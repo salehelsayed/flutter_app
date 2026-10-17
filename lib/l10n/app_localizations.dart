@@ -7267,6 +7267,54 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Refresh audio outputs'**
   String get call_audio_refresh_outputs;
+
+  /// No description provided for @call_back_superseded.
+  ///
+  /// In en, this message translates to:
+  /// **'A newer call with this contact exists. Call back from the latest one.'**
+  String get call_back_superseded;
+
+  /// Title of the optional onboarding step that asks for the microphone.
+  ///
+  /// In en, this message translates to:
+  /// **'Calls and voice notes'**
+  String get onboarding_mic_title;
+
+  /// Why the app asks for the microphone during onboarding.
+  ///
+  /// In en, this message translates to:
+  /// **'MKnoon uses your microphone for calls and voice notes.'**
+  String get onboarding_mic_body;
+
+  /// Reassurance that the choice can be changed later.
+  ///
+  /// In en, this message translates to:
+  /// **'You can change this anytime in Settings.'**
+  String get onboarding_mic_settings_hint;
+
+  /// Card title that shows the system microphone prompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow microphone'**
+  String get onboarding_mic_allow;
+
+  /// Card description under Allow microphone.
+  ///
+  /// In en, this message translates to:
+  /// **'So calls work right away'**
+  String get onboarding_mic_allow_desc;
+
+  /// Card description under Not now; the app asks again at the first call or recording.
+  ///
+  /// In en, this message translates to:
+  /// **'We will ask when you first call or record'**
+  String get onboarding_mic_not_now_desc;
+
+  /// Call ended because the microphone is blocked and the system will not ask again; shown with an Open Settings button.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is off for MKnoon. Turn it on in Settings to make and answer calls.'**
+  String get call_end_permission_settings;
 }
 
 class _AppLocalizationsDelegate

@@ -303,7 +303,8 @@ bool _allowedLiteral(String literal) {
 
   final withoutInterpolations = literal
       .replaceAll(RegExp(r'\$\{[^}]+\}'), '')
-      .replaceAll(RegExp(r'\$[A-Za-z_][A-Za-z0-9_\.]*'), '');
+      .replaceAll(RegExp(r'\$[A-Za-z_][A-Za-z0-9_\.]*'), '')
+      .replaceAll(RegExp(r'\\[nrt]'), '');
   return !RegExp(r'[A-Za-z]').hasMatch(withoutInterpolations);
 }
 

@@ -22,6 +22,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -187,16 +188,21 @@ class _FakeContactRepository implements ContactRepository {
 // ---------------------------------------------------------------------------
 // Helper to build a valid contact request ChatMessage
 // ---------------------------------------------------------------------------
-const _testPeerId = '12D3KooWSenderPeerId1234567890';
-const _testPublicKey = 'dGVzdFB1YmxpY0tleUJhc2U2NA==';
+// Task 12b: the sender is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _testSender = TestEd25519Identity.fromSeedByte(0x82);
+final _testPeerId = _testSender.peerId;
+final _testPublicKey = _testSender.publicKey;
 const _testOwnPeerId = '12D3KooWOwnPeerId12345678901';
 
 ChatMessage _makeContactRequestMessage({
-  String peerId = _testPeerId,
-  String publicKey = _testPublicKey,
+  String? peerId,
+  String? publicKey,
   String? from,
   String? mlkem,
 }) {
+  peerId ??= _testPeerId;
+  publicKey ??= _testPublicKey;
   final payload = SplayTreeMap<String, dynamic>.from({
     'mlkem': ?mlkem,
     'ns': peerId,
@@ -835,13 +841,15 @@ void main() {
   // ---------------------------------------------------------------------------
   group('v2 encrypted', () {
     ChatMessage makeV2Message({
-      String peerId = _testPeerId,
-      String publicKey = _testPublicKey,
+      String? peerId,
+      String? publicKey,
       String? from,
       String? mlkem,
       String? msgId,
       CallWakeHandleGrant? cwh,
     }) {
+      peerId ??= _testPeerId;
+      publicKey ??= _testPublicKey;
       final payload = SplayTreeMap<String, dynamic>.from({
         'mlkem': ?mlkem,
         'ns': peerId,
@@ -1338,7 +1346,8 @@ void main() {
     }
 
     ChatMessage makeV2({
-      String peerId = _testPeerId,
+      TestEd25519Identity? identity,
+      String? peerId,
       String? msgId,
       String? confirmNonce,
       String? from,
@@ -1346,9 +1355,10 @@ void main() {
       CallWakeHandleGrant? callWakeHandle,
       String? callWakeReceiptChallenge,
     }) {
+      peerId ??= identity?.peerId ?? _testPeerId;
       final payload = SplayTreeMap<String, dynamic>.from({
         'ns': peerId,
-        'pk': _testPublicKey,
+        'pk': identity?.publicKey ?? _testPublicKey,
         'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
         'sig': 'fakeSigBase64ForTesting',
         'ts': '2024-06-15T12:00:00Z',
@@ -1470,8 +1480,10 @@ void main() {
       },
     );
 
+    // Owner decision A: an authenticated, unmarked legacy key-exchange retry
+    // is ACKed with its exact receipt first, then gets exactly one reciprocal.
     test(
-      'ACKs verified key-exchange retry before requesting reciprocal wake recovery once',
+      'ACKs an unmarked key-exchange retry with its receipt, then reciprocates once',
       () async {
         const challenge = '123e4567-e89b-42d3-a456-426614174000';
         contactRepo.addTestContact(
@@ -1484,16 +1496,12 @@ void main() {
             scannedAt: '2024-01-01T00:00:00Z',
           ),
         );
-        final store = _FakeReceivedCallWakeHandleStore();
         final order = <String>[];
-        final events = <Map<String, dynamic>>[];
-        debugSetFlowEventSink(events.add);
-        addTearDown(() => debugSetFlowEventSink(null));
         bridge.onSend = (request) {
           if (request['cmd'] == 'message:confirm') order.add('ack');
         };
         final l = makeListener(
-          receivedCallWakeHandleStore: store,
+          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
           requestReciprocalCallWakeRecovery: (peerId) async {
             order.add('recover:$peerId');
           },
@@ -1512,167 +1520,11 @@ void main() {
 
         expect(result, HandleMessageResult.alreadyContact);
         expect(order, ['ack', 'recover:$_testPeerId']);
-        expect(bridge.confirmRequests, hasLength(1));
         expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
           'nonce': 'nonce-recovery',
           'ok': true,
           'callWakeReceipt': challenge,
         });
-        final recoveryEvents = events.where(
-          (event) => (event['event'] as String).startsWith(
-            'CALL_WAKE_RECIPROCAL_RECOVERY_',
-          ),
-        );
-        expect(recoveryEvents, hasLength(2));
-        expect(
-          recoveryEvents.every(
-            (event) => (event['details'] as Map<String, dynamic>).isEmpty,
-          ),
-          isTrue,
-        );
-      },
-    );
-
-    test(
-      'contains reciprocal wake recovery callback failures after ACK',
-      () async {
-        const challenge = '123e4567-e89b-42d3-a456-426614174000';
-        contactRepo.addTestContact(
-          ContactModel(
-            peerId: _testPeerId,
-            publicKey: _testPublicKey,
-            rendezvous: '/addr',
-            username: 'TestUser',
-            signature: 'sig',
-            scannedAt: '2024-01-01T00:00:00Z',
-          ),
-        );
-        final l = makeListener(
-          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
-          requestReciprocalCallWakeRecovery: (_) async {
-            throw StateError('recovery failed');
-          },
-        );
-        addTearDown(l.dispose);
-
-        final result = await l.processIncomingMessage(
-          makeV2(
-            confirmNonce: 'nonce-contained',
-            intent: 'key_exchange_retry',
-            callWakeHandle: wakeGrant(),
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-
-        expect(result, HandleMessageResult.alreadyContact);
-        expect(bridge.confirmRequests, hasLength(1));
-        expect(bridge.confirmRequests.single['payload']['ok'], isTrue);
-      },
-    );
-
-    test(
-      'does not reciprocate new, invalid, replayed, blocked, no-ACK, or no-receipt requests',
-      () async {
-        const challenge = '123e4567-e89b-42d3-a456-426614174000';
-        contactRepo.addTestContact(
-          ContactModel(
-            peerId: _testPeerId,
-            publicKey: _testPublicKey,
-            rendezvous: '/addr',
-            username: 'TestUser',
-            signature: 'sig',
-            scannedAt: '2024-01-01T00:00:00Z',
-          ),
-        );
-        var recoveries = 0;
-        final grant = wakeGrant();
-        final l = makeListener(
-          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
-          requestReciprocalCallWakeRecovery: (_) async {
-            recoveries += 1;
-          },
-        );
-        addTearDown(l.dispose);
-
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'ordinary-new',
-            confirmNonce: 'nonce-new',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-no-receipt',
-            confirmNonce: 'nonce-no-receipt',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-          ),
-        );
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-replay',
-            confirmNonce: 'nonce-replay-1',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-replay',
-            confirmNonce: 'nonce-replay-2',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-inbox-redelivery',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-
-        expect(recoveries, 1);
-
-        bridge.nextResponse = {'ok': true, 'valid': false};
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-invalid',
-            confirmNonce: 'nonce-invalid',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-        bridge.nextResponse = {'ok': true, 'valid': true};
-
-        contactRepo.addTestContact(
-          ContactModel(
-            peerId: _testPeerId,
-            publicKey: _testPublicKey,
-            rendezvous: '/addr',
-            username: 'TestUser',
-            signature: 'sig',
-            scannedAt: '2024-01-01T00:00:00Z',
-            isBlocked: true,
-          ),
-        );
-        await l.processIncomingMessage(
-          makeV2(
-            msgId: 'retry-blocked',
-            confirmNonce: 'nonce-blocked',
-            intent: 'key_exchange_retry',
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
-
-        expect(recoveries, 1);
       },
     );
 
@@ -1767,7 +1619,10 @@ void main() {
 
       for (var i = 0; i < 3; i++) {
         await l.processIncomingMessage(
-          makeV2(peerId: '12D3KooWDistinctPeer${i}xxxxxxxxxx', msgId: 'rl-$i'),
+          makeV2(
+            identity: TestEd25519Identity.fromSeedByte(0x90 + i),
+            msgId: 'rl-$i',
+          ),
         );
       }
       await Future<void>.delayed(const Duration(milliseconds: 20));

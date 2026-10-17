@@ -15,6 +15,44 @@ import org.junit.Test
 
 class MknoonCallAndroidRuntimeTest {
     @Test
+    fun `F4 production release helper retains the exact held lock on failure for retry`() {
+        val id = UUID.randomUUID()
+        val successor = UUID.randomUUID()
+        class Lock(var held: Boolean = true)
+        val owned = Lock()
+        val next = Lock()
+        val locks = java.util.concurrent.ConcurrentHashMap<UUID, Lock>()
+        locks[id] = owned
+        locks[successor] = next
+        var failures = 1
+        var releases = 0
+        fun release() = releaseCallProximityLock(id, locks, { it.held }) {
+            releases++
+            if (failures-- > 0) throw IllegalStateException("injected release failure")
+            it.held = false
+        }
+        org.junit.Assert.assertThrows(IllegalStateException::class.java) { release() }
+        org.junit.Assert.assertSame(owned, locks[id])
+        assertTrue(owned.held)
+        org.junit.Assert.assertSame(next, locks[successor])
+        release()
+        assertFalse(owned.held)
+        assertFalse(locks.containsKey(id))
+        release()
+        assertEquals(2, releases)
+        assertTrue(next.held)
+    }
+
+    @Test
+    fun `F4 production release helper settles only after observing an unheld lock`() {
+        val id = UUID.randomUUID()
+        val locks = java.util.concurrent.ConcurrentHashMap<UUID, Boolean>()
+        locks[id] = false
+        releaseCallProximityLock(id, locks, { it }) { error("must not release an unheld lock") }
+        assertTrue(locks.isEmpty())
+    }
+
+    @Test
     fun `lifecycle diagnostics have one closed identifier free wire vocabulary`() {
         assertEquals(
             listOf(

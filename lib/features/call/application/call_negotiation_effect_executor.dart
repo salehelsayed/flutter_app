@@ -200,6 +200,15 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   bool _engineEventSubscriptionClosed = false;
   bool _candidateSubscriptionClosed = false;
   bool _engineClosed = false;
+  // A failed audio start (blocked microphone) closes the engine from inside
+  // the preparer's await. That close must not pre-empt the typed reason the
+  // preparer is about to throw with an untyped mediaFailed, so a close seen
+  // during preparation is held until the preparer has answered.
+  _MediaPreparationPhase _mediaPreparationPhase = _MediaPreparationPhase.idle;
+
+  /// The first engine close event held during preparation, recorded only if
+  /// preparation succeeds and the close is replayed for the current call.
+  CallEngineEvent? _heldCloseEvent;
 
   @override
   Future<CallEvent?> execute(
@@ -228,6 +237,9 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
           return await _restartIce(snapshot);
         case CallEffectType.requestIceRestart:
           return await _requestIceRestart(snapshot);
+        case CallEffectType.resumeRecoverySignals:
+          _resumeRecoverySignals(snapshot);
+          return null;
         default:
           return null;
       }
@@ -666,6 +678,24 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     );
   }
 
+  /// The node reports the call's pending path epoch ready. Sealed recovery
+  /// writes keep their call/episode/ICE authority and material; only their
+  /// backoff wait ends. A write already on the wire is left to finish.
+  void _resumeRecoverySignals(CallSessionSnapshot snapshot) {
+    if (snapshot.state != CallState.reconnecting) return;
+    for (final work in _recoverySignals.toList(growable: false)) {
+      if (!_isCurrentRecoverySignal(work)) {
+        _retireRecoverySignal(work);
+        continue;
+      }
+      final timer = work.timer;
+      if (work.inFlight || timer == null) continue;
+      timer.cancel();
+      work.timer = null;
+      unawaited(_retryRecoverySignal(work));
+    }
+  }
+
   Future<void> _retryRecoverySignal(_RecoverySignalWork work) async {
     if (!_isCurrentRecoverySignal(work)) {
       _retireRecoverySignal(work);
@@ -673,7 +703,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     }
     work.attempts++;
     try {
-      await work.retry!.retry(canApply: () => _isCurrentRecoverySignal(work));
+      work.inFlight = true;
+      try {
+        await work.retry!.retry(canApply: () => _isCurrentRecoverySignal(work));
+      } finally {
+        work.inFlight = false;
+      }
       if (!_isCurrentRecoverySignal(work)) {
         _retireRecoverySignal(work);
         return;
@@ -803,10 +838,30 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
         CallNegotiationPortErrorCode.mediaUnavailable,
       );
     }
-    await mediaPreparer.prepareLocallyAcceptedMedia(
-      snapshot: snapshot,
-      configuration: configuration,
-    );
+    _mediaPreparationPhase = _MediaPreparationPhase.inFlight;
+    var engineClosedDuringPreparation = false;
+    CallEngineEvent? heldClose;
+    try {
+      await mediaPreparer.prepareLocallyAcceptedMedia(
+        snapshot: snapshot,
+        configuration: configuration,
+      );
+    } finally {
+      engineClosedDuringPreparation =
+          _mediaPreparationPhase == _MediaPreparationPhase.engineClosedInFlight;
+      heldClose = _heldCloseEvent;
+      _heldCloseEvent = null;
+      _mediaPreparationPhase = _MediaPreparationPhase.idle;
+    }
+    // A preparer failure has already thrown past this point with its own
+    // typed reason. After a success, a held close ends this call before its
+    // media is accepted.
+    if (engineClosedDuringPreparation) {
+      if (heldClose != null && _isCurrentSession(snapshot)) {
+        _observeFailure(callId, heldClose.failureReason, true);
+      }
+      await _dispatchFailureForSession(snapshot);
+    }
     if (!_isCurrentSession(snapshot)) {
       throw const CallNegotiationPortException(
         CallNegotiationPortErrorCode.mediaUnavailable,
@@ -1009,6 +1064,12 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     if (_closed) return;
     final session = _readSnapshotSafely();
     if (session == null || session.callId == null || session.isTerminal) return;
+    if (_mediaPreparationPhase != _MediaPreparationPhase.idle &&
+        _isEngineClosedEvent(event)) {
+      _mediaPreparationPhase = _MediaPreparationPhase.engineClosedInFlight;
+      _heldCloseEvent ??= event;
+      return;
+    }
     final needsRecovery = _needsTransportRecovery(event, session);
     if (needsRecovery) {
       _pendingMediaLossCallId = session.callId;
@@ -1147,6 +1208,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
   void _onEngineStreamDone() {
     if (_closed) return;
     _cancelMediaReadinessWatch(closeActivePhase: true);
+    if (_mediaPreparationPhase != _MediaPreparationPhase.idle) {
+      _mediaPreparationPhase = _MediaPreparationPhase.engineClosedInFlight;
+      return;
+    }
     unawaited(_dispatchFailureForCurrentSnapshot());
   }
 
@@ -1547,6 +1612,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
     _ => false,
   };
 
+  static bool _isEngineClosedEvent(CallEngineEvent event) =>
+      event.type == CallEngineEventType.closed ||
+      event.connectionState == CallConnectionState.closed;
+
   static bool _isFailureEngineEvent(CallEngineEvent event) =>
       event.type == CallEngineEventType.overflow ||
       event.type == CallEngineEventType.closed ||
@@ -1597,6 +1666,10 @@ final class CallNegotiationEffectExecutor implements CallEffectExecutor {
       };
 }
 
+/// [engineClosedInFlight] holds an engine close that arrived while the media
+/// preparer was still running, for [_prepareMedia] to settle once it answers.
+enum _MediaPreparationPhase { idle, inFlight, engineClosedInFlight }
+
 final class _PendingEngineEvent {
   const _PendingEngineEvent(
     this.event,
@@ -1640,4 +1713,5 @@ final class _RecoverySignalWork {
   void Function()? onRetired;
   CallTimerHandle? timer;
   int attempts = 0;
+  bool inFlight = false;
 }

@@ -23,6 +23,8 @@ set +e
   --tests 'com.mknoon.app.MknoonFirebaseMessagingServiceTest' \
   --tests 'com.mknoon.app.AndroidCallWakeBridgeTest' \
   --tests 'com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest' \
+  --tests 'com.mknoon.app.DefaultNetworkPathMonitorTest' \
+  --tests 'com.mknoon.app.PreviousNetworkLossWatcherTest' \
   >"$LOG" 2>&1
 status=$?
 set -e

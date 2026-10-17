@@ -918,6 +918,11 @@ void main() {
     expect(wiring, contains('ContactRequestSendIntent.newRequest'));
     expect(wiring, contains('resolveCallWakeHandle:'));
     expect(wiring, contains('requireExactCallWakeReceipt: true'));
+    // Owner decision A: the legacy reciprocal is never marked, and the
+    // signed-marker repair path stays wired beside it.
+    expect(wiring, contains('markAsNewRequest: false'));
+    expect(wiring, contains('repairRepository: contactRepairRepository'));
+    expect(wiring, contains('contactRepairOutboxWorker.drain()'));
   });
 
   test('production outgoing call requires an exact direct wake receipt', () {

@@ -5,7 +5,10 @@ import 'package:flutter_app/features/call/application/call_audio_controller.dart
 import 'package:flutter_app/features/call/application/call_route_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
+import 'package:flutter_app/features/call/infrastructure/call_microphone_permission_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 
 void main() {
   group('VC2-03 foreground audio start', () {
@@ -356,6 +359,59 @@ void main() {
         }
       },
     );
+  });
+
+  // Production shares one permission adapter and builds a controller per call.
+  group('microphone permission across calls', () {
+    test(
+      'a mic turned on in Settings lets the next call start without a restart',
+      () async {
+        final gateway = FakeMicPermissionGateway()
+          ..statusToReturn = MicPermissionStatus.permanentlyDenied;
+        final permission = CallMicrophonePermissionAdapter(gateway: gateway);
+
+        final firstCall = await _Harness(
+          microphonePermission: permission,
+        ).start();
+        expect(firstCall.status, CallAudioStartStatus.permissionDenied);
+        expect(
+          firstCall.permissionStatus,
+          MicPermissionStatus.permanentlyDenied,
+        );
+        expect(gateway.requestCallCount, 1);
+
+        gateway.statusToReturn = MicPermissionStatus.granted;
+        final secondHarness = _Harness(microphonePermission: permission);
+        final secondCall = await secondHarness.start();
+
+        expect(secondCall.status, CallAudioStartStatus.started);
+        expect(secondCall.permissionStatus, MicPermissionStatus.granted);
+        expect(gateway.requestCallCount, 2);
+        expect(secondHarness.engine.createConnectionCalls, 1);
+      },
+    );
+
+    test('a mic denied on one call is asked for again on the next', () async {
+      final gateway = FakeMicPermissionGateway()
+        ..statusToReturn = MicPermissionStatus.denied;
+      final permission = CallMicrophonePermissionAdapter(gateway: gateway);
+
+      final firstCall = await _Harness(
+        microphonePermission: permission,
+      ).start();
+      expect(firstCall.status, CallAudioStartStatus.permissionDenied);
+      expect(firstCall.permissionStatus, MicPermissionStatus.denied);
+      expect(gateway.requestCallCount, 1);
+
+      gateway.statusToReturn = MicPermissionStatus.granted;
+      final secondCall = await _Harness(
+        microphonePermission: permission,
+      ).start();
+
+      expect(gateway.requestCallCount, 2);
+      expect(secondCall.status, CallAudioStartStatus.started);
+      expect(secondCall.permissionStatus, MicPermissionStatus.granted);
+    });
   });
 
   group('VC2-03 foreground audio controls', () {
@@ -1090,6 +1146,7 @@ final class _Harness {
   _Harness({
     List<String>? calls,
     MicPermissionStatus permissionStatus = MicPermissionStatus.granted,
+    CallMicrophonePermission? microphonePermission,
     CallAudioEngineStartFailureObserver? onEngineStartFailure,
   }) : calls = calls ?? <String>[] {
     engine = _FakeCallEngine(this.calls);
@@ -1098,7 +1155,7 @@ final class _Harness {
     session = _FakeAudioSession(this.calls);
     controller = CallAudioController(
       engine: engine,
-      microphonePermission: permission,
+      microphonePermission: microphonePermission ?? permission,
       mediaConflicts: conflicts,
       audioSession: session,
       onEngineStartFailure: onEngineStartFailure,

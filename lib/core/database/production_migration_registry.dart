@@ -120,6 +120,7 @@ import 'migrations/117_call_history.dart';
 import 'migrations/118_call_history_read_state.dart';
 import 'migrations/119_quiet_message_recovery.dart';
 import 'migrations/120_media_attachment_file_name.dart';
+import 'migrations/121_contact_repair.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -693,6 +694,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '120_media_attachment_file_name',
     runMediaAttachmentFileNameMigration,
   ),
+  ProductionMigrationEntry(
+    121,
+    '121_contact_repair',
+    runContactRepairMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1255,6 +1261,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     120,
     '120_media_attachment_file_name',
     runMediaAttachmentFileNameMigration,
+  ),
+  ProductionMigrationEntry(
+    121,
+    '121_contact_repair',
+    runContactRepairMigration,
   ),
 ]);
 

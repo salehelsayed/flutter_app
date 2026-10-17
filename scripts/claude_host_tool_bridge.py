@@ -21,6 +21,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 import urllib.parse
@@ -49,6 +50,34 @@ def _json_response(handler: http.server.BaseHTTPRequestHandler, status: int, pay
     handler.send_header("Content-Length", str(len(body)))
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def _run_child(argv: list[str], *, cwd: Path, env: dict[str, str]) -> tuple[int, str, str]:
+    # Output goes to temp files, not pipes: flutter/xcodebuild leave daemons behind that
+    # inherit the child's stdout/stderr, and waiting for pipe EOF then never returns.
+    # Read through a fresh descriptor, bounded to the size at direct-child exit: descendants share the
+    # child's file offset, so seeking the inherited descriptor would race their writes.
+    handles = []
+    try:
+        out = tempfile.NamedTemporaryFile(delete=False)
+        handles.append(out)
+        err = tempfile.NamedTemporaryFile(delete=False)
+        handles.append(err)
+        child = subprocess.Popen(argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err)
+        returncode = child.wait()
+        texts = []
+        for handle in (out, err):
+            size = os.fstat(handle.fileno()).st_size
+            with open(handle.name, "rb") as snapshot:
+                texts.append(snapshot.read(size).decode("utf-8", errors="replace"))
+        return (returncode, texts[0], texts[1])
+    finally:
+        for handle in handles:
+            handle.close()
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
 
 
 def _read_local_properties(repo_root: Path) -> dict[str, str]:
@@ -261,24 +290,14 @@ class BridgeHandler(http.server.BaseHTTPRequestHandler):
 
         started = time.time()
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=str(cwd),
-                env=self.server.host_env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                errors="replace",
-                check=False,
-            )
+            returncode, stdout, stderr = _run_child(argv, cwd=cwd, env=self.server.host_env)
             _json_response(
                 self,
                 200,
                 {
-                    "returncode": completed.returncode,
-                    "stdout": completed.stdout,
-                    "stderr": completed.stderr,
+                    "returncode": returncode,
+                    "stdout": stdout,
+                    "stderr": stderr,
                     "host_cwd": str(cwd),
                     "reason": reason,
                     "duration_seconds": round(time.time() - started, 3),
@@ -367,7 +386,24 @@ def client(argv: list[str]) -> int:
     return int(payload.get("returncode", 1))
 
 
+def _raise_open_file_limit(target: int = 10240) -> int:
+    # Jobs inherit this limit; flutter's xattr sweep fails with "Too many open files" at the
+    # macOS default soft limit of 256. macOS rejects RLIM_INFINITY, so cap at `target`.
+    import resource
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    wanted = target if hard == resource.RLIM_INFINITY else min(target, hard)
+    if soft != resource.RLIM_INFINITY and soft < wanted:
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
+            return wanted
+        except (ValueError, OSError):
+            return soft
+    return soft
+
+
 def serve(args: argparse.Namespace) -> int:
+    _raise_open_file_limit()
     repo_root = Path(args.repo_root).resolve()
     allowed_tools = set(args.allow_tool or DEFAULT_ALLOWED_TOOLS)
     server = BridgeServer(

@@ -4444,4 +4444,33 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get call_audio_refresh_outputs => 'Audioausgänge aktualisieren';
+
+  @override
+  String get call_back_superseded =>
+      'Es gibt einen neueren Anruf mit diesem Kontakt. Ruf über den neuesten Anruf zurück.';
+
+  @override
+  String get onboarding_mic_title => 'Anrufe und Sprachnachrichten';
+
+  @override
+  String get onboarding_mic_body =>
+      'MKnoon nutzt dein Mikrofon für Anrufe und Sprachnachrichten.';
+
+  @override
+  String get onboarding_mic_settings_hint =>
+      'Du kannst das jederzeit in den Einstellungen ändern.';
+
+  @override
+  String get onboarding_mic_allow => 'Mikrofon erlauben';
+
+  @override
+  String get onboarding_mic_allow_desc => 'Damit Anrufe sofort funktionieren';
+
+  @override
+  String get onboarding_mic_not_now_desc =>
+      'Wir fragen dich beim ersten Anruf oder der ersten Aufnahme';
+
+  @override
+  String get call_end_permission_settings =>
+      'Der Mikrofonzugriff für MKnoon ist aus. Schalte ihn in den Einstellungen ein, um Anrufe zu tätigen und anzunehmen.';
 }

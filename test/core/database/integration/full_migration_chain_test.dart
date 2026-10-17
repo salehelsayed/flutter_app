@@ -1485,7 +1485,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 120);
+        expect(currentIdentityDatabaseVersion, 121);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1505,7 +1505,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 120);
+        expect(currentIdentityDatabaseVersion, 121);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1520,7 +1520,7 @@ void main() {
       },
     );
     test('VC2-02 production registry reaches v117 exactly once', () {
-      expect(currentIdentityDatabaseVersion, 120);
+      expect(currentIdentityDatabaseVersion, 121);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -1587,7 +1587,9 @@ void main() {
         expect(index119, index118 + 1);
         final index120 = registry.indexWhere((entry) => entry.version == 120);
         expect(index120, index119 + 1);
-        expect(index120, registry.length - 1);
+        expect(index120, registry.length - 2);
+        expect(registry.last.version, 121);
+        expect(registry.last.name, '121_contact_repair');
         expect(registry[index119].name, '119_quiet_message_recovery');
         expect(registry[index119].run, same(runQuietMessageRecoveryMigration));
         expect(registry[index120].name, '120_media_attachment_file_name');
@@ -2083,7 +2085,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 120);
+      expect(currentIdentityDatabaseVersion, 121);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

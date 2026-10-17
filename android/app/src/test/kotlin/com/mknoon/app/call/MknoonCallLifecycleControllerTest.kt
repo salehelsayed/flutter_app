@@ -12,6 +12,177 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MknoonCallLifecycleControllerTest {
+    private fun activeProximityRig(incoming: Boolean = false): LifecycleRig {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED,
+            if (incoming) rig.controller.present(rig.payload) else rig.controller.registerOutgoing(rig.payload))
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED))
+        if (incoming) assertTrue(rig.controller.answer(id))
+        assertTrue(rig.controller.activateAudio(id))
+        return rig
+    }
+
+    @Test
+    fun `F3 late earpiece callbacks during and after deactivation cannot acquire proximity`() {
+        for (incoming in listOf(false, true)) {
+            val rig = activeProximityRig(incoming)
+            val id = rig.payload.nativeCallId
+            assertTrue(rig.controller.onRouteChanged(id, "earpiece"))
+            rig.platform.onStopEndpointUpdates = { rig.controller.onRouteChanged(id, "earpiece") }
+            assertTrue(rig.controller.deactivateAudio(id))
+            assertFalse(rig.controller.audioState().active)
+            assertFalse(rig.platform.proximityHeld)
+            rig.controller.onRouteChanged(id, "earpiece")
+            assertEquals(listOf(true, false), rig.platform.proximityCalls)
+            assertTrue(rig.controller.hasTerminalLifecycle(id).not())
+            assertEquals(id, rig.controller.activeNativeCallId())
+            assertTrue(rig.controller.activateAudio(id))
+            assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+            assertTrue(rig.platform.proximityHeld)
+            assertEquals(listOf(true, false, true), rig.platform.proximityCalls)
+            assertTrue(rig.controller.onRouteChanged(id, "speaker"))
+            assertFalse(rig.platform.proximityHeld)
+            assertTrue(rig.controller.endFromDart(id))
+            assertFalse(rig.controller.isCleanupPending(id))
+        }
+    }
+
+    @Test
+    fun `F3 inactive unadopted terminal and stale successor callbacks cannot enable proximity`() {
+        val rig = LifecycleRig()
+        val id = rig.payload.nativeCallId
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
+        rig.controller.onRouteChanged(id, "earpiece")
+        assertTrue(rig.platform.proximityCalls.isEmpty())
+        rig.controller.attach()
+        assertTrue(rig.controller.markAdopted(id))
+        assertTrue(rig.controller.acknowledge(id, requireNotNull(rig.controller.snapshot()).highestSequence,
+            PendingNativeCallAcknowledgement.ADOPTED))
+        rig.controller.onRouteChanged(id, "earpiece")
+        assertTrue(rig.platform.proximityCalls.isEmpty())
+        assertTrue(rig.controller.activateAudio(id))
+        rig.controller.onRouteChanged(id, "earpiece")
+        assertTrue(rig.platform.proximityHeld)
+        assertFalse(rig.controller.onRouteChanged(UUID.randomUUID(), "earpiece"))
+        assertTrue(rig.controller.endFromDart(id))
+        assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+        val terminal = requireNotNull(rig.controller.snapshot())
+        assertTrue(rig.controller.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
+        val successor = callPayload(nativeCallId = UUID.randomUUID())
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(successor))
+        assertTrue(rig.controller.markAdopted(successor.nativeCallId))
+        assertTrue(rig.controller.acknowledge(successor.nativeCallId,
+            requireNotNull(rig.controller.snapshot()).highestSequence, PendingNativeCallAcknowledgement.ADOPTED))
+        assertTrue(rig.controller.activateAudio(successor.nativeCallId))
+        assertTrue(rig.controller.onRouteChanged(successor.nativeCallId, "speaker"))
+        assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+        assertFalse(rig.platform.proximityHeld)
+        assertTrue(rig.controller.endFromDart(successor.nativeCallId))
+    }
+
+    @Test
+    fun `F3 terminal persistence failure fences late route callbacks during cleanup`() {
+        val rig = activeProximityRig()
+        val id = rig.payload.nativeCallId
+        rig.controller.onRouteChanged(id, "earpiece")
+        rig.store.appendFailuresRemaining = 1
+        rig.platform.onStopEndpointUpdates = { rig.controller.onRouteChanged(id, "earpiece") }
+        assertFalse(rig.controller.endFromDart(id))
+        assertFalse(rig.platform.proximityHeld)
+        assertTrue(rig.controller.isCleanupPending(id))
+        assertEquals(listOf(true, false), rig.platform.proximityCalls)
+        assertTrue(rig.controller.retryCleanup(id))
+        assertFalse(rig.platform.proximityHeld)
+        assertFalse(rig.controller.isCleanupPending(id))
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+    }
+
+    @Test
+    fun `F4 held proximity failure remains pending after collectors stop until release succeeds`() {
+        val rig = activeProximityRig()
+        val id = rig.payload.nativeCallId
+        rig.controller.onRouteChanged(id, "earpiece")
+        rig.platform.proximityReleaseFailuresRemaining = 2
+        assertFalse(rig.controller.endFromDart(id))
+        assertTrue(rig.controller.isCleanupPending(id))
+        assertTrue(rig.platform.proximityHeld)
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        val terminal = requireNotNull(rig.controller.snapshot())
+        assertFalse(rig.controller.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
+        val successor = callPayload(nativeCallId = UUID.randomUUID())
+        fun assertSuccessorRefusedWhileProximityHeld() {
+            assertTrue(rig.controller.isCleanupPending(id))
+            assertTrue(rig.platform.proximityHeld)
+            val operations = rig.operations.toList()
+            val proximityCalls = rig.platform.proximityCalls.toList()
+            val audioState = rig.controller.audioState()
+            val presented = rig.presented.toList()
+            for (incoming in listOf(true, false)) {
+                assertEquals(MknoonCallPresentationResult.BUSY,
+                    if (incoming) rig.controller.present(successor)
+                    else rig.controller.registerOutgoing(successor))
+                assertEquals(0, rig.platform.registerCalls)
+                assertEquals(1, rig.platform.registerOutgoingCalls)
+                assertEquals(0, rig.platform.showIncomingCalls)
+                assertEquals(1, rig.store.createCalls)
+                assertEquals(operations, rig.operations)
+                assertEquals(presented, rig.presented)
+                assertEquals(terminal, rig.controller.snapshot())
+                assertEquals(id, rig.controller.activeNativeCallId())
+                assertTrue(rig.controller.isCleanupPending(id))
+                assertFalse(rig.controller.isCleanupPending(successor.nativeCallId))
+                assertNull(rig.controller.audioState(successor.nativeCallId))
+                assertEquals(audioState, rig.controller.audioState())
+                assertEquals(proximityCalls, rig.platform.proximityCalls)
+                assertTrue(rig.platform.proximityHeld)
+                assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+            }
+        }
+        assertSuccessorRefusedWhileProximityHeld()
+        assertFalse(rig.controller.retryCleanup(id))
+        assertTrue(rig.platform.proximityHeld)
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        assertSuccessorRefusedWhileProximityHeld()
+        assertTrue(rig.controller.retryCleanup(id))
+        assertFalse(rig.platform.proximityHeld)
+        assertFalse(rig.controller.isCleanupPending(id))
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        val releases = rig.platform.proximityCalls.size
+        assertTrue(rig.controller.retryCleanup(id))
+        assertEquals(releases, rig.platform.proximityCalls.size)
+        assertTrue(rig.controller.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
+        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(successor))
+        assertFalse(rig.controller.onRouteChanged(id, "earpiece"))
+        assertFalse(rig.platform.proximityHeld)
+        assertTrue(rig.controller.endFromDart(successor.nativeCallId))
+    }
+
+    @Test
+    fun `F4 deactivation release failure is truthful and uses bounded native cleanup retry`() {
+        val rig = activeProximityRig()
+        val id = rig.payload.nativeCallId
+        rig.controller.onRouteChanged(id, "earpiece")
+        rig.platform.proximityReleaseFailuresRemaining = 3
+        assertFalse(rig.controller.deactivateAudio(id))
+        assertFalse(rig.controller.audioState().active)
+        assertTrue(rig.controller.isCleanupPending(id))
+        assertTrue(rig.platform.proximityHeld)
+        assertFalse(rig.controller.deactivateAudio(id))
+        assertFalse(rig.controller.activateAudio(id))
+        assertFalse(rig.controller.retryCleanup(id))
+        assertTrue(rig.platform.proximityHeld)
+        assertTrue(rig.controller.retryCleanup(id))
+        assertFalse(rig.platform.proximityHeld)
+        assertFalse(rig.controller.isCleanupPending(id))
+        assertFalse(rig.controller.deactivateAudio(id))
+        assertEquals(1, rig.platform.stopEndpointUpdatesCalls)
+        assertEquals(1, rig.platform.endCalls)
+    }
+
     @Test
     fun `output confirmation cannot succeed after terminal cleanup during the request`() {
         val rig = LifecycleRig()
@@ -2449,8 +2620,16 @@ internal class LifecycleFakePlatform(
     var startEndpointUpdatesCalls = 0
     var stopEndpointUpdatesCalls = 0
     val proximityCalls = mutableListOf<Boolean>()
+    var proximityHeld = false
+    var proximityReleaseFailuresRemaining = 0
+    var onStopEndpointUpdates: (() -> Unit)? = null
     override fun setProximityScreenOff(nativeCallId: UUID, enabled: Boolean) {
         proximityCalls += enabled
+        if (!enabled && proximityReleaseFailuresRemaining > 0) {
+            proximityReleaseFailuresRemaining -= 1
+            throw IllegalStateException("injected proximity release failure")
+        }
+        proximityHeld = enabled
     }
     var startMicrophoneCalls = 0
     var stopIncomingRingerCalls = 0
@@ -2577,6 +2756,7 @@ internal class LifecycleFakePlatform(
     override fun stopEndpointUpdates(nativeCallId: UUID) {
         stopEndpointUpdatesCalls += 1
         operations += "platform.stopEndpointUpdates"
+        onStopEndpointUpdates?.invoke()
     }
 
     override fun startMicrophoneService(nativeCallId: UUID) {

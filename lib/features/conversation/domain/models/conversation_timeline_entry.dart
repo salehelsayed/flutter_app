@@ -65,6 +65,17 @@ final class ConversationCallTimelineEntry extends ConversationTimelineEntry {
   final DateTime endedAt;
   final Duration? duration;
 
+  /// An incoming call the user did not take, the projection of
+  /// `isMissedIncomingCall` on the durable history row. Such a row may start a
+  /// fresh call only while it is still the contact's newest call.
+  bool get isMissedIncoming =>
+      direction == ConversationCallDirection.incoming &&
+      const {
+        ConversationCallStatus.missed,
+        ConversationCallStatus.busy,
+        ConversationCallStatus.cancelled,
+      }.contains(status);
+
   @override
   String get stableId => 'call:$callId';
 

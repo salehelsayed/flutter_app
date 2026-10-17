@@ -55,6 +55,7 @@ import 'package:flutter_app/features/call/domain/received_call_wake_handle_store
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/data/repositories/sql_contact_repair_repository.dart';
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -637,6 +638,12 @@ buildProductionCanonicalInboxProjectionComposition({
       emitRecoveredIntroductionStatus:
           introductionListener.emitIntroStatusChanged,
       receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+      // Task 12b: headless receipt reserves the durable reply (and remembers
+      // nothing it should not); the foreground worker sends it later, so
+      // recovery never depends on receiving the packet again.
+      repairRepository: SqlContactRepairRepository(database),
+      getOwnPublicKey: () async => identity.publicKey,
+      getOwnAccountPeerId: () async => identity.peerId,
       autoAcceptAndReciprocate: null,
     );
     contactRequestListenerForCleanup = contactRequestListener;

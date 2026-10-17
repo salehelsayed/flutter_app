@@ -663,4 +663,94 @@ void main() {
       );
     },
   );
+
+  // SE-42 D27: Go keeps its host on purpose while a newer network path owns
+  // recovery or a live call owns native media. That answer is not a failure
+  // of this path: no failure accounting, no backoff, no restart escalation.
+  for (final code in <String>['CALL_MEDIA_PROTECTED', 'RECOVERY_SUPERSEDED']) {
+    test(
+      '$code keeps the host and retries every tick without failure accounting',
+      () async {
+        bridge.whenCommand(
+          'relay:reconnect',
+          (_) => jsonEncode({
+            'ok': true,
+            'success': false,
+            'recoveryMode': 'in_place',
+            'reusedHost': true,
+            'errorCode': code,
+          }),
+        );
+        await startAndLatchOnline();
+        statusFeed.sticky = _statusJson(relayState: 'degraded');
+
+        final events = await _captureFlowEvents(() async {
+          for (var i = 0; i < 4; i++) {
+            await service.performImmediateHealthCheck();
+          }
+        });
+
+        expect(service.consecutiveRefreshFailures, 0);
+        expect(
+          reconnects(),
+          4,
+          reason: 'every tick retries under the normal cadence, no backoff',
+        );
+        expect(
+          events.where((e) => e['event'] == 'RELAY_RECOVERY_BACKOFF_SKIP'),
+          isEmpty,
+        );
+        expect(
+          events.where((e) => e['event'] == 'P2P_HEALTH_CHECK_RECOVERY_FAILED'),
+          isEmpty,
+        );
+        expect(
+          events.where(
+            (e) =>
+                e['event'] == 'RELAY_OUTAGE_TIMING' &&
+                (e['details'] as Map<String, dynamic>)['phase'] == 'recovered',
+          ),
+          isEmpty,
+          reason: 'a kept host without a session is not a recovery',
+        );
+        final held = events
+            .where((e) => e['event'] == 'P2P_HEALTH_CHECK_RECOVERY_HELD')
+            .toList();
+        expect(held, hasLength(4));
+        expect(
+          (held.first['details'] as Map<String, dynamic>)['errorCode'],
+          code,
+        );
+        expect(drains(), 4, reason: 'INV-1: drains stay per-tick');
+      },
+    );
+  }
+
+  test('an in-place REFRESH_FAILED still counts as a failure', () async {
+    bridge.whenCommand(
+      'relay:reconnect',
+      (_) => jsonEncode({
+        'ok': true,
+        'success': false,
+        'recoveryMode': 'in_place',
+        'errorCode': 'REFRESH_FAILED',
+      }),
+    );
+    await startAndLatchOnline();
+    statusFeed.sticky = _statusJson(relayState: 'degraded');
+
+    final events = await _captureFlowEvents(() async {
+      await service.performImmediateHealthCheck();
+    });
+
+    expect(service.consecutiveRefreshFailures, 1);
+    expect(
+      events.any((e) => e['event'] == 'P2P_HEALTH_CHECK_RECOVERY_FAILED'),
+      isTrue,
+    );
+    expect(
+      events.where((e) => e['event'] == 'P2P_HEALTH_CHECK_RECOVERY_HELD'),
+      isEmpty,
+    );
+  });
 }

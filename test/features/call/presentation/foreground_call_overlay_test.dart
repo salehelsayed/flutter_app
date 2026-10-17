@@ -21,6 +21,9 @@ import 'package:flutter_app/features/push/domain/push_registration_health.dart';
 import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_surface.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 
 void main() {
   const fallbackName = 'Unknown contact';
@@ -28,6 +31,7 @@ void main() {
 
   Widget harness({
     required _FakeForegroundCallCapability capability,
+    MicPermissionGateway? micPermission,
     VoidCallback? onAttached,
     Future<String?> Function(String peerId)? loadContactDisplayName,
     double keyboardInset = 0,
@@ -50,6 +54,7 @@ void main() {
       builder: (context) {
         final overlay = ForegroundCallOverlay(
           capability: capability,
+          micPermission: micPermission,
           onAttached: onAttached,
           loadContactDisplayName:
               loadContactDisplayName ?? (_) async => 'Local contact',
@@ -649,6 +654,154 @@ void main() {
       capability.emit(null);
       await tester.pump();
     }
+  });
+
+  group('microphone denial notice', () {
+    Future<void> endWithPermissionDenied(
+      WidgetTester tester,
+      _FakeForegroundCallCapability capability,
+    ) async {
+      capability.emit(
+        _projection(
+          now: now,
+          callId: _activeId,
+          peerId: 'active-peer',
+          direction: CallDirection.outgoing,
+          state: CallState.ended,
+          endReason: CallEndReason.permissionDenied,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+    }
+
+    testWidgets(
+      'a permanently denied mic offers Settings instead of failing silently',
+      (tester) async {
+        final capability = _FakeForegroundCallCapability();
+        addTearDown(capability.dispose);
+        final gateway = FakeMicPermissionGateway()
+          ..currentStatus = MicPermissionStatus.permanentlyDenied;
+        await tester.pumpWidget(
+          harness(capability: capability, micPermission: gateway),
+        );
+
+        await endWithPermissionDenied(tester, capability);
+
+        expect(
+          find.text(
+            'Microphone access is off for MKnoon. Turn it on in Settings to '
+            'make and answer calls.',
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('foreground-call-open-settings')),
+        );
+        await tester.pump();
+        expect(gateway.openAppSettingsCallCount, 1);
+        expect(gateway.requestCallCount, 0);
+      },
+    );
+
+    testWidgets(
+      'an answered incoming call with a permanently denied mic offers Settings',
+      (tester) async {
+        final capability = _FakeForegroundCallCapability();
+        addTearDown(capability.dispose);
+        final gateway = FakeMicPermissionGateway()
+          ..currentStatus = MicPermissionStatus.permanentlyDenied;
+        await tester.pumpWidget(
+          harness(capability: capability, micPermission: gateway),
+        );
+        capability.emit(
+          _projection(
+            now: now,
+            callId: _incomingId,
+            peerId: 'incoming-peer',
+            direction: CallDirection.incoming,
+            state: CallState.ringing,
+            incomingValidated: true,
+          ),
+        );
+        await tester.pump();
+        await tester.tap(find.byTooltip('Answer'));
+        await tester.pump();
+        expect(capability.actions, <_RecordedAction>[
+          _RecordedAction('answer', _incomingId),
+        ]);
+
+        capability.emit(
+          _projection(
+            now: now,
+            callId: _incomingId,
+            peerId: 'incoming-peer',
+            direction: CallDirection.incoming,
+            state: CallState.ended,
+            incomingValidated: true,
+            endReason: CallEndReason.permissionDenied,
+          ),
+        );
+        await tester.pump();
+        await tester.pump();
+
+        expect(
+          find.text(
+            'Microphone access is off for MKnoon. Turn it on in Settings to '
+            'make and answer calls.',
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('foreground-call-open-settings')),
+        );
+        await tester.pump();
+        expect(gateway.openAppSettingsCallCount, 1);
+      },
+    );
+
+    testWidgets('a mic that can still be asked keeps the plain notice', (
+      tester,
+    ) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      final gateway = FakeMicPermissionGateway()
+        ..currentStatus = MicPermissionStatus.denied;
+      await tester.pumpWidget(
+        harness(capability: capability, micPermission: gateway),
+      );
+
+      await endWithPermissionDenied(tester, capability);
+
+      expect(
+        find.text('Microphone permission is needed to make calls.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('foreground-call-open-settings')),
+        findsNothing,
+      );
+      expect(gateway.requestCallCount, 0);
+    });
+
+    testWidgets('a mic granted in Settings meanwhile keeps the plain notice', (
+      tester,
+    ) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      final gateway = FakeMicPermissionGateway()
+        ..currentStatus = MicPermissionStatus.granted;
+      await tester.pumpWidget(
+        harness(capability: capability, micPermission: gateway),
+      );
+
+      await endWithPermissionDenied(tester, capability);
+
+      expect(
+        find.byKey(const ValueKey('foreground-call-open-settings')),
+        findsNothing,
+      );
+    });
   });
 
   testWidgets('media failure notice distinguishes a dropped connected call', (

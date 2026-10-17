@@ -196,7 +196,7 @@ type NodeConfig struct {
 	AutoRegister                      bool          // Auto-register on rendezvous after relay connect
 	PersonalRendezvousRefreshInterval time.Duration // 0 → DefaultPersonalRendezvousRefreshEvery
 	KeyRotationGracePeriod            time.Duration // 0 → KeyRotationGracePeriod default; sign/publish-under-prev-epoch window
-	ListenPort                        int           // 0 for random
+	ListenPort                        int           // 0 for random (the supported mode). A fixed port is an unsupported static-port constraint for the default-network handoff: its QUIC listener keeps the old socket (see freshAwareQUICTransport.rebindListeners).
 	FeatureFlags                      *FeatureFlags // Rollout flags; nil → all enabled
 	// ProcessStartEpochMs is the Dart-side process-start wall-clock epoch
 	// (DateTime.now().millisecondsSinceEpoch captured at the first line of

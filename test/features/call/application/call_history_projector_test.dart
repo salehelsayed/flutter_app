@@ -218,6 +218,21 @@ void main() {
     }
   });
 
+  test('a callee that could not present the call keeps a busy row', () async {
+    final projector = CallHistoryProjector(_Repository());
+
+    final entry = await projector.projectTerminal(
+      _terminal(
+        id: 'b0b0b0b0-b0b0-4b0b-8b0b-b0b0b0b0b0b0',
+        direction: CallDirection.incoming,
+        reason: CallEndReason.busy,
+        startedAt: DateTime.utc(2026, 10, 15, 20),
+      ),
+    );
+
+    expect(entry.status, CallHistoryStatus.busy);
+  });
+
   test('hangups after media connected are completed calls', () async {
     final repository = _Repository();
     final projector = CallHistoryProjector(repository);

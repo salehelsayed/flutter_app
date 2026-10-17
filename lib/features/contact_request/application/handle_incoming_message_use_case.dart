@@ -3,10 +3,14 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
+import 'package:flutter_app/features/contact_request/application/existing_contact_repair_policy.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/domain/models/contact_request_control.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -40,6 +44,37 @@ enum HandleMessageResult {
 
   /// Message failed parsing or validation.
   invalidMessage,
+
+  /// A signed repair reply from a peer that is not a current, unblocked
+  /// contact. A reply never creates a contact or a pending request.
+  repairReplyIgnored,
+}
+
+/// Verified facts about one received contact request, for the listener.
+///
+/// Delivered only after the payload was authenticated against the stored
+/// signing authority (existing contact) or its own bound key (new peer).
+final class ContactRequestReceiveFacts {
+  const ContactRequestReceiveFacts({
+    required this.authenticatedPeerId,
+    required this.authenticatedPublicKey,
+    required this.control,
+    required this.repairDecision,
+    this.repairClaim,
+  });
+
+  final String authenticatedPeerId;
+
+  /// The Ed25519 key the payload was verified with (the stored key for an
+  /// existing contact).
+  final String authenticatedPublicKey;
+
+  /// The signed `cr` marker, when present.
+  final ContactRequestControl? control;
+  final ExistingContactRepairDecision repairDecision;
+
+  /// Outcome of the durable reply reservation, when one was attempted.
+  final ContactRepairClaimOutcome? repairClaim;
 }
 
 typedef OnCallWakeHandleReceiptEvaluated =
@@ -89,6 +124,17 @@ handleIncomingMessage({
   // current in the receiver's durable ledger. The listener turns a positive
   // evaluation into an opaque deferred-ACK receipt; false withholds that ACK.
   OnCallWakeHandleReceiptEvaluated? onCallWakeHandleReceiptEvaluated,
+  // Task 12b: durable relationship memory and the reply-once reservation. When
+  // null, deletion/decline memory and automatic repair replies are off.
+  ContactRepairRepository? repairRepository,
+  // Our account Ed25519 public key, recorded with a reservation so a reply is
+  // never sent under a different local identity.
+  String? ownAccountPublicKey,
+  // Our ACCOUNT peer ID, which a signed marker must name as its recipient. A
+  // linked installation's transport ID ([ownPeerId]) is not the account ID.
+  String? ownAccountPeerId,
+  void Function(ContactRequestReceiveFacts facts)? onReceiveFacts,
+  int Function()? nowMs,
 }) async {
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
@@ -125,12 +171,14 @@ handleIncomingMessage({
   // 3. Determine version and extract payload
   final version = json['version'] as String? ?? '1';
   Map<String, dynamic>? payload;
+  String? outerMsgId;
 
   if (version == '2') {
     // --- v2: Encrypted contact request ---
     final msgId = json['msgId'] as String?;
     final ts = json['ts'] as String?;
     final encrypted = json['encrypted'] as Map<String, dynamic>?;
+    outerMsgId = msgId;
 
     // Validate v2 structure
     if (msgId == null || ts == null || encrypted == null) {
@@ -262,6 +310,40 @@ handleIncomingMessage({
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
+  // Task 12b: the signed operation marker. Only the encrypted v2 path may
+  // carry it, its ID must be the outer message ID (so the AAD and the signed
+  // identity agree), and it must be addressed to this account.
+  ContactRequestControl? control;
+  if (payload.containsKey('cr')) {
+    if (version != '2') {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CONTROL_V1_REJECTED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+    try {
+      control = ContactRequestControl.parse(payload['cr']);
+    } on FormatException {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CONTROL_MALFORMED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+    if (control.id != outerMsgId ||
+        control.to != (ownAccountPeerId ?? ownPeerId)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CONTROL_BINDING_MISMATCH',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+  }
+
   CallWakeHandleGrant? callWakeHandleGrant;
   if (payload.containsKey('cwh')) {
     // Call wake authority is recipient-private and must never ride the v1
@@ -318,16 +400,30 @@ handleIncomingMessage({
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
+  final rawPeerId = payload['ns'];
+  final rawPublicKey = payload['pk'];
+  final rawSignature = payload['sig'];
+  if (rawPeerId is! String ||
+      rawPublicKey is! String ||
+      rawSignature is! String) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_FIELD_TYPE_INVALID',
+      details: {},
+    );
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
 
-  final peerId = payload['ns'] as String;
-  final publicKey = payload['pk'] as String;
-  final signature = payload['sig'] as String;
+  final peerId = rawPeerId;
+  final publicKey = rawPublicKey;
+  final signature = rawSignature;
 
   final peerIdPrefix = safePrefix(peerId);
 
   // 5. Verify sender matches claimed identity
   // Note: message.from may be "unknown" if JS layer doesn't populate it correctly.
-  // In that case, we skip this check and rely on signature verification instead.
+  // That only skips this transport check; it never replaces the stored-key
+  // authentication below.
   if (message.from != 'unknown' && peerId != message.from) {
     emitFlowEvent(
       layer: 'FL',
@@ -341,6 +437,40 @@ handleIncomingMessage({
   if (peerId == ownPeerId) {
     emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_FROM_SELF', details: {});
     return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  // 6b. Task 12b: the claimed peer ID must be the libp2p ID of the payload's
+  // own Ed25519 key.
+  if (ed25519PublicKeyCanonicalPeerId(
+        base64PublicKey: publicKey,
+        claimedPeerId: peerId,
+      ) !=
+      peerId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_IDENTITY_BINDING_MISMATCH',
+      details: {},
+    );
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  // 6c. Task 12b: an existing contact is authenticated with the signing key
+  // we already store for it, before any key, token, grant or intro write. A
+  // valid signature under a different, payload-supplied key is a rogue claim.
+  final storedBeforeVerify = await contactRepo.getContact(peerId);
+  final String verificationKey;
+  if (storedBeforeVerify != null) {
+    if (!_sameEd25519Key(storedBeforeVerify.publicKey, publicKey)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_STORED_AUTHORITY_MISMATCH',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+    verificationKey = storedBeforeVerify.publicKey;
+  } else {
+    verificationKey = publicKey;
   }
 
   // 7. Verify signature
@@ -359,12 +489,14 @@ handleIncomingMessage({
     // request's signature fails to verify — after backfill that would drop every
     // contact-add + key rotation (INV-1). A no-`wt` request keeps the old shape.
     if (payload['wt'] != null) 'wt': payload['wt'],
+    // Task 12b: the signed operation marker, canonicalised.
+    if (control != null) 'cr': control.toCanonicalMap(),
   });
   final dataToVerify = jsonEncode(unsignedPayload);
 
   final isValid = await callVerifyPayload(
     bridge: bridge,
-    publicKey: publicKey,
+    publicKey: verificationKey,
     data: dataToVerify,
     signature: signature,
   );
@@ -378,76 +510,214 @@ handleIncomingMessage({
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
-  var exactCallWakeHandleIsDurable = false;
-  if (receivedCallWakeHandleStore != null && callWakeHandleGrant != null) {
-    final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
-    final stored = await receivedCallWakeHandleStore.storeIfStrictlyNewer(
-      issuerAccountPeerId: peerId,
-      grant: callWakeHandleGrant,
-      nowMs: nowMs,
-    );
-    final current = await receivedCallWakeHandleStore.readForIssuer(peerId);
-    exactCallWakeHandleIsDurable =
-        current == callWakeHandleGrant && callWakeHandleGrant.isValidAt(nowMs);
+  // 7b. Re-read the authority after the verification await: a block, delete,
+  // re-add or key replacement while crypto was pending invalidates this work.
+  final existingContact = await contactRepo.getContact(peerId);
+  if ((storedBeforeVerify == null) != (existingContact == null) ||
+      (existingContact != null &&
+          (existingContact.publicKey != storedBeforeVerify!.publicKey ||
+              existingContact.isBlocked != storedBeforeVerify.isBlocked))) {
     emitFlowEvent(
       layer: 'FL',
-      event: stored
-          ? 'CALL_WAKE_HANDLE_RECEIVED_STORED'
-          : 'CALL_WAKE_HANDLE_RECEIVED_IGNORED',
-      details: {'peerId': peerIdPrefix},
+      event: 'CONTACT_REQUEST_AUTHORITY_CHANGED_DURING_VERIFY',
+      details: {},
     );
-    if (stored && onCallWakeHandleStored != null) {
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
+
+  final consent = await repairRepository?.readConsent(peerId);
+  final blocked = existingContact?.isBlocked ?? false;
+  // Known withdrawal (deleted or declined) with no current contact.
+  final refused =
+      existingContact == null &&
+      consent != null &&
+      consent.state != ContactRelationshipState.active;
+  final requestDigest = contactRequestSignedDigest(dataToVerify);
+
+  // 7c. The same signed request ID with a different signed body is a
+  // conflict: reject it before applying anything it carries.
+  if (control != null && repairRepository != null && existingContact != null) {
+    final recordedDigest = await repairRepository.lookupRequestDigest(
+      peerId: peerId,
+      requestId: control.id,
+    );
+    if (recordedDigest != null && recordedDigest != requestDigest) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_CONTROL_ID_CONFLICT',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+  }
+
+  final repairDecision = decideExistingContactRepair(
+    control: control,
+    existedBeforeRouting: existingContact != null,
+    blocked: blocked,
+  );
+  void reportFacts([ContactRepairClaimOutcome? claim]) {
+    onReceiveFacts?.call(
+      ContactRequestReceiveFacts(
+        authenticatedPeerId: peerId,
+        authenticatedPublicKey: verificationKey,
+        control: control,
+        repairDecision: repairDecision,
+        repairClaim: claim,
+      ),
+    );
+  }
+
+  // A blocked contact gets no key, token, grant, intro or reply through this
+  // path. A signed repair reply from anyone who is not a current contact is
+  // dropped: a reply never creates a contact.
+  if (blocked) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_FROM_BLOCKED_IGNORED',
+      details: {},
+    );
+    reportFacts();
+    return (HandleMessageResult.alreadyContact, null, null);
+  }
+  if (control != null && !control.isNewRequest && existingContact == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_REPAIR_REPLY_IGNORED',
+      details: {},
+    );
+    reportFacts();
+    return (HandleMessageResult.repairReplyIgnored, null, null);
+  }
+  if (control != null && existingContact != null) {
+    await repairRepository?.recordPeerSupportsMarked(peerId);
+  }
+
+  // Known withdrawn peers get no new authority state from a passive message.
+  if (!refused) {
+    var exactCallWakeHandleIsDurable = false;
+    if (receivedCallWakeHandleStore != null && callWakeHandleGrant != null) {
+      final nowMsValue = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final stored = await receivedCallWakeHandleStore.storeIfStrictlyNewer(
+        issuerAccountPeerId: peerId,
+        grant: callWakeHandleGrant,
+        nowMs: nowMsValue,
+      );
+      final current = await receivedCallWakeHandleStore.readForIssuer(peerId);
+      exactCallWakeHandleIsDurable =
+          current == callWakeHandleGrant &&
+          callWakeHandleGrant.isValidAt(nowMsValue);
+      emitFlowEvent(
+        layer: 'FL',
+        event: stored
+            ? 'CALL_WAKE_HANDLE_RECEIVED_STORED'
+            : 'CALL_WAKE_HANDLE_RECEIVED_IGNORED',
+        details: {'peerId': peerIdPrefix},
+      );
+      if (stored && onCallWakeHandleStored != null) {
+        try {
+          await onCallWakeHandleStored();
+        } catch (_) {
+          // The verified grant is already durable. A presentation refresh must
+          // never turn an accepted contact request into a retry/failure.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CALL_WAKE_HANDLE_REFRESH_FAILED',
+            details: {'peerId': peerIdPrefix},
+          );
+        }
+      }
+    }
+    if (callWakeReceiptChallenge != null) {
+      onCallWakeHandleReceiptEvaluated?.call(
+        callWakeReceiptChallenge,
+        exactCallWakeHandleIsDurable,
+      );
+    }
+
+    // FDC-09 §12 / CV-14: persist the recipient-issued `wt` on every verified
+    // path before the silent-intro early return. Anti-rollback compares parsed
+    // signed UTC instants: newer replaces, equal-identical is idempotent,
+    // equal-different is a conflict, older is ignored.
+    if (receivedWakeTokenStore != null) {
+      final wt = payload['wt'];
+      final wtTs = payload['ts'];
+      final wtAtMs = parseSignedInstantMs(wtTs);
+      if (wt is String && wt.isNotEmpty && wtTs is String && wtAtMs != null) {
+        final existing = await receivedWakeTokenStore.readTokenFor(peerId);
+        final storedAtMs = parseSignedInstantMs(existing?['ts']);
+        final storedToken = existing?['tok'];
+        if (storedAtMs == null || wtAtMs > storedAtMs) {
+          await receivedWakeTokenStore.writeTokenFor(peerId, wt, wtTs);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'WAKE_TOKEN_RECEIVED_STORED',
+            details: {'peerId': peerIdPrefix},
+          );
+        } else {
+          emitFlowEvent(
+            layer: 'FL',
+            event:
+                wtAtMs == storedAtMs && storedToken != null && storedToken != wt
+                ? 'WAKE_TOKEN_RECEIVED_CONFLICT_IGNORED'
+                : 'WAKE_TOKEN_RECEIVED_ROLLBACK_IGNORED',
+            details: {'peerId': peerIdPrefix},
+          );
+        }
+      }
+    }
+  }
+
+  Future<(HandleMessageResult, ContactRequestModel?, String?)> withRepair(
+    HandleMessageResult result,
+    String? verifiedPeerId,
+  ) async {
+    ContactRepairClaimOutcome? claim;
+    if (repairDecision == ExistingContactRepairDecision.claimReply &&
+        repairRepository != null) {
+      final signedAtMs = parseSignedInstantMs(payload!['ts']);
+      final String authorityFingerprint;
       try {
-        await onCallWakeHandleStored();
-      } catch (_) {
-        // The verified grant is already durable. A presentation refresh must
-        // never turn an accepted contact request into a retry/failure.
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CALL_WAKE_HANDLE_REFRESH_FAILED',
-          details: {'peerId': peerIdPrefix},
+        authorityFingerprint = ed25519AuthorityFingerprint(
+          existingContact!.publicKey,
         );
+      } on FormatException {
+        reportFacts();
+        return (result, null, verifiedPeerId);
       }
-    }
-  }
-  if (callWakeReceiptChallenge != null) {
-    onCallWakeHandleReceiptEvaluated?.call(
-      callWakeReceiptChallenge,
-      exactCallWakeHandleIsDurable,
-    );
-  }
-
-  // FDC-09 §12 / CV-14: extract + persist the recipient-issued `wt` NOW —
-  // immediately after the signature check and BEFORE the silent-intro-recovery
-  // early-return below — so it is captured on ALL verified paths (new contact,
-  // already-contact key rotation, AND silent-intro-recovered, which returns
-  // before the contact checks). Anti-rollback: the signed `ts` must be strictly
-  // newer than the stored ts (own comparison — the ML-KEM anti-rollback guard is
-  // keyed off contact-table state absent on the new-contact / intro paths).
-  if (receivedWakeTokenStore != null) {
-    final wt = payload['wt'] as String?;
-    final wtTs = payload['ts'] as String?;
-    if (wt != null && wt.isNotEmpty && wtTs != null) {
-      final existing = await receivedWakeTokenStore.readTokenFor(peerId);
-      final storedTs = existing?['ts'];
-      if (storedTs == null || wtTs.compareTo(storedTs) > 0) {
-        await receivedWakeTokenStore.writeTokenFor(peerId, wt, wtTs);
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'WAKE_TOKEN_RECEIVED_STORED',
-          details: {'peerId': peerIdPrefix},
-        );
+      if (signedAtMs == null) {
+        claim = const ContactRepairClaimOutcome(ContactRepairClaimStatus.stale);
       } else {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'WAKE_TOKEN_RECEIVED_ROLLBACK_IGNORED',
-          details: {'peerId': peerIdPrefix},
+        claim = await repairRepository.claimReply(
+          ContactRepairClaim(
+            peerId: peerId,
+            requestId: control!.id,
+            requestDigest: requestDigest,
+            signedAtMs: signedAtMs,
+            authorityFingerprint: authorityFingerprint,
+            localAuthorityFingerprint: _fingerprintOrEmpty(ownAccountPublicKey),
+            relationshipRevision: consent?.revision ?? 0,
+            wallNowMs:
+                nowMs?.call() ?? DateTime.now().toUtc().millisecondsSinceEpoch,
+          ),
         );
       }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REPAIR_REPLY_CLAIM',
+        details: {'status': claim.status.name},
+      );
     }
+    reportFacts(claim);
+    return (result, null, verifiedPeerId);
   }
 
-  if (attemptSilentIntroRecovery != null) {
+  // Silent intro recovery runs only for peers whose relationship was not
+  // withdrawn, and never for a signed reply: a reply cannot force an
+  // introduction into acceptance.
+  if (attemptSilentIntroRecovery != null &&
+      !refused &&
+      (control == null || control.isNewRequest)) {
     final recoveryResult = await attemptSilentIntroRecovery(
       VerifiedContactRequestEnvelope(
         peerId: peerId,
@@ -464,33 +734,51 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_SILENT_INTRO_RECOVERED',
         details: {'peerId': peerIdPrefix},
       );
-      return (HandleMessageResult.silentIntroRecovered, null, null);
+      final (result, _, _) = await withRepair(
+        HandleMessageResult.silentIntroRecovered,
+        null,
+      );
+      return (result, null, null);
     }
   }
 
-  // 8. Check if already a contact (and accept ML-KEM key updates)
-  final isContact = await contactRepo.contactExists(peerId);
-  if (isContact) {
+  // 8. Existing contact: accept an ML-KEM key update. Times are compared as
+  // parsed UTC instants. A first key lands; a changed key needs a strictly
+  // newer signed instant; an equal instant with a different key is a
+  // conflict; an older key never rolls back.
+  if (existingContact != null) {
+    // Re-read after the grant, token and intro awaits: a delete or block that
+    // landed meanwhile wins, and the write keeps the CURRENT row's flags.
+    final current = await contactRepo.getContact(peerId);
+    final currentConsent = await repairRepository?.readConsent(peerId);
+    if (current == null ||
+        current.isBlocked ||
+        current.publicKey != existingContact.publicKey ||
+        currentConsent?.revision != consent?.revision) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_RELATIONSHIP_CHANGED_DURING_RECEIVE',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
     final mlkemFromPayload = payload['mlkem'] as String?;
-    final existingContact = await contactRepo.getContact(peerId);
-    final payloadTs = payload['ts'] as String?;
 
-    if (existingContact != null &&
-        mlkemFromPayload != null &&
-        existingContact.mlKemPublicKey != mlkemFromPayload) {
-      // First key, or a rotation announced after a restore (P0-B). Both
-      // arrive inside the Ed25519-signed payload, already verified above.
-      // Anti-rollback: a CHANGED key is only accepted when the signed ts is
-      // strictly newer than the last accepted key update (falling back to
-      // scannedAt when the key was never updated).
-      final hadKey = existingContact.mlKemPublicKey != null;
-      final lastKeyUpdateTs =
-          existingContact.mlKemKeyUpdatedTs ?? existingContact.scannedAt;
+    if (mlkemFromPayload != null &&
+        mlkemFromPayload.isNotEmpty &&
+        mlkemFromPayload.length <= _maxMlKemPublicKeyChars &&
+        current.mlKemPublicKey != mlkemFromPayload) {
+      final hadKey = current.mlKemPublicKey != null;
+      final payloadTs = payload['ts'] as String?;
+      final payloadAtMs = parseSignedInstantMs(payloadTs);
+      final lastKeyUpdateTs = current.mlKemKeyUpdatedTs ?? current.scannedAt;
+      final lastKeyUpdateAtMs = parseSignedInstantMs(lastKeyUpdateTs);
       final tsIsNewer =
-          payloadTs != null && payloadTs.compareTo(lastKeyUpdateTs) > 0;
+          payloadAtMs != null &&
+          (lastKeyUpdateAtMs == null || payloadAtMs > lastKeyUpdateAtMs);
       if (!hadKey || tsIsNewer) {
         await contactRepo.addContact(
-          existingContact.copyWith(
+          current.copyWith(
             mlKemPublicKey: mlkemFromPayload,
             mlKemKeyUpdatedTs:
                 payloadTs ?? DateTime.now().toUtc().toIso8601String(),
@@ -501,12 +789,14 @@ handleIncomingMessage({
           event: hadKey ? 'CONTACT_KEY_ROTATED' : 'CONTACT_REQUEST_KEY_UPDATED',
           details: {'peerId': peerIdPrefix},
         );
-        return (HandleMessageResult.contactKeyUpdated, null, peerId);
+        return withRepair(HandleMessageResult.contactKeyUpdated, peerId);
       }
 
       emitFlowEvent(
         layer: 'FL',
-        event: 'CONTACT_REQUEST_KEY_ROLLBACK_IGNORED',
+        event: payloadAtMs != null && payloadAtMs == lastKeyUpdateAtMs
+            ? 'CONTACT_REQUEST_KEY_CONFLICT_IGNORED'
+            : 'CONTACT_REQUEST_KEY_ROLLBACK_IGNORED',
         details: {
           'peerId': peerIdPrefix,
           'payloadTs': payloadTs ?? '<missing>',
@@ -520,8 +810,9 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_ALREADY_CONTACT',
       details: {'peerId': peerIdPrefix},
     );
-    return (HandleMessageResult.alreadyContact, null, peerId);
+    return withRepair(HandleMessageResult.alreadyContact, peerId);
   }
+  reportFacts();
 
   // 9. Check if request already pending
   final existingRequest = await requestRepo.getRequest(peerId);
@@ -554,16 +845,13 @@ handleIncomingMessage({
   // 11 (171). One-scan auto-add eligibility. A NEW, recipient-bound (v2)
   // verified request from a non-declined, non-blocked peer is added tap-free
   // (the listener performs the add + reciprocal). v1 plaintext requests (no
-  // recipient binding) and any previously-declined peer stay on the manual
-  // dialog (INV-2 / INV-3). step-8 (contactExists) already short-circuited
-  // existing — and therefore blocked — contacts to alreadyContact; the
-  // isBlocked guard here is defense-in-depth against a future reorder.
+  // recipient binding), any previously-declined peer and (Task 12b) any peer
+  // whose deletion or decline we remember stay on the manual dialog (INV-2 /
+  // INV-3): there is no passive re-add.
   final priorWasDeclined =
       existingRequest != null &&
       existingRequest.status == ContactRequestStatus.declined;
-  final blockedGuard =
-      (await contactRepo.getContact(peerId))?.isBlocked == true;
-  if (version == '2' && !priorWasDeclined && !blockedGuard) {
+  if (version == '2' && !priorWasDeclined && !refused) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_AUTO_ADD_ELIGIBLE',
@@ -578,4 +866,31 @@ handleIncomingMessage({
     details: {'peerId': peerIdPrefix, 'username': request.username},
   );
   return (HandleMessageResult.contactRequest, request, null);
+}
+
+/// Generous bound on an ML-KEM-768 public key in base64 (1184 bytes encode to
+/// 1580 characters).
+const int _maxMlKemPublicKeyChars = 4096;
+
+bool _sameEd25519Key(String stored, String claimed) {
+  try {
+    final a = base64Decode(stored.trim());
+    final b = base64Decode(claimed.trim());
+    if (a.length != 32 || b.length != 32) return false;
+    for (var i = 0; i < 32; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+String _fingerprintOrEmpty(String? base64PublicKey) {
+  if (base64PublicKey == null) return '';
+  try {
+    return ed25519AuthorityFingerprint(base64PublicKey);
+  } on FormatException {
+    return '';
+  }
 }

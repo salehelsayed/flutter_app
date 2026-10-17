@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -100,6 +101,45 @@ type RelaySessionManager struct {
 	// needsGroupRecovery is set to true when the watchdog triggers,
 	// signalling to Flutter that group topics need rejoin.
 	needsGroupRecovery bool
+
+	// callMedia is the call-media protection lease (SE-42 D27 lease
+	// contract). hostIncarnation moves on every Reset (Stop), so a release
+	// from before it is a no-op; hostUp mirrors the node's started state;
+	// fullRestartInProgress is set from a lane's decision to Stop/Start the
+	// host until that Start returns, and refuses new leases meanwhile. All
+	// four are decided under one lock, so a grant and a restart decision can
+	// never both win.
+	callMedia             callMediaLease
+	hostIncarnation       uint64
+	hostUp                bool
+	fullRestartInProgress bool
+}
+
+// callMediaLease is the one holder of call-media protection: while held, no
+// recovery lane may fall back to a full host Stop/Start. (generation,
+// incarnation) identifies the holder exactly, so a late release from an
+// earlier call, or from before a Stop, can never clear a successor.
+type callMediaLease struct {
+	held        bool
+	generation  int64
+	incarnation uint64
+}
+
+// Reasons a call-media protection acquire is refused.
+const (
+	CallMediaProtectionRestartInProgress = "restart_in_progress"
+	CallMediaProtectionNotStarted        = "not_started"
+	CallMediaProtectionSuperseded        = "superseded"
+)
+
+// CallMediaProtectionReply is the broker's answer to an acquire or a release.
+// A grant carries the incarnation the release must echo.
+type CallMediaProtectionReply struct {
+	Held        bool
+	Generation  int64
+	Incarnation uint64
+	Reason      string
+	Released    bool
 }
 
 // RecoveryResult carries the structured result of a relay session refresh.
@@ -131,6 +171,19 @@ type recoveryPromise struct {
 	err              error
 	deadline         time.Time
 	coalescedWaiters int
+	// ctx is cancelled when a newer network path supersedes this recovery. The
+	// owner keeps ownership until its work really exits; cancellation only
+	// tells the work to stop early and forbids the full-restart fallback.
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+}
+
+// Context reports the cancellation signal for this recovery's owned work.
+func (p *recoveryPromise) Context() context.Context {
+	if p == nil || p.ctx == nil {
+		return context.Background()
+	}
+	return p.ctx
 }
 
 // NewRelaySessionManager creates a new relay session manager.
@@ -139,6 +192,8 @@ func NewRelaySessionManager() *RelaySessionManager {
 		sessions:            make(map[string]*RelaySessionState),
 		aggregateState:      AggregateRelayStarting,
 		recoveryWaitTimeout: RecoveryWaitTimeout,
+		// 1, so a release that omits the incarnation (0) never matches.
+		hostIncarnation: 1,
 	}
 }
 
@@ -166,6 +221,10 @@ func (m *RelaySessionManager) AggregateState() AggregateRelayState {
 func (m *RelaySessionManager) HealthyRelayCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	return m.healthyRelayCountLocked()
+}
+
+func (m *RelaySessionManager) healthyRelayCountLocked() int {
 	count := 0
 	for _, s := range m.sessions {
 		if s.State == RelayStateReserved {
@@ -408,10 +467,117 @@ func (m *RelaySessionManager) BeginRecovery() (*recoveryPromise, bool) {
 	if waitTimeout <= 0 {
 		waitTimeout = RecoveryWaitTimeout
 	}
-	m.recovery = &recoveryPromise{done: make(chan struct{}), deadline: time.Now().Add(waitTimeout)}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	m.recovery = &recoveryPromise{done: make(chan struct{}), deadline: time.Now().Add(waitTimeout), ctx: ctx, cancel: cancel}
 	m.aggregateState = AggregateRelayRecovering
 
 	return m.recovery, true
+}
+
+// CancelRecovery asks the running recovery, if any, to stop early and returns
+// its promise so the caller can wait for the owner to actually finish.
+// Ownership is not released here; CompleteRecovery still does that.
+func (m *RelaySessionManager) CancelRecovery(cause error) *recoveryPromise {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.recovering || m.recovery == nil {
+		return nil
+	}
+	if m.recovery.cancel != nil {
+		m.recovery.cancel(cause)
+	}
+	return m.recovery
+}
+
+// AcquireCallMediaProtection grants the lease to generation unless a full
+// restart has been decided and its Start has not returned
+// (restart_in_progress), the host is not up (not_started), or a newer
+// generation holds it (superseded). A generation at least as new as the
+// holder takes over. The answer is immediate; it never waits for a restart.
+func (m *RelaySessionManager) AcquireCallMediaProtection(generation int64) CallMediaProtectionReply {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	reply := CallMediaProtectionReply{Generation: generation}
+	switch {
+	case m.fullRestartInProgress:
+		reply.Reason = CallMediaProtectionRestartInProgress
+	case !m.hostUp:
+		reply.Reason = CallMediaProtectionNotStarted
+	case m.callMedia.held && m.callMedia.generation > generation:
+		reply.Reason = CallMediaProtectionSuperseded
+	default:
+		m.callMedia = callMediaLease{held: true, generation: generation, incarnation: m.hostIncarnation}
+		reply.Held, reply.Incarnation = true, m.hostIncarnation
+	}
+	return reply
+}
+
+// ReleaseCallMediaProtection clears the lease only when (generation,
+// incarnation) is exactly the holder. A stale terminal callback, a late grant
+// settled by a caller that timed out, or a release from before a Stop is a
+// no-op and reports Released=false.
+func (m *RelaySessionManager) ReleaseCallMediaProtection(generation int64, incarnation uint64) CallMediaProtectionReply {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	reply := CallMediaProtectionReply{Generation: generation}
+	if m.callMedia.held && m.callMedia.generation == generation && m.callMedia.incarnation == incarnation {
+		m.callMedia = callMediaLease{}
+		reply.Released = true
+	}
+	return reply
+}
+
+// CallMediaProtected reports whether a live call currently forbids a full
+// host restart.
+func (m *RelaySessionManager) CallMediaProtected() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.callMedia.held
+}
+
+// hostStarted opens lease admission for the host that just committed. Called
+// from Start under the node lock.
+func (m *RelaySessionManager) hostStarted() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hostUp = true
+}
+
+// beginFullRestart is the one place a recovery lane decides to fall back to a
+// full host Stop/Start. Under the broker lock it refuses when the work was
+// cancelled or superseded by a newer network path, or when a live call holds
+// protection; otherwise it marks the restart in progress, which makes every
+// lease acquire answer restart_in_progress until endFullRestart. nil means
+// go ahead.
+func (m *RelaySessionManager) beginFullRestart(ctx context.Context, recovery *recoveryPromise) *RecoveryResult {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	code, reason := "", ""
+	switch {
+	case ctx.Err() != nil || recovery.Context().Err() != nil:
+		code, reason = "RECOVERY_SUPERSEDED", "recovery superseded by a newer network path; full restart skipped"
+	case m.callMedia.held:
+		code, reason = "CALL_MEDIA_PROTECTED", "a live call owns native media; full restart skipped"
+	default:
+		m.fullRestartInProgress = true
+		return nil
+	}
+	return &RecoveryResult{
+		RecoveryMode:      "in_place",
+		Success:           false,
+		ErrorCode:         code,
+		Reason:            reason,
+		ReusedHost:        true,
+		RelayState:        string(m.aggregateState),
+		HealthyRelayCount: m.healthyRelayCountLocked(),
+	}
+}
+
+// endFullRestart reopens lease admission once the restart's Start returned.
+func (m *RelaySessionManager) endFullRestart() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fullRestartInProgress = false
 }
 
 // Wait blocks until the shared recovery completes and returns the final
@@ -463,6 +629,9 @@ func (m *RelaySessionManager) CompleteRecovery(recovery *recoveryPromise, result
 	m.recovery = nil
 	recovery.result = result
 	recovery.err = err
+	if recovery.cancel != nil {
+		recovery.cancel(nil)
+	}
 	close(recovery.done)
 }
 
@@ -716,11 +885,17 @@ func (m *RelaySessionManager) RecordWatchdogRestart() {
 	m.needsGroupRecovery = true
 }
 
-// Reset clears all session state. Used when performing a full host restart.
+// Reset clears all session state. Called from Stop under the node lock, so
+// also when a full host restart stops the host. The host's lease holders go
+// with it: the lease is cleared and the incarnation moves, so a release they
+// send later can never clear a lease granted on the next host.
 func (m *RelaySessionManager) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.sessions = make(map[string]*RelaySessionState)
+	m.callMedia = callMediaLease{}
+	m.hostIncarnation++
+	m.hostUp = false
 	if m.recovering {
 		m.aggregateState = AggregateRelayRecovering
 		return

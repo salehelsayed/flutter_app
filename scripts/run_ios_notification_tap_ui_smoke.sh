@@ -298,7 +298,7 @@ wait_for_ready_signal() {
         return 0
       fi
       if [[ -f "$log_file" ]] &&
-        tail -n "+$((start_line + 1))" "$log_file" | grep -Eq "$case_start_pattern"; then
+        tail -n "+$((start_line + 1))" "$log_file" | grep -E "$case_start_pattern" >/dev/null; then
         break
       fi
       if ! kill -0 "$watched_pid" >/dev/null 2>&1; then
@@ -337,7 +337,9 @@ wait_for_any_pattern_after_line() {
     if [[ -f "$file" ]]; then
       local pattern
       for pattern in "$@"; do
-        if tail -n "+$((start_line + 1))" "$file" | grep -Fq "$pattern"; then
+        # grep -q would exit at the first match and SIGPIPE tail, which pipefail
+        # turns into a failed match once enough log follows it.
+        if tail -n "+$((start_line + 1))" "$file" | grep -F "$pattern" >/dev/null; then
           return 0
         fi
       done

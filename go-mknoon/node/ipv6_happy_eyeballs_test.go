@@ -21,7 +21,6 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/peerstore"
 	"github.com/libp2p/go-libp2p/p2p/net/swarm"
-	quic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 	"github.com/libp2p/go-libp2p/p2p/transport/tcp"
 	"github.com/libp2p/go-libp2p/p2p/transport/websocket"
 	ma "github.com/multiformats/go-multiaddr"
@@ -325,7 +324,8 @@ func TestDualStackUDPBlackholeFallsBackToTCPAndWSSMessaging(t *testing.T) {
 			}()
 			t.Cleanup(func() { udp.Close(); <-done })
 			address := "/ip4/127.0.0.1/tcp/0"
-			var serverOptions, clientOptions []libp2p.Option
+			var serverOptions []libp2p.Option
+			var clientTransports func(*freshQUICDialPolicy) []libp2p.Option
 			if transport == "wss" {
 				// Trust only this fixture's certificate. No system trust changes or
 				// insecure TLS bypass; both peers still use the pinned native transport.
@@ -334,10 +334,15 @@ func TestDualStackUDPBlackholeFallsBackToTCPAndWSSMessaging(t *testing.T) {
 				roots := x509.NewCertPool()
 				roots.AddCert(certificateServer.Certificate())
 				serverOptions = []libp2p.Option{libp2p.Transport(websocket.New, websocket.WithTLSConfig(certificateServer.TLS))}
-				clientOptions = []libp2p.Option{
-					libp2p.Transport(tcp.NewTCPTransport),
-					libp2p.Transport(quic.NewTransport),
-					libp2p.Transport(websocket.New, websocket.WithTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
+				// The node registers its own transport set, so replace it rather
+				// than append: the client WebSocket transport must trust the
+				// fixture certificate, and QUIC stays the node's own transport.
+				clientTransports = func(p *freshQUICDialPolicy) []libp2p.Option {
+					return []libp2p.Option{
+						libp2p.Transport(tcp.NewTCPTransport),
+						libp2p.Transport(p.newTransport),
+						libp2p.Transport(websocket.New, websocket.WithTLSClientConfig(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
+					}
 				}
 				address += "/wss"
 			}
@@ -358,9 +363,7 @@ func TestDualStackUDPBlackholeFallsBackToTCPAndWSSMessaging(t *testing.T) {
 			})
 			sender := NewNode()
 			sender.hermeticLocalNetworkForTests = true
-			sender.newHost = func(_ NodeConfig, opts []libp2p.Option) (host.Host, error) {
-				return libp2p.New(append(opts, clientOptions...)...)
-			}
+			sender.transportOptionsForTests = clientTransports
 			if _, err := sender.Start(NodeConfig{PrivateKeyHex: generateTestKey(t), RelayAddresses: []string{}, AutoRegister: false}); err != nil {
 				t.Fatal(err)
 			}
@@ -456,7 +459,7 @@ func TestWarmRelayConnectionWithTimeout_UsesOneBudgetForAllAddresses(t *testing.
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	err = n.warmRelayConnectionWithTimeout(info, budget)
+	err = n.warmRelayConnectionWithTimeout(context.Background(), info, budget)
 	if !errors.Is(err, context.DeadlineExceeded) || calls != 1 {
 		t.Fatalf("want one expired overall budget: calls=%d error=%v", calls, err)
 	}
@@ -561,7 +564,7 @@ func TestWarmRelayConnection_IPv6HandshakeStallFallsBackToIPv4(t *testing.T) {
 		target.Addrs()[0],
 	}}
 	start := time.Now()
-	if err := n.warmRelayConnectionWithTimeout(info, 3*time.Second); err != nil {
+	if err := n.warmRelayConnectionWithTimeout(context.Background(), info, 3*time.Second); err != nil {
 		t.Fatalf("IPv4 fallback failed: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed >= 2*time.Second {
@@ -585,7 +588,7 @@ func TestWarmRelayConnection_ConnectsToIPv6Loopback(t *testing.T) {
 	}
 	t.Cleanup(func() { target.Close() })
 	n := startLocalNodeForMultiRelayTest(t)
-	if err := n.warmRelayConnectionWithTimeout(peer.AddrInfo{ID: target.ID(), Addrs: target.Addrs()}, time.Second); err != nil {
+	if err := n.warmRelayConnectionWithTimeout(context.Background(), peer.AddrInfo{ID: target.ID(), Addrs: target.Addrs()}, time.Second); err != nil {
 		t.Fatalf("IPv6 connection failed: %v", err)
 	}
 	conns := n.Host().Network().ConnsToPeer(target.ID())

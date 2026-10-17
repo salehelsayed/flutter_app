@@ -62,6 +62,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/conversati
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
@@ -8152,7 +8153,38 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
-  Future<void> _startOutgoingCall(OutgoingCallCapability capability) async {
+  /// "Call back" on one chat call row. A row for an incoming call the user did
+  /// not take follows the Calls page rule: it may start a fresh call only while
+  /// it is still this contact's newest call, and without durable history
+  /// nothing can prove that, so it refuses. Every other row is a plain call.
+  Future<void> _callBackFromTimelineRow(
+    ConversationCallTimelineEntry row,
+    OutgoingCallCapability capability,
+  ) async {
+    if (!row.isMissedIncoming) return _startOutgoingCall(capability);
+    final source = widget.callTimelineSource;
+    final history = source is CallHistoryAccess
+        ? source as CallHistoryAccess
+        : null;
+    if (history == null) {
+      _showOutgoingCallMessage(
+        AppLocalizations.of(context)!.call_back_superseded,
+      );
+      return;
+    }
+    await _startOutgoingCall(
+      capability,
+      isEligible: () async {
+        final latest = await history.recentCallsForContact(row.contactPeerId);
+        return latest.isNotEmpty && latest.first.callId.value == row.callId;
+      },
+    );
+  }
+
+  Future<void> _startOutgoingCall(
+    OutgoingCallCapability capability, {
+    Future<bool> Function()? isEligible,
+  }) async {
     final diagnostics = CallDiagnostics.instance;
     if (_outgoingCallStartInFlight) {
       diagnostics.record(
@@ -8177,16 +8209,24 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     await diagnostics.runWithTrace(
       traceId,
-      () => _startOutgoingCallInTrace(capability, traceId),
+      () => _startOutgoingCallInTrace(
+        capability,
+        traceId,
+        isEligible: isEligible,
+      ),
     );
   }
 
   Future<void> _startOutgoingCallInTrace(
     OutgoingCallCapability capability,
-    String? traceId,
-  ) async {
+    String? traceId, {
+    Future<bool> Function()? isEligible,
+  }) async {
     final diagnostics = CallDiagnostics.instance;
     final contactPeerId = _contact.peerId;
+    final supersededMessage = AppLocalizations.of(
+      context,
+    )!.call_back_superseded;
     final lifecycleGeneration = _appLifecycleGeneration;
     final preflightElapsed = Stopwatch()..start();
     late final OutgoingCallStartRequest request;
@@ -8350,6 +8390,24 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       if (!_outgoingCallContactAvailable) {
         setState(() => _outgoingCallContactAvailable = true);
+      }
+      // Local history, rechecked after the contact and endpoint awaits so a
+      // call that arrived meanwhile supersedes this row before admission.
+      if (isEligible != null) {
+        final eligible = await isEligible();
+        if (!stillOwnsCallAction()) {
+          finishInterrupted();
+          return;
+        }
+        if (!eligible) {
+          diagnostics.finishAttempt(
+            traceId: traceId,
+            outcome: 'preflight_failed',
+            reason: 'superseded',
+          );
+          _showOutgoingCallMessage(supersededMessage);
+          return;
+        }
       }
       shouldShowFailure = true;
       result = await capability.startOutgoingCall(
@@ -8545,6 +8603,11 @@ class _ConversationWiredState extends State<ConversationWired>
           onCallRetry: outgoingCallCapability == null
               ? null
               : () => unawaited(_startOutgoingCall(outgoingCallCapability)),
+          onCallBack: outgoingCallCapability == null
+              ? null
+              : (row) => unawaited(
+                  _callBackFromTimelineRow(row, outgoingCallCapability),
+                ),
           showCallAction: outgoingCallCapability != null,
           callActionEnabled:
               outgoingCallAvailable && !_outgoingCallStartInFlight,

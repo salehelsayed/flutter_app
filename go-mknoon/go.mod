@@ -34,12 +34,18 @@ require (
 	filippo.io/edwards25519 v1.2.0
 	github.com/cloudflare/circl v1.6.3
 	github.com/google/uuid v1.6.0
+	// SE-42 D27: node/fresh_quic_transport.go wraps the QUIC transport through
+	// public APIs only (libp2p.Transport + a per-dial quicreuse manager with
+	// DisableReuseport) and owns the dial socket's lifetime itself. No fork.
+	// On a bump, node/fresh_quic_transport_test.go must stay green: it fails
+	// loudly if the quicreuse dial path or socket release behavior changes.
 	github.com/libp2p/go-libp2p v0.50.0 // plan 406: bumps are proven by the mixed-version interop test (scripts/test/go_mixed_version_interop.sh) plus a short device LAN run, not the full FDC-S6 soak
 	github.com/libp2p/go-libp2p-pubsub v0.18.0
 	github.com/libp2p/go-msgio v0.3.0
 	github.com/libp2p/go-netroute v0.4.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/multiformats/go-multistream v0.6.1
+	github.com/quic-go/quic-go v0.62.0
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/mobile v0.0.0-20260908204917-8b95e45f8d3e
@@ -107,7 +113,6 @@ require (
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/quic-go/webtransport-go v0.13.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect

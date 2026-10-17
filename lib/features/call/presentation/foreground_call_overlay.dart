@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -37,6 +38,7 @@ final class ForegroundCallOverlay extends StatefulWidget {
     this.now,
     this.onAttached,
     this.backGuard,
+    this.micPermission,
   });
 
   final ForegroundCallCapability? capability;
@@ -52,6 +54,10 @@ final class ForegroundCallOverlay extends StatefulWidget {
   /// action sends the app to the background instead of popping the hidden
   /// routes or finishing the activity under the call.
   final ForegroundCallBackGuard? backGuard;
+
+  /// Tells a microphone denial the system will no longer prompt for apart
+  /// from one the next call can still ask about.
+  final MicPermissionGateway? micPermission;
 
   @override
   State<ForegroundCallOverlay> createState() => _ForegroundCallOverlayState();
@@ -72,6 +78,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   Timer? _terminalNoticeTimer;
   CallId? _terminalNoticeCallId;
   bool _terminalNoticeVisible = false;
+  CallId? _micBlockedCallId;
   bool _navigatorCanHandlePop = false;
   bool? _publishedOwnsBack;
   CallId? _minimizedCallId;
@@ -187,6 +194,7 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     String? lookupPeerId;
     late int lookupGeneration;
     CallId? terminalNoticeToSchedule;
+    CallId? micCheckCallId;
 
     void update() {
       _projection = projection;
@@ -212,6 +220,11 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _terminalNoticeCallId = terminalCallId;
         _terminalNoticeVisible = terminalCallId != null && !wasMinimized;
         terminalNoticeToSchedule = terminalCallId;
+        _micBlockedCallId = null;
+        if (terminalCallId != null &&
+            session?.endReason == CallEndReason.permissionDenied) {
+          micCheckCallId = terminalCallId;
+        }
       }
 
       if (surfaceKind == _ForegroundCallSurface.hidden ||
@@ -245,6 +258,9 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
     }
 
     _publishLockedProjection();
+
+    final micCallId = micCheckCallId;
+    if (micCallId != null) unawaited(_checkMicBlocked(micCallId));
 
     final terminalCallId = terminalNoticeToSchedule;
     if (terminalCallId != null) {
@@ -337,11 +353,18 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         _ForegroundCallSurface.terminal =>
           _terminalNoticeVisible
               ? _TerminalCallNotice(
-                  message: _terminalMessage(
-                    session!,
-                    AppLocalizations.of(context)!,
-                  ),
+                  message: _micBlockedCallId == session!.callId
+                      ? AppLocalizations.of(
+                          context,
+                        )!.call_end_permission_settings
+                      : _terminalMessage(
+                          session,
+                          AppLocalizations.of(context)!,
+                        ),
                   onDismiss: _dismissTerminalNotice,
+                  onOpenSettings: _micBlockedCallId == session.callId
+                      ? _openMicSettings
+                      : null,
                 )
               : null,
         _ForegroundCallSurface.hidden => null,
@@ -578,6 +601,29 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _checkMicBlocked(CallId callId) async {
+    final gateway = widget.micPermission;
+    if (gateway == null) return;
+    final MicPermissionStatus status;
+    try {
+      status = await gateway.status();
+    } catch (_) {
+      return;
+    }
+    if (!mounted ||
+        status != MicPermissionStatus.permanentlyDenied ||
+        _terminalNoticeCallId != callId) {
+      return;
+    }
+    setState(() => _micBlockedCallId = callId);
+  }
+
+  void _openMicSettings() {
+    final gateway = widget.micPermission;
+    if (gateway == null) return;
+    unawaited(gateway.openAppSettings().catchError((Object _) => false));
+  }
+
   void _dismissTerminalNotice({CallId? callId}) {
     if (callId != null && callId != _terminalNoticeCallId) return;
     _terminalNoticeTimer?.cancel();
@@ -662,10 +708,15 @@ String? _audioStatusMessage(CallAudioFailure failure, AppLocalizations l10n) =>
     };
 
 class _TerminalCallNotice extends StatelessWidget {
-  const _TerminalCallNotice({required this.message, required this.onDismiss});
+  const _TerminalCallNotice({
+    required this.message,
+    required this.onDismiss,
+    this.onOpenSettings,
+  });
 
   final String message;
   final VoidCallback onDismiss;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -706,6 +757,14 @@ class _TerminalCallNotice extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 28),
+              if (onOpenSettings != null) ...[
+                FilledButton(
+                  key: const ValueKey('foreground-call-open-settings'),
+                  onPressed: onOpenSettings,
+                  child: Text(l10n.compose_open_settings),
+                ),
+                const SizedBox(height: 12),
+              ],
               Tooltip(
                 message: l10n.call_dismiss_status,
                 child: FilledButton(

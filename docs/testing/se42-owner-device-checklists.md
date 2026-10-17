@@ -110,3 +110,48 @@ iOS user force-quit and its subsequent recovery: NOT RUN.
 For remaining cases use the original numbered steps and all observation fields above. First prioritize (1) owner-present speaker/voice-note checks and the proximity finding, (2) a separately scoped Calls/return-bar/iPhone incoming diagnosis, (3) locked callbacks/notification and OS-policy cases, (4) existing fixture-backed callback races, cellular/interruption and download measurements when their prerequisites exist. Preserve first failures; do not repair server/catch-up/SE-41 or add low-data/automatic one-way work.
 
 Cleanup: all calls ended; Android journals empty/no live owner or pending cleanup, mode 0 and no own running microphone operation; test PCM processors removed; own QR clipboards cleared; owned Appium sessions deleted. Pixel Wi-Fi/mobile/DND and emulator network/DND restored to baseline; iPhone OS policy untouched. Existing identities and owner work retained. No source fix, new device harness, local relay, server write, account reset, commit or push. The resulting checklist is PARTIAL, with the FAIL/NOT RUN/N/A dispositions above intact.
+
+V3 correctness candidate — 2026-10-14; device execution NOT RUN
+
+This section records the F3–F5 corrective candidate only. It preserves all earlier results and their original identities. The morning observations belong to source 30491a5811b812b1c6eb1165f427d6509eb13e00. The afternoon report contains owner-recorded observations with source-to-artifact binding not independently verified; it does not certify this candidate. No historical PASS, FAIL, PARTIAL or N/A is transferred to V3.
+
+Source commit: 11711629181fe2a7ffc3c173ec675d3f4816cacc; branch wave3-baseline-20260930; version 1.0.1+125. F3–F5 are uncommitted working-tree edits. Tested working-source identity: acfc8ec5583b30fdb93f61b177670a67d13a943ece587419e1c4057813545385, computed as SHA-256 of sorted compact JSON mapping the six changed production/test paths to their file SHA-256 values. Local manifest: .codex-test-logs/se42-v3-20261014/tested-code-identity.json. The commit alone does not include these corrections.
+Mobile artifact SHA-256: not applicable (no mobile artifact built). Mobile build time: not applicable. Device class/model/OS: not applicable (no device used). Device actions/timestamps, installed configuration and observations: not applicable. No current target/accessory availability assertion is made. V3 host assertions are automation-recorded; V3 owner/device observations are NOT RUN. Host compilation is separate from mobile artifact/device acceptance.
+Raw receipts stay local and git-ignored under .codex-test-logs/se42-v3-20261014/; they are neither committed nor shared. A future separately authorized device run must record full source commit, uncommitted working-source identity where applicable, actual build time and artifact SHA-256, device class without identifiers, and owner-recorded versus automation-recorded observation provenance. Unavailable identity evidence must be labeled unavailable rather than inferred.
+
+| Scenario | V3 result | Disposition |
+|---|---|---|
+| 1.1 | NOT RUN | Historical baseline; outside corrective device authorization. |
+| 1.2 | NOT RUN | Offline cancellation/no-answer not executed. |
+| 1.3 | NOT RUN | Offline reconnect/history/card observations not executed. |
+| 1.4 | NOT RUN | Offline relaunch not executed. |
+| 1.5 | NOT RUN | Still-valid reconnect control not executed. |
+| 2.1 | NOT RUN | Continuous physical audio during minimize/chat/return remains required. |
+| 2.2 | NOT RUN | Physical Back/accessibility/TalkBack acceptance remains required. |
+| 2.3 | NOT RUN | Remote end, physical normal audio and fresh voice note remain required. |
+| 2.4 | NOT RUN | Foreground/background/cold/locked notification callbacks remain required. |
+| 2.5 | NOT RUN | Device policy, duplicate/stale and busy refusal cases remain required. |
+| 2.6 | NOT RUN | Physical discoverability/paging/name/error/unread acceptance remains required. |
+| 2.7 | NOT RUN | Approved mixed-precision device fixture not exercised. |
+| 2.8 | NOT RUN | Startup/unlock supersession not exercised. |
+| 2.9 | NOT RUN | Duplicate pending action not exercised. |
+| 2.10 | NOT RUN | Post-admission callback ownership/busy refusal not exercised. |
+| 3.1 | NOT RUN | Physical route/acoustic acceptance remains required for available outputs. |
+| 3.2 | NOT RUN | Accessory availability not assessed for V3; original N/A (no accessories) remains historical. |
+| 3.3 | NOT RUN | F3–F4 physical earpiece screen/touch/recovery and iOS proximity remain required. |
+| 3.4 | NOT RUN | Physical proximity/audio cleanup, next call and voice note remain required. |
+| 4.1 | NOT RUN | Physical iOS incoming presentation remains unresolved; F5 logging isolation is not a presentation fix. |
+| 4.2 | NOT RUN | DND/Focus/silent/exception behavior remains required on available relevant targets. |
+| 4.3 | NOT RUN | Eligible process death versus force-stop/force-quit remains required. |
+| 4.4 | NOT RUN | Phone/CallKit interruption remains required. |
+| 4.5 | NOT RUN | Kill/crash cleanup and subsequent call remain required. |
+| 5.1 | NOT RUN | Physical simultaneous call/audio acceptance not executed. |
+| 6.1 | NOT RUN | Physical Answer-to-two-way timing not measured. |
+| 6.2 | NOT RUN | Active-call network handover not executed. |
+| 6.3 | NOT RUN | One-way controls not executed; new automatic detector/recovery remains deferred. |
+| 6.4 | NOT RUN | Low-data remains owner-deferred. |
+| 6.5 | NOT RUN | Download comparison not executed. |
+
+For 3.3–3.4, separately authorized retesting should distinguish valid active incoming/outgoing earpiece ownership, genuine audio deactivation/reactivation with unchanged route, route release, near-ear screen/touch recovery and final cleanup/next-call behavior. Preserve RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY semantics; a successful host retry or elapsed wake-lock timeout is not physical screen acceptance. Earlier absent-accessory N/A reasons remain intact; genuinely unavailable optional targets/accessories are N/A by project policy, not failed gates.
+For 4.1, bind the new artifact to source and correlate finite incoming wake/receipt, presentation, Answer, canonical call outcome and native cancellation separately. Normal signal_terminate cleanup is not a refusal or presentation proof. Record the first miss/failure even if a later attempt succeeds. The original physical incoming finding still needs diagnostic and owner-observed proof; no provider/OS cause is inferred. No device build, install, control or campaign is authorized by this entry.
+Evidence storage/provenance contract: owner decision 01a13af1-05f3-7b89-a94c-3c545623c6db. This contract changes reporting only; device execution remains prohibited for the V3 corrective session.

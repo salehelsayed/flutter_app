@@ -2059,5 +2059,13 @@
   "calls_load_error": "Anrufe konnten nicht geladen werden",
   "calls_more": "Mehr anzeigen",
   "call_audio_choose_output": "Audioausgabe wählen",
-  "call_audio_refresh_outputs": "Audioausgänge aktualisieren"
+  "call_audio_refresh_outputs": "Audioausgänge aktualisieren",
+  "call_back_superseded": "Es gibt einen neueren Anruf mit diesem Kontakt. Ruf über den neuesten Anruf zurück.",
+  "onboarding_mic_title": "Anrufe und Sprachnachrichten",
+  "onboarding_mic_body": "MKnoon nutzt dein Mikrofon für Anrufe und Sprachnachrichten.",
+  "onboarding_mic_settings_hint": "Du kannst das jederzeit in den Einstellungen ändern.",
+  "onboarding_mic_allow": "Mikrofon erlauben",
+  "onboarding_mic_allow_desc": "Damit Anrufe sofort funktionieren",
+  "onboarding_mic_not_now_desc": "Wir fragen dich beim ersten Anruf oder der ersten Aufnahme",
+  "call_end_permission_settings": "Der Mikrofonzugriff für MKnoon ist aus. Schalte ihn in den Einstellungen ein, um Anrufe zu tätigen und anzunehmen."
 }

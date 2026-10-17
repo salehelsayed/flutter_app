@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
+
+import '../../../core/utils/flow_event_emitter.dart';
 
 import '../domain/call_engine.dart';
 import '../domain/call_audio_output_device.dart';
@@ -215,15 +218,12 @@ final class FlutterWebRtcPeerConnectionAdapter
       );
       final connection = await _failureStageGuard.run(
         FlutterWebRtcFailureStage.peerCreate,
-        () => _peerConnectionFactory(<String, dynamic>{
-          'iceTransportPolicy':
-              configuration.iceTransportPolicy ==
-                  WebRtcIceTransportPolicy.relayOnly
-              ? 'relay'
-              : 'all',
-          'sdpSemantics': 'unified-plan',
-          'iceServers': _pluginIceServers(configuration.iceServers),
-        }),
+        () => _peerConnectionFactory(
+          _nativeConfiguration(
+            configuration.iceTransportPolicy,
+            configuration.iceServers,
+          ),
+        ),
       );
       connectionForCleanup = connection;
       if (_closed) {
@@ -324,6 +324,22 @@ final class FlutterWebRtcPeerConnectionAdapter
       );
     }
   }
+
+  /// The one native RTCConfiguration for create and every later
+  /// setConfiguration. Native SetConfiguration rejects a change to fields
+  /// fixed at creation, such as the gathering policy, and the plugin ignores
+  /// that result, so a mismatch would silently drop refreshed TURN servers.
+  Map<String, dynamic> _nativeConfiguration(
+    WebRtcIceTransportPolicy iceTransportPolicy,
+    List<CallIceServer> iceServers,
+  ) => <String, dynamic>{
+    'iceTransportPolicy':
+        iceTransportPolicy == WebRtcIceTransportPolicy.relayOnly
+        ? 'relay'
+        : 'all',
+    'sdpSemantics': 'unified-plan',
+    'iceServers': _pluginIceServers(iceServers),
+  };
 
   void _validateConfiguration(WebRtcPeerConnectionConfiguration configuration) {
     final supported =
@@ -428,8 +444,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       );
     } on WebRtcAdapterException {
       rethrow;
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('createOffer', error);
     }
   }
 
@@ -450,8 +466,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       );
     } on WebRtcAdapterException {
       rethrow;
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('createAnswer', error);
     }
   }
 
@@ -462,8 +478,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       await connection.setLocalDescription(
         webrtc.RTCSessionDescription(description.value, description.type.name),
       );
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('setLocalDescription', error);
     }
   }
 
@@ -474,8 +490,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       await connection.setRemoteDescription(
         webrtc.RTCSessionDescription(description.value, description.type.name),
       );
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('setRemoteDescription', error);
     }
   }
 
@@ -492,8 +508,8 @@ final class FlutterWebRtcPeerConnectionAdapter
           ),
         );
       }
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('addIceCandidates', error);
     }
   }
 
@@ -503,8 +519,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       await _requireConnection().restartIce();
       _iceGeneration += 1;
       _rtpProgressSampler.reset();
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('restartIce', error);
     }
   }
 
@@ -515,15 +531,9 @@ final class FlutterWebRtcPeerConnectionAdapter
       throw const WebRtcAdapterException(WebRtcFailureReason.notReady);
     }
     try {
-      await _requireConnection().setConfiguration(<String, dynamic>{
-        'iceTransportPolicy':
-            configuration.iceTransportPolicy ==
-                WebRtcIceTransportPolicy.relayOnly
-            ? 'relay'
-            : 'all',
-        'sdpSemantics': 'unified-plan',
-        'iceServers': _pluginIceServers(iceServers),
-      });
+      await _requireConnection().setConfiguration(
+        _nativeConfiguration(configuration.iceTransportPolicy, iceServers),
+      );
       _configuration = WebRtcPeerConnectionConfiguration(
         iceTransportPolicy: configuration.iceTransportPolicy,
         receiveAudio: configuration.receiveAudio,
@@ -532,8 +542,8 @@ final class FlutterWebRtcPeerConnectionAdapter
         captureVideo: configuration.captureVideo,
         iceServers: iceServers,
       );
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('updateIceServers', error);
     }
   }
 
@@ -552,8 +562,8 @@ final class FlutterWebRtcPeerConnectionAdapter
       }
     } on WebRtcAdapterException {
       rethrow;
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('setLocalAudioEnabled', error);
     }
   }
 
@@ -717,8 +727,8 @@ final class FlutterWebRtcPeerConnectionAdapter
         inboundAudioRtpObserved: _inboundAudioRtpObserved,
         outboundAudioRtpObserved: _outboundAudioRtpObserved,
       );
-    } catch (_) {
-      throw const WebRtcAdapterException(WebRtcFailureReason.other);
+    } catch (error) {
+      throw _diagnosedFailure('snapshotOnce', error);
     }
   }
 
@@ -2006,4 +2016,46 @@ CallFailureReason _mapAdapterFailureReason(WebRtcFailureReason reason) {
     case WebRtcFailureReason.other:
       return CallFailureReason.other;
   }
+}
+
+/// Records why a native WebRTC operation failed before it collapses into
+/// [WebRtcFailureReason.other]: the operation, the error type, the platform
+/// code and a closed kind. Never the message, which can carry SDP.
+WebRtcAdapterException _diagnosedFailure(String operation, Object error) {
+  try {
+    final message = error is PlatformException ? error.message ?? '' : '$error';
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_ENGINE_OPERATION_FAILED',
+      details: <String, Object?>{
+        'operation': operation,
+        'errorType': error.runtimeType.toString(),
+        if (error is PlatformException) 'platformCode': error.code,
+        'kind': _failureKind(message),
+      },
+    );
+  } catch (_) {
+    // Diagnostics never change call handling.
+  }
+  return const WebRtcAdapterException(WebRtcFailureReason.other);
+}
+
+String _failureKind(String message) {
+  final lower = message.toLowerCase();
+  if (lower.contains('wrong state')) return 'wrong_state';
+  if (lower.contains('invalid_modification') ||
+      lower.contains('invalid modification')) {
+    return 'invalid_modification';
+  }
+  if (lower.contains('failed to parse') || lower.contains('invalid sdp')) {
+    return 'sdp_invalid';
+  }
+  if (lower.contains('ice ufrag') || lower.contains('ice pwd')) {
+    return 'ice_credentials';
+  }
+  if (lower.contains('not found') || lower.contains('is null')) {
+    return 'missing_peer';
+  }
+  if (lower.contains('closed')) return 'closed';
+  return 'other';
 }

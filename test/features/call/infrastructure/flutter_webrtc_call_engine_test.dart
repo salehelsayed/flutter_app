@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_audio_route_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/call_stats_sampler.dart';
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart' as webrtc;
 
@@ -608,11 +610,37 @@ void main() {
           secureKeyStore: store,
           alwaysRelay: !alwaysRelay,
         );
-        await engine.restartIce();
+        await engine.restartIce(
+          iceServers: [
+            CallIceServer(
+              urls: ['turn:approved.invalid:3478'],
+              username: 'fresh-user',
+              credential: 'fresh-secret',
+              expiresAt: DateTime.utc(9999),
+            ),
+          ],
+        );
         expect(peer.restartCalls, 1);
         expect(
           peer.lastConfiguration!['iceTransportPolicy'],
           alwaysRelay ? 'relay' : 'all',
+        );
+        // Native SetConfiguration rejects a change to creation-only fields
+        // such as the gathering policy, and the plugin ignores that result,
+        // so any difference here would silently drop the refreshed TURN
+        // servers.
+        expect(
+          Map<String, dynamic>.of(peer.lastConfiguration!)
+            ..remove('iceServers'),
+          Map<String, dynamic>.of(nativeConfiguration!)..remove('iceServers'),
+        );
+        expect(
+          (peer.lastConfiguration!['iceServers'] as List).map(
+            (s) => (s as Map)['urls'],
+          ),
+          [
+            ['turn:approved.invalid:3478'],
+          ],
         );
         expect(
           await resolveCallTransportPolicy(
@@ -1428,6 +1456,56 @@ void main() {
       },
     );
 
+    test(
+      'a native negotiation failure records its operation, type, code and kind',
+      () async {
+        final events = <Map<String, Object?>>[];
+        debugSetFlowEventSink((payload) {
+          if (payload['event'] == 'CALL_ENGINE_OPERATION_FAILED') {
+            events.add(Map<String, Object?>.from(payload['details'] as Map));
+          }
+        });
+        addTearDown(() => debugSetFlowEventSink(null));
+        final peer = _FailingRemoteDescriptionPeerConnection();
+        final failing = FlutterWebRtcCallEngine(
+          adapter: FlutterWebRtcPeerConnectionAdapter(
+            peerConnectionFactory: (_) async => peer,
+            configureAndroidAudioFocus: () async {},
+          ),
+        );
+        addTearDown(failing.close);
+        await failing.createConnection(
+          CallConnectionConfiguration(
+            transportPolicy: CallTransportPolicy.all,
+            receiveAudio: true,
+            receiveVideo: false,
+            captureAudio: false,
+            captureVideo: false,
+            iceServers: [
+              CallIceServer(
+                urls: ['stun:approved.invalid:3478'],
+                expiresAt: DateTime.utc(9999),
+              ),
+            ],
+          ),
+        );
+
+        await expectLater(
+          () => failing.setRemoteDescription(_offer()),
+          throwsA(anything),
+        );
+
+        expect(events, <Map<String, Object?>>[
+          <String, Object?>{
+            'operation': 'setRemoteDescription',
+            'errorType': 'PlatformException',
+            'platformCode': 'SetRemoteDescriptionFailed',
+            'kind': 'wrong_state',
+          },
+        ]);
+      },
+    );
+
     test('accepts only the exact authenticated SDP fingerprint', () async {
       await _createAudioConnection(engine);
       final description = _offer();
@@ -2108,4 +2186,18 @@ void main() {
       },
     );
   });
+}
+
+final class _FailingRemoteDescriptionPeerConnection
+    extends _RetryablePeerConnection {
+  @override
+  Future<void> setRemoteDescription(
+    webrtc.RTCSessionDescription description,
+  ) => Future<void>.error(
+    PlatformException(
+      code: 'SetRemoteDescriptionFailed',
+      message:
+          'Failed to set remote offer sdp: Called in wrong state: have-local-offer',
+    ),
+  );
 }

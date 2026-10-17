@@ -113,7 +113,13 @@ const _expectedGroupApiFingerprint = 'fe1ac6ec';
 // caff0f087 (re-pinned 2026-10-06, user approved): the undelivered-messages
 // banner and its attention count/Retry handoff are removed; stuck inbox rows
 // now retry in the background. No other handoff changes.
-const _expectedDirectHandoffFingerprint = '675a7b3f';
+// Chat "Call back" superseded guard (re-pinned 2026-10-15, owner approved the
+// fix): the direct handoff adds only `onCallBack`, the per-row call action.
+// It hands the tapped call row to the same authority-gated call owner, which
+// first proves a missed incoming row is still the contact's newest call (the
+// Calls page rule) and refuses without durable history. The header `onCall`
+// and `onCallRetry` expressions are unchanged and no longer stand in for rows.
+const _expectedDirectHandoffFingerprint = '049cff44';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 const _expectedGroupHandoffFingerprint = '060099cf';
@@ -816,6 +822,13 @@ void main() {
     expect(
       directHandoffArguments['callActionInFlight'],
       '_outgoingCallStartInFlight',
+    );
+    // A call row never borrows the header call: the row action carries the
+    // tapped entry so the owner can refuse a superseded missed incoming call.
+    expect(
+      directHandoffArguments['onCallBack'],
+      'outgoingCallCapability == null ? null : (row) => '
+      'unawaited(_callBackFromTimelineRow(row, outgoingCallCapability))',
     );
 
     // Keep these diagnostics useful when an intentional public API migration

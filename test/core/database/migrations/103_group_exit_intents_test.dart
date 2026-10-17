@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 120);
+      expect(currentIdentityDatabaseVersion, 121);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -114,12 +114,12 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 9]
+        productionCreateMigrations[productionCreateMigrations.length - 10]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 9]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 10]
             .version,
         112,
       );
@@ -135,10 +135,7 @@ void main() {
             .name,
         '104_group_exit_diagnostics',
       );
-      expect(
-        productionUpgradeMigrations.last.name,
-        '120_media_attachment_file_name',
-      );
+      expect(productionUpgradeMigrations.last.name, '121_contact_repair');
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);
       expect(

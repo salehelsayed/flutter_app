@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
 /// Result of parsing a QR payload.
@@ -74,18 +75,43 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
     }
   }
 
-  final peerId = json['ns'] as String;
-  final publicKey = json['pk'] as String;
-  final timestamp = json['ts'] as String;
-  final signature = json['sig'] as String;
+  final rawPeerId = json['ns'];
+  final rawPublicKey = json['pk'];
+  final rawTimestamp = json['ts'];
+  final rawSignature = json['sig'];
+  if (rawPeerId is! String ||
+      rawPublicKey is! String ||
+      rawTimestamp is! String ||
+      rawSignature is! String) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_PARSE_IDENTITY_BINDING_MISMATCH',
+      details: {},
+    );
+    return (ParseQRResult.invalidSignature, null);
+  }
+  final publicKey = rawPublicKey;
+  final timestamp = rawTimestamp;
+  final signature = rawSignature;
+
+  // 2b. The peer ID must be the libp2p ID of the QR's own Ed25519 account key,
+  //     checked before the payload can count as a self-scan or a contact.
+  final peerId = ed25519PublicKeyCanonicalPeerId(
+    base64PublicKey: publicKey,
+    claimedPeerId: rawPeerId,
+  );
+  if (peerId == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_PARSE_IDENTITY_BINDING_MISMATCH',
+      details: {},
+    );
+    return (ParseQRResult.invalidSignature, null);
+  }
 
   // 3. Check for self-scan
   if (peerId == ownPeerId) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'QR_PARSE_SELF_SCAN',
-      details: {},
-    );
+    emitFlowEvent(layer: 'FL', event: 'QR_PARSE_SELF_SCAN', details: {});
     return (ParseQRResult.selfScan, null);
   }
 
@@ -139,7 +165,7 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
   }
 
   // 6. Create contact model
-  final contact = ContactModel.fromQRPayload(json);
+  final contact = ContactModel.fromQRPayload({...json, 'ns': peerId});
 
   emitFlowEvent(
     layer: 'FL',

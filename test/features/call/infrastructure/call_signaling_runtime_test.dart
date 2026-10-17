@@ -36,17 +36,16 @@ final class _History implements CallHistoryRepository {
   Future<void> upsertTerminal(CallHistoryEntry entry) async {}
 }
 
-final class _ThrowingRuntimeHistory implements CallHistoryRepository {
+final class _ThrowingRuntimeTerminalSend implements CallEffectExecutor {
   @override
-  Future<CallHistoryEntry?> getByCallId(CallId callId) async => null;
-
-  @override
-  Future<List<CallHistoryEntry>> listForContact(String peerId) async =>
-      const <CallHistoryEntry>[];
-
-  @override
-  Future<void> upsertTerminal(CallHistoryEntry entry) async {
-    throw StateError('history unavailable');
+  Future<CallEvent?> execute(
+    CallEffect effect,
+    CallSessionSnapshot snapshot,
+  ) async {
+    if (effect.type == CallEffectType.sendTerminate) {
+      throw StateError('terminal send failed during shutdown');
+    }
+    return null;
   }
 }
 
@@ -1834,7 +1833,8 @@ void main() {
       final coordinator = CallCoordinator(
         reducer: const CallReducer(),
         cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
-        historyProjector: CallHistoryProjector(_ThrowingRuntimeHistory()),
+        historyProjector: CallHistoryProjector(_History()),
+        effectExecutor: _ThrowingRuntimeTerminalSend(),
         clock: () => _runtimeNow,
         idSource: () => CallId.parse('22222222-2222-4222-8222-222222222222'),
       );

@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
@@ -2747,7 +2748,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             ? null
             : () => privateMediaRecovery!,
         directMediaBlobLocalCleanupFn: widget.directMediaBlobLocalCleanup,
-        retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
+        retryPushRegistrationFn:
+            widget.pushRegistrationCoordinator?.refreshOnResume,
         drainNotificationCompletedOutcomesFn:
             widget.drainNotificationCompletedOutcomes,
         skipDirectInboxDrain: droppedPushRecoveryOwnsInbox,
@@ -3512,6 +3514,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             capability: widget.foregroundCallCapability,
             onAttached: widget.onForegroundCallPresentationReady,
             backGuard: _foregroundCallBackGuard,
+            micPermission: const PermissionHandlerMicGateway(),
             loadContactDisplayName: (peerId) async =>
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: updateGate,

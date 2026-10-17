@@ -11,8 +11,21 @@ class FakeMicPermissionGateway implements MicPermissionGateway {
   MicPermissionStatus statusToReturn = MicPermissionStatus.granted;
   bool openAppSettingsReturn = true;
 
+  /// What [status] reports without prompting; falls back to [statusToReturn].
+  MicPermissionStatus? currentStatus;
+  Object? statusError;
+
   int requestCallCount = 0;
+  int statusCallCount = 0;
   int openAppSettingsCallCount = 0;
+
+  @override
+  Future<MicPermissionStatus> status() async {
+    statusCallCount++;
+    final error = statusError;
+    if (error != null) throw error;
+    return currentStatus ?? statusToReturn;
+  }
 
   @override
   Future<MicPermissionStatus> request() async {

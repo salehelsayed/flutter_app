@@ -23,8 +23,10 @@ const _nowMs = 2_000_000;
 const _expiresAtMs = _nowMs + 45_000;
 const _callHandle = '33333333-3333-4333-8333-333333333333';
 const _secondCallHandle = '44444444-4444-4444-8444-444444444444';
+const _thirdCallHandle = '66666666-6666-4666-8666-666666666666';
 final _callId = CallId.parse('22222222-2222-4222-8222-222222222222');
 final _secondCallId = CallId.parse('55555555-5555-4555-8555-555555555555');
+final _thirdCallId = CallId.parse('77777777-7777-4777-8777-777777777777');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
@@ -2166,6 +2168,460 @@ void main() {
       await adapter.close();
       await coordinator.dispose();
       await native.events.close();
+    },
+  );
+
+  group('incoming presentation after a retained blocked cleanup', () {
+    late bool cleanupAllowed;
+    Completer<void>? cleanupGate;
+    late int cleanupRuns;
+    late int forceReleases;
+    late List<
+      (
+        NativeOutgoingRegistrationStage,
+        NativeOutgoingRegistrationStatus,
+        NativeOutgoingRegistrationReason,
+      )
+    >
+    registrations;
+    late DateTime now;
+    late _NativeHarness native;
+    late CallCoordinator coordinator;
+    late AndroidCallLifecycleAdapter adapter;
+
+    final successor = IncomingCallPresentation(
+      displayName: null,
+      callId: _secondCallId,
+      callerAccountPeerId: 'remote-account',
+      expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
+    );
+
+    int terminalAcks() => native
+        .callsOf('acknowledge')
+        .where((call) => call.arguments['disposition'] == 'TERMINAL')
+        .length;
+
+    setUp(() async {
+      cleanupAllowed = false;
+      cleanupGate = null;
+      cleanupRuns = 0;
+      forceReleases = 0;
+      registrations = [];
+      now = _now;
+      final cleanup = CallCleanupCoordinator(<CallCleanupStep>[
+        CallCleanupStep('call_media', (_) async {
+          cleanupRuns++;
+          final gate = cleanupGate;
+          if (gate != null) await gate.future;
+          if (!cleanupAllowed) throw StateError('private cleanup failure');
+        }, requiredForTerminalAck: true),
+      ]);
+      native = _NativeHarness()
+        ..attachResult = _batch(<Map<String, Object?>>[
+          _event(1, 'retained-old-presented', 'presented'),
+          _event(2, 'retained-old-terminal', 'remoteCancelled'),
+        ]);
+      coordinator = _coordinator(cleanupCoordinator: cleanup);
+      adapter = _adapter(
+        native,
+        coordinator,
+        <CallId, String>{
+          _callId: _callHandle,
+          _secondCallId: _secondCallHandle,
+          _thirdCallId: _thirdCallHandle,
+        },
+        clock: () => now,
+        onRetainedTerminalForceReleased: () => forceReleases++,
+        onOutgoingRegistrationResult: (stage, status, reason) =>
+            registrations.add((stage, status, reason)),
+      );
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      expect(await adapter.present(_presentation()), isFalse);
+      await _until(() => cleanupRuns >= 2);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      await _prepareIncomingFor(
+        coordinator,
+        callId: _secondCallId,
+        eventSuffix: 'successor',
+      );
+    });
+
+    tearDown(() async {
+      await adapter.close();
+      await coordinator.dispose();
+      await native.events.close();
+    });
+
+    test('retries the cleanup once and then presents the successor', () async {
+      cleanupAllowed = true;
+      final runsBefore = cleanupRuns;
+
+      expect(await adapter.present(successor), isTrue);
+
+      expect(cleanupRuns, runsBefore + 1);
+      expect(terminalAcks(), 1);
+      expect(adapter.isBoundTo(_callId), isFalse);
+      expect(adapter.isBoundTo(_secondCallId), isTrue);
+      expect(native.callsOf('presentAuthenticated'), hasLength(1));
+      expect(native.callsOf('failClosed'), isEmpty);
+    });
+
+    test(
+      'a still-blocked cleanup keeps refusing with one retry per attempt',
+      () async {
+        final runsBefore = cleanupRuns;
+
+        expect(await adapter.present(successor), isFalse);
+        expect(cleanupRuns, runsBefore + 1);
+        expect(await adapter.present(successor), isFalse);
+        expect(cleanupRuns, runsBefore + 2);
+        now = _now.add(
+          AndroidCallLifecycleAdapter.defaultRetainedTerminalReleaseWindow -
+              const Duration(milliseconds: 1),
+        );
+        expect(await adapter.present(successor), isFalse);
+
+        expect(terminalAcks(), 0);
+        expect(forceReleases, 0);
+        expect(adapter.isBoundTo(_callId), isTrue);
+        expect(native.callsOf('presentAuthenticated'), isEmpty);
+        expect(native.callsOf('failClosed'), isEmpty);
+      },
+    );
+
+    test(
+      'a still-blocked terminal past the release window is force-released',
+      () async {
+        now = _now.add(
+          AndroidCallLifecycleAdapter.defaultRetainedTerminalReleaseWindow,
+        );
+        final runsBefore = cleanupRuns;
+
+        expect(await adapter.present(successor), isTrue);
+
+        expect(
+          cleanupRuns,
+          runsBefore + 1,
+          reason: 'the retry still runs first',
+        );
+        expect(forceReleases, 1);
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_callId), isFalse);
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+        expect(native.callsOf('failClosed'), isEmpty);
+      },
+    );
+
+    test(
+      'the outgoing reconcile also force-releases past the window',
+      () async {
+        now = _now.add(
+          AndroidCallLifecycleAdapter.defaultRetainedTerminalReleaseWindow,
+        );
+
+        expect(await adapter.reconcileBeforeOutgoing(), isTrue);
+
+        expect(forceReleases, 1);
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_callId), isFalse);
+      },
+    );
+
+    test(
+      'a released media close lets the retained terminal go at once',
+      () async {
+        cleanupAllowed = true;
+        expect(await coordinator.retryTerminalCleanup(_callId), isTrue);
+
+        expect(await adapter.releaseCleanupReadyTerminal(_callId), isTrue);
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_callId), isFalse);
+        expect(await adapter.releaseCleanupReadyTerminal(_callId), isTrue);
+        expect(terminalAcks(), 1, reason: 'a repeated release is a no-op');
+        expect(forceReleases, 0);
+        expect(await adapter.present(successor), isTrue);
+      },
+    );
+
+    test(
+      'an early release does nothing while blocked or for another call',
+      () async {
+        expect(await adapter.releaseCleanupReadyTerminal(_callId), isFalse);
+        cleanupAllowed = true;
+        expect(await coordinator.retryTerminalCleanup(_callId), isTrue);
+        expect(
+          await adapter.releaseCleanupReadyTerminal(_secondCallId),
+          isFalse,
+        );
+
+        expect(terminalAcks(), 0);
+        expect(adapter.isBoundTo(_callId), isTrue);
+      },
+    );
+
+    test(
+      'a concurrent outgoing reconcile acknowledges the terminal once',
+      () async {
+        cleanupAllowed = true;
+
+        final results = await Future.wait<bool>(<Future<bool>>[
+          adapter.present(successor),
+          adapter.reconcileBeforeOutgoing(),
+        ]);
+
+        expect(results.first, isTrue);
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+        expect(native.callsOf('failClosed'), isEmpty);
+      },
+    );
+
+    test(
+      'a close during the incoming cleanup retry presents nothing afterwards',
+      () async {
+        final gate = Completer<void>();
+        cleanupGate = gate;
+        cleanupAllowed = true;
+        final runsBefore = cleanupRuns;
+
+        final presenting = adapter.present(successor);
+        await _until(() => cleanupRuns == runsBefore + 1);
+        final closing = adapter.close();
+        gate.complete();
+
+        expect(await presenting, isFalse);
+        await closing;
+        expect(terminalAcks(), 0);
+        expect(native.callsOf('presentAuthenticated'), isEmpty);
+      },
+    );
+
+    test(
+      'a close during the outgoing cleanup retry acknowledges nothing afterwards',
+      () async {
+        final gate = Completer<void>();
+        cleanupGate = gate;
+        cleanupAllowed = true;
+        final runsBefore = cleanupRuns;
+
+        final reconciling = adapter.reconcileBeforeOutgoing();
+        await _until(() => cleanupRuns == runsBefore + 1);
+        final closing = adapter.close();
+        gate.complete();
+
+        expect(await reconciling, isFalse);
+        await closing;
+        expect(terminalAcks(), 0);
+        expect(registrations.last, (
+          NativeOutgoingRegistrationStage.terminalReplay,
+          NativeOutgoingRegistrationStatus.rejected,
+          NativeOutgoingRegistrationReason.closed,
+        ));
+      },
+    );
+
+    test(
+      'the same held cleanup retry without a close still presents the successor',
+      () async {
+        final gate = Completer<void>();
+        cleanupGate = gate;
+        cleanupAllowed = true;
+        final runsBefore = cleanupRuns;
+
+        final presenting = adapter.present(successor);
+        await _until(() => cleanupRuns == runsBefore + 1);
+        gate.complete();
+
+        expect(await presenting, isTrue);
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+        expect(native.callsOf('presentAuthenticated'), hasLength(1));
+      },
+    );
+
+    test(
+      'competing invites during the cleanup retry acknowledge the old call once and present one successor',
+      () async {
+        final gate = Completer<void>();
+        cleanupGate = gate;
+        cleanupAllowed = true;
+        final runsBefore = cleanupRuns;
+        final third = IncomingCallPresentation(
+          displayName: null,
+          callId: _thirdCallId,
+          callerAccountPeerId: 'remote-account',
+          expiresAt: DateTime.fromMillisecondsSinceEpoch(
+            _expiresAtMs,
+            isUtc: true,
+          ),
+        );
+
+        // A real native ACK takes a round trip; a second waiter must not slip
+        // its own ACK in while the first is still in flight.
+        native.latency['acknowledge'] = const Duration(milliseconds: 5);
+        final presentingSecond = adapter.present(successor);
+        await _until(() => cleanupRuns == runsBefore + 1);
+        final presentingThird = adapter.present(third);
+        gate.complete();
+
+        expect(await presentingSecond, isTrue);
+        expect(await presentingThird, isFalse);
+        expect(terminalAcks(), 1);
+        // The binding after the third present is not asserted: the reducer
+        // refuses a third invite as busy before any present in production, so
+        // a present while bound and without a native descriptor is a binding
+        // conflict the adapter fences on its own.
+        expect(
+          native
+              .callsOf('presentAuthenticated')
+              .map((call) => call.arguments['callHandle']),
+          <Object?>[_secondCallHandle],
+        );
+      },
+    );
+
+    test(
+      'a refused native ACK during the force release keeps the old call for a later attempt',
+      () async {
+        now = _now.add(
+          AndroidCallLifecycleAdapter.defaultRetainedTerminalReleaseWindow,
+        );
+        native.results['acknowledge'] = false;
+
+        expect(await adapter.present(successor), isFalse);
+        expect(terminalAcks(), 1);
+        expect(forceReleases, 0);
+        expect(adapter.isBoundTo(_callId), isTrue);
+        expect(native.callsOf('presentAuthenticated'), isEmpty);
+
+        native.results['acknowledge'] = true;
+        expect(await adapter.present(successor), isTrue);
+        expect(terminalAcks(), 2);
+        expect(
+          native.callsOf('acknowledge').last.arguments['throughSequence'],
+          2,
+          reason: 'the retained journal still names the old terminal',
+        );
+        expect(forceReleases, 1);
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+      },
+    );
+
+    test(
+      'a late release of the old call after the successor is bound acknowledges nothing',
+      () async {
+        cleanupAllowed = true;
+        expect(await adapter.present(successor), isTrue);
+        expect(terminalAcks(), 1);
+        // The successor ends too, with its own cleanup blocked, so it now
+        // holds the retained terminal that a late release for the old call
+        // must leave alone.
+        cleanupAllowed = false;
+        native.events.add(
+          _batch(
+            <Map<String, Object?>>[
+              _event(
+                1,
+                'successor-presented',
+                'presented',
+                callHandle: _secondCallHandle,
+              ),
+              _event(
+                2,
+                'successor-terminal',
+                'remoteCancelled',
+                callHandle: _secondCallHandle,
+              ),
+            ],
+            callHandle: _secondCallHandle,
+            phase: 'journal',
+          ),
+        );
+        await _until(() => coordinator.isTerminalCall(_secondCallId));
+        await _settle();
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+        expect(terminalAcks(), 1);
+
+        expect(await coordinator.retryTerminalCleanup(_callId), isTrue);
+        await adapter.releaseCleanupReadyTerminal(_callId);
+
+        expect(terminalAcks(), 1);
+        expect(adapter.isBoundTo(_secondCallId), isTrue);
+        expect(coordinator.terminalCleanupAckReady(_secondCallId), isFalse);
+        expect(native.callsOf('presentAuthenticated'), hasLength(1));
+      },
+    );
+  });
+
+  test(
+    'a bound call the coordinator has not ended keeps its retained terminal past the release window',
+    () async {
+      var now = _now;
+      var forceReleases = 0;
+      final native = _NativeHarness()
+        ..attachResult = _batch(<Map<String, Object?>>[
+          _event(1, 'not-ended-presented', 'presented'),
+          _event(2, 'not-ended-terminal', 'remoteCancelled'),
+        ]);
+      final coordinator = _coordinator();
+      final adapter = _adapter(
+        native,
+        coordinator,
+        <CallId, String>{
+          _callId: _callHandle,
+          _secondCallId: _secondCallHandle,
+        },
+        clock: () => now,
+        onRetainedTerminalForceReleased: () => forceReleases++,
+      );
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      int terminalAcks() => native
+          .callsOf('acknowledge')
+          .where((call) => call.arguments['disposition'] == 'TERMINAL')
+          .length;
+      // Valid past the last attempt, so only the retained terminal can
+      // refuse the successor, never its own invite expiry.
+      final successor = IncomingCallPresentation(
+        displayName: null,
+        callId: _secondCallId,
+        callerAccountPeerId: 'remote-account',
+        expiresAt: _now.add(const Duration(minutes: 5)),
+      );
+
+      await adapter.start();
+      // The coordinator has no session for this call, so it refuses the
+      // native terminal: the adapter stays bound with the terminal retained
+      // while the coordinator does not consider the call ended.
+      expect(await adapter.present(_presentation()), isFalse);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      expect(coordinator.isTerminalCall(_callId), isFalse);
+      await _prepareIncomingFor(
+        coordinator,
+        callId: _secondCallId,
+        eventSuffix: 'successor',
+      );
+
+      for (final elapsed in <Duration>[
+        AndroidCallLifecycleAdapter.defaultRetainedTerminalReleaseWindow,
+        const Duration(minutes: 1),
+      ]) {
+        now = _now.add(elapsed);
+        expect(await adapter.present(successor), isFalse, reason: '$elapsed');
+        expect(
+          await adapter.reconcileBeforeOutgoing(),
+          isFalse,
+          reason: '$elapsed',
+        );
+      }
+      expect(terminalAcks(), 0);
+      expect(forceReleases, 0);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      expect(native.callsOf('presentAuthenticated'), isEmpty);
     },
   );
 
@@ -4341,13 +4797,16 @@ AndroidCallLifecycleAdapter _adapter(
   NativeOutgoingRegistrationResultObserver? onOutgoingRegistrationResult,
   bool projectTerminalBeforeEnd = false,
   bool requireAdoptionForAudio = false,
+  DateTime Function()? clock,
+  void Function()? onRetainedTerminalForceReleased,
 }) {
   final adapter = AndroidCallLifecycleAdapter(
     invokeMethod: native.invoke,
     nativeEvents: native.events.stream,
     coordinator: coordinator,
     resolveAuthenticatedHandle: (callId) => handles[callId],
-    clock: () => _now,
+    clock: clock ?? () => _now,
+    onRetainedTerminalForceReleased: onRetainedTerminalForceReleased,
     onOutgoingRegistrationResult: onOutgoingRegistrationResult,
     projectTerminalBeforeEnd: projectTerminalBeforeEnd,
     requireAdoptionForAudio: requireAdoptionForAudio,

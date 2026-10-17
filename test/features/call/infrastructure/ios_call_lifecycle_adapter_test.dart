@@ -1020,6 +1020,78 @@ void main() {
     await coordinator.dispose();
     await native.events.close();
   });
+
+  test(
+    'a blocked retained terminal is released through the iOS adapter only once ten seconds have passed',
+    () async {
+      const secondHandle = '44444444-4444-4444-8444-444444444444';
+      final secondCallId = CallId.parse('55555555-5555-4555-8555-555555555555');
+      var now = _now;
+      var cleanupRuns = 0;
+      final cleanup = CallCleanupCoordinator(<CallCleanupStep>[
+        CallCleanupStep('call_media', (_) async {
+          cleanupRuns++;
+          throw StateError('media still held by the microphone prompt');
+        }, requiredForTerminalAck: true),
+      ]);
+      final native = _LifecycleNative(terminalAtAttach: true);
+      final coordinator = _coordinator(cleanupCoordinator: cleanup);
+      final adapter = _adapter(
+        native,
+        coordinator,
+        clock: () => now,
+        handles: <CallId, String>{
+          _callId: _callHandle,
+          secondCallId: secondHandle,
+        },
+      );
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      int terminalAcks() => native
+          .callsOf('acknowledge')
+          .where((call) => call.arguments['disposition'] == 'TERMINAL')
+          .length;
+      final successor = IncomingCallPresentation(
+        displayName: 'Bob',
+        callId: secondCallId,
+        callerAccountPeerId: 'remote-account',
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(
+          _expiresAtMs,
+          isUtc: true,
+        ),
+      );
+
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      expect(await adapter.present(_presentation()), isFalse);
+      await _until(() => cleanupRuns >= 1);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      await _prepareIncoming(
+        coordinator,
+        callId: secondCallId,
+        eventSuffix: '-successor',
+      );
+
+      now = _now.add(
+        const Duration(seconds: 10) - const Duration(milliseconds: 1),
+      );
+      expect(await adapter.present(successor), isFalse);
+      expect(terminalAcks(), 0);
+      expect(adapter.isBoundTo(_callId), isTrue);
+
+      now = _now.add(const Duration(seconds: 10));
+      expect(await adapter.present(successor), isTrue);
+      expect(terminalAcks(), 1);
+      expect(adapter.isBoundTo(secondCallId), isTrue);
+      expect(
+        native.callsOf('presentAuthenticated').last.arguments['callHandle'],
+        secondHandle,
+      );
+    },
+  );
 }
 
 IosCallLifecycleAdapter _adapter(
@@ -1030,13 +1102,14 @@ IosCallLifecycleAdapter _adapter(
   Future<void> Function(Duration delay)? audioActivationDelay,
   NativeOutgoingRegistrationResultObserver? onOutgoingRegistrationResult,
   DateTime Function()? clock,
+  Map<CallId, String> handles = const <CallId, String>{},
 }) {
   final adapter = IosCallLifecycleAdapter(
     invokeMethod: native.invoke,
     nativeEvents: native.events.stream,
     coordinator: coordinator,
     resolveAuthenticatedHandle: (callId) =>
-        callId == _callId ? _callHandle : null,
+        handles[callId] ?? (callId == _callId ? _callHandle : null),
     clock: clock ?? () => _now,
     audioActivationMaxAttempts: audioActivationMaxAttempts,
     audioActivationRetryInterval: audioActivationRetryInterval,
@@ -1073,13 +1146,17 @@ IncomingCallPresentation _presentation() => IncomingCallPresentation(
   expiresAt: DateTime.fromMillisecondsSinceEpoch(_expiresAtMs, isUtc: true),
 );
 
-Future<void> _prepareIncoming(CallCoordinator coordinator) async {
+Future<void> _prepareIncoming(
+  CallCoordinator coordinator, {
+  CallId? callId,
+  String eventSuffix = '',
+}) async {
   await coordinator.dispatch(
     CallEvent(
       type: CallEventType.remoteInvite,
-      eventId: 'remote-invite',
+      eventId: 'remote-invite$eventSuffix',
       occurredAt: _now,
-      callId: _callId,
+      callId: callId ?? _callId,
       contactPeerId: 'remote-account',
       localAccountPeerId: 'local-account',
       localDeviceId: 'local-device',
@@ -1092,17 +1169,21 @@ Future<void> _prepareIncoming(CallCoordinator coordinator) async {
   await coordinator.dispatch(
     CallEvent(
       type: CallEventType.incomingValidated,
-      eventId: 'incoming-validated',
+      eventId: 'incoming-validated$eventSuffix',
       occurredAt: _now,
-      callId: _callId,
+      callId: callId ?? _callId,
       contactPeerId: 'remote-account',
     ),
   );
 }
 
-CallCoordinator _coordinator({_ActivatingEffects? effects}) => CallCoordinator(
+CallCoordinator _coordinator({
+  _ActivatingEffects? effects,
+  CallCleanupCoordinator? cleanupCoordinator,
+}) => CallCoordinator(
   reducer: const CallReducer(),
-  cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+  cleanupCoordinator:
+      cleanupCoordinator ?? CallCleanupCoordinator(const <CallCleanupStep>[]),
   historyProjector: CallHistoryProjector(_History(), clock: () => _now),
   effectExecutor: effects ?? const NoopCallEffectExecutor(),
   clock: () => _now,

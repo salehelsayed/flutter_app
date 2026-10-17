@@ -12,6 +12,7 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
@@ -30,6 +31,7 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
+import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
@@ -127,6 +129,7 @@ void main() {
     AccountMigrationTransferRunFn? accountMigrationRunTransfer,
     DownloadProfilePictureFn? downloadProfilePictureFn,
     ThemeData? themeOverride,
+    Future<bool> Function(String peerId)? shouldMarkContactRequest,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -164,6 +167,8 @@ void main() {
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+        shouldMarkContactRequest:
+            shouldMarkContactRequest ?? (_) async => false,
       ),
     );
   }
@@ -310,7 +315,7 @@ void main() {
   testWidgets(
     'contact QR sends an encrypted request and isolates profile download failure',
     (tester) async {
-      const scannedPeerId = 'encrypted-peer-12345';
+      final scannedPeerId = _fx('encrypted').peerId;
       String? downloadedOwnerPeerId;
       p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
       p2pService.storeInInboxResult = true;
@@ -335,11 +340,7 @@ void main() {
         find.byType(QRScannerScreen),
       );
       scanner.onScanned(
-        _buildValidQrData(
-          peerId: scannedPeerId,
-          publicKey: 'scanned-encryption-public-key',
-          username: 'Bob',
-        ),
+        _buildValidQrData(identity: _fx('encrypted'), username: 'Bob'),
       );
       await pumpFrames(tester, count: 20);
 
@@ -368,6 +369,244 @@ void main() {
       });
       expect(envelope.containsKey('payload'), isFalse);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'scanning an existing contact shows the circle dialog and re-sends our '
+    'request without touching the stored row',
+    (tester) async {
+      final existingPeerId = _fx('existing').peerId;
+      final existing = ContactModel(
+        peerId: existingPeerId,
+        publicKey: _fx('existing').publicKey,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob (stored)',
+        signature: 'stored-sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+      );
+      contactRepository.addTestContact(existing);
+      var downloadCalls = 0;
+      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+      p2pService.storeInInboxResult = true;
+
+      await tester.pumpWidget(
+        buildScanner(
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+              }) async {
+                downloadCalls++;
+                return null;
+              },
+        ),
+      );
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(
+            _buildValidQrData(identity: _fx('existing'), username: 'Bob'),
+          );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(find.text('Added to your circle!'), findsNothing);
+
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.lastStoreInInboxPeerId, existingPeerId);
+      final envelope =
+          jsonDecode(p2pService.lastStoreInInboxMessage!)
+              as Map<String, dynamic>;
+      expect(envelope['type'], 'contact_request');
+      expect(envelope['version'], '2');
+      expect(envelope['intent'], 'new_request');
+      expect(_contactRequestRecipientKeys(bridge), [_fx('existing').publicKey]);
+
+      // No profile download, no delete, no duplicate, no overwrite.
+      expect(downloadCalls, 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(existingPeerId))!.toMap(),
+        existing.toMap(),
+      );
+    },
+  );
+
+  testWidgets(
+    'a QR that claims a stored contact with a different key fails the '
+    'identity binding and encrypts nothing',
+    (tester) async {
+      final existingPeerId = _fx('existing').peerId;
+      final existing = ContactModel(
+        peerId: existingPeerId,
+        publicKey: _fx('existing').publicKey,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob (stored)',
+        signature: 'stored-sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+      );
+      contactRepository.addTestContact(existing);
+      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+      p2pService.storeInInboxResult = true;
+
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(
+            _buildValidQrData(
+              identity: _fx('existing'),
+              publicKeyOverride: _fx('untrusted').publicKey,
+            ),
+          );
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Invalid Signature'), findsOneWidget);
+      expect(find.text('Already in your circle!'), findsNothing);
+      expect(_contactRequestRecipientKeys(bridge), isEmpty);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(existingPeerId))!.toMap(),
+        existing.toMap(),
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(_buildValidQrData(identity: _fx('existing')));
+      await pumpFrames(tester, count: 20);
+      expect(_contactRequestRecipientKeys(bridge), [_fx('existing').publicKey]);
+      expect(p2pService.storeInInboxCallCount, 1);
+    },
+  );
+
+  // Task 12b, owner decision 1(a): only a peer verified as updated gets the
+  // signed repair marker; any other peer gets today's unmarked request.
+  for (final eligible in [true, false]) {
+    testWidgets(
+      're-scanning an existing contact ${eligible ? 'verified as updated sends '
+                'a signed new_request marker' : 'not verified as updated sends '
+                'an unmarked request'}',
+      (tester) async {
+        final existing = ContactModel(
+          peerId: _fx('existing').peerId,
+          publicKey: _fx('existing').publicKey,
+          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+          username: 'Bob (stored)',
+          signature: 'stored-sig',
+          scannedAt: '2026-01-01T00:00:00.000Z',
+        );
+        contactRepository.addTestContact(existing);
+        p2pService.emitState(
+          const NodeState(isStarted: true, peerId: ownPeerId),
+        );
+        p2pService.storeInInboxResult = true;
+        final asked = <String>[];
+
+        await tester.pumpWidget(
+          buildScanner(
+            shouldMarkContactRequest: (peerId) async {
+              asked.add(peerId);
+              return eligible;
+            },
+          ),
+        );
+        await pumpFrames(tester);
+        tester
+            .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+            .onScanned(_buildValidQrData(identity: _fx('existing')));
+        await pumpFrames(tester, count: 20);
+
+        expect(asked, [existing.peerId]);
+        final encrypt = bridge.sentMessages
+            .map((m) => jsonDecode(m) as Map<String, dynamic>)
+            .singleWhere((r) => r['cmd'] == 'contactrequest.encrypt');
+        final payload =
+            jsonDecode(
+                  (encrypt['payload'] as Map<String, dynamic>)['plaintext']
+                      as String,
+                )
+                as Map<String, dynamic>;
+        if (eligible) {
+          final cr = payload['cr'] as Map<String, dynamic>;
+          expect(cr['kind'], 'new_request');
+          expect(cr['to'], existing.peerId);
+          final envelope =
+              jsonDecode(p2pService.lastStoreInInboxMessage!)
+                  as Map<String, dynamic>;
+          expect(envelope['msgId'], cr['id']);
+        } else {
+          expect(payload.containsKey('cr'), isFalse);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'scanning a blocked contact shows the circle dialog and sends nothing',
+    (tester) async {
+      final openPeerId = _fx('open').peerId;
+      final blockedPeerId = _fx('blocked').peerId;
+      final blocked = ContactModel(
+        peerId: blockedPeerId,
+        publicKey: _fx('blocked').publicKey,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Mallory',
+        signature: 'blocked-sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+        isBlocked: true,
+        blockedAt: '2026-01-02T00:00:00.000Z',
+      );
+      contactRepository
+        ..addTestContact(
+          ContactModel(
+            peerId: openPeerId,
+            publicKey: _fx('open').publicKey,
+            rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+            username: 'Bob',
+            signature: 'open-sig',
+            scannedAt: '2026-01-01T00:00:00.000Z',
+          ),
+        )
+        ..addTestContact(blocked);
+      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+      p2pService.storeInInboxResult = true;
+
+      // Control: the open contact's re-scan does send, so the silence below
+      // is the blocked branch and not a dead send path.
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(_buildValidQrData(identity: _fx('open')));
+      await pumpFrames(tester, count: 20);
+      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.lastStoreInInboxPeerId, openPeerId);
+
+      // Tear the first scanner down so its dialog is gone before the second.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(_buildValidQrData(identity: _fx('blocked')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(p2pService.storeInInboxCallCount, 1);
+      expect(p2pService.lastStoreInInboxPeerId, openPeerId);
+      expect(await contactRepository.getContactCount(), 2);
+      expect(
+        (await contactRepository.getContact(blockedPeerId))!.toMap(),
+        blocked.toMap(),
+      );
     },
   );
 
@@ -420,7 +659,7 @@ void main() {
         find.byType(QRScannerScreen),
       );
       scanner.onScanned(
-        _buildValidQrData(peerId: 'new-peer-12345', username: 'Bob'),
+        _buildValidQrData(identity: _fx('new'), username: 'Bob'),
       );
       await pumpFrames(tester);
 
@@ -479,7 +718,7 @@ void main() {
     await pumpFrames(tester);
     await tester.enterText(
       find.byType(TextField).last,
-      _buildValidQrData(peerId: 'late-peer-12345', username: 'Bob'),
+      _buildValidQrData(identity: _fx('late'), username: 'Bob'),
     );
     await tester.tap(find.text('Submit'));
     await pumpFrames(tester, count: 20);
@@ -489,13 +728,13 @@ void main() {
     gatedBridge.releaseVerify();
     await pumpFrames(tester);
 
-    expect(await contactRepository.getContact('late-peer-12345'), isNotNull);
+    expect(await contactRepository.getContact(_fx('late').peerId), isNotNull);
     expect(find.text('Added to your circle!'), findsOneWidget);
     await tester.tap(find.text('OK'));
     await pumpFrames(tester, count: 20);
     expect(find.byType(FeedWired), findsOneWidget);
     expect(gatedBridge.commandLog, contains('contactrequest.encrypt'));
-    expect(p2pService.lastStoreInInboxPeerId, 'late-peer-12345');
+    expect(p2pService.lastStoreInInboxPeerId, _fx('late').peerId);
   });
 
   testWidgets('contact QR success forwards Move Account runner into feed', (
@@ -523,7 +762,7 @@ void main() {
       find.byType(QRScannerScreen),
     );
     scanner.onScanned(
-      _buildValidQrData(peerId: 'runner-peer-12345', username: 'Bob'),
+      _buildValidQrData(identity: _fx('runner'), username: 'Bob'),
     );
     await pumpFrames(tester);
 
@@ -635,14 +874,34 @@ class _VerifyGatedBridge extends FakeBridge {
   }
 }
 
+List<String> _contactRequestRecipientKeys(FakeBridge bridge) {
+  final keys = <String>[];
+  for (final message in bridge.sentMessages) {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] != 'contactrequest.encrypt') continue;
+    final payload = request['payload'] as Map<String, dynamic>;
+    keys.add(payload['recipientPublicKey'] as String);
+  }
+  return keys;
+}
+
+// Task 12b: every scanned QR names a real Ed25519 identity, so its peer ID is
+// the libp2p ID of its key (the parser now checks that binding).
+final _fixtures = <String, TestEd25519Identity>{};
+TestEd25519Identity _fx(String label) => _fixtures.putIfAbsent(
+  label,
+  () => TestEd25519Identity.fromSeedByte(0x60 + _fixtures.length),
+);
+
 String _buildValidQrData({
-  String peerId = 'scanned-peer-id',
-  String publicKey = 'scanned-pk',
+  TestEd25519Identity? identity,
+  String? publicKeyOverride,
   String username = 'Bob',
 }) {
+  final id = identity ?? _fx('scanned');
   final payload = SplayTreeMap<String, dynamic>.from({
-    'ns': peerId,
-    'pk': publicKey,
+    'ns': id.peerId,
+    'pk': publicKeyOverride ?? id.publicKey,
     'rv': '/dns4/relay/tcp/443/p2p/relay',
     'ts': DateTime.now().toUtc().toIso8601String(),
     'un': username,

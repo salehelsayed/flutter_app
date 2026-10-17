@@ -49,6 +49,7 @@ import '../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../shared/fakes/in_memory_contact_repository.dart';
 import '../../shared/fakes/in_memory_contact_request_repository.dart';
 import '../../shared/fakes/in_memory_message_repository.dart';
+import '../../shared/fakes/ed25519_contact_request_crypto.dart';
 
 /// Extends [PassthroughCryptoBridge] (which already passthrough-handles the v2
 /// chat `message.encrypt`/`message.decrypt`) so the v2 CONTACT-REQUEST crypto
@@ -97,6 +98,16 @@ class _RoundtripCryptoBridge extends PassthroughCryptoBridge {
 }
 
 /// One participant: full contact-request + chat stack wired to a shared network.
+// Task 12b: every peer is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _fixtures = <String, TestEd25519Identity>{};
+TestEd25519Identity _fixture(String label) => _fixtures.putIfAbsent(
+  label,
+  () => TestEd25519Identity.fromSeedByte(0xB8 + _fixtures.length),
+);
+String _pkFor(String peerId) =>
+    _fixtures.values.firstWhere((id) => id.peerId == peerId).publicKey;
+
 class _RoundtripUser {
   _RoundtripUser({
     required this.peerId,
@@ -112,7 +123,7 @@ class _RoundtripUser {
     identityRepo.seed(
       IdentityModel(
         peerId: peerId,
-        publicKey: 'pk-$peerId',
+        publicKey: _pkFor(peerId),
         privateKey: 'sk-$peerId',
         mnemonic12:
             'abandon abandon abandon abandon abandon abandon '
@@ -180,7 +191,7 @@ class _RoundtripUser {
     contactRepo.addTestContact(
       ContactModel(
         peerId: other.peerId,
-        publicKey: 'pk-${other.peerId}',
+        publicKey: _pkFor(other.peerId),
         rendezvous: '/dns4/relay/tcp/443/p2p/relay',
         username: other.username,
         signature: 'sig-${other.peerId}',
@@ -199,8 +210,8 @@ class _RoundtripUser {
 }
 
 void main() {
-  const alicePeerId = '12D3KooWAliceRoundtrip0000000001';
-  const bobPeerId = '12D3KooWBobRoundtripxx0000000002';
+  final alicePeerId = _fixture('alice').peerId;
+  final bobPeerId = _fixture('bob').peerId;
 
   late FakeP2PNetwork network;
   late _RoundtripUser alice;
@@ -367,10 +378,9 @@ void main() {
       final bobStored = await bob.messageRepo.getMessagesForContact(
         alicePeerId,
       );
-      expect(
-        bobStored.map((m) => m.text).toList(),
-        const <String>['Encrypted hello after the key exchange'],
-      );
+      expect(bobStored.map((m) => m.text).toList(), const <String>[
+        'Encrypted hello after the key exchange',
+      ]);
     },
   );
 }

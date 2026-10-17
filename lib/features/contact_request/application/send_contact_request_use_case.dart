@@ -7,6 +7,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/contact_request/domain/models/contact_request_control.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:uuid/uuid.dart';
@@ -53,6 +54,85 @@ typedef ResolveCallWakeHandle =
 typedef OnCallWakeHandleDistributed =
     Future<void> Function(String peerId, CallWakeHandleGrant grant);
 
+/// A fully built, signed and (for v2) encrypted contact-request message.
+///
+/// Durable repair retries persist this exact value and transmit it again, so a
+/// retry reuses the same message ID, signed payload and ciphertext instead of
+/// minting a new request.
+final class BuiltContactRequestEnvelope {
+  const BuiltContactRequestEnvelope({
+    required this.senderPeerId,
+    required this.targetPeerId,
+    required this.messageJson,
+    required this.encrypted,
+    this.msgId,
+    this.callWakeHandle,
+    this.callWakeReceiptChallenge,
+  });
+
+  final String senderPeerId;
+  final String targetPeerId;
+  final String messageJson;
+  final bool encrypted;
+  final String? msgId;
+  final CallWakeHandleGrant? callWakeHandle;
+  final String? callWakeReceiptChallenge;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'senderPeerId': senderPeerId,
+    'targetPeerId': targetPeerId,
+    'messageJson': messageJson,
+    'encrypted': encrypted,
+    'msgId': msgId,
+    'callWakeHandle': callWakeHandle?.toCanonicalMap(),
+    'callWakeReceiptChallenge': callWakeReceiptChallenge,
+  };
+
+  static BuiltContactRequestEnvelope fromJson(Map<String, Object?> json) {
+    final rawGrant = json['callWakeHandle'];
+    return BuiltContactRequestEnvelope(
+      senderPeerId: json['senderPeerId'] as String,
+      targetPeerId: json['targetPeerId'] as String,
+      messageJson: json['messageJson'] as String,
+      encrypted: json['encrypted'] as bool,
+      msgId: json['msgId'] as String?,
+      callWakeHandle: rawGrant == null
+          ? null
+          : CallWakeHandleGrant.fromCanonicalMap(rawGrant),
+      callWakeReceiptChallenge: json['callWakeReceiptChallenge'] as String?,
+    );
+  }
+}
+
+/// Outcome of [buildContactRequestEnvelope]: an envelope, or the reason none
+/// could be built.
+final class ContactRequestEnvelopeBuild {
+  const ContactRequestEnvelopeBuild.built(
+    BuiltContactRequestEnvelope this.envelope,
+  ) : failure = null;
+
+  const ContactRequestEnvelopeBuild.failed(
+    SendContactRequestResult this.failure,
+  ) : envelope = null;
+
+  final BuiltContactRequestEnvelope? envelope;
+  final SendContactRequestResult? failure;
+}
+
+/// Outcome of [transmitContactRequestEnvelope].
+final class ContactRequestTransmitOutcome {
+  const ContactRequestTransmitOutcome(
+    this.result, {
+    this.exactCallWakeReceipt = false,
+  });
+
+  final SendContactRequestResult result;
+
+  /// True only when the receiver returned the exact receipt for this
+  /// envelope's call-wake challenge.
+  final bool exactCallWakeReceipt;
+}
+
 /// Sends a contact request to a peer after scanning their QR code.
 ///
 /// This function:
@@ -62,6 +142,12 @@ typedef OnCallWakeHandleDistributed =
 /// 4. If [recipientPublicKey] is provided, encrypts as v2 envelope
 /// 5. Otherwise sends as v1 plaintext
 /// 6. Sends via P2P to the target peer
+///
+/// [markAsNewRequest] adds the signed Task 12b `cr` marker, which lets an
+/// updated receiver answer with one durable repair reply. Callers set it only
+/// for peers verified as updated: an older receiver rejects the marked
+/// signature. A marked request must be encrypted (v2); there is no unmarked or
+/// plaintext fallback.
 ///
 /// Returns the result of the operation.
 Future<SendContactRequestResult> sendContactRequest({
@@ -90,6 +176,7 @@ Future<SendContactRequestResult> sendContactRequest({
   // asks for that exact receipt; ordinary contact delivery may succeed without
   // it, but the grant remains distribution-pending until proof arrives.
   bool requireExactCallWakeReceipt = false,
+  bool markAsNewRequest = false,
 }) async {
   final targetPrefix = targetPeerId.length > 10
       ? targetPeerId.substring(0, 10)
@@ -111,6 +198,79 @@ Future<SendContactRequestResult> sendContactRequest({
     return SendContactRequestResult.nodeNotRunning;
   }
 
+  final build = await buildContactRequestEnvelope(
+    identityRepo: identityRepo,
+    bridge: bridge,
+    targetPeerId: targetPeerId,
+    recipientPublicKey: recipientPublicKey,
+    intent: intent,
+    resolveWakeToken: resolveWakeToken,
+    resolveCallWakeHandle: resolveCallWakeHandle,
+    requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+    control: markAsNewRequest
+        ? ContactRequestControl.newRequest(
+            id: const Uuid().v4(),
+            to: targetPeerId,
+          )
+        : null,
+  );
+  final envelope = build.envelope;
+  if (envelope == null) return build.failure!;
+
+  final outcome = await transmitContactRequestEnvelope(
+    p2pService: p2pService,
+    envelope: envelope,
+    requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+  );
+  if (outcome.exactCallWakeReceipt) {
+    await markContactRequestCallWakeHandleDistributed(
+      envelope: envelope,
+      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+    );
+  }
+  return outcome.result;
+}
+
+/// Reports an exactly-receipted call-wake grant as distributed. A callback
+/// failure leaves distribution pending but cannot undo delivery.
+Future<void> markContactRequestCallWakeHandleDistributed({
+  required BuiltContactRequestEnvelope envelope,
+  required OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
+}) async {
+  final grant = envelope.callWakeHandle;
+  if (grant == null || onCallWakeHandleDistributed == null) return;
+  try {
+    await onCallWakeHandleDistributed(envelope.targetPeerId, grant);
+  } catch (_) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CALL_WAKE_HANDLE_DISTRIBUTION_STATE_ERROR',
+      details: {'reason': 'callback_failed'},
+    );
+  }
+}
+
+/// Builds, signs and (when [recipientPublicKey] is set) encrypts one contact
+/// request. Each call mints a fresh message ID unless [control] fixes it.
+///
+/// When [control] is present the request is marked: `cr` is signed inside the
+/// plaintext and the outer `msgId` equals `cr.id`. A marked request requires
+/// [recipientPublicKey]; it is never sent as plaintext v1.
+Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
+  required IdentityRepository identityRepo,
+  required Bridge bridge,
+  required String targetPeerId,
+  String? recipientPublicKey,
+  ContactRequestSendIntent intent = ContactRequestSendIntent.newRequest,
+  Future<String?> Function(String peerId)? resolveWakeToken,
+  ResolveCallWakeHandle? resolveCallWakeHandle,
+  bool requireExactCallWakeReceipt = false,
+  ContactRequestControl? control,
+}) async {
+  final targetPrefix = targetPeerId.length > 10
+      ? targetPeerId.substring(0, 10)
+      : targetPeerId;
+
   // 2. Load own identity
   final identity = await identityRepo.loadIdentity();
   if (identity == null) {
@@ -119,7 +279,20 @@ Future<SendContactRequestResult> sendContactRequest({
       event: 'CONTACT_REQUEST_SEND_NO_IDENTITY',
       details: {},
     );
-    return SendContactRequestResult.noIdentity;
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.noIdentity,
+    );
+  }
+
+  if (control != null && recipientPublicKey == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_MARKED_REQUIRES_ENCRYPTION',
+      details: {},
+    );
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.encryptionError,
+    );
   }
 
   // 3. Build unsigned payload (same format as QR, plus mlkem key)
@@ -151,7 +324,9 @@ Future<SendContactRequestResult> sendContactRequest({
         'reason': 'encrypted_current_grant_required',
       },
     );
-    return SendContactRequestResult.sendFailed;
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.sendFailed,
+    );
   }
   final callWakeReceiptChallenge = callWakeHandle == null
       ? null
@@ -166,6 +341,7 @@ Future<SendContactRequestResult> sendContactRequest({
     if (callWakeHandle != null) 'cwh': callWakeHandle.toCanonicalMap(),
     'cwr': ?callWakeReceiptChallenge,
     if (wakeToken != null && wakeToken.isNotEmpty) 'wt': wakeToken,
+    if (control != null) 'cr': control.toCanonicalMap(),
   });
   final dataToSign = jsonEncode(unsignedPayload);
 
@@ -191,7 +367,9 @@ Future<SendContactRequestResult> sendContactRequest({
         'errorMessage': signResponse['errorMessage'],
       },
     );
-    return SendContactRequestResult.signingError;
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.signingError,
+    );
   }
 
   // 5. Add signature to payload
@@ -202,18 +380,120 @@ Future<SendContactRequestResult> sendContactRequest({
   });
   final signedPayloadJson = jsonEncode(signedPayload);
 
-  Future<void> markCallWakeHandleDistributed() async {
-    if (callWakeHandle == null || onCallWakeHandleDistributed == null) return;
-    try {
-      await onCallWakeHandleDistributed(targetPeerId, callWakeHandle);
-    } catch (_) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CALL_WAKE_HANDLE_DISTRIBUTION_STATE_ERROR',
-        details: {'targetPeerId': targetPrefix, 'reason': 'callback_failed'},
-      );
-    }
+  // 6. Build message envelope (v1 or v2)
+  if (recipientPublicKey == null) {
+    // v1: Plaintext envelope (backward compat)
+    final v1Message = {
+      'type': 'contact_request',
+      'version': '1',
+      'intent': intent.wireValue,
+      'payload': signedPayload,
+    };
+    return ContactRequestEnvelopeBuild.built(
+      BuiltContactRequestEnvelope(
+        senderPeerId: identity.peerId,
+        targetPeerId: targetPeerId,
+        messageJson: jsonEncode(v1Message),
+        encrypted: false,
+      ),
+    );
   }
+
+  // v2: Encrypt the signed payload. A marked request's operation ID is its
+  // message ID, so the encryption AAD and the signed marker agree.
+  final msgId = control?.id ?? const Uuid().v4();
+  final ts = DateTime.now().toUtc().toIso8601String();
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'CONTACT_REQUEST_SEND_ENCRYPTING',
+    details: {'targetPeerId': targetPrefix},
+  );
+
+  final encryptResponse = await callEncryptContactRequest(
+    bridge: bridge,
+    recipientPublicKey: recipientPublicKey,
+    signedPayloadJson: signedPayloadJson,
+    msgId: msgId,
+    ts: ts,
+  );
+
+  if (encryptResponse['ok'] != true) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
+      details: {
+        'errorCode': encryptResponse['errorCode'],
+        'errorMessage': encryptResponse['errorMessage'],
+      },
+    );
+    // No silent downgrade: if encryption was requested but failed, return error.
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.encryptionError,
+    );
+  }
+
+  // Validate required fields from encrypt response
+  final ephemeralPublicKey = encryptResponse['ephemeralPublicKey'];
+  final ciphertext = encryptResponse['ciphertext'];
+  final nonce = encryptResponse['nonce'];
+
+  if (ephemeralPublicKey is! String ||
+      ciphertext is! String ||
+      nonce is! String ||
+      ephemeralPublicKey.isEmpty ||
+      ciphertext.isEmpty ||
+      nonce.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
+      details: {'reason': 'malformed encrypt response'},
+    );
+    return const ContactRequestEnvelopeBuild.failed(
+      SendContactRequestResult.encryptionError,
+    );
+  }
+
+  final v2Message = {
+    'type': 'contact_request',
+    'version': '2',
+    'intent': intent.wireValue,
+    'msgId': msgId,
+    'ts': ts,
+    if (sanitizedUsername.isNotEmpty) 'senderUsername': sanitizedUsername,
+    'encrypted': {
+      'ephemeralPublicKey': ephemeralPublicKey,
+      'ciphertext': ciphertext,
+      'nonce': nonce,
+    },
+  };
+  return ContactRequestEnvelopeBuild.built(
+    BuiltContactRequestEnvelope(
+      senderPeerId: identity.peerId,
+      targetPeerId: targetPeerId,
+      messageJson: jsonEncode(v2Message),
+      encrypted: true,
+      msgId: msgId,
+      callWakeHandle: callWakeHandle,
+      callWakeReceiptChallenge: callWakeReceiptChallenge,
+    ),
+  );
+}
+
+/// Transmits an already built envelope, byte for byte: LAN (only without a
+/// call-wake grant), then one direct discover/dial/send, then the relay inbox
+/// unless an exact call-wake receipt is required.
+Future<ContactRequestTransmitOutcome> transmitContactRequestEnvelope({
+  required P2PService p2pService,
+  required BuiltContactRequestEnvelope envelope,
+  bool requireExactCallWakeReceipt = false,
+}) async {
+  final targetPeerId = envelope.targetPeerId;
+  final targetPrefix = targetPeerId.length > 10
+      ? targetPeerId.substring(0, 10)
+      : targetPeerId;
+  final messageJson = envelope.messageJson;
+  final callWakeReceiptChallenge = envelope.callWakeReceiptChallenge;
 
   bool hasExactCallWakeReceipt(SendMessageResult sendResult) {
     if (callWakeReceiptChallenge == null ||
@@ -231,85 +511,6 @@ Future<SendContactRequestResult> sendContactRequest({
     }
   }
 
-  // 6. Build message envelope (v1 or v2)
-  String messageJson;
-
-  if (recipientPublicKey != null) {
-    // v2: Encrypt the signed payload
-    final msgId = const Uuid().v4();
-    final ts = DateTime.now().toUtc().toIso8601String();
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CONTACT_REQUEST_SEND_ENCRYPTING',
-      details: {'targetPeerId': targetPrefix},
-    );
-
-    final encryptResponse = await callEncryptContactRequest(
-      bridge: bridge,
-      recipientPublicKey: recipientPublicKey,
-      signedPayloadJson: signedPayloadJson,
-      msgId: msgId,
-      ts: ts,
-    );
-
-    if (encryptResponse['ok'] != true) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
-        details: {
-          'errorCode': encryptResponse['errorCode'],
-          'errorMessage': encryptResponse['errorMessage'],
-        },
-      );
-      // No silent downgrade: if encryption was requested but failed, return error.
-      return SendContactRequestResult.encryptionError;
-    }
-
-    // Validate required fields from encrypt response
-    final ephemeralPublicKey = encryptResponse['ephemeralPublicKey'];
-    final ciphertext = encryptResponse['ciphertext'];
-    final nonce = encryptResponse['nonce'];
-
-    if (ephemeralPublicKey is! String ||
-        ciphertext is! String ||
-        nonce is! String ||
-        ephemeralPublicKey.isEmpty ||
-        ciphertext.isEmpty ||
-        nonce.isEmpty) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONTACT_REQUEST_SEND_ENCRYPTION_ERROR',
-        details: {'reason': 'malformed encrypt response'},
-      );
-      return SendContactRequestResult.encryptionError;
-    }
-
-    final v2Message = {
-      'type': 'contact_request',
-      'version': '2',
-      'intent': intent.wireValue,
-      'msgId': msgId,
-      'ts': ts,
-      if (sanitizedUsername.isNotEmpty) 'senderUsername': sanitizedUsername,
-      'encrypted': {
-        'ephemeralPublicKey': ephemeralPublicKey,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
-    };
-    messageJson = jsonEncode(v2Message);
-  } else {
-    // v1: Plaintext envelope (backward compat)
-    final v1Message = {
-      'type': 'contact_request',
-      'version': '1',
-      'intent': intent.wireValue,
-      'payload': signedPayload,
-    };
-    messageJson = jsonEncode(v1Message);
-  }
-
   // 7. Try to send (with retries)
   emitFlowEvent(
     layer: 'FL',
@@ -321,7 +522,7 @@ Future<SendContactRequestResult> sendContactRequest({
   // A boolean LAN success cannot prove that the receiver durably stored the
   // exact grant generation, so cwh-bearing requests always use a reply-capable
   // direct transport (then the ordinary inbox fallback when permitted).
-  if (callWakeHandle == null && p2pService.isLocalPeer(targetPeerId)) {
+  if (envelope.callWakeHandle == null && p2pService.isLocalPeer(targetPeerId)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_SEND_LOCAL_ATTEMPT',
@@ -330,7 +531,7 @@ Future<SendContactRequestResult> sendContactRequest({
     final localSent = await p2pService.sendLocalMessage(
       targetPeerId,
       messageJson,
-      identity.peerId,
+      envelope.senderPeerId,
     );
     if (localSent) {
       emitFlowEvent(
@@ -338,8 +539,9 @@ Future<SendContactRequestResult> sendContactRequest({
         event: 'CONTACT_REQUEST_SEND_LOCAL_SUCCESS',
         details: {'targetPeerId': targetPrefix},
       );
-      await markCallWakeHandleDistributed();
-      return SendContactRequestResult.success;
+      return const ContactRequestTransmitOutcome(
+        SendContactRequestResult.success,
+      );
     }
     emitFlowEvent(
       layer: 'FL',
@@ -396,10 +598,10 @@ Future<SendContactRequestResult> sendContactRequest({
             event: 'CONTACT_REQUEST_SEND_SUCCESS',
             details: {'targetPeerId': targetPrefix},
           );
-          if (exactCallWakeReceipt) {
-            await markCallWakeHandleDistributed();
-          }
-          return SendContactRequestResult.success;
+          return ContactRequestTransmitOutcome(
+            SendContactRequestResult.success,
+            exactCallWakeReceipt: exactCallWakeReceipt,
+          );
         }
       }
     }
@@ -417,7 +619,9 @@ Future<SendContactRequestResult> sendContactRequest({
       event: 'CONTACT_REQUEST_CALL_WAKE_RECEIPT_FAILED',
       details: {'targetPeerId': targetPrefix},
     );
-    return SendContactRequestResult.sendFailed;
+    return const ContactRequestTransmitOutcome(
+      SendContactRequestResult.sendFailed,
+    );
   }
 
   // All retries exhausted — try offline inbox fallback.
@@ -441,7 +645,9 @@ Future<SendContactRequestResult> sendContactRequest({
       // Inbox acceptance proves storage by the relay, not durable application
       // storage by the receiver. Keep any cwh generation pending until a later
       // direct exchange returns its exact receipt.
-      return SendContactRequestResult.success;
+      return const ContactRequestTransmitOutcome(
+        SendContactRequestResult.success,
+      );
     }
   } catch (e) {
     emitFlowEvent(
@@ -451,5 +657,7 @@ Future<SendContactRequestResult> sendContactRequest({
     );
   }
 
-  return SendContactRequestResult.sendFailed;
+  return const ContactRequestTransmitOutcome(
+    SendContactRequestResult.sendFailed,
+  );
 }

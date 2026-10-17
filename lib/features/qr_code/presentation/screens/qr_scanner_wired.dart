@@ -17,6 +17,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/direct_co
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -102,6 +103,11 @@ class QRScannerWired extends StatelessWidget {
   final TransportMetrics? transportMetrics;
   final ResolveCallWakeHandle? resolveCallWakeHandle;
   final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
+
+  /// Task 12b: whether the request to a scanned peer carries the signed
+  /// repair marker. Only peers verified as updated qualify; the default reads
+  /// the coordinated-rollout flag.
+  final Future<bool> Function(String peerId) shouldMarkContactRequest;
   final MigrationQrScannedHandler? onMigrationQrScanned;
 
   /// 360: handler for the dedicated dual-signed linked-device document.
@@ -165,6 +171,7 @@ class QRScannerWired extends StatelessWidget {
     this.transportMetrics,
     this.resolveCallWakeHandle,
     this.onCallWakeHandleDistributed,
+    this.shouldMarkContactRequest = contactRepairRolloutEligible,
     this.onMigrationQrScanned,
     this.onDirectLinkedDeviceQrScanned,
     this.accountMigrationRunTransfer,
@@ -331,6 +338,20 @@ class QRScannerWired extends StatelessWidget {
 
       case AddContactResult.alreadyExists:
         _showAlreadyExistsDialog(context, contact);
+        // A compact QR carries no ML-KEM key, so a contact who re-added us
+        // from our QR holds us without one. Only a request from us gives it.
+        // It goes to the key we already trust, never to one the QR claims.
+        final existing = await contactRepository.getContact(contact.peerId);
+        final blocked = existing?.isBlocked ?? false;
+        final keyMatches = existing?.publicKey == contact.publicKey;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'QR_SCAN_EXISTING_CONTACT_RESEND',
+          details: {'blocked': blocked, 'keyMatches': keyMatches},
+        );
+        if (existing != null && !blocked && keyMatches) {
+          _sendContactRequestInBackground(existing.peerId, existing.publicKey);
+        }
         break;
 
       case AddContactResult.dbError:
@@ -359,6 +380,7 @@ class QRScannerWired extends StatelessWidget {
       recipientPublicKey: recipientPublicKey,
       resolveCallWakeHandle: resolveCallWakeHandle,
       onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+      markAsNewRequest: await shouldMarkContactRequest(targetPeerId),
     );
 
     emitFlowEvent(

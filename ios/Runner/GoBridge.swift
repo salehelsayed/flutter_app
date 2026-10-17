@@ -292,6 +292,9 @@ class GoBridge: NSObject {
             runOnBackground({ BridgeRelayReconnect() }, result: result)
         case "relayProbe":
             runOnBackground({ BridgeRelayProbe(args ?? "") }, method: "relayProbe", result: result)
+        // SE-42 D27: call-media protection lease on the relay recovery broker.
+        case "callMediaProtection":
+            runOnBackground({ BridgeCallMediaProtection(args ?? "") }, result: result)
         case "relayTurnCredentialsV1":
             runOnBackground({ BridgeTurnCredentialsV1() }, result: result)
         case "turnCredentialsWithDiagnosticsV1", "relayTurnCredentialsWithDiagnosticsV1":

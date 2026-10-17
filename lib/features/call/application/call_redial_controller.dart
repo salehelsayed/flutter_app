@@ -99,6 +99,16 @@ class CallRedialController {
   }
 }
 
+/// An incoming call the user did not take. Such a card may start a fresh call
+/// only while it is still the contact's newest call.
+bool isMissedIncomingCall(CallHistoryEntry entry) =>
+    entry.direction == CallDirection.incoming &&
+    const {
+      CallHistoryStatus.missed,
+      CallHistoryStatus.busy,
+      CallHistoryStatus.cancelled,
+    }.contains(entry.status);
+
 /// Bounded local action inbox. Cold/locked opens wait for the canonical runtime
 /// and foreground unlock. Duplicates and superseded cards cannot double dial.
 class CallBackActionHandler {
@@ -149,13 +159,7 @@ class CallBackActionHandler {
         final source = history();
         final entry = await source?.findCall(id);
         if (!isCurrent()) continue;
-        if (entry == null ||
-            entry.direction != CallDirection.incoming ||
-            !const {
-              CallHistoryStatus.missed,
-              CallHistoryStatus.busy,
-              CallHistoryStatus.cancelled,
-            }.contains(entry.status)) {
+        if (entry == null || !isMissedIncomingCall(entry)) {
           onResult(OutgoingCallStartResult.unavailable);
           continue;
         }

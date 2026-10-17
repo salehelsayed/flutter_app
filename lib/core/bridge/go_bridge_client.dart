@@ -125,6 +125,8 @@ class GoBridgeClient extends Bridge {
     // Relay
     'relay:reconnect': _CmdSpec('relayReconnect', false),
     'relay:probe': _CmdSpec('relayProbe', true),
+    // SE-42 D27: call-media protection lease on the relay recovery broker.
+    'call_media:protection': _CmdSpec('callMediaProtection', true),
     turnCredentialsV1BridgeCommand: _CmdSpec(
       turnCredentialsV1NativeMethod,
       false,
@@ -821,6 +823,26 @@ class GoBridgeClient extends Bridge {
             eventData,
           );
           emitTransportDiagnosticEvent(eventName, safeEventData);
+          emitFlowEvent(
+            layer: 'GO',
+            event: eventName.replaceAll(':', '_').toUpperCase(),
+            details: safeEventData,
+          );
+          break;
+
+        // SE-42 D27: default-network handoff progress. The typed
+        // NetworkPathSource consumes the stream; the flow log keeps only the
+        // allow-listed counters, stages, family and timings.
+        case 'network:path_changing':
+        case 'network:relay_ready':
+        case 'network:relay_failed':
+        // Emitted by the native previous-network watcher, not by Go.
+        case 'network:previous_path_lost':
+          final safeEventData = sanitizeNetworkPathEventData(
+            eventName,
+            eventData,
+          )..remove('event');
+          emitNetworkPathEvent(eventName, eventData);
           emitFlowEvent(
             layer: 'GO',
             event: eventName.replaceAll(':', '_').toUpperCase(),

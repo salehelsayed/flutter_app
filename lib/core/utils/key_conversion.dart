@@ -209,3 +209,98 @@ String _base58BtcEncode(Uint8List input) {
   }
   return encoded.toString();
 }
+
+// ---------------------------------------------------------------------------
+// Task 12b: peer-ID / Ed25519 account-key binding for scanned identities.
+// ---------------------------------------------------------------------------
+
+const String _base32LowerAlphabet = 'abcdefghijklmnopqrstuvwxyz234567';
+
+/// CID codec for libp2p public-key identities.
+const int _libp2pKeyCidCodec = 0x72;
+
+/// Decodes a textual libp2p peer ID to its multihash bytes, the way
+/// `peer.Decode` does for the forms this app can meet: a base58btc multihash
+/// (`12D3KooW…`, `Qm…`) or a CIDv1 in multibase base32 (`b…`) with the
+/// libp2p-key codec. Returns null for anything else.
+Uint8List? decodePeerIdMultihash(String peerId) {
+  final text = peerId.trim();
+  if (text.isEmpty) return null;
+  if (text.startsWith('b')) {
+    final cid = _base32LowerDecode(text.substring(1));
+    // CIDv1: version varint 0x01, codec varint 0x72, then the multihash.
+    if (cid == null || cid.length < 4) return null;
+    if (cid[0] != 0x01 || cid[1] != _libp2pKeyCidCodec) return null;
+    return Uint8List.sublistView(cid, 2);
+  }
+  return _base58BtcDecode(text);
+}
+
+/// Returns the canonical base58 peer ID when [claimedPeerId] names the same
+/// identity as the Ed25519 [base64PublicKey], otherwise null.
+///
+/// Only the identity multihash that `peer.IDFromPublicKey` produces for an
+/// Ed25519 key is accepted. Never throws: a malformed key or ID is a
+/// mismatch, so callers fail closed.
+String? ed25519PublicKeyCanonicalPeerId({
+  required String base64PublicKey,
+  required String claimedPeerId,
+}) {
+  final String derived;
+  try {
+    derived = ed25519PublicKeyToPeerId(base64PublicKey);
+  } on PeerIdDerivationException {
+    return null;
+  }
+  final claimed = decodePeerIdMultihash(claimedPeerId);
+  final expected = _base58BtcDecode(derived);
+  if (claimed == null || expected == null) return null;
+  if (claimed.length != expected.length) return null;
+  for (var i = 0; i < claimed.length; i++) {
+    if (claimed[i] != expected[i]) return null;
+  }
+  return derived;
+}
+
+Uint8List? _base58BtcDecode(String text) {
+  var value = BigInt.zero;
+  final radix = BigInt.from(58);
+  var leadingZeros = 0;
+  var seenNonZero = false;
+  for (final unit in text.codeUnits) {
+    final digit = _base58BtcAlphabet.indexOf(String.fromCharCode(unit));
+    if (digit < 0) return null;
+    if (digit == 0 && !seenNonZero) {
+      leadingZeros++;
+    } else {
+      seenNonZero = true;
+    }
+    value = value * radix + BigInt.from(digit);
+  }
+  final bytes = <int>[];
+  while (value > BigInt.zero) {
+    bytes.add((value & BigInt.from(0xff)).toInt());
+    value = value >> 8;
+  }
+  return Uint8List.fromList(<int>[
+    ...List<int>.filled(leadingZeros, 0),
+    ...bytes.reversed,
+  ]);
+}
+
+Uint8List? _base32LowerDecode(String text) {
+  final out = <int>[];
+  var buffer = 0;
+  var bits = 0;
+  for (final unit in text.codeUnits) {
+    final digit = _base32LowerAlphabet.indexOf(String.fromCharCode(unit));
+    if (digit < 0) return null;
+    buffer = ((buffer << 5) | digit) & 0xffff;
+    bits += 5;
+    if (bits >= 8) {
+      out.add((buffer >> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  return Uint8List.fromList(out);
+}

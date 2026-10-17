@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
+
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
@@ -36,17 +38,24 @@ class _FakeBridge extends Bridge {
 // Test data
 // ---------------------------------------------------------------------------
 
-const _ownPeerId = '12D3KooWOwnPeerIdForTest';
-const _otherPeerId = '12D3KooWOtherPeerIdTest';
+// Task 12b: deterministic public test identities, so each peer ID really is
+// the libp2p ID of its Ed25519 key.
+final _own = TestEd25519Identity.fromSeedByte(0x41);
+final _other = TestEd25519Identity.fromSeedByte(0x42);
+final _ownPeerId = _own.peerId;
+final _otherPeerId = _other.peerId;
 
-Map<String, dynamic> _validPayload({String? peerId, String? ts}) => {
-      'pk': 'publicKeyBase64',
-      'ns': peerId ?? _otherPeerId,
-      'rv': '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
-      'ts': ts ?? DateTime.now().toUtc().toIso8601String(),
-      'sig': 'signatureBase64',
-      'un': 'Alice',
-    };
+Map<String, dynamic> _validPayload({
+  TestEd25519Identity? identity,
+  String? ts,
+}) => {
+  'pk': (identity ?? _other).publicKey,
+  'ns': (identity ?? _other).peerId,
+  'rv': '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+  'ts': ts ?? DateTime.now().toUtc().toIso8601String(),
+  'sig': 'signatureBase64',
+  'un': 'Alice',
+};
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -72,7 +81,7 @@ void main() {
     expect(result, equals(ParseQRResult.success));
     expect(contact, isNotNull);
     expect(contact!.peerId, equals(_otherPeerId));
-    expect(contact.publicKey, equals('publicKeyBase64'));
+    expect(contact.publicKey, equals(_other.publicKey));
     expect(contact.username, equals('Alice'));
   });
 
@@ -102,7 +111,7 @@ void main() {
   });
 
   test('selfScan: scanning own QR code', () async {
-    final payload = _validPayload(peerId: _ownPeerId);
+    final payload = _validPayload(identity: _own);
 
     final (result, contact) = await parseQRPayload(
       qrString: jsonEncode(payload),

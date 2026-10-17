@@ -280,6 +280,11 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onAvatarTap;
   final VoidCallback? onCall;
   final VoidCallback? onCallRetry;
+
+  /// "Call back" on one call row. Null hides the row button: the header call
+  /// never stands in for it, because a missed incoming row must first prove it
+  /// is still the contact's newest call.
+  final void Function(ConversationCallTimelineEntry entry)? onCallBack;
   final bool showCallAction;
   final bool callActionEnabled;
   final bool callActionInFlight;
@@ -392,6 +397,7 @@ class ConversationScreen extends StatefulWidget {
     this.onAvatarTap,
     this.onCall,
     this.onCallRetry,
+    this.onCallBack,
     this.showCallAction = false,
     this.callActionEnabled = false,
     this.callActionInFlight = false,
@@ -1075,7 +1081,9 @@ class _ConversationScreenState extends State<ConversationScreen>
               padding: const EdgeInsets.only(bottom: 16),
               child: CallTimelineRow(
                 entry: call,
-                onCall: widget.onCallRetry ?? widget.onCall,
+                onCall: widget.onCallBack == null
+                    ? null
+                    : () => widget.onCallBack!(call),
                 callEnabled: !widget.callActionInFlight,
               ),
             );

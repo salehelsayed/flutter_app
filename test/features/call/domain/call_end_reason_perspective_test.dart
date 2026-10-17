@@ -128,6 +128,18 @@ void main() {
       );
     }
 
+    test('a caller reads a callee microphone denial as no answer, never as '
+        'busy or its own permission problem', () {
+      final ended = _reduce(<CallEvent>[
+        ..._outgoingRinging,
+        _event(
+          CallEventType.remoteTerminate,
+          endReason: CallEndReason.permissionDenied,
+        ),
+      ]);
+      expect(ended.endReason, CallEndReason.noAnswer);
+    });
+
     test(
       'BETA-0924-04 a terminate without a reason stays a remote hang-up',
       () {

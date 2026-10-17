@@ -40,6 +40,9 @@ Future<int> retryIncompleteKeyExchanges({
   LoadPendingCallWakeHandleContactIds? loadPendingCallWakeHandleContactIds,
   ResolveCallWakeHandle? resolveCallWakeHandle,
   OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
+  // Task 12b: peers verified as updated get the signed repair marker, so they
+  // answer with one durable repair reply. Others stay unmarked.
+  Future<bool> Function(String peerId)? shouldMarkAsNewRequest,
 }) async {
   // 1. Guard: own ML-KEM key must exist (resend would be pointless without it)
   final identity = await identityRepo.loadIdentity();
@@ -131,6 +134,8 @@ Future<int> retryIncompleteKeyExchanges({
             : (_) async => wakeToken,
         resolveCallWakeHandle: resolveCallWakeHandle,
         onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+        markAsNewRequest:
+            await shouldMarkAsNewRequest?.call(contact.peerId) ?? false,
       );
 
       if (result == SendContactRequestResult.success) {

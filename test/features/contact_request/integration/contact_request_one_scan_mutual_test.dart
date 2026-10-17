@@ -11,6 +11,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 
 // ---------------------------------------------------------------------------
 // 171 TC-08: one-scan mutual convergence (two live listeners over a fake net).
@@ -24,8 +25,17 @@ import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 // can't reproduce the unbuffered-broadcast drop). That is TC-04/TC-14/TC-13.
 // ---------------------------------------------------------------------------
 
-const _aPeerId = '12D3KooWAaaaScannerPeerId0001';
-const _bPeerId = '12D3KooWBbbbScannedPeerId0002';
+// Task 12b: every peer is a real Ed25519 identity, so its peer ID is the
+// libp2p ID of its key (the receiver now checks that binding).
+final _fixtures = <String, TestEd25519Identity>{};
+TestEd25519Identity _fixture(String label) => _fixtures.putIfAbsent(
+  label,
+  () => TestEd25519Identity.fromSeedByte(0xB0 + _fixtures.length),
+);
+String _pkFor(String peerId) =>
+    _fixtures.values.firstWhere((id) => id.peerId == peerId).publicKey;
+final _aPeerId = _fixture('a').peerId;
+final _bPeerId = _fixture('b').peerId;
 
 class _StaticDecryptBridge extends Bridge {
   _StaticDecryptBridge(this.incomingPayload);
@@ -47,7 +57,10 @@ class _StaticDecryptBridge extends Bridge {
     final req = jsonDecode(message) as Map<String, dynamic>;
     switch (req['cmd']) {
       case 'contactrequest.decrypt':
-        return jsonEncode({'ok': true, 'plaintext': jsonEncode(incomingPayload)});
+        return jsonEncode({
+          'ok': true,
+          'plaintext': jsonEncode(incomingPayload),
+        });
       case 'payload.verify':
         return jsonEncode({'ok': true, 'valid': true});
       default:
@@ -58,7 +71,7 @@ class _StaticDecryptBridge extends Bridge {
 
 Map<String, dynamic> _payloadFor(String peerId) => {
   'ns': peerId,
-  'pk': 'pk-$peerId',
+  'pk': _pkFor(peerId),
   'rv': '/dns4/relay.example/tcp/4001/p2p/$peerId',
   'ts': DateTime.now().toUtc().toIso8601String(),
   'sig': 'sig-$peerId',
@@ -80,89 +93,92 @@ ChatMessage _v2RequestFrom(String fromPeerId) => ChatMessage(
 );
 
 void main() {
-  test('B fresh auto-adds A and reciprocates; A no loop; one row each', () async {
-    // --- A: already has B as a contact (A scanned B) ---
-    final aContacts = InMemoryContactRepository();
-    final aRequests = InMemoryContactRequestRepository();
-    aContacts.addTestContact(
-      ContactModel(
-        peerId: _bPeerId,
-        publicKey: 'pk-$_bPeerId',
-        rendezvous: '/dns4/relay.example/tcp/4001/p2p/$_bPeerId',
-        username: 'User-$_bPeerId',
-        signature: 'sig-$_bPeerId',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-      ),
-    );
-    // A's bridge decrypts B's (reciprocal) payload.
-    final aBridge = _StaticDecryptBridge(_payloadFor(_bPeerId));
+  test(
+    'B fresh auto-adds A and reciprocates; A no loop; one row each',
+    () async {
+      // --- A: already has B as a contact (A scanned B) ---
+      final aContacts = InMemoryContactRepository();
+      final aRequests = InMemoryContactRequestRepository();
+      aContacts.addTestContact(
+        ContactModel(
+          peerId: _bPeerId,
+          publicKey: _pkFor(_bPeerId),
+          rendezvous: '/dns4/relay.example/tcp/4001/p2p/$_bPeerId',
+          username: 'User-$_bPeerId',
+          signature: 'sig-$_bPeerId',
+          scannedAt: DateTime.now().toUtc().toIso8601String(),
+        ),
+      );
+      // A's bridge decrypts B's (reciprocal) payload.
+      final aBridge = _StaticDecryptBridge(_payloadFor(_bPeerId));
 
-    // --- B: cold, knows nobody ---
-    final bContacts = InMemoryContactRepository();
-    final bRequests = InMemoryContactRequestRepository();
-    // B's bridge decrypts A's (initial) payload.
-    final bBridge = _StaticDecryptBridge(_payloadFor(_aPeerId));
+      // --- B: cold, knows nobody ---
+      final bContacts = InMemoryContactRepository();
+      final bRequests = InMemoryContactRequestRepository();
+      // B's bridge decrypts A's (initial) payload.
+      final bBridge = _StaticDecryptBridge(_payloadFor(_aPeerId));
 
-    var aReciprocalCount = 0;
-    var bReciprocalCount = 0;
+      var aReciprocalCount = 0;
+      var bReciprocalCount = 0;
 
-    late final ContactRequestListener aListener;
+      late final ContactRequestListener aListener;
 
-    aListener = ContactRequestListener(
-      contactRequestStream: const Stream.empty(),
-      requestRepo: aRequests,
-      contactRepo: aContacts,
-      bridge: aBridge,
-      getOwnPeerId: () => _aPeerId,
-      getOwnPrivateKey: () async => 'a-priv',
-      // A must NEVER reciprocate B's reciprocal (B is already a contact).
-      autoAcceptAndReciprocate: (peerId) async {
-        aReciprocalCount++;
-        return AcceptContactRequestResult.success;
-      },
-    );
+      aListener = ContactRequestListener(
+        contactRequestStream: const Stream.empty(),
+        requestRepo: aRequests,
+        contactRepo: aContacts,
+        bridge: aBridge,
+        getOwnPeerId: () => _aPeerId,
+        getOwnPrivateKey: () async => 'a-priv',
+        // A must NEVER reciprocate B's reciprocal (B is already a contact).
+        autoAcceptAndReciprocate: (peerId) async {
+          aReciprocalCount++;
+          return AcceptContactRequestResult.success;
+        },
+      );
 
-    final bListener = ContactRequestListener(
-      contactRequestStream: const Stream.empty(),
-      requestRepo: bRequests,
-      contactRepo: bContacts,
-      bridge: bBridge,
-      getOwnPeerId: () => _bPeerId,
-      getOwnPrivateKey: () async => 'b-priv',
-      // B accepts A + reciprocates (mimics acceptAndReciprocate: local add +
-      // deliver a reciprocal v2 request to A's live listener).
-      autoAcceptAndReciprocate: (peerId) async {
-        bReciprocalCount++;
-        final req = await bRequests.getRequest(peerId);
-        if (req != null) {
-          await bContacts.addContact(req.toContactModel());
-          await bRequests.updateStatus(peerId, ContactRequestStatus.accepted);
-        }
-        // Reciprocal B -> A over the fake net.
-        await aListener.processIncomingMessage(_v2RequestFrom(_bPeerId));
-        return AcceptContactRequestResult.success;
-      },
-    );
+      final bListener = ContactRequestListener(
+        contactRequestStream: const Stream.empty(),
+        requestRepo: bRequests,
+        contactRepo: bContacts,
+        bridge: bBridge,
+        getOwnPeerId: () => _bPeerId,
+        getOwnPrivateKey: () async => 'b-priv',
+        // B accepts A + reciprocates (mimics acceptAndReciprocate: local add +
+        // deliver a reciprocal v2 request to A's live listener).
+        autoAcceptAndReciprocate: (peerId) async {
+          bReciprocalCount++;
+          final req = await bRequests.getRequest(peerId);
+          if (req != null) {
+            await bContacts.addContact(req.toContactModel());
+            await bRequests.updateStatus(peerId, ContactRequestStatus.accepted);
+          }
+          // Reciprocal B -> A over the fake net.
+          await aListener.processIncomingMessage(_v2RequestFrom(_bPeerId));
+          return AcceptContactRequestResult.success;
+        },
+      );
 
-    addTearDown(aListener.dispose);
-    addTearDown(bListener.dispose);
+      addTearDown(aListener.dispose);
+      addTearDown(bListener.dispose);
 
-    // A -> B initial request lands on B's live listener.
-    final bResult = await bListener.processIncomingMessage(
-      _v2RequestFrom(_aPeerId),
-    );
+      // A -> B initial request lands on B's live listener.
+      final bResult = await bListener.processIncomingMessage(
+        _v2RequestFrom(_aPeerId),
+      );
 
-    expect(bResult, equals(HandleMessageResult.contactAutoAdded));
-    // B is now mutual with A (one row), tap-free.
-    expect(await bContacts.contactExists(_aPeerId), isTrue);
-    expect((await bContacts.getAllContacts()).length, equals(1));
-    // A still has exactly one contact (B) — unchanged.
-    expect(await aContacts.contactExists(_bPeerId), isTrue);
-    expect((await aContacts.getAllContacts()).length, equals(1));
-    // INV-4: B reciprocated once; A issued ZERO reciprocals (loop terminates).
-    expect(bReciprocalCount, equals(1));
-    expect(aReciprocalCount, equals(0));
-  });
+      expect(bResult, equals(HandleMessageResult.contactAutoAdded));
+      // B is now mutual with A (one row), tap-free.
+      expect(await bContacts.contactExists(_aPeerId), isTrue);
+      expect((await bContacts.getAllContacts()).length, equals(1));
+      // A still has exactly one contact (B) — unchanged.
+      expect(await aContacts.contactExists(_bPeerId), isTrue);
+      expect((await aContacts.getAllContacts()).length, equals(1));
+      // INV-4: B reciprocated once; A issued ZERO reciprocals (loop terminates).
+      expect(bReciprocalCount, equals(1));
+      expect(aReciprocalCount, equals(0));
+    },
+  );
 }
 
 // HandleMessageResult is re-exported via the listener's use-case import.

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import '../../application/call_history_access.dart';
 import '../../application/call_redial_controller.dart';
 import '../../application/outgoing_call_capability.dart';
 import '../../data/call_history_repository.dart';
@@ -15,10 +16,15 @@ class CallsPage extends StatefulWidget {
     required this.browser,
     required this.changes,
     required this.redial,
+    this.history,
   });
   final CallHistoryBrowser browser;
   final Stream<void> changes;
   final CallRedialController redial;
+
+  /// Proves a missed-call row is still the contact's newest call. Without it
+  /// such rows refuse to dial.
+  final CallHistoryAccess? history;
   @override
   State<CallsPage> createState() => _CallsPageState();
 }
@@ -101,13 +107,34 @@ class _CallsPageState extends State<CallsPage> {
 
   Future<void> _redial(CallHistoryListRow row) async {
     if (_redialing) return;
-    setState(() => _redialing = true);
-    final result = await widget.redial.start(
-      row.entry.contactAccountPeerId,
-      isCurrent: () => mounted,
-    );
-    if (!mounted) return;
-    setState(() => _redialing = false);
+    final entry = row.entry;
+    final history = widget.history;
+    var superseded = false;
+    Future<bool> Function()? isEligible;
+    if (isMissedIncomingCall(entry)) {
+      if (history == null) {
+        superseded = true;
+      } else {
+        isEligible = () async {
+          final latest = await history.recentCallsForContact(
+            entry.contactAccountPeerId,
+          );
+          superseded = latest.isEmpty || latest.first.callId != entry.callId;
+          return !superseded;
+        };
+      }
+    }
+    var result = OutgoingCallStartResult.unavailable;
+    if (!superseded) {
+      setState(() => _redialing = true);
+      result = await widget.redial.start(
+        entry.contactAccountPeerId,
+        isCurrent: () => mounted,
+        isEligible: isEligible,
+      );
+      if (!mounted) return;
+      setState(() => _redialing = false);
+    }
     if (result == OutgoingCallStartResult.started ||
         result == OutgoingCallStartResult.canceled) {
       return;
@@ -116,7 +143,9 @@ class _CallsPageState extends State<CallsPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          result == OutgoingCallStartResult.microphoneDenied
+          superseded
+              ? l10n.call_back_superseded
+              : result == OutgoingCallStartResult.microphoneDenied
               ? l10n.call_end_permission
               : l10n.call_end_unavailable,
         ),

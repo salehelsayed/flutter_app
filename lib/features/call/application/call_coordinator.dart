@@ -63,7 +63,15 @@ final class CallEventQueueFullException implements Exception {
 }
 
 /// Privacy-safe internal failures from process-owned coordinator work.
-enum CallCoordinatorInternalFailure { timerDispatchFailed }
+enum CallCoordinatorInternalFailure {
+  timerDispatchFailed,
+
+  /// The history write did not finish within `terminalHistoryTimeout`.
+  terminalHistoryProjectionTimedOut,
+
+  /// The history write threw: a persistence or projection error.
+  terminalHistoryProjectionFailed,
+}
 
 typedef CallAppliedStateTransitionObserver =
     void Function(
@@ -182,6 +190,11 @@ final class CallCoordinator {
 
   bool terminalCleanupAckReady(CallId callId) =>
       _terminalCleanupReports[callId]?.terminalAckReady == true;
+
+  /// True only for a call this coordinator has already ended.
+  bool isTerminalCall(CallId callId) =>
+      _terminalSnapshots[callId]?.isTerminal == true &&
+      _active?.callId != callId;
 
   Future<bool> retryTerminalCleanup(CallId callId) {
     if (_disposed || _disposing) return Future<bool>.value(false);
@@ -492,10 +505,29 @@ final class CallCoordinator {
           _terminalSnapshots[snapshot.callId!] = snapshot;
           _terminalCleanupReports[snapshot.callId!] = report;
         } finally {
+          // History is presentation. The call is already terminal and its
+          // cleanup ran, so a slow or failed row cannot fail the dispatch
+          // that ended the call. Only this budget, not a TimeoutException the
+          // repository throws itself, counts as a timeout.
           try {
+            var budgetExpired = false;
             await historyProjector
                 .projectTerminal(snapshot)
-                .timeout(terminalHistoryTimeout);
+                .then<void>((_) {})
+                .timeout(
+                  terminalHistoryTimeout,
+                  onTimeout: () => budgetExpired = true,
+                );
+            if (budgetExpired) {
+              _reportInternalFailure(
+                CallCoordinatorInternalFailure
+                    .terminalHistoryProjectionTimedOut,
+              );
+            }
+          } catch (_) {
+            _reportInternalFailure(
+              CallCoordinatorInternalFailure.terminalHistoryProjectionFailed,
+            );
           } finally {
             _rememberTerminal(snapshot.callId!);
             if (_active?.callId == snapshot.callId) _active = null;
@@ -621,7 +653,8 @@ final class CallCoordinator {
     CallEffectType.deliverAnswer ||
     CallEffectType.queueIceCandidate ||
     CallEffectType.restartIce ||
-    CallEffectType.requestIceRestart => true,
+    CallEffectType.requestIceRestart ||
+    CallEffectType.resumeRecoverySignals => true,
     _ => false,
   };
 

@@ -26,6 +26,21 @@ void main() {
         expect(gateway.openSettingsCalls, 0);
       },
     );
+
+    test(
+      'asks again on every call, so a grant made in Settings works at once',
+      () async {
+        final gateway = _FakeMicPermissionGateway(
+          MicPermissionStatus.permanentlyDenied,
+        );
+        final adapter = CallMicrophonePermissionAdapter(gateway: gateway);
+
+        expect(await adapter.request(), MicPermissionStatus.permanentlyDenied);
+        gateway.current = MicPermissionStatus.granted;
+        expect(await adapter.request(), MicPermissionStatus.granted);
+        expect(gateway.requestCalls, 2);
+      },
+    );
   });
 
   group('CallForegroundAudioSessionAdapter', () {
@@ -292,16 +307,19 @@ void main() {
 }
 
 final class _FakeMicPermissionGateway implements MicPermissionGateway {
-  _FakeMicPermissionGateway(this.status);
+  _FakeMicPermissionGateway(this.current);
 
-  final MicPermissionStatus status;
+  MicPermissionStatus current;
+
+  @override
+  Future<MicPermissionStatus> status() async => current;
   int requestCalls = 0;
   int openSettingsCalls = 0;
 
   @override
   Future<MicPermissionStatus> request() async {
     requestCalls++;
-    return status;
+    return current;
   }
 
   @override
