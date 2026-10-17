@@ -24,3 +24,27 @@ date | marketing version | build | platform | commit SHA | tag | ASC build ID or
 <FAJR:date> | <FAJR:version> | 123 | iOS | UNKNOWN | none | <FAJR:asc-build-id> | backfill, VALID, newest
 
 (Rows oldest first. The only known fact is that the newest build is 123. Fill nothing else in.)
+
+## Update check after each release (SE-41)
+
+Every shipped build reads the signed version file at
+`https://updates.mknoon.xyz/mknoon/version.json`. After a release, update it
+as follows. The full steps are in the
+[update check runbook](se41-update-check-runbook.md).
+
+1. When the new build is live in both stores, publish a new version file with
+   `latestBuild` set to the new build number. Keep `minBuild` as it is. Older
+   builds then show the soft update notice. They keep working.
+2. Raise `minBuild` only when every condition in runbook
+   [§6](se41-update-check-runbook.md#6-when-to-raise-minbuild-o8) is true:
+   100% phased release, live in every store country, and installable on the
+   oldest supported iOS and Android versions. Builds below `minBuild` show the
+   forced update screen.
+3. Every new file needs a higher `sequence` than the last one published. Never
+   reuse or lower a `sequence` (runbook
+   [§3](se41-update-check-runbook.md#3-sequence-rules)).
+4. The owner signs the file offline with k1. Publishing it to the update host
+   needs the owner's approval.
+5. To undo a `minBuild` raise, publish a new file with a lower `minBuild` and a
+   higher `sequence`. Never delete the file (runbook
+   [§5](se41-update-check-runbook.md#5-rollback)).
