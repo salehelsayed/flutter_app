@@ -98,6 +98,7 @@ com.mknoon.app.DroppedPushRecoveryStoreTest|testTC37502FixedAndDeletedTriggersSh
 com.mknoon.app.DroppedPushRecoveryWorkSchedulerTest|testTC37503FixedWakeUsesExistingUniqueExpeditedChain
 com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|testTC37503WorkerAdoptsCurrentTriggerAcrossRetryProcessDeathAndPeriodicContinuation
 com.mknoon.app.HeadlessCanonicalRecoveryWorkerTest|immediate retry re-signals the warm owner with the authoritative generation
+com.mknoon.app.MknoonFirebaseMessagingServiceTest|T4b exact update_check push runs the worker and never delegates or recovers
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|testTC37501ExactFixedWakeInterceptsAndAllOtherShapesDelegateOnce
 com.mknoon.app.MknoonFirebaseMessagingServiceTest|VC2-04 call wake has a separate strict ingress and never enters ordinary recovery
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-375-06 native read back advertises exact fixed consumer version kind and disposition
@@ -171,9 +172,9 @@ com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 default off 
 com.mknoon.app.ProductionHeadlessCanonicalRecovery374Test|TC-374-08 shared deleted batch seam commits resnapshots and schedules before caller work
 """
 expected = [line for line in expected_text.strip().splitlines() if line]
-if len(expected) != 75 or len(set(expected)) != 75:
+if len(expected) != 76 or len(set(expected)) != 76:
     raise SystemExit(
-        "the frozen Plan 374/375/393 JUnit manifest must contain 75 unique methods"
+        "the frozen Plan 374/375/393 JUnit manifest must contain 76 unique methods"
     )
 
 xml_files = [result_dir / f"TEST-{name}.xml" for name in selected_classes]
@@ -357,5 +358,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 75 methods; artifacts: %s\n' \
+printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 76 methods; artifacts: %s\n' \
   "$RESULT_DIR"
