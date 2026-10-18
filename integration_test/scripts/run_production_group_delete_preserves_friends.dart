@@ -6,6 +6,7 @@ import '../../tool/sims/production_group_delete_criteria.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_journey_peer.dart';
 import '../support/production_sims_result.dart';
+import '../support/production_verbatim_keyboard.dart';
 
 const _scenario = 'production.group_delete_preserves_friends';
 
@@ -30,12 +31,24 @@ Future<void> main(List<String> arguments) async {
     final flows = <String>[];
     final waits = <String, int>{};
     final cases = <Map<String, Object?>>[];
+    final keyboardSwitches = <Map<String, Object?>>[];
     final proof = <String, Object?>{
       'runId': journey.runId,
       'flows': flows,
       'waits': waits,
       'cases': cases,
     };
+    proof['keyboardSwitches'] = keyboardSwitches;
+    // One verbatim keyboard session per device, restored only at the end:
+    // restoring while the composer keeps focus opens the device keyboard, and
+    // the following back then only closes it.
+    final keyboards = <String, ProductionVerbatimKeyboardSession>{};
+    Future<void> restoreKeyboards() async {
+      for (final keyboard in keyboards.values) {
+        await keyboard.restore();
+      }
+    }
+
     Future<void> persist() => File(
       '${output!.path}/observations.json',
     ).writeAsString(jsonEncode(proof));
@@ -82,10 +95,14 @@ Future<void> main(List<String> arguments) async {
         bool Function(Map<String, Object?>) predicate,
       ) async {
         final elapsed = Stopwatch()..start();
-        final value = await waitForProductionObservation(stage, timeout, () async {
-          final current = await snapshot(peer);
-          return predicate(current) ? current : null;
-        });
+        final value = await waitForProductionObservation(
+          stage,
+          timeout,
+          () async {
+            final current = await snapshot(peer);
+            return predicate(current) ? current : null;
+          },
+        );
         waits[stage] = elapsed.elapsedMilliseconds;
         proof[stage] = value;
         await persist();
@@ -111,10 +128,25 @@ Future<void> main(List<String> arguments) async {
         await journey.flow(from, 'production_direct_open', '$label-open', {
           'PEER_ID': peers[to]!,
         });
-        await flow(from, 'production_direct_send', label, {
-          'MESSAGE': text,
-          'MESSAGE_PATTERN': RegExp.escape(text),
-        });
+        // Device keyboards autocorrect proof texts, and on some (SwiftKey on
+        // Android 8.1) hideKeyboard leaves the composer deaf to inputText.
+        await keyboards
+            .putIfAbsent(
+              from.device,
+              () =>
+                  ProductionVerbatimKeyboardSession(from.adb, keyboardSwitches),
+            )
+            .run(
+              label,
+              (verbatim) => flow(
+                from,
+                verbatim
+                    ? 'production_verbatim_send'
+                    : 'production_direct_send',
+                label,
+                {'MESSAGE': text, 'MESSAGE_PATTERN': RegExp.escape(text)},
+              ),
+            );
         await journey.flow(from, 'production_conversation_back', '$label-back');
       }
 
@@ -124,8 +156,18 @@ Future<void> main(List<String> arguments) async {
           );
 
       attempts++;
-      await direct(journey.alice, 'bob', texts['aliceHello']!, 'alice-send-bob');
-      await direct(journey.bob, 'alice', texts['aliceReply']!, 'bob-send-alice');
+      await direct(
+        journey.alice,
+        'bob',
+        texts['aliceHello']!,
+        'alice-send-bob',
+      );
+      await direct(
+        journey.bob,
+        'alice',
+        texts['aliceReply']!,
+        'bob-send-alice',
+      );
       await direct(charlie, 'bob', texts['charlieHello']!, 'charlie-send-bob');
       await direct(
         journey.bob,
@@ -159,11 +201,16 @@ Future<void> main(List<String> arguments) async {
       proof['adminBefore'] = await snapshot(journey.alice);
       await persist();
 
-      await flow(journey.bob, 'production_orbit_group_leave_delete', 'bob-leave-delete', {
-        'GROUP_ID': groupId,
-        'ALICE_PEER_ID': peers['alice']!,
-        'CHARLIE_PEER_ID': peers['charlie']!,
-      });
+      await flow(
+        journey.bob,
+        'production_orbit_group_leave_delete',
+        'bob-leave-delete',
+        {
+          'GROUP_ID': groupId,
+          'ALICE_PEER_ID': peers['alice']!,
+          'CHARLIE_PEER_ID': peers['charlie']!,
+        },
+      );
       await wait(
         'afterDelete',
         journey.bob,
@@ -186,11 +233,20 @@ Future<void> main(List<String> arguments) async {
         await flow(journey.bob, 'production_direct_open', 'bob-open-$friend', {
           'PEER_ID': peers[friend]!,
         });
-        await flow(journey.bob, 'production_direct_assert_two', 'bob-render-$friend', {
-          'FIRST_PATTERN': RegExp.escape(texts[first]!),
-          'SECOND_PATTERN': RegExp.escape(texts[second]!),
-        });
-        await flow(journey.bob, 'production_conversation_back', 'bob-back-$friend');
+        await flow(
+          journey.bob,
+          'production_direct_assert_two',
+          'bob-render-$friend',
+          {
+            'FIRST_PATTERN': RegExp.escape(texts[first]!),
+            'SECOND_PATTERN': RegExp.escape(texts[second]!),
+          },
+        );
+        await flow(
+          journey.bob,
+          'production_conversation_back',
+          'bob-back-$friend',
+        );
       }
       proof['afterUi'] = await snapshot(journey.bob);
       cases.add({'id': 'DELETE_PRESERVES_FRIENDS', 'status': 'PASS'});
@@ -201,6 +257,7 @@ Future<void> main(List<String> arguments) async {
       ).writeAsString(jsonEncode({'failures': failures}));
       if (failures.isNotEmpty) throw StateError(failures.join('; '));
     } finally {
+      await restoreKeyboards();
       await journey.restore();
     }
     evidence = writeSimsArtifactEvidenceSync(
