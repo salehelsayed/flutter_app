@@ -253,6 +253,25 @@ closed, and it fails without the fix. After a successful scan, two request sends
 are expected: the scanner's own, then the key-exchange retry coordinator's about
 one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
 
+A USB Android 8.1 phone (Honor JSN-L22, API 27, SwiftKey) plus two API 36
+x86_64 emulators passed all five Group invites and Media production journeys
+on 2026-10-17 (`invites`, `invite-matrix`, `invite-accept-spinner`,
+`new-member-media`, `delete-preserves-friends`) after these repairs:
+the preflight accepts API 27's process-dump ending (`mLastIdleTime=…`);
+POST_NOTIFICATIONS is granted only on API 33+; `simsAndroidAbi` now really
+narrows the APK (Flutter's default ABIs were unioned in) and accepts
+`arm64-v8a+x86_64`, because arm64 Go code dies under the emulators' ARM
+translation (`berberis: Undefined instruction 0xd5380000`, `MRS MIDR_EL1`);
+`production_reopen_seeded` waits 45 s (debug cold start reached `runApp` at
+16.7 s); the delete runner sends through a per-device verbatim keyboard
+session; `production_group_send` uses bounded backs (`hideKeyboard` acts as
+Back there); the group name field (`group_name_field`) and group info button
+(`group_info_button`, explicit label) carry automation ids because API 27
+exposes neither a text-field hint nor a tooltip-only label as plain text.
+Setup on such a phone: automatic time on (a 1970 clock fails every relay
+TLS dial) and `io.appium.settings` installed for the verbatim keyboard.
+Evidence: `.codex-test-logs/phone-emu/run-1` … `run-12`.
+
 The group multi-party integration harness must register `testWidgets` before
 awaiting platform runtime configuration; put asynchronous configuration in
 `setUpAll` and keep registration-time names independent of late runtime fields.

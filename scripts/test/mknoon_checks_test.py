@@ -587,6 +587,9 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ANDROID_ABI'], '')
         config['sims_android_abi'] = 'x86_64'
         self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ANDROID_ABI'], 'x86_64')
+        config['sims_android_abi'] = 'arm64-v8a+x86_64'
+        self.assertEqual(checks.sims_environment(config, self.root / 'report.json')['SIMS_ANDROID_ABI'],
+                         'arm64-v8a+x86_64')
         config['sims_android_abi'] = 'x86'
         with self.assertRaises(checks.InvalidPlan):
             checks.sims_environment(config, self.root / 'report.json')

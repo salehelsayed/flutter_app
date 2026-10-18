@@ -1137,14 +1137,17 @@ final class SimsBuildOrchestrator {
 }
 
 /// Android ABI for SIMS builds. Defaults to arm64-v8a (USB phones and Apple
-/// Silicon emulators); `SIMS_ANDROID_ABI=x86_64` opts into x86_64 emulators.
+/// Silicon emulators); `SIMS_ANDROID_ABI=x86_64` opts into x86_64 emulators,
+/// and `arm64-v8a+x86_64` builds one APK for a USB phone plus x86_64
+/// emulators (arm64 Go code cannot run under the emulators' ARM translation).
 String effectiveSimsAndroidAbi([Map<String, String>? environment]) {
   final raw = (environment ?? Platform.environment)['SIMS_ANDROID_ABI']?.trim();
   return switch (raw) {
     null || '' || 'arm64-v8a' => 'arm64-v8a',
     'x86_64' => 'x86_64',
+    'arm64-v8a+x86_64' => 'arm64-v8a+x86_64',
     _ => throw FormatException(
-      'SIMS_ANDROID_ABI must be arm64-v8a or x86_64',
+      'SIMS_ANDROID_ABI must be arm64-v8a, x86_64 or arm64-v8a+x86_64',
       raw,
     ),
   };
@@ -1201,6 +1204,10 @@ List<String> effectiveSimsBuildArguments(
         'x86_64' => const <String>[
           '--target-platform=android-x64',
           '--android-project-arg=simsAndroidAbi=x86_64',
+        ],
+        'arm64-v8a+x86_64' => const <String>[
+          '--target-platform=android-arm64,android-x64',
+          '--android-project-arg=simsAndroidAbi=arm64-v8a+x86_64',
         ],
         _ => const <String>[
           '--target-platform=android-arm64',
@@ -2230,9 +2237,11 @@ String _architectureFor(
   Map<String, String> environment,
 ) {
   if (profile.platform == 'android') {
-    return effectiveSimsAndroidAbi(environment) == 'x86_64'
-        ? 'android-x64'
-        : 'android-arm64';
+    return switch (effectiveSimsAndroidAbi(environment)) {
+      'x86_64' => 'android-x64',
+      'arm64-v8a+x86_64' => 'android-arm64+x64',
+      _ => 'android-arm64',
+    };
   }
   if (profile.artifactKind.contains('universal') ||
       profile.artifactKind == 'apk') {

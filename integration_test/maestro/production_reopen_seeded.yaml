@@ -3,8 +3,11 @@ name: production_reopen_seeded
 ---
 - stopApp
 - launchApp
-- assertVisible:
-    id: orbit.view.all_chats
+# A debug build cold start on an older phone can exceed assertVisible's ~17 s.
+- extendedWaitUntil:
+    visible:
+      id: orbit.view.all_chats
+    timeout: 45000
 # A relaunch after missed messages can raise a heads-up notification over the
 # top of the screen at any moment; dismiss it and retry the view switch.
 - retry:

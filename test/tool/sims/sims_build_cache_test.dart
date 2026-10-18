@@ -208,6 +208,29 @@ void main() {
     );
   });
 
+  test('SIMS_ANDROID_ABI=arm64-v8a+x86_64 builds one APK for a phone and '
+      'x86_64 emulators', () {
+    final manifest = SimsManifest.loadSync(
+      File('tool/sims/critical_features.json'),
+    );
+    final profile = manifest.buildProfileById('android.e2e.production')!;
+    const environment = <String, String>{
+      'SIMS_ANDROID_ABI': 'arm64-v8a+x86_64',
+    };
+    expect(effectiveSimsAndroidAbi(environment), 'arm64-v8a+x86_64');
+    final arguments = effectiveSimsBuildArguments(
+      profile,
+      environment: environment,
+    );
+    expect(arguments, contains('--target-platform=android-arm64,android-x64'));
+    expect(
+      arguments,
+      contains('--android-project-arg=simsAndroidAbi=arm64-v8a+x86_64'),
+    );
+    expect(arguments, isNot(contains('--target-platform=android-arm64')));
+    expect(arguments, isNot(contains('--target-platform=android-x64')));
+  });
+
   test(
     'production-call APK command and cache identity include every native option',
     () {

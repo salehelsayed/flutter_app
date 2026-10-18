@@ -464,13 +464,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
         'production-journey/runtime-config.json',
         p.invocation.toJson(),
       );
-      await p.adb([
-        'shell',
-        'pm',
-        'grant',
-        p.packageName,
-        'android.permission.POST_NOTIFICATIONS',
-      ]);
+      await p.grantPostNotifications();
     }
     for (final p in actors) {
       await p.adb([
@@ -546,13 +540,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
       'production-journey/runtime-config.json',
       next.invocation.toJson(),
     );
-    await next.adb([
-      'shell',
-      'pm',
-      'grant',
-      productionJourneyAndroidPackage,
-      'android.permission.POST_NOTIFICATIONS',
-    ]);
+    await next.grantPostNotifications();
     await flow(next, 'production_resume', 'alice-fresh-performance');
     await next.awaitReady();
     return next;

@@ -229,12 +229,15 @@ val keystorePropertiesFile = rootProject.file("key.properties")
 val hasReleaseSigning = keystorePropertiesFile.exists()
 val allowDebugSigningInRelease =
     providers.gradleProperty("allowDebugSigningInRelease").orNull == "true"
-val simsAndroidAbi =
+val simsAndroidAbis =
     when (val raw = providers.gradleProperty("simsAndroidAbi").orNull?.trim()) {
         null, "" -> null
-        "arm64-v8a", "x86_64" -> raw
+        "arm64-v8a", "x86_64" -> listOf(raw)
+        // A USB arm64 phone plus x86_64 emulators: arm64 Go code cannot run
+        // under the emulators' ARM translation, so each device needs its ABI.
+        "arm64-v8a+x86_64" -> listOf("arm64-v8a", "x86_64")
         else -> throw GradleException(
-            "simsAndroidAbi must be exactly arm64-v8a or x86_64 when supplied."
+            "simsAndroidAbi must be exactly arm64-v8a, x86_64 or arm64-v8a+x86_64 when supplied."
         )
     }
 
@@ -376,10 +379,10 @@ android {
 
     buildTypes {
         getByName("debug") {
-            simsAndroidAbi?.let { abi ->
+            simsAndroidAbis?.let { abis ->
                 ndk {
                     abiFilters.clear()
-                    abiFilters.add(abi)
+                    abis.forEach { abi -> abiFilters.add(abi) }
                 }
             }
         }
@@ -542,6 +545,22 @@ if (
                 "Android release builds require android/app/google-services.json.\n" +
                     "Keep the file out of git, but inject it locally or in CI before release builds."
             )
+        }
+    }
+}
+
+// Flutter's plugin adds its default ABIs to defaultConfig and AGP unions them
+// with the debug filter above, so the APK still carried other ABIs' plugin
+// libraries. On an x86_64 emulator those make Android install the app as
+// x86_64, skip ARM translation, and fail to load the arm64-only libflutter.so.
+simsAndroidAbis?.let { abis ->
+    androidComponents {
+        onVariants(selector().withBuildType("debug")) { variant ->
+            listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+                .filter { it !in abis }
+                .forEach { other ->
+                    variant.packaging.jniLibs.excludes.add("lib/$other/**")
+                }
         }
     }
 }

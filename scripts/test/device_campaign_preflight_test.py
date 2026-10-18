@@ -26,6 +26,14 @@ IDLE = """ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)
 """
 BUSY = IDLE.replace('  Process LRU list',
                     '  Active instrumentation:\n    Instrumentation #0: private-canary\n  Process LRU list')
+# Android 8.1 (API 27) predates mForceBackgroundCheck: its process dump ends
+# with mLastIdleTime/mLowRamSinceLastIdle. Shape of a USB Honor JSN-L22 dump.
+IDLE_API27 = IDLE.replace('  mForceBackgroundCheck=false\n', (
+    '  mNumNonCachedProcs=27 (51 total) mNumCachedHiddenProcs=0 mNumServiceProcs=8 mNewNumServiceProcs=8\n'
+    '  mAllowLowerMemLevel=false mLastMemoryLevel=0 mLastNumProcesses=51\n'
+    '  mLastIdleTime=+20m8s830ms mLowRamSinceLastIdle=0\n'))
+BUSY_API27 = IDLE_API27.replace('  Process LRU list',
+                    '  Active instrumentation:\n    Instrumentation #0: private-canary\n  Process LRU list')
 
 
 
@@ -91,6 +99,18 @@ class CampaignPreflightTest(unittest.TestCase):
                                 'mForceBackgroundCheck=' + force_background_check)
             self.assertEqual(preflight.instrumentation_state(body), 'idle')
             self.assertEqual(preflight.instrumentation_state('\n' + body + '\n'), 'idle')
+
+    def test_api27_frames_end_at_last_idle_time(self):
+        self.assertEqual(preflight.instrumentation_state(IDLE_API27), 'idle')
+        self.assertEqual(preflight.instrumentation_state(
+            IDLE_API27.replace('mLowRamSinceLastIdle=0', 'mLowRamSinceLastIdle=12MB')), 'idle')
+        self.assertEqual(preflight.instrumentation_state(BUSY_API27), 'busy')
+        for body in (IDLE_API27.rsplit('  mLastIdleTime=', 1)[0],
+                     IDLE_API27 + 'unrecognized trailing output\n',
+                     IDLE_API27.replace('mProcessesReady=true', 'unknownProcessState=true'),
+                     IDLE_API27 + IDLE_API27):
+            with self.subTest(body=body):
+                self.assertEqual(preflight.instrumentation_state(body), 'unavailable')
 
     def test_both_pinned_targets_precede_audited_no_device_listing(self):
         receipt, commands = self.run_fixture([(IDLE, 0, False, .01)] * 2 + [

@@ -1312,8 +1312,8 @@ def sims_environment(config, report, check=None):
     # Always written so an ambient shell value cannot enable the opt-in.
     env['SIMS_ALLOW_EMULATOR_AS_ANDROID_PHYSICAL'] = '1' if allows_emulator_as_android_physical(config) else ''
     abi = config.get('sims_android_abi', '')
-    if abi not in ('', 'arm64-v8a', 'x86_64'):
-        raise InvalidPlan('sims_android_abi must be arm64-v8a or x86_64')
+    if abi not in ('', 'arm64-v8a', 'x86_64', 'arm64-v8a+x86_64'):
+        raise InvalidPlan('sims_android_abi must be arm64-v8a, x86_64 or arm64-v8a+x86_64')
     env['SIMS_ANDROID_ABI'] = abi
     pins = {('ios-simulator-a' if k == 'ios_simulator' else k.replace('_', '-')): v for k,v in ids.items()}
     if ids.get('ios_simulator') and ids.get('ios_simulator_a') != ids['ios_simulator'] and ids.get('ios_simulator_a'):

@@ -85,12 +85,22 @@ void main() {
       expect(
         appBuild,
         contains(
-          'simsAndroidAbi must be exactly arm64-v8a or x86_64 when supplied.',
+          'simsAndroidAbi must be exactly arm64-v8a, x86_64 or '
+          'arm64-v8a+x86_64 when supplied.',
         ),
       );
+      // A USB arm64 phone plus x86_64 emulators share one dual-ABI APK.
+      expect(appBuild, contains('"arm64-v8a+x86_64" -> listOf("arm64-v8a", "x86_64")'));
       expect(appBuild, contains('getByName("debug")'));
       expect(appBuild, contains('abiFilters.clear()'));
-      expect(appBuild, contains('abiFilters.add(abi)'));
+      expect(appBuild, contains('abis.forEach { abi -> abiFilters.add(abi) }'));
+      // Flutter's plugin adds its default ABIs to defaultConfig and AGP unions
+      // them with the build-type filter, so only packaging exclusion narrows
+      // the APK. A stray x86_64 library makes an x86_64 emulator skip ARM
+      // translation and fail to load the arm64-only libflutter.so.
+      expect(appBuild, contains('withBuildType("debug")'));
+      expect(appBuild, contains('variant.packaging.jniLibs.excludes.add('));
+      expect(appBuild, contains('"lib/\$other/**"'));
       expect(
         orchestrator,
         contains('--android-project-arg=simsAndroidAbi=arm64-v8a'),
