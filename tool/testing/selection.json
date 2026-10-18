@@ -1195,7 +1195,8 @@
         "test/tool/sims/sims_build_cache_test.dart",
         "test/integration/android_app_package_test.dart",
         "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
-        "test/tool/sims/sims_verification_test.dart"
+        "test/tool/sims/sims_verification_test.dart",
+        "test/integration/android_production_audio_call_evidence_test.dart"
       ],
       "boundary": "Local audio proof binds a disposable package across prepared APK, cache, app-owned controls and native activity launch; shared iOS cache identity includes native compilation conditions and preserves Release settings",
       "limitations": "Host command and semantic UI fixtures preserve campaign safety; actual bidirectional audio and cleanup still require device-audio. This profile does not exercise FCM delivery.",
@@ -5431,7 +5432,9 @@
         "tool/sims/build_orchestrator.dart",
         "test/tool/sims/sims_build_cache_test.dart",
         "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
-        "lib/core/debug/intro_e2e_runner.dart"
+        "lib/core/debug/intro_e2e_runner.dart",
+        "integration_test/support/android_production_audio_call_evidence.dart",
+        "test/integration/android_production_audio_call_evidence_test.dart"
       ],
       "checks": [
         "production-audio-harness-contract",
