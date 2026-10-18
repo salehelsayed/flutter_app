@@ -1062,6 +1062,20 @@ lock remains, with an additional cooperating cross-checkout lease for shared
 Flutter/native/AAR outputs. SIMS Flutter/native host rows also share an exclusive
 build resource. This does not fence unmanaged external build processes.
 
+Host-only SIMS test rows (non-artifact `host.*` profiles with only `host.*`
+targets) remove inherited `MKNOON_*`/`SIMS_*` run settings while preserving
+`MKNOON_HOST_*`, `SIMS_HOST_*`, `SIMS_MAX_PARALLEL` and ordinary SDK/process
+variables. Their subprocesses disable automatic parent-environment inheritance
+so removed settings cannot reappear. Explicit per-capability bindings are
+applied afterward; synthetic sentinel inputs use that existing binding API.
+Device, artifact and mixed-target rows retain their preservation and relay
+settings. In `.codex-test-logs/S2-baseline-fixes-20261018/F2/`, the real host row
+with incoming `MKNOON_PRESERVE_PHYSICAL_APP_DATA=1` changed from 31 passing/33
+failing guard cases to all 64 passing; the curated SIMS lane passed 304 cases,
+including all 47 executor cases and the nonhost preservation canary. Its
+diagnostic wrapper result remains `NOT RUN` overall because other required
+checks were omitted.
+
 `selection.json` owns `full_inventory`: audited listing expansion, automatic
 source selectors, source registrations, scenario catalogs and explicit exclusions.
 `discover` and `full --plan` reconcile tracked and nonignored source files,

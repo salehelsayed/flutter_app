@@ -520,6 +520,68 @@ void main() {
     expect(execution.verdict.blocker, SimsBlockerKind.missingArtifact);
   });
 
+  for (final host in [true, false]) {
+    test(
+      host
+          ? 'host test rows remove inherited device settings'
+          : 'device rows retain preservation and relay settings',
+      () async {
+        final row =
+            _processRow(
+              declaredBuildException: true,
+              command: const [
+                'python3',
+                '-c',
+                r'''import json, os
+keys = ['MKNOON_PRESERVE_PHYSICAL_APP_DATA', 'MKNOON_RELAY_ADDRESSES',
+        'SIMS_MANIFEST', 'SIMS_DEVICE_ASSIGNMENTS_JSON',
+        'MKNOON_HOST_FLUTTER_WORKERS', 'SIMS_HOST_CONCURRENCY', 'SIMS_MAX_PARALLEL']
+print(json.dumps({**{k: os.environ.get(k) for k in keys},
+                  'homePresent': bool(os.environ.get('HOME')),
+                  'pathPresent': bool(os.environ.get('PATH'))}))''',
+              ],
+            ).copyWith(
+              targetCapabilities: host
+                  ? const ['host.python3']
+                  : const ['android.emulator'],
+            );
+        final values = <String, String>{
+          ...Platform.environment,
+          'MKNOON_PRESERVE_PHYSICAL_APP_DATA': '1',
+          'MKNOON_RELAY_ADDRESSES': 'fixture-relay',
+          'SIMS_MANIFEST': 'fixture-manifest',
+          'SIMS_DEVICE_ASSIGNMENTS_JSON': 'fixture-assignments',
+          'MKNOON_HOST_FLUTTER_WORKERS': '1',
+          'SIMS_HOST_CONCURRENCY': '1',
+          'SIMS_MAX_PARALLEL': '1',
+        };
+        final execution = await SimsProcessExecutor(
+          logDirectory: Directory('${temporaryDirectory.path}/logs'),
+          environment: values,
+        ).execute(row);
+        expect(execution.verdict.status, SimsVerdictStatus.pass);
+        final actual = jsonDecode(execution.stdoutText) as Map;
+        for (final key in [
+          'MKNOON_PRESERVE_PHYSICAL_APP_DATA',
+          'MKNOON_RELAY_ADDRESSES',
+          'SIMS_MANIFEST',
+          'SIMS_DEVICE_ASSIGNMENTS_JSON',
+        ]) {
+          expect(actual[key], host ? isNull : values[key], reason: key);
+        }
+        for (final key in [
+          'MKNOON_HOST_FLUTTER_WORKERS',
+          'SIMS_HOST_CONCURRENCY',
+          'SIMS_MAX_PARALLEL',
+        ]) {
+          expect(actual[key], '1', reason: key);
+        }
+        expect(actual['homePresent'], isTrue);
+        expect(actual['pathPresent'], isTrue);
+      },
+    );
+  }
+
   test('capability environment overrides global device assignments', () async {
     final row = _processRow(declaredBuildException: true).copyWith(
       command: const <String>[
@@ -913,15 +975,8 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
   Future<SimsCommandExecution> executeStructuredSentinel(
     Map<String, Object?> sentinel, {
     int processExitCode = 0,
-  }) =>
-      SimsProcessExecutor(
-        logDirectory: Directory('${temporaryDirectory.path}/logs'),
-        environment: <String, String>{
-          ...Platform.environment,
-          'SIMS_TEST_SENTINEL': jsonEncode(sentinel),
-          'SIMS_TEST_EXIT': '$processExitCode',
-        },
-      ).execute(
+  }) {
+    final row =
         _processRow(
           declaredBuildException: true,
           allowTargetUnavailable: true,
@@ -931,8 +986,17 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
             '-c',
             r'''printf 'SIMS_RESULT_JSON=%s\n' "$SIMS_TEST_SENTINEL"; exit "$SIMS_TEST_EXIT"''',
           ],
-        ),
-      );
+        );
+    return SimsProcessExecutor(
+      logDirectory: Directory('${temporaryDirectory.path}/logs'),
+      environmentByCapabilityId: <String, Map<String, String>>{
+        row.id: <String, String>{
+          'SIMS_TEST_SENTINEL': jsonEncode(sentinel),
+          'SIMS_TEST_EXIT': '$processExitCode',
+        },
+      },
+    ).execute(row);
+  }
 
   Map<String, Object?> passSentinel({Object? evidence}) => <String, Object?>{
     'status': 'PASS',

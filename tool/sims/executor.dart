@@ -153,10 +153,26 @@ final class SimsProcessExecutor {
       }
     }
 
+    final hostOnly = _isHostOnlyRow(row);
     final childEnvironment = <String, String>{
+      if (hostOnly) ...Platform.environment,
       ...environment,
-      ...?environmentByCapabilityId[row.id],
-    }..removeWhere((name, _) => name.startsWith('SIMS_ARTIFACT_'));
+    };
+    if (hostOnly) {
+      // Host fixtures must use their own device/relay configuration. Keep the
+      // ordinary SDK/process environment and the launcher's host worker bounds.
+      childEnvironment.removeWhere(
+        (name, _) =>
+            (name.startsWith('MKNOON_') || name.startsWith('SIMS_')) &&
+            !name.startsWith('MKNOON_HOST_') &&
+            !name.startsWith('SIMS_HOST_') &&
+            name != 'SIMS_MAX_PARALLEL',
+      );
+    }
+    // Explicit row bindings are intentional, unlike inherited launcher state.
+    childEnvironment
+      ..addAll(environmentByCapabilityId[row.id] ?? const <String, String>{})
+      ..removeWhere((name, _) => name.startsWith('SIMS_ARTIFACT_'));
     childEnvironment.addAll(<String, String>{
       'SIMS_CAPABILITY_ID': row.id,
       'SIMS_ARTIFACT_PROFILE_ID': row.buildProfileId,
@@ -343,6 +359,7 @@ final class SimsProcessExecutor {
         executable,
         arguments,
         environment: childEnvironment,
+        includeParentEnvironment: !_isHostOnlyRow(row),
       );
       final child = process;
       void failed(Object error) {
@@ -787,6 +804,11 @@ String? _resolveExecutable(String executable, Map<String, String> environment) {
 }
 
 String _shellQuote(String value) => "'${value.replaceAll("'", "'\"'\"'")}'";
+
+bool _isHostOnlyRow(CapabilitySpec row) =>
+    row.buildProfileId.startsWith('host.') &&
+    !row.artifactRequired &&
+    row.targetCapabilities.every((target) => target.startsWith('host.'));
 
 String _safeFileName(String value) =>
     value.replaceAll(RegExp('[^A-Za-z0-9_.-]'), '_');
