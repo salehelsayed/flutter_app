@@ -431,14 +431,29 @@ class GroupConversationScreen extends StatelessWidget {
               ),
             ),
             if (onInfo != null)
-              IconButton(
-                tooltip: AppLocalizations.of(context)!.action_group_information,
-                icon: Icon(
-                  Icons.info_outline,
-                  color: readableColors.iconSecondary,
-                  size: 22,
+              // One explicit node for the label, tap and automation id:
+              // Android 8.1 exposed the tooltip-only label as
+              // "\nGroup information", which exact-text selectors miss.
+              Semantics(
+                container: true,
+                identifier: 'group_info_button',
+                button: true,
+                enabled: true,
+                label: AppLocalizations.of(context)!.action_group_information,
+                onTap: onInfo,
+                child: ExcludeSemantics(
+                  child: IconButton(
+                    tooltip: AppLocalizations.of(
+                      context,
+                    )!.action_group_information,
+                    icon: Icon(
+                      Icons.info_outline,
+                      color: readableColors.iconSecondary,
+                      size: 22,
+                    ),
+                    onPressed: onInfo,
+                  ),
                 ),
-                onPressed: onInfo,
               ),
           ],
         ),
