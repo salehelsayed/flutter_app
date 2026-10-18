@@ -2541,6 +2541,17 @@ invocations with the variable absent retain legacy public defaults. The audited
 route hashes the suite, both independently launching scripts, the boundary and
 completion helpers, and the host-file protocol sources.
 
+The multi-party relay oracle compares the exact profile selected by the
+`MKNOON_RELAY_ADDRESSES` compile define. Plain host oracles use the same
+validated launcher input forwarded by the central builder; a compiled define
+always takes priority over ambient configuration. Missing or mismatched
+observations fail, and an unconfigured production build retains the existing
+public profile. On the PR-first candidate, the custom-profile criteria passed
+571 cases and the default-profile curated group check passed 929 cases.
+The original compile-profile failure and both configuration results are retained
+under `.codex-test-logs/S2-baseline-fixes-20261018/F1/`. These host checks do not
+certify relay connectivity or a device campaign.
+
 The full legacy command depends on the SIMS aggregate. Its curated host paths
 emit explicit `HOST_RESULT_ALIAS host.dart.all <path>` rows and consume the
 canonical host result. The seven old directory sweeps, host benchmark duplicate

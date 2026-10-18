@@ -691,6 +691,48 @@ void main() {
       expect(wrong.detail, contains('does not match'));
     });
 
+    test('relay configuration matches the compiled relay define', () {
+      const compiled = String.fromEnvironment(
+        'MKNOON_RELAY_ADDRESSES',
+        defaultValue: expectedMultiPartyRelayAddresses,
+      );
+      expect(evaluateRelayConfiguration(compiled).ok, isTrue);
+      expect(evaluateRelayConfiguration(null).ok, isFalse);
+      expect(evaluateRelayConfiguration('$compiled,unexpected').ok, isFalse);
+    });
+
+    test('relay configuration keeps the selected build input exact', () {
+      const fixture =
+          '/dns/relay.fixture.invalid/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+      final selected = expectedMultiPartyRelayAddresses == fixture
+          ? fixture.replaceFirst('relay.fixture', 'other.fixture')
+          : fixture;
+      final buildInput = {'MKNOON_RELAY_ADDRESSES': selected};
+      const compiled = bool.hasEnvironment('MKNOON_RELAY_ADDRESSES');
+      expect(
+        evaluateRelayConfiguration(selected, buildEnvironment: buildInput).ok,
+        !compiled,
+      );
+      expect(
+        evaluateRelayConfiguration(
+          expectedMultiPartyRelayAddresses,
+          buildEnvironment: buildInput,
+        ).ok,
+        compiled,
+      );
+      expect(
+        evaluateRelayConfiguration(null, buildEnvironment: buildInput).ok,
+        isFalse,
+      );
+      expect(
+        evaluateRelayConfiguration(
+          expectedMultiPartyRelayAddresses,
+          buildEnvironment: const {},
+        ).ok,
+        isTrue,
+      );
+    });
+
     test(
       'ML-016 private_non_friend_member_delivery accepts no-contact Dana delivery proof',
       () {
@@ -3226,13 +3268,11 @@ void main() {
 
     test('NW-004 rejects recovery without rejoin or preserved topics', () {
       final verdicts = _validPrivateRelayReconnectGroupRecoveryVerdicts();
-      verdicts[1] = _withNw004ProofOverrides(
-        verdicts[1],
-        const <String, Object?>{
-          'groupTopicsRejoinedAfterReconnect': false,
-          'topicsPreservedInPlace': false,
-        },
-      );
+      verdicts[1] =
+          _withNw004ProofOverrides(verdicts[1], const <String, Object?>{
+            'groupTopicsRejoinedAfterReconnect': false,
+            'topicsPreservedInPlace': false,
+          });
 
       final rejected = evaluateGroupMultiPartyVerdicts(
         scenario: 'private_relay_reconnect_group_recovery',

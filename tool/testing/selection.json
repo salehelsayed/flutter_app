@@ -1268,6 +1268,7 @@
         "test/features/groups/application/send_group_message_use_case_test.dart",
         "test/core/utils/flow_event_emitter_test.dart",
         "test/integration/group_multi_party_launch_spec_test.dart",
+        "test/integration/group_multi_party_device_criteria_test.dart",
         "test/integration/invite_reliability_runner_contract_test.dart"
       ],
       "boundary": "Shared group fixtures and paired invitation runners preserve strict dependencies, bounded failure observations and terminal evidence before either device exits",
@@ -5522,6 +5523,8 @@
         "test/integration/group_multi_device_shared_path_test.dart",
         "integration_test/scripts/run_b1b_sibling_device_convergence.dart",
         "test/integration/group_multi_party_launch_spec_test.dart",
+        "integration_test/scripts/group_multi_party_device_criteria.dart",
+        "test/integration/group_multi_party_device_criteria_test.dart",
         "integration_test/group_recovery_cli_e2e_test.dart",
         "integration_test/scripts/run_invite_reliability_multi_device.dart",
         "test/integration/invite_reliability_runner_contract_test.dart"

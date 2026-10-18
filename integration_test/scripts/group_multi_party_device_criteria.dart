@@ -1,6 +1,13 @@
-const expectedMultiPartyRelayAddresses =
+import 'dart:io';
+
+const _productionMultiPartyRelayAddresses =
     '/dns/mknoun.xyz/tcp/4001/wss/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g,'
     '/dns/mknoun.xyz/udp/4002/quic-v1/p2p/12D3KooWGMYMmN1RGUYjWaSV6P3XtnBjwnosnJGNMnttfVCRnd6g';
+
+const expectedMultiPartyRelayAddresses = String.fromEnvironment(
+  'MKNOON_RELAY_ADDRESSES',
+  defaultValue: _productionMultiPartyRelayAddresses,
+);
 
 class GroupMultiPartyCriterion {
   const GroupMultiPartyCriterion(this.ok, this.detail);
@@ -727,7 +734,10 @@ Map<String, String> roleDeviceMapForScenario({
   };
 }
 
-GroupMultiPartyCriterion evaluateRelayConfiguration(String? relayAddresses) {
+GroupMultiPartyCriterion evaluateRelayConfiguration(
+  String? relayAddresses, {
+  Map<String, String>? buildEnvironment,
+}) {
   final normalized = relayAddresses?.trim() ?? '';
   if (normalized.isEmpty) {
     return const GroupMultiPartyCriterion(
@@ -735,7 +745,18 @@ GroupMultiPartyCriterion evaluateRelayConfiguration(String? relayAddresses) {
       'MKNOON_RELAY_ADDRESSES is required for multi-party device proof',
     );
   }
-  if (normalized != expectedMultiPartyRelayAddresses) {
+  // Device code uses its compiled profile. Plain host oracles use the same
+  // validated launcher input that C1 forwards to the central app build. A
+  // compiled define takes priority over the host environment.
+  final configured =
+      (buildEnvironment ?? Platform.environment)['MKNOON_RELAY_ADDRESSES']
+          ?.trim();
+  final expected = const bool.hasEnvironment('MKNOON_RELAY_ADDRESSES')
+      ? expectedMultiPartyRelayAddresses.trim()
+      : configured == null || configured.isEmpty
+      ? expectedMultiPartyRelayAddresses
+      : configured;
+  if (normalized != expected) {
     return const GroupMultiPartyCriterion(
       false,
       'MKNOON_RELAY_ADDRESSES does not match the required app relay profile',
