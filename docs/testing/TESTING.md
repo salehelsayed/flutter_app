@@ -934,6 +934,15 @@ guard or replace it with an existence check. The original checksum failures
 and focused rechecks are retained under
 `.codex-test-logs/audio-validation-fixes-20261010/`.
 
+DTR-18's Conversation media-adapter body pin also needs Plan 414's existing
+`fileName: stored.fileName` assignment during incoming reconstruction. That
+single owner-commit addition accounts for the complete normalized digest change;
+removing only the line reproduces the previous pin. SE-47/SE-55 did not cause
+this drift. The production adapter stays unchanged, and all four placement
+contract cases still enforce the 22 adapter locations, stale-consumer/source-lock
+rejection and exact dependency floor. Causal source hashes and the passing
+contract are retained in `.codex-test-logs/S2-baseline-fixes-20261018/F4/`.
+
 The full inventory routes direct-media custody, production one-to-one audio,
 and fixed-wake recovery through their existing outer fixture adapters. These
 adapters start the local service before compiling the relay address into the

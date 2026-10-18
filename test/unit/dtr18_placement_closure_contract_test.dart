@@ -77,7 +77,10 @@ const _relocations = <String, List<String>>{
     // The committed build-119 repair requalifies incoming group custody against
     // the exact stored key under the existing attachment lifecycle lease.
     // The SQL CAS and this adapter's placement remain unchanged.
-    'b865f0a7ff5fc073bad7b13617105acb44147987cdb0c8aba4f6dd9d2be31362',
+    // Plan 414 preserves stored.fileName during incoming reconstruction in
+    // this same data adapter. Removing only that line reproduces the prior pin;
+    // placement, ownership and dependency direction are unchanged.
+    'f0ac543584446f9acd86c160e716a6e7b12216fee31d020104e8988cae96f902',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
