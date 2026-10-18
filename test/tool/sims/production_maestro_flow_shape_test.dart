@@ -4,6 +4,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
+  test('input flows retap after hiding the keyboard before typing', () {
+    final missingRetaps = <String>[];
+    for (final file
+        in Directory('integration_test/maestro')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((file) => file.path.endsWith('.yaml'))) {
+      final flow =
+          loadYamlDocuments(file.readAsStringSync()).last.contents as YamlList;
+      var hidden = false;
+      for (final step in _flowCommands(flow)) {
+        if (step == 'hideKeyboard') {
+          hidden = true;
+        } else if (step is YamlMap && step.containsKey('tapOn')) {
+          hidden = false;
+        } else if (step is YamlMap && step.containsKey('inputText') && hidden) {
+          missingRetaps.add(file.path);
+        }
+      }
+    }
+    expect(missingRetaps, isEmpty);
+  });
+
   test('reopen flow waits past a slow phone cold start before asserting '
       'Orbit', () {
     // A debug build on an Android 8.1 Honor JSN-L22 reached runApp 16.7 s
@@ -153,4 +176,17 @@ void main() {
     );
     expect(tap, greaterThan(scroll));
   });
+}
+
+Iterable<Object?> _flowCommands(YamlList steps) sync* {
+  for (final step in steps) {
+    yield step;
+    if (step is YamlMap) {
+      for (final value in step.values.whereType<YamlMap>()) {
+        if (value['commands'] is YamlList) {
+          yield* _flowCommands(value['commands'] as YamlList);
+        }
+      }
+    }
+  }
 }

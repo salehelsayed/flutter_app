@@ -4,6 +4,8 @@ name: production_direct_send
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE}
 - assertVisible:
     id: chat_composer

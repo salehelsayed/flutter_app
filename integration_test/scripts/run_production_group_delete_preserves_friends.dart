@@ -257,8 +257,11 @@ Future<void> main(List<String> arguments) async {
       ).writeAsString(jsonEncode({'failures': failures}));
       if (failures.isNotEmpty) throw StateError(failures.join('; '));
     } finally {
-      await restoreKeyboards();
-      await journey.restore();
+      try {
+        await restoreKeyboards();
+      } finally {
+        await journey.restore();
+      }
     }
     evidence = writeSimsArtifactEvidenceSync(
       directory: output,

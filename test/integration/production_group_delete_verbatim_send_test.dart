@@ -19,7 +19,7 @@ void main() {
       runner,
       matches(
         RegExp(
-          r'finally \{\s*await restoreKeyboards\(\);\s*await journey\.restore\(\);',
+          r'finally \{\s*try \{\s*await restoreKeyboards\(\);\s*\} finally \{\s*await journey\.restore\(\);',
         ),
       ),
     );

@@ -1725,6 +1725,20 @@ receipts. Evidence: `production-bootstrap-migration-20260927/`
 and `wave2-flow-identity-causal-001.log`. This repair does not certify the
 remaining routing scenarios or change any original harness.
 
+Keyboard dismissal now intentionally drops composer focus. Direct and batch
+send flows must re-tap the composer before `inputText`. A `deviceInfo` error
+can occur after a send: retry driver startup only when the attempt contains
+no command-execution markers, retaining the original failure otherwise.
+Keyboard cleanup must use a nested `finally` so app-state restoration is
+attempted even when restoring an input method fails. Newly added
+manifest-owned journey adapters and regression support also need exact
+discovery classifications and the shared classified result helper.
+The PR/queue host check passes 606 cases, with 14 preflight contracts and clean
+targeted analysis. The three causal failures, first integration failures and
+corrected run remain in `.codex-test-logs/pr15-review-20261018/`
+(`005-addendum-red.log`, `003-merged-flutter.log`, `010-merged-flutter.log`).
+These are host contracts; they do not certify a device journey.
+
 The later cached routing attempt reached S14 after recording the cases through
 S12/S13, then retained a three-minute exact-row timeout. Requested text contained
 `relay fallback`; the actual delivered row contained `relay Fallback`, with a

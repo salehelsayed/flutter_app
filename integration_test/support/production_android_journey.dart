@@ -170,23 +170,26 @@ final class ProductionJourneyFlowRunner {
     );
     if (result.exitCode != 0) {
       final log = File('${destination.path}/process.log');
-      if (log.existsSync() &&
-          _driverNeverStarted.any(log.readAsStringSync().contains)) {
-        throw const _DriverNeverStarted();
-      }
-      // Maestro's console omits the cause; its debug log names a device
-      // server that died or failed while reading device info, before any UI
-      // step.
+      final console = log.existsSync() ? log.readAsStringSync() : '';
+      var commandStarted = _maestroCommandStarted.hasMatch(console);
+      var driverNeverStarted = _driverNeverStarted.any(console.contains);
+      // deviceInfo is also called by later commands. A driver error alone
+      // cannot prove that replaying this attempt would repeat no UI action.
       final debug = Directory('${destination.path}/debug');
-      if (debug.existsSync() &&
-          debug
-              .listSync(recursive: true)
-              .whereType<File>()
-              .where((file) => file.path.endsWith('/maestro.log'))
-              .any((file) {
-                final text = file.readAsStringSync();
-                return _deviceInfoFailed.any(text.contains);
-              })) {
+      if (debug.existsSync()) {
+        for (final file
+            in debug
+                .listSync(recursive: true)
+                .whereType<File>()
+                .where((file) => file.path.endsWith('/maestro.log'))) {
+          final text = file.readAsStringSync();
+          commandStarted =
+              commandStarted || _maestroCommandStarted.hasMatch(text);
+          driverNeverStarted =
+              driverNeverStarted || _deviceInfoFailed.any(text.contains);
+        }
+      }
+      if (driverNeverStarted && !commandStarted) {
         throw const _DriverNeverStarted();
       }
       throw StateError('$label Maestro flow failed');
@@ -213,12 +216,19 @@ const _driverNeverStarted = [
   'Unable to launch',
 ];
 
-// Maestro debug-log causes of a flow that failed while fetching device
-// information, which it does before the first step.
+// Device-info errors can occur during startup or a later command. Their retry
+// also requires the attempt's command-start guard above.
 const _deviceInfoFailed = [
   "Device server died during 'deviceInfo'",
   "'deviceInfo' failed:",
 ];
+
+// Maestro logs RUNNING before a command executes. Retain a failure once any
+// command started, including a later deviceInfo death after a successful send.
+final _maestroCommandStarted = RegExp(
+  r'\bMaestroCommandRunner[^\r\n]*\b(?:RUNNING|COMPLETED|FAILED|WARNED)\b'
+  r'|\[Command execution\]',
+);
 
 bool _isSimulator(String device) => RegExp(
   r'^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$',

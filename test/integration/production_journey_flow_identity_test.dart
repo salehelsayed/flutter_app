@@ -132,4 +132,21 @@ void main() {
     expect(adapter.destinations, hasLength(1));
     expect(adapter.adbCalls, isEmpty);
   });
+  for (final (command, failure) in [
+    ('inputText', "'deviceInfo' failed: INTERNAL"),
+    ('tapOn', "Device server died during 'deviceInfo'"),
+  ]) {
+    test('device-info failure after $command is not replayed', () async {
+      adapter.serverDeaths.add(
+        '12:00:00 [ INFO] maestro.cli.runner.MaestroCommandRunner.invoke: '
+        '$command RUNNING\n'
+        '12:00:01 [ INFO] maestro.cli.runner.MaestroCommandRunner.invoke: '
+        '$command COMPLETED\n'
+        '$failure\n',
+      );
+      await expectLater(run(), throwsStateError);
+      expect(adapter.destinations, hasLength(1));
+      expect(adapter.adbCalls, isEmpty);
+    });
+  }
 }

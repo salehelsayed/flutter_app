@@ -4,6 +4,8 @@ name: production_direct_send_batch5
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE_1}
 - assertVisible:
     id: chat_composer
@@ -15,6 +17,8 @@ name: production_direct_send_batch5
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE_2}
 - assertVisible:
     id: chat_composer
@@ -26,6 +30,8 @@ name: production_direct_send_batch5
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE_3}
 - assertVisible:
     id: chat_composer
@@ -37,6 +43,8 @@ name: production_direct_send_batch5
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE_4}
 - assertVisible:
     id: chat_composer
@@ -48,6 +56,8 @@ name: production_direct_send_batch5
 - tapOn:
     id: chat_composer
 - hideKeyboard
+- tapOn:
+    id: chat_composer
 - inputText: ${MESSAGE_5}
 - assertVisible:
     id: chat_composer
