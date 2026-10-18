@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_update_open_store
+---
+- assertVisible: '^Please update Mknoon$'
+- scrollUntilVisible:
+    element: '^Update now$'
+    direction: DOWN
+    timeout: 15000
+- tapOn: '^Update now$'

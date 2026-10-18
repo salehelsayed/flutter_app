@@ -109,6 +109,8 @@ bool isMissedIncomingCall(CallHistoryEntry entry) =>
       CallHistoryStatus.cancelled,
     }.contains(entry.status);
 
+enum CallBackActionObservation { submitted, redialRequested, completed }
+
 /// Bounded local action inbox. Cold/locked opens wait for the canonical runtime
 /// and foreground unlock. Duplicates and superseded cards cannot double dial.
 class CallBackActionHandler {
@@ -117,17 +119,25 @@ class CallBackActionHandler {
     required this.ready,
     required this.redial,
     required this.onResult,
+    this.observe,
   });
   final CallHistoryAccess? Function() history;
   final Future<bool> Function() ready;
   final CallRedialController redial;
   final void Function(OutgoingCallStartResult result) onResult;
+  final void Function(
+    CallBackActionObservation,
+    CallId,
+    OutgoingCallStartResult?,
+  )?
+  observe;
   final LinkedHashSet<CallId> _consumed = LinkedHashSet();
   CallId? _pending;
   Object _generation = Object();
   Future<void>? _drain;
 
   Future<void> submit(CallId id) {
+    _observe(CallBackActionObservation.submitted, id);
     if (_consumed.contains(id)) return Future<void>.value();
     if (_pending == id) return retryPending();
     _generation = Object();
@@ -160,7 +170,7 @@ class CallBackActionHandler {
         final entry = await source?.findCall(id);
         if (!isCurrent()) continue;
         if (entry == null || !isMissedIncomingCall(entry)) {
-          onResult(OutgoingCallStartResult.unavailable);
+          _result(id, OutgoingCallStartResult.unavailable);
           continue;
         }
         final latest = await source!.recentCallsForContact(
@@ -168,16 +178,18 @@ class CallBackActionHandler {
         );
         if (!isCurrent()) continue;
         if (latest.isEmpty || latest.first.callId != id) {
-          onResult(OutgoingCallStartResult.unavailable);
+          _result(id, OutgoingCallStartResult.unavailable);
           continue;
         }
         final isReady = await ready();
         if (!isCurrent()) continue;
         if (!isReady) {
-          onResult(OutgoingCallStartResult.unavailable);
+          _result(id, OutgoingCallStartResult.unavailable);
           continue;
         }
-        onResult(
+        _observe(CallBackActionObservation.redialRequested, id);
+        _result(
+          id,
           await redial.start(
             entry.contactAccountPeerId,
             isCurrent: isCurrent,
@@ -190,8 +202,25 @@ class CallBackActionHandler {
           ),
         );
       } catch (_) {
-        if (isCurrent()) onResult(OutgoingCallStartResult.failed);
+        if (isCurrent()) _result(id, OutgoingCallStartResult.failed);
       }
+    }
+  }
+
+  void _result(CallId id, OutgoingCallStartResult result) {
+    _observe(CallBackActionObservation.completed, id, result);
+    onResult(result);
+  }
+
+  void _observe(
+    CallBackActionObservation event,
+    CallId id, [
+    OutgoingCallStartResult? result,
+  ]) {
+    try {
+      observe?.call(event, id, result);
+    } catch (_) {
+      // Read-only diagnostic observers never control callback admission.
     }
   }
 }

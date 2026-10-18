@@ -1,0 +1,5 @@
+appId: ${APP_ID}
+name: production_contact_confirm
+---
+- tapOn: '^Delete$'
+- assertNotVisible: ${BODY}

@@ -327,7 +327,14 @@ def command_for(check, root, files):
         return ['go', 'test', '-json', '-count=1', '-timeout=10m', *check['packages']], check['packages']
     if kind == 'sims':
         if check.get('adapter'):
-            return ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']], [check['capability']]
+            command = ['dart', 'run', check['adapter'], '--mode', 'major', '--scenario', check['capability']]
+            paths = [check['capability']]
+            if check.get('additional_capabilities'):
+                from testing_inventory import sims_rows_for_check
+                byid = {row['id']: row for row in json.loads((root / SIMS).read_text())['capabilities']}
+                paths = sorted(row['id'] for row in sims_rows_for_check(byid, check))
+                command.append('--include-regressions')
+            return command, paths
         return ['dart', 'tool/sims/sims.dart', 'major', '--only', check['capability'],
                 '--continue-on-failure', '--format', 'json'], [check['capability']]
     return check.get('command', []), check.get('paths', [])
@@ -1069,8 +1076,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
                             if c['kind'] == 'sims':
                                 if report_path.is_file(): os.chmod(report_path, 0o600)
-                                a = inspect_sims(report_path, c['capability'], code, timeout,
-                                    c['selected_paths'] if c.get('expanded_capabilities') else None)
+                                a = inspect_sims(report_path, '*' if c.get('additional_capabilities') else c['capability'], code, timeout,
+                                    c['selected_paths'] if c.get('expanded_capabilities') or c.get('additional_capabilities') else None)
                                 # A valid aggregate can contain both failed and
                                 # passing children. Verify its integrity before
                                 # accepting any child receipt, even on failure.

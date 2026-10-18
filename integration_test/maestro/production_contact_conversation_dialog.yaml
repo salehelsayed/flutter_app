@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_contact_conversation_dialog
+---
+- assertVisible:
+    id: chat_composer
+- tapOn: ${OPTIONS}
+- tapOn: ${DELETE_ACTION}
+- assertVisible: ${BODY}
+- assertVisible: '^Delete$'
+- assertVisible: ${CANCEL}

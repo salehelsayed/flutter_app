@@ -6336,6 +6336,8 @@ final class ProductionApplicationBootstrap
     // the process. The call graph of each start subscribes and unsubscribes.
     final networkPathSource = NetworkPathSource(events: networkPathEventStream);
     callSignalingComposition = createProductionCallSignalingComposition(
+      onCallEnvelopeEncoded: debugE2EComposition?.callEnvelopeEncodedObserver,
+      onCallTimerScheduled: debugE2EComposition?.callTimerScheduledObserver,
       networkPathOutcomes: networkPathSource.outcomes,
       secureKeyStore: secureKeyStore,
       iceServers: productionVoiceCallStunServers(),
@@ -6429,6 +6431,7 @@ final class ProductionApplicationBootstrap
               readCurrentForeground: () => graph.current,
               foregroundChanges: graph.changes,
               readActiveConnectionSnapshot: graph.readActiveConnectionSnapshot,
+              readOutputDevices: graph.outputDevices,
               readOutgoingCallWakeAuthorityReady:
                   (contactAccountPeerId) async =>
                       hasExactCurrentProductionCallWakeAuthority(
@@ -9934,6 +9937,9 @@ final class ProductionApplicationBootstrap
 
       return MyApp(
         repository: repository,
+        updateCheckController: debugE2EComposition?.updateCheckController,
+        callBackReadinessBarrier: debugE2EComposition?.callBackReadinessBarrier,
+        onCallBackObservation: debugE2EComposition?.callBackObservation,
         // 360: the real database-backed linked-device trust authority. The
         // contact profile is the only surface that admits or withdraws a
         // device, and it requires a non-null capability.
@@ -10605,6 +10611,7 @@ final class ProductionApplicationBootstrap
       if (debugE2EComposition?.startsIntroPoller ?? false) {
         debugE2EComposition!.startIntroPollerAfterColdRecovery(
           DebugE2EPollerDependencies(
+            notificationService: notificationService,
             documentsDirectory: Directory(appDocDir.path),
             navigatorKey: MyApp.navigatorKey,
             p2pService: p2pService,

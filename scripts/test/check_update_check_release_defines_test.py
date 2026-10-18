@@ -25,6 +25,40 @@ def run(args, env=None):
 
 
 class ReleaseGuardTest(unittest.TestCase):
+    def test_fixture_defines_are_refused_without_echoing_values(self):
+        for key in guard.FIXTURE_KEYS:
+            for args in (["--dart-define=" + key + "=fixture-public-marker"],
+                         ["--dart-define", key + "=false"]):
+                result = run(args)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(key, result.stderr)
+                self.assertNotIn("fixture-public-marker", result.stdout + result.stderr)
+
+    def test_fixture_define_files_are_refused_for_json_and_env(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for key in guard.FIXTURE_KEYS:
+                for suffix, body in (("json", json.dumps({key: "fixture-public-marker", "OTHER": "on"})),
+                                     ("env", key + "=fixture-public-marker\nOTHER=on\n")):
+                    path = pathlib.Path(tmp) / ("fixture." + suffix)
+                    path.write_text(body)
+                    result = run(["--dart-define-from-file", str(path)])
+                    self.assertEqual(result.returncode, 1)
+                    self.assertNotIn("fixture-public-marker", result.stdout + result.stderr)
+
+    def test_fixture_environment_is_refused_without_echoing_values(self):
+        for key in guard.FIXTURE_KEYS:
+            result = run([], env={key: "fixture-public-marker"})
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(key, result.stderr)
+            self.assertNotIn("fixture-public-marker", result.stdout + result.stderr)
+
+    def test_unrelated_env_file_defines_do_not_block_a_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "defines.env"
+            path.write_text("MKNOON_UPDATE_CHECK=on\nOTHER=value\n")
+            result = run(["--dart-define-from-file", str(path)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_real_release_defines_pass(self):
         result = run(["--release", f"--dart-define-from-file={RELEASE_DEFINES}"])
         self.assertEqual(result.returncode, 0, result.stderr)

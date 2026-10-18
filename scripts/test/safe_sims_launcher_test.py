@@ -75,6 +75,19 @@ print('private-child-marker')
     def native(self):
         return json.loads((self.repo / "build/kayan-safe/native-report.json").read_text())
 
+    def test_call_profile_cases_stay_in_the_shared_fixture_cohort(self):
+        rebound = launcher.disposable_manifest(self.manifest)
+        extra = {f"kx00{number}" for number in range(20, 28)} | {f"kx000{number}" for number in range(5, 9)} | {
+            "kx0001", "kx0002", "kx0003", "kx0015", "kx0016", "kx0017", "kx0029", "kx0030"}
+        rows, blocked = launcher.policy(rebound, "device-audio")
+        self.assertEqual(set(rows), extra | {
+            "android.production_1to1_audio_call", "build.android.e2e.production_call_local"})
+        self.assertEqual(blocked, {})
+        _, major_blocked = launcher.policy(rebound, "major")
+        for key in extra:
+            self.assertEqual(major_blocked[key], "local_fixture_mode_required")
+        self.assertEqual(major_blocked["build.android.e2e.production_call_local"], "unused_build")
+
     def test_rebinding_changes_only_explicit_audited_device_metadata(self):
         rebound = launcher.disposable_manifest(self.manifest)
         original = {r["id"]: r for r in self.manifest["capabilities"]}
@@ -89,7 +102,7 @@ print('private-child-marker')
                                     for r in row["resources"]))
                 for field in set(before) - {"resources", "targetCapabilities", "artifactValidator", "assertions"}:
                     self.assertEqual(row[field], before[field], (row["id"], field))
-        self.assertEqual(len(changed), 64)
+        self.assertEqual(len(changed), 76)
         self.assertEqual(rebound["buildProfiles"], self.manifest["buildProfiles"])
         self.assertEqual(launcher.disposable_manifest(rebound), rebound)
 

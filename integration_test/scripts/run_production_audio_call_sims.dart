@@ -6,6 +6,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 
+import '../../tool/sims/manifest.dart';
+
 import '../support/android_production_audio_call_evidence.dart';
 import 'android_production_audio_call_campaign.dart';
 import 'production_audio_call_local_fixture.dart';
@@ -41,6 +43,7 @@ Future<void> main(List<String> arguments) async {
       mode: options.mode,
       environment: Platform.environment,
       dependencies: AndroidProductionAudioCallSimsAdapterDependencies.system(),
+      includeRegressions: options.includeRegressions,
     );
   } on FormatException catch (error) {
     stderr.writeln(error.message);
@@ -176,10 +179,17 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   required String mode,
   required Map<String, String> environment,
   required AndroidProductionAudioCallSimsAdapterDependencies dependencies,
+  bool includeRegressions = false,
 }) async {
   if (mode != 'major' && mode != 'full') {
     throw const FormatException('Production audio-call mode is invalid.');
   }
+  final selection = includeRegressions
+      ? productionAudioCallCohortExclusions(
+          environment,
+          mode,
+        ).expand((id) => ['--exclude', id]).toList()
+      : ['--only', androidProductionAudioCallScenarioId];
   final devices = _explicitAndroidPair(environment);
   final hostIp = await dependencies.resolveFixtureHostIp(environment);
   final goEnvironment =
@@ -255,8 +265,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
         'run',
         'tool/sims/sims.dart',
         mode,
-        '--only',
-        androidProductionAudioCallScenarioId,
+        ...selection,
         '--prepare-builds',
       ],
       environment: centralEnvironment,
@@ -268,8 +277,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
               'run',
               'tool/sims/sims.dart',
               mode,
-              '--only',
-              androidProductionAudioCallScenarioId,
+              ...selection,
             ],
             environment: centralEnvironment,
           )
@@ -286,6 +294,37 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
     return 1;
   }
   return result;
+}
+
+/// One existing call-profile APK and one local relay/coturn lease serve the
+/// base proof and its KX cases. Use the existing SIMS exclusion selector; no
+/// inner row invokes this outer fixture wrapper or prepares another build.
+List<String> productionAudioCallCohortExclusions(
+  Map<String, String> environment,
+  String mode,
+) {
+  final manifest = SimsManifest.loadSync(
+    File(environment['SIMS_MANIFEST'] ?? 'tool/sims/critical_features.json'),
+  );
+  manifest.validateOrThrow();
+  final active = {
+    for (final row in manifest.capabilities)
+      if (row.active && row.modes.any((value) => value.name == mode))
+        row.id: row,
+  };
+  final wanted = {
+    androidProductionAudioCallScenarioId,
+    for (final row in active.values)
+      if (row.id.startsWith('kx') &&
+          row.buildProfileId == androidProductionAudioCallProfileId)
+        row.id,
+  };
+  while (true) {
+    final dependencies = {for (final id in wanted) ...active[id]!.dependencies};
+    if (wanted.containsAll(dependencies)) break;
+    wanted.addAll(dependencies);
+  }
+  return active.keys.where((id) => !wanted.contains(id)).toList()..sort();
 }
 
 bool _isSha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
@@ -333,14 +372,20 @@ List<String> _explicitAndroidPair(Map<String, String> environment) {
 }
 
 final class _ProductionAudioCallAdapterOptions {
-  const _ProductionAudioCallAdapterOptions({required this.mode});
+  const _ProductionAudioCallAdapterOptions({
+    required this.mode,
+    required this.includeRegressions,
+  });
 
   factory _ProductionAudioCallAdapterOptions.parse(List<String> arguments) {
     String? mode;
     String? scenario;
+    var includeRegressions = false;
     for (var index = 0; index < arguments.length; index += 1) {
       final argument = arguments[index];
-      if (argument == '--mode' && index + 1 < arguments.length) {
+      if (argument == '--include-regressions' && !includeRegressions) {
+        includeRegressions = true;
+      } else if (argument == '--mode' && index + 1 < arguments.length) {
         mode = arguments[++index].trim();
       } else if (argument.startsWith('--mode=')) {
         mode = argument.substring('--mode='.length).trim();
@@ -360,8 +405,12 @@ final class _ProductionAudioCallAdapterOptions {
         '--scenario must be $androidProductionAudioCallScenarioId.',
       );
     }
-    return _ProductionAudioCallAdapterOptions(mode: mode!);
+    return _ProductionAudioCallAdapterOptions(
+      mode: mode!,
+      includeRegressions: includeRegressions,
+    );
   }
 
   final String mode;
+  final bool includeRegressions;
 }

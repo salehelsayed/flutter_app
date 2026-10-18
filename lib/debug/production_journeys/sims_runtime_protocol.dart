@@ -2,6 +2,45 @@
 // byte-compatible; new production journeys and their host adapters share this module.
 import 'dart:convert';
 
+const productionUpdateCheckJourneys = {
+  'kx0020',
+  'kx0021',
+  'kx0022',
+  'kx0023',
+  'kx0024',
+  'kx0025',
+  'kx0026',
+  'kx0027',
+  'kx0028',
+};
+
+const productionContactDeleteJourneys = {
+  'kx0010',
+  'kx0011',
+  'kx0012',
+  'kx0013',
+  'kx0014',
+};
+
+const productionCallBackJourneys = {'kx0005', 'kx0006', 'kx0007', 'kx0008'};
+const productionCallNotificationJourneys = {
+  'kx0002',
+  'kx0003',
+  'kx0015',
+  'kx0016',
+  'kx0017',
+};
+const productionCallJourneys = {
+  ...productionCallBackJourneys,
+  ...productionCallRegressionJourneys,
+};
+const productionCallRegressionJourneys = {
+  'kx0001',
+  ...productionCallNotificationJourneys,
+  'kx0029',
+  'kx0030',
+};
+
 const String simsRuntimeConfigSchema = 'mknoon.sims.runtime-config.v1';
 const String simsRuntimeAckSchema = 'mknoon.sims.runtime-ack.v1';
 const String simsAndroidStandardProfileId = 'android.e2e.standard';

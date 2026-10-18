@@ -1,0 +1,12 @@
+appId: ${APP_ID}
+name: production_update_hard
+---
+- assertVisible: '^Please update Mknoon$'
+- assertNotVisible: '^A new version of Mknoon is ready\.$'
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- assertVisible: '^Please update Mknoon$'
+- assertNotVisible: '^Not now$'

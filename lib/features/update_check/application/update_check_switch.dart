@@ -4,7 +4,8 @@ import 'package:flutter/foundation.dart';
 ///
 /// `--dart-define=MKNOON_UPDATE_CHECK=on|off`. When unset: on in release and
 /// profile builds, off in debug. Always off in E2E builds
-/// (`E2E_TEST_MODE=true`) and SIMS builds (non-empty `SIMS_BUILD_PROFILE_ID`).
+/// (`E2E_TEST_MODE=true`) and SIMS builds (non-empty `SIMS_BUILD_PROFILE_ID`)
+/// unless an approved debug fixture profile explicitly opts in.
 /// Off means no network request AND no enforcement (decision none).
 ///
 /// Store builds must not ship with it off: the release scripts refuse
@@ -15,6 +16,7 @@ class UpdateCheckSwitch {
     required this.isDebugBuild,
     required this.e2eTestMode,
     required this.simsBuildProfileId,
+    this.testProfileOptIn = false,
   });
 
   factory UpdateCheckSwitch.fromEnvironment() => const UpdateCheckSwitch(
@@ -22,14 +24,35 @@ class UpdateCheckSwitch {
     isDebugBuild: kDebugMode,
     e2eTestMode: bool.fromEnvironment('E2E_TEST_MODE'),
     simsBuildProfileId: String.fromEnvironment('SIMS_BUILD_PROFILE_ID'),
+    testProfileOptIn: bool.fromEnvironment('MKNOON_SE41_TEST_PROFILE'),
   );
 
   final String mode;
   final bool isDebugBuild;
   final bool e2eTestMode;
   final String simsBuildProfileId;
+  final bool testProfileOptIn;
+
+  /// Validates the test source before either foreground or background uses it.
+  bool get testProfileEnabled {
+    if (testProfileOptIn) {
+      if (!isDebugBuild ||
+          !e2eTestMode ||
+          !const {
+            'android.e2e.production_call_local',
+            'ios.simulator.app',
+          }.contains(simsBuildProfileId)) {
+        throw StateError(
+          'SE41 fixture opt-in requires an approved debug E2E profile.',
+        );
+      }
+      return true;
+    }
+    return false;
+  }
 
   bool get enabled {
+    if (testProfileEnabled) return mode.trim().toLowerCase() == 'on';
     if (e2eTestMode || simsBuildProfileId.isNotEmpty) return false;
     switch (mode.trim().toLowerCase()) {
       case 'on':

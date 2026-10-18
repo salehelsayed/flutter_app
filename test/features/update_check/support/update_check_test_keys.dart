@@ -12,15 +12,9 @@ import 'package:flutter_app/features/update_check/infrastructure/update_check_st
 import 'package:flutter_app/features/update_check/infrastructure/version_file_fetcher.dart';
 import 'package:pinenacl/ed25519.dart' as nacl;
 
-final nacl.SigningKey testOnlyK1 = nacl.SigningKey.fromSeed(
-  Uint8List.fromList(List<int>.filled(32, 0x11)),
-);
-final nacl.SigningKey testOnlyK2 = nacl.SigningKey.fromSeed(
-  Uint8List.fromList(List<int>.filled(32, 0x22)),
-);
-final nacl.SigningKey testOnlyRogue = nacl.SigningKey.fromSeed(
-  Uint8List.fromList(List<int>.filled(32, 0x99)),
-);
+import '../../../../integration_test/support/update_check_test_keys.dart';
+export '../../../../integration_test/support/update_check_test_keys.dart'
+    show testOnlyK1, testOnlyK2, testOnlyRogue;
 
 TrustedVersionKey trustedK1() => TrustedVersionKey(
   keyId: 'k1',
@@ -65,11 +59,7 @@ Uint8List payloadBytes({
 );
 
 Map<String, Object?> section(int latestBuild, int minBuild, [Object? reason]) =>
-    {
-      'latestBuild': latestBuild,
-      'minBuild': minBuild,
-      'reasonCode': ?reason,
-    };
+    {'latestBuild': latestBuild, 'minBuild': minBuild, 'reasonCode': ?reason};
 
 /// A signed envelope. [signer] defaults to the key that matches [keyId].
 Uint8List signedEnvelope(

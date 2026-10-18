@@ -151,6 +151,93 @@ void main() {
   );
 
   test(
+    'SE41 runtime cases cannot borrow another profile or peer role',
+    () async {
+      final config = File(
+        '${directory.path}/production-journey/runtime-config.json',
+      );
+      await config.parent.create(recursive: true);
+      ProductionJourneyController? activate(String profile) =>
+          ProductionJourneyController.forInstalledProfile(
+            stateDirectory: directory,
+            isDebugMode: true,
+            e2eTestMode: true,
+            profileId: profile,
+          );
+      for (final valid in [
+        invocation.copyWith(
+          profileId: 'android.e2e.production_call_local',
+          scenarioId: 'kx0020',
+          role: 'alice',
+        ),
+        invocation.copyWith(
+          profileId: 'ios.simulator.app',
+          scenarioId: 'kx0028',
+          role: 'alice',
+        ),
+      ]) {
+        await config.writeAsString(jsonEncode(valid.toJson()));
+        final accepted = activate(valid.profileId);
+        expect(accepted, isNotNull);
+        accepted!.dispose();
+        for (final invalid in [
+          valid.copyWith(role: 'bob'),
+          valid.copyWith(profileId: 'android.e2e.production'),
+          valid.copyWith(
+            profileId: valid.profileId == 'ios.simulator.app'
+                ? 'android.e2e.production_call_local'
+                : 'ios.simulator.app',
+          ),
+        ]) {
+          await config.writeAsString(jsonEncode(invalid.toJson()));
+          expect(() => activate(invalid.profileId), throwsStateError);
+        }
+      }
+      final wrongCase = invocation.copyWith(
+        profileId: 'android.e2e.production_call_local',
+        scenarioId: routingSmokeJourney,
+        role: 'alice',
+      );
+      await config.writeAsString(jsonEncode(wrongCase.toJson()));
+      expect(() => activate(wrongCase.profileId), throwsStateError);
+    },
+  );
+
+  test(
+    'contact deletion runtime is confined to Alice and the journey profile',
+    () async {
+      final config = File(
+        '${directory.path}/production-journey/runtime-config.json',
+      );
+      await config.parent.create();
+      for (final id in productionContactDeleteJourneys) {
+        final own = invocation.copyWith(scenarioId: id, role: 'alice');
+        await config.writeAsString(jsonEncode(own.toJson()));
+        final created = ProductionJourneyController.forInstalledProfile(
+          stateDirectory: directory,
+          isDebugMode: true,
+          e2eTestMode: true,
+          profileId: own.profileId,
+        );
+        expect(created, isNotNull);
+        created!.dispose();
+        await config.writeAsString(
+          jsonEncode(own.copyWith(role: 'bob').toJson()),
+        );
+        expect(
+          () => ProductionJourneyController.forInstalledProfile(
+            stateDirectory: directory,
+            isDebugMode: true,
+            e2eTestMode: true,
+            profileId: own.profileId,
+          ),
+          throwsStateError,
+        );
+      }
+    },
+  );
+
+  test(
     'provider receiver activates only for Bob in notification journeys',
     () async {
       final config = File(

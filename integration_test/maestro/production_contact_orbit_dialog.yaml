@@ -1,0 +1,14 @@
+appId: ${APP_ID}
+name: production_contact_orbit_dialog
+---
+- assertVisible:
+    id: orbit.contact.${PEER_ID}
+- swipe:
+    from:
+      id: orbit.contact.${PEER_ID}
+    direction: LEFT
+    duration: 500
+- tapOn: ${DELETE_ACTION}
+- assertVisible: ${BODY}
+- assertVisible: '^Delete$'
+- assertVisible: ${CANCEL}

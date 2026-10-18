@@ -59,7 +59,9 @@ void main() {
     final reply = Completer<ByteData?>();
     await messenger.handlePlatformMessage(
       updateCheckBackgroundChannelName,
-      const StandardMethodCodec().encodeMethodCall(MethodCall(method, arguments)),
+      const StandardMethodCodec().encodeMethodCall(
+        MethodCall(method, arguments),
+      ),
       reply.complete,
     );
     final data = await reply.future;
@@ -75,57 +77,82 @@ void main() {
       ('debug default', _switch(mode: '', debug: true)),
       ('MKNOON_UPDATE_CHECK=off', _switch(mode: 'off')),
     ]) {
-      test('$name: configure tells native code to cancel, never schedule', () async {
-        await UpdateCheckBackgroundHost(updateSwitch: updateSwitch).configure();
-        expect(nativeCalls.single.method, 'configure');
-        expect(nativeCalls.single.arguments, {'enabled': false});
-      });
+      test(
+        '$name: configure tells native code to cancel, never schedule',
+        () async {
+          await UpdateCheckBackgroundHost(
+            updateSwitch: updateSwitch,
+          ).configure();
+          expect(nativeCalls.single.method, 'configure');
+          expect(nativeCalls.single.arguments, {'enabled': false});
+        },
+      );
     }
 
     test('on: configure schedules', () async {
       await UpdateCheckBackgroundHost(updateSwitch: _switch()).configure();
       expect(nativeCalls.single.arguments, {'enabled': true});
     });
-  });
 
-  test('run answers before any bootstrap and passes the call state (AC5)', () async {
-    final temp = await TempStateStore.create();
-    addTearDown(temp.dispose);
-    final fetcher = FakeVersionFileFetcher([
-      signedEnvelope(payloadBytes(ios: section(120, 115))),
-    ]);
-    final calls = <bool>[];
-    final bootstrap = Completer<void>();
-    UpdateCheckBackgroundHost(
-      updateSwitch: _switch(),
-      runnerFactory: (inCall) {
-        calls.add(inCall);
-        return UpdateCheckBackgroundRunner(
-          service: UpdateCheckService(
-            updateSwitch: _switch(),
-            verifier: testVerifier(),
-            fetcher: fetcher,
-            store: temp.store,
-            installedBuildNumber: () async => '110',
-            platform: UpdatePlatform.ios,
-          ),
-          store: temp.store,
-          poster: _NoPoster(),
-          isForeground: () async => false,
-          isInCall: () async => inCall,
+    test(
+      'fixture enables checks while cancelling uncontrolled native jobs',
+      () async {
+        const fixture = UpdateCheckSwitch(
+          mode: 'on',
+          isDebugBuild: true,
+          e2eTestMode: true,
+          simsBuildProfileId: 'android.e2e.production_call_local',
+          testProfileOptIn: true,
         );
+        expect(fixture.enabled, isTrue);
+        await UpdateCheckBackgroundHost(updateSwitch: fixture).configure();
+        expect(nativeCalls.single.method, 'configure');
+        expect(nativeCalls.single.arguments, {'enabled': false});
       },
-    ).install();
-
-    final reply = await callFromNative('run', {
-      'reason': 'ios_bg_app_refresh',
-      'budgetMs': 5000,
-      'inCall': true,
-    });
-    expect(reply, {'outcome': 'inCall', 'enabled': true, 'checked': true});
-    expect(calls, [true]);
-    expect(bootstrap.isCompleted, isFalse);
+    );
   });
+
+  test(
+    'run answers before any bootstrap and passes the call state (AC5)',
+    () async {
+      final temp = await TempStateStore.create();
+      addTearDown(temp.dispose);
+      final fetcher = FakeVersionFileFetcher([
+        signedEnvelope(payloadBytes(ios: section(120, 115))),
+      ]);
+      final calls = <bool>[];
+      final bootstrap = Completer<void>();
+      UpdateCheckBackgroundHost(
+        updateSwitch: _switch(),
+        runnerFactory: (inCall) {
+          calls.add(inCall);
+          return UpdateCheckBackgroundRunner(
+            service: UpdateCheckService(
+              updateSwitch: _switch(),
+              verifier: testVerifier(),
+              fetcher: fetcher,
+              store: temp.store,
+              installedBuildNumber: () async => '110',
+              platform: UpdatePlatform.ios,
+            ),
+            store: temp.store,
+            poster: _NoPoster(),
+            isForeground: () async => false,
+            isInCall: () async => inCall,
+          );
+        },
+      ).install();
+
+      final reply = await callFromNative('run', {
+        'reason': 'ios_bg_app_refresh',
+        'budgetMs': 5000,
+        'inCall': true,
+      });
+      expect(reply, {'outcome': 'inCall', 'enabled': true, 'checked': true});
+      expect(calls, [true]);
+      expect(bootstrap.isCompleted, isFalse);
+    },
+  );
 
   test('a check-now push over the channel always checks (T4b G1)', () async {
     final temp = await TempStateStore.create();
@@ -172,7 +199,10 @@ void main() {
       platform: UpdatePlatform.ios,
     ).install();
 
-    expect(await callFromNative('openStore', {'url': 'https://evil.example'}), true);
+    expect(
+      await callFromNative('openStore', {'url': 'https://evil.example'}),
+      true,
+    );
     expect(opened, [Uri.parse('https://testflight.apple.com/join/nUVjrEYS')]);
   });
 }

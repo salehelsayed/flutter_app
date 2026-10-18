@@ -450,6 +450,15 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return
       ;;
+    integration_test/scripts/production_call_back_regressions.dart|\
+    integration_test/scripts/production_call_surface_regressions.dart|\
+    integration_test/scripts/run_production_call_back.dart|\
+    integration_test/scripts/run_production_call_regression.dart|\
+    integration_test/scripts/run_production_contact_delete.dart|\
+    integration_test/scripts/run_production_update_check.dart)
+      record "support" "$path" "support" "manifest-owned production call, SE-41 and SE-47 adapters and shared regression support; original routes retained"
+      return
+      ;;
     integration_test/scripts/run_production_notification_sound.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap notification sound S1-S16 and control journey with Maestro UI, exact descriptor projection and retained original native disposition oracle; original routes retained"
       return

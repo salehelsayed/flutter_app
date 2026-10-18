@@ -1,7 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../integration_test/support/update_check_test_keys.dart';
+import '../../../integration_test/scripts/run_production_audio_call_sims.dart'
+    show productionAudioCallCohortExclusions;
 import '../../../tool/sims/manifest.dart';
 import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/sims.dart';
@@ -12,6 +16,33 @@ void main() {
   setUpAll(() {
     manifest = SimsManifest.loadSync(File('tool/sims/critical_features.json'));
   });
+
+  test(
+    'call fixture cohort shares one APK across base call, regressions and Android updates',
+    () {
+      final excluded = productionAudioCallCohortExclusions({}, 'major');
+      final plan = SimsPlanner(manifest).compile(excludedIds: excluded);
+      expect(plan.selectedIds, {
+        'android.production_1to1_audio_call',
+        'build.android.e2e.production_call_local',
+        'kx0001',
+        'kx0002',
+        'kx0003',
+        'kx0015',
+        'kx0016',
+        'kx0017',
+        'kx0029',
+        'kx0030',
+        for (var number = 5; number <= 8; number++) 'kx000$number',
+        for (var number = 20; number <= 27; number++) 'kx00$number',
+      });
+      expect(plan.rows.map((row) => row.buildProfileId).toSet(), {
+        'android.e2e.production_call_local',
+      });
+      expect(plan.releaseEligibleCandidate, isFalse);
+      expect(plan.selectedIds, isNot(contains('kx0028')));
+    },
+  );
 
   test(
     'explicit partitions retain dependencies and cannot claim release green',
@@ -575,6 +606,9 @@ void main() {
       'VOICE_CALL_ALWAYS_RELAY_ENABLED': 'true',
       'VOICE_CALL_FORCE_RELAY_ENABLED': 'true',
       'ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED': 'true',
+      'MKNOON_SE41_TEST_PROFILE': 'true',
+      'MKNOON_UPDATE_CHECK': 'on',
+      'MKNOON_SE41_TEST_PUBLIC_KEY_B64': base64Encode(testOnlyK1.verifyKey),
     });
 
     final build = manifest.capabilityById(
@@ -593,6 +627,62 @@ void main() {
       <String>['build:android.e2e.production_call_local:write'],
     );
   });
+
+  test('SE41 TEST trust is confined to the two approved E2E profiles', () {
+    final profiles = manifest.buildProfiles.where(
+      (profile) => profile.compileDefines.keys.any(
+        (key) => key.startsWith('MKNOON_SE41_TEST_'),
+      ),
+    );
+    expect(profiles.map((profile) => profile.id).toSet(), {
+      'android.e2e.production_call_local',
+      'ios.simulator.app',
+    });
+    for (final profile in profiles) {
+      expect(profile.compileDefines['E2E_TEST_MODE'], 'true');
+      expect(profile.compileDefines['MKNOON_SE41_TEST_PROFILE'], 'true');
+      expect(profile.compileDefines['MKNOON_UPDATE_CHECK'], 'on');
+      expect(
+        profile.compileDefines['MKNOON_SE41_TEST_PUBLIC_KEY_B64'],
+        base64Encode(testOnlyK1.verifyKey),
+      );
+    }
+  });
+
+  test(
+    'SE41 cases reuse one existing build and exact single-simulator scope',
+    () {
+      final planner = SimsPlanner(manifest);
+      for (var number = 20; number <= 28; number++) {
+        final id = 'kx${number.toString().padLeft(4, '0')}';
+        final profile = number == 28
+            ? 'ios.simulator.app'
+            : 'android.e2e.production_call_local';
+        final row = manifest.capabilityById(id)!;
+        expect(row.buildProfileId, profile);
+        expect(row.dependencies, ['build.$profile']);
+        expect(row.targetCapabilities, [
+          number == 28 ? 'ios.simulator' : 'android.emulator',
+        ]);
+        expect(row.command, [
+          'dart',
+          'run',
+          'integration_test/scripts/run_production_update_check.dart',
+          '--scenario',
+          id,
+        ]);
+        expect(row.artifactValidator, 'validateProductionUpdateCheck');
+        expect(row.automationReady, isTrue);
+        expect(planner.compile(onlyId: id).selectedIds, {id, 'build.$profile'});
+      }
+      for (final id in ['kx0004', 'kx0009', 'kx0018', 'kx0019']) {
+        final row = manifest.capabilityById(id)!;
+        expect(row.automationReady, isFalse);
+        expect(row.buildProfileId, 'ios.device.production');
+        expect(row.command.last, contains('physical_data_preservation'));
+      }
+    },
+  );
 
   test(
     'TC-399-08 production audio closure registers inner proof and external wrapper safely',
@@ -669,6 +759,7 @@ void main() {
         'android.microphone',
         'host.docker',
         'host.go1.27',
+        'android.emulator.rebindable',
       ]);
       expect(capability.allowedNaReason, targetUnavailableNaReason);
       expect(capability.artifactRequired, isTrue);
@@ -676,6 +767,31 @@ void main() {
         'validateAndroidProductionAudioCallArtifact',
       ]);
       expect(capability.declaredBuildException, isFalse);
+    },
+  );
+
+  test(
+    'contact deletion cases reuse one existing journey build and emulator',
+    () {
+      final planner = SimsPlanner(manifest);
+      for (var number = 10; number <= 14; number++) {
+        final id = 'kx${number.toString().padLeft(4, '0')}';
+        final row = manifest.capabilityById(id)!;
+        expect(row.buildProfileId, 'android.e2e.production');
+        expect(row.targetCapabilities, ['android.emulator']);
+        expect(row.artifactValidator, 'validateProductionContactDelete');
+        expect(row.command, [
+          'dart',
+          'run',
+          'integration_test/scripts/run_production_contact_delete.dart',
+          '--scenario',
+          id,
+        ]);
+        expect(planner.compile(onlyId: id).selectedIds, {
+          id,
+          'build.android.e2e.production',
+        });
+      }
     },
   );
 
@@ -734,6 +850,7 @@ void main() {
       expect(scenario.targetCapabilities, <String>[
         'android.physical',
         'android.emulator',
+        'android.emulator.rebindable',
       ]);
       expect(scenario.allowedNaReason, targetUnavailableNaReason);
       expect(scenario.artifactValidators, <String>[

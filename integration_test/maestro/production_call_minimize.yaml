@@ -1,0 +1,6 @@
+appId: ${APP_ID}
+name: production_call_minimize
+---
+- assertVisible: '^Connected$'
+- tapOn: '^Minimize call$'
+- assertVisible: '^Return to call, .*$'

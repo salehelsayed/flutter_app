@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_call_microphone_denial
+---
+- extendedWaitUntil:
+    visible:
+      id: "(com.android|com.google.android).permissioncontroller:id/permission_deny_button"
+    timeout: 30000
+- tapOn:
+    id: "(com.android|com.google.android).permissioncontroller:id/permission_deny_button"
+- assertVisible: "Microphone permission is needed to make calls."

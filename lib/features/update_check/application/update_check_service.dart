@@ -9,6 +9,7 @@ import '../domain/update_check_state.dart';
 import '../domain/version_file_verifier.dart';
 import '../infrastructure/update_check_state_store.dart';
 import '../infrastructure/version_file_fetcher.dart';
+import 'update_check_fixture.dart';
 import 'update_check_switch.dart';
 
 /// The SE-41 in-app update check. T2a (hard overlay) and T2b (banner) call it.
@@ -33,8 +34,14 @@ class UpdateCheckService {
     Uri? versionFileUrl,
     DateTime Function()? clock,
   }) : _switch = updateSwitch ?? UpdateCheckSwitch.fromEnvironment(),
-       _verifier = verifier ?? VersionFileVerifier(builtInVersionKeys()),
-       _fetcher = fetcher ?? VersionFileFetcher(),
+       _verifier =
+           verifier ??
+           updateCheckFixtureVerifier(updateSwitch: updateSwitch) ??
+           VersionFileVerifier(builtInVersionKeys()),
+       _fetcher =
+           fetcher ??
+           updateCheckFixtureFetcher(updateSwitch: updateSwitch) ??
+           VersionFileFetcher(),
        _store = store ?? UpdateCheckStateStore(),
        _installedBuildNumber = installedBuildNumber ?? _packageBuildNumber,
        _platform = platform ?? _currentPlatform(),

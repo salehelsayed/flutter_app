@@ -80,6 +80,15 @@ typedef CallAppliedStateTransitionObserver =
       CallEndReason? endReason,
     );
 
+typedef CallScheduledTimerObserver =
+    void Function(
+      CallId callId,
+      CallTimeoutKind kind,
+      DateTime scheduledAt,
+      Duration requestedDelay,
+      Duration effectiveDelay,
+    );
+
 /// One bounded terminal request can interrupt a reduction preparing media.
 /// The request is still reduced on the coordinator lane, before later effects.
 final class _CallPreparationInterruption {
@@ -110,6 +119,7 @@ final class CallCoordinator {
     this.terminalHistoryTimeout = const Duration(seconds: 5),
     this.onInternalFailure,
     this.onAppliedStateTransition,
+    this.onTimerScheduled,
   }) : _timerScheduler = timerScheduler ?? const DartCallTimerScheduler() {
     if (maxPendingEvents <= 0 ||
         terminalTombstoneCapacity <= 0 ||
@@ -151,6 +161,7 @@ final class CallCoordinator {
   final void Function(CallCoordinatorInternalFailure failure)?
   onInternalFailure;
   final CallAppliedStateTransitionObserver? onAppliedStateTransition;
+  final CallScheduledTimerObserver? onTimerScheduled;
   final CallTimerScheduler _timerScheduler;
 
   final StreamController<CallSessionSnapshot> _snapshots =
@@ -675,11 +686,14 @@ final class CallCoordinator {
     final delay = effect.delay;
     final callId = snapshot.callId;
     if (delay == null || callId == null || delay.isNegative) return;
+    final observedAt = onTimerScheduled == null ? null : clock();
     var remaining = delay;
     if (timeoutKind == CallTimeoutKind.inviteExpiry &&
         snapshot.startedAt != null) {
       final authenticatedDeadline = snapshot.startedAt!.add(delay);
-      final untilDeadline = authenticatedDeadline.difference(clock());
+      final untilDeadline = authenticatedDeadline.difference(
+        observedAt ?? clock(),
+      );
       remaining = untilDeadline.isNegative ? Duration.zero : untilDeadline;
     }
     _timers.remove(effect.type)?.cancel();
@@ -722,6 +736,19 @@ final class CallCoordinator {
       );
     });
     _timers[effect.type] = timer;
+    if (observedAt != null) {
+      try {
+        onTimerScheduled?.call(
+          callId,
+          timeoutKind,
+          observedAt,
+          delay,
+          remaining,
+        );
+      } catch (_) {
+        /* Read-only observation cannot change a scheduled timer. */
+      }
+    }
   }
 
   /// Timer events have one reserved bounded path behind the public queue.

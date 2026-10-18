@@ -8,9 +8,24 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import '../../tool/sims/artifact_evidence.dart';
+import '../../tool/sims/production_call_back_criteria.dart';
+import '../../tool/sims/production_call_regression_criteria.dart';
+import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
 import '../support/android_app_state_guard.dart';
 import '../support/android_production_audio_call_evidence.dart';
+import '../support/production_android_journey.dart';
+import '../support/production_journey_peer.dart';
+import '../support/production_call_notification_evidence.dart';
 import '_android_app_package.dart';
+import 'reaction_notification_proof_support.dart'
+    show
+        extractActiveNotificationCards,
+        findAndroidNotificationCardTapTarget,
+        findAndroidNotificationActionTapTarget,
+        findAndroidCollapsedNotificationExpandCenter;
+
+part 'production_call_back_regressions.dart';
+part 'production_call_surface_regressions.dart';
 
 const String _fixtureIdentityEnvironment =
     'MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_IDENTITY_SHA256';
@@ -501,6 +516,21 @@ abstract interface class AndroidProductionAudioCallCampaignDriver {
   Future<void> restoreState();
 }
 
+enum AndroidProductionAudioCallStage {
+  ready,
+  incoming,
+  connected,
+  mediaReady,
+  terminal,
+}
+
+typedef AndroidProductionAudioCallStageHook =
+    Future<void> Function(
+      AndroidProductionAudioCallStage stage,
+      AndroidProductionAudioCallIdentity caller,
+      AndroidProductionAudioCallIdentity callee,
+    );
+
 /// Dependency-injectable orchestration core. Independent device work is
 /// deliberately paired through [Future.wait] so the fast lane does not pay
 /// serial ADB/poller latency.
@@ -519,6 +549,7 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
   bool emulatorPair = false,
   Duration rtpObservationTimeout = const Duration(seconds: 20),
   Duration rtpObservationPollInterval = const Duration(milliseconds: 250),
+  AndroidProductionAudioCallStageHook? onStage,
 }) async {
   if (devices.length != 2 || devices.first == devices.last) {
     throw const FormatException(
@@ -629,6 +660,11 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
       ),
     ]);
 
+    await onStage?.call(
+      AndroidProductionAudioCallStage.ready,
+      callerIdentity,
+      calleeIdentity,
+    );
     final armed =
         await Future.wait<Map<String, Object?>>(<Future<Map<String, Object?>>>[
           driver.observe(
@@ -696,6 +732,11 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
       profileSha256: profileSha256,
       apkSha256: apkSha256,
     );
+    await onStage?.call(
+      AndroidProductionAudioCallStage.incoming,
+      callerIdentity,
+      calleeIdentity,
+    );
     final nativeAnswerPackage = await driver.tapNativeAnswer(physicalDeviceId);
     validateAndroidProductionAudioCallNativeAnswerPackage(nativeAnswerPackage);
     nativeAnswered = true;
@@ -706,6 +747,11 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
       driver.waitForSemantic(physicalDeviceId, 'Call controls'),
     ]);
 
+    await onStage?.call(
+      AndroidProductionAudioCallStage.connected,
+      callerIdentity,
+      calleeIdentity,
+    );
     final sampled =
         await Future.wait<Map<String, Object?>>(<Future<Map<String, Object?>>>[
           _waitForBidirectionalAudioRtp(
@@ -750,6 +796,11 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
       apkSha256: apkSha256,
     );
     artifacts.addAll(await driver.captureArtifacts('active'));
+    await onStage?.call(
+      AndroidProductionAudioCallStage.mediaReady,
+      callerIdentity,
+      calleeIdentity,
+    );
 
     await driver.tapSemantic(emulatorDeviceId, 'Mute');
     await driver.waitForSemantic(emulatorDeviceId, 'Unmute');
@@ -795,6 +846,11 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
       );
     }
     artifacts.addAll(await driver.captureArtifacts('terminal'));
+    await onStage?.call(
+      AndroidProductionAudioCallStage.terminal,
+      callerIdentity,
+      calleeIdentity,
+    );
     final nativeCleanup = await Future.wait<bool>(
       devices.map(driver.nativeCallReleased),
     );
@@ -877,6 +933,7 @@ runAndroidProductionAudioCallCampaign({
   required List<String> devices,
   required String? artifactPath,
   Map<String, String>? environment,
+  String? regressionScenario,
 }) async {
   final env = environment ?? Platform.environment;
   final artifact = artifactPath == null ? null : File(artifactPath).absolute;
@@ -946,6 +1003,7 @@ runAndroidProductionAudioCallCampaign({
     relayHost: relay.host,
     relayPort: relay.port,
     proofDirectory: _proofDirectory(env),
+    regressionScenario: regressionScenario,
   );
   final tokens = _SecureTokens();
 
@@ -964,6 +1022,9 @@ runAndroidProductionAudioCallCampaign({
       runId: tokens.next('production-audio'),
       callerNonce: tokens.next('caller'),
       calleeNonce: tokens.next('callee'),
+      onStage:
+          driver._callBackRegression?.onStage ??
+          driver._surfaceRegression?.onStage,
     );
   } on AndroidProductionAudioCallPrimaryFailure catch (error) {
     return _compoundCampaignFailureResult(error);
@@ -998,7 +1059,10 @@ runAndroidProductionAudioCallCampaign({
       ? 'validateAndroidProductionAudioCallEmulatorArtifact'
       : androidProductionAudioCallArtifactValidatorId;
   final durable = writeSimsArtifactEvidenceSync(
-    directory: _proofDirectory(env),
+    directory:
+        driver._callBackRegression?.output ??
+        driver._surfaceRegression?.output ??
+        _proofDirectory(env),
     capabilityId: androidProductionAudioCallScenarioId,
     validatorIds: <String>[validatorId],
     payload: androidProductionAudioCallDurablePayload(
@@ -1028,6 +1092,14 @@ runAndroidProductionAudioCallCampaign({
       detail: 'Durable production audio-call evidence failed validation.',
       artifactPresent: false,
     );
+  }
+  final regression = driver._callBackRegression;
+  if (regression != null) {
+    return regression.result(durable, emulatorPair: emulatorPair);
+  }
+  final surface = driver._surfaceRegression;
+  if (surface != null) {
+    return surface.result(durable, emulatorPair: emulatorPair);
   }
   return AndroidProductionAudioCallCampaignResult.pass(durable);
 }
@@ -1151,11 +1223,30 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     int startDispatchMaximumPolls = 180,
     Duration startDispatchPollInterval = const Duration(milliseconds: 250),
     DateTime Function()? now,
+    String? regressionScenario,
   }) : _runner = runner,
        _now = now ?? DateTime.now,
        _startDispatchMaximumPolls = startDispatchMaximumPolls,
        _startDispatchPollInterval = startDispatchPollInterval {
     validateAndroidProductionAudioCallAppPackage(packageName);
+    if (regressionScenario != null) {
+      if (!productionCallJourneys.contains(regressionScenario)) {
+        throw const FormatException(
+          'An exact registered callback scenario is required.',
+        );
+      }
+      if (productionCallBackJourneys.contains(regressionScenario)) {
+        _callBackRegression = _ProductionCallBackRegression(
+          this,
+          regressionScenario,
+        );
+      } else {
+        _surfaceRegression = _ProductionCallSurfaceRegression(
+          this,
+          regressionScenario,
+        );
+      }
+    }
     if (startDispatchMaximumPolls < 1 || startDispatchPollInterval.isNegative) {
       throw ArgumentError(
         'Start-dispatch polling must have a positive bound and non-negative '
@@ -1183,6 +1274,8 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   final Map<String, Future<String>> _pendingUiDumps = {};
   final Map<String, String> _setupSteps = {};
   final Map<String, String> _setupPhases = {};
+  _ProductionCallBackRegression? _callBackRegression;
+  _ProductionCallSurfaceRegression? _surfaceRegression;
 
   @override
   Future<AndroidProductionAudioCallTargetKind> classifyTarget(
@@ -1292,6 +1385,8 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       'auto_setup.json',
       jsonEncode(<String, Object?>{'username': username}),
     );
+    await _callBackRegression?.preparePeer(deviceId);
+    await _surfaceRegression?.preparePeer(deviceId);
   }
 
   @override
@@ -2070,6 +2165,12 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     required String role,
     required String stage,
   }) async {
+    if (_surfaceRegression?.routePickerOpen == true &&
+        deviceId == _surfaceRegression?.subject.device) {
+      throw StateError(
+        'Private output picker labels excluded; coarse route evidence retained in the attempt.',
+      );
+    }
     final stem = '$stage-$role-${_token('capture')}';
     final ui = sanitizeAndroidProductionAudioCallDiagnosticText(
       await _uiDump(deviceId),

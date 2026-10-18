@@ -614,6 +614,7 @@ def sims_rows_for_check(byid, check):
     if excluded - active.keys():
         raise ValueError('Unknown or inactive excluded SIMS capabilities')
     wanted = set(active) - excluded if check.get('capability') == '*' else {check.get('capability')}
+    wanted.update(check.get('additional_capabilities', []))
     if wanted - active.keys() or wanted & excluded:
         raise ValueError('Invalid selected SIMS capability')
     while True:
@@ -644,6 +645,8 @@ def validate_sims_partitions(root, commands):
         flags += [arg.split('=', 1)[1] for arg in args if arg.startswith('--exclude=')]
         if set(flags) != set(check.get('excluded_capabilities', [])) or (args and args[-1] == '--exclude'):
             errors.append('SIMS exclusion command/metadata mismatch: ' + owner)
+        if bool(check.get('additional_capabilities')) != ('--include-regressions' in args):
+            errors.append('SIMS fixture cohort command/metadata mismatch: ' + owner)
     for owner, check in commands.items():
         for capability in check.get('excluded_capabilities', []):
             alternatives = set().union(*(ids for other, ids in coverage.items() if other != owner))

@@ -489,6 +489,25 @@ class ExternalReportRegressionTest(unittest.TestCase):
         self.assertEqual(self.inspect([self.verdict(status='FAIL', exitCode=1)], timeout=True)['status'], 'FAIL')
         self.assertEqual(self.inspect([self.verdict()], timeout=True)['status'], 'BLOCKED')
 
+    def test_fixture_cohort_cannot_pass_on_its_anchor_without_the_additional_case(self):
+        manifest = self.root / 'tool/sims/critical_features.json'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(json.dumps({'capabilities': [
+            dict(id='build.fixture', modes=['major']),
+            dict(id='fixture.executed', modes=['major'], dependencies=['build.fixture']),
+            dict(id='kx0020', modes=['major'], dependencies=['build.fixture']),
+        ]}))
+        check = dict(kind='sims', capability='fixture.executed', additional_capabilities=['kx0020'],
+                     adapter='integration_test/scripts/run_production_audio_call_sims.dart')
+        command, selected = checks.command_for(check, self.root, [])
+        self.assertIn('--include-regressions', command)
+        self.assertEqual(set(selected), {'fixture.executed', 'kx0020', 'build.fixture'})
+        self.inspect([self.verdict(), self.verdict('build.fixture')])
+        result = checks.inspect_sims(self.path, '*', 0, False, selected)
+        self.assertEqual(result['checkpoint'], 'incomplete_sims_selection')
+        self.inspect([self.verdict(), self.verdict('build.fixture'), self.verdict('kx0020', status='FAIL')])
+        self.assertEqual(checks.inspect_sims(self.path, '*', 1, False, selected)['status'], 'FAIL')
+
     def test_policy_na_only_satisfies_full_aggregate_with_a_real_pass(self):
         na = self.verdict('fixture.unavailable', status='N/A', assertionsAttempted=0,
                           artifactPresent=False, exitCode=None, printOnly=False,

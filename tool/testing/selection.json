@@ -639,7 +639,8 @@
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
-        "scripts/test/safe_sims_launcher_test.py"
+        "scripts/test/safe_sims_launcher_test.py",
+        "scripts/test/legacy_device_helpers_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -923,8 +924,30 @@
       "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
       "disposable_android_package": "com.mknoon.sims.productionaudio",
       "ui_driver": "existing_campaign",
-      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations; use Appium MCP for separate UI reproduction.",
-      "host_preflight": "one-to-one-runner"
+      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations. Its KX rows also correlate actual app-handler callback submission/redial/outcomes, canonical session state and native permission/notification evidence; UI taps and the existing host mocks alone cannot establish those app/native boundaries. Reuse the existing native notification-row parser and driver for the Call back child, plus existing Maestro journeys for update UI; retain independent row artifacts under one call-profile APK/backend lease. Notification cases also require actual OS channel, heads-up-manager and publication-order evidence; existing Maestro owns minimize/return UI, and the native owned-row tap never launches the app as a shortcut. Route29 compares coarse UI rows with the real native output provider; no endpoint identifier/name is serialized, and a stuck private picker suppresses raw artifacts. Preference30 reads only its saved boolean and uses existing Maestro for actual settings copy/toggle/restoration; forced relay is not a network-causality claim. kx0001 reads post-sign actual wire metadata and scheduled canonical timer origins for the current authenticated call; neither UI text nor static policy constants prove those runtime timestamps. It introduces no incoming-admission delay and makes no delayed/OS-offline proof claim.",
+      "host_preflight": "one-to-one-runner",
+      "additional_capabilities": [
+        "kx0001",
+        "kx0002",
+        "kx0003",
+        "kx0005",
+        "kx0006",
+        "kx0007",
+        "kx0008",
+        "kx0015",
+        "kx0016",
+        "kx0017",
+        "kx0020",
+        "kx0021",
+        "kx0022",
+        "kx0023",
+        "kx0024",
+        "kx0025",
+        "kx0026",
+        "kx0027",
+        "kx0029",
+        "kx0030"
+      ]
     },
     "signed-startup-contacts": {
       "kind": "manual",
@@ -5084,7 +5107,17 @@
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/sims_native_xctest_receipts.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/legacy_device_helpers_test.py",
+        "docker-ws/_device_targets.sh",
+        "docker-ws/_host_paths.sh",
+        "docker-ws/install_iphones_keep_identity.sh",
+        "docker-ws/resign_and_install_iphones.sh",
+        "docker-ws/se41_test_variant.sh",
+        "docker-ws/se41_test_log.sh",
+        "docker-ws/se55_iphone11_deploy.sh",
+        "docker-ws/mknoon_checks_host.sh",
+        "docker-ws/fetch_codex_artifact.sh"
       ],
       "checks": [
         "workflow",
@@ -6205,7 +6238,10 @@
         "scripts/test/provider_delivery_preflight_test.py",
         "test/integration/production_android_*",
         "test/integration/production_provider_*",
-        "test/tool/sims/production_provider_*"
+        "test/tool/sims/production_provider_*",
+        "integration_test/scripts/run_production_update_check.dart",
+        "integration_test/support/production_update_check_notification.dart",
+        "integration_test/scripts/run_production_contact_delete.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6327,7 +6363,8 @@
         "android/app/src/main/kotlin/com/mknoon/app/MknoonFirebaseMessaging*",
         "android/app/src/test/kotlin/com/mknoon/app/MknoonFirebaseMessagingServiceTest.kt",
         "ios/Runner/*.lproj/Localizable.strings",
-        "ios/Runner/*.lproj/InfoPlist.strings"
+        "ios/Runner/*.lproj/InfoPlist.strings",
+        "integration_test/support/update_check_test_keys.dart"
       ],
       "checks": [
         "update-check",
@@ -6356,6 +6393,25 @@
         "analysis"
       ],
       "why": "Analyzer configuration changes must run actual static analysis instead of falling through to unrelated behavioral test lanes."
+    },
+    {
+      "id": "production-call-regressions",
+      "patterns": [
+        "integration_test/scripts/production_call_back_regressions.dart",
+        "integration_test/scripts/run_production_call_back.dart",
+        "tool/sims/production_call_back_criteria.dart",
+        "integration_test/support/production_call_notification_evidence.dart",
+        "integration_test/scripts/production_call_surface_regressions.dart",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "tool/sims/production_call_regression_criteria.dart"
+      ],
+      "checks": [
+        "production-audio-harness-contract",
+        "sims-plan-contract",
+        "maestro-flow-contracts",
+        "device-audio"
+      ],
+      "why": "Call regressions reuse the authenticated audio fixture and preserve actual callback/current-call, native notification/keyguard/permission observations and cleanup; host contracts do not certify a device run."
     }
   ],
   "documentation_only": [
@@ -6447,7 +6503,47 @@
         "--exclude",
         "build.android.production_fcm.fixed_wake",
         "--exclude",
-        "notifications.android_recovery_completion"
+        "notifications.android_recovery_completion",
+        "--exclude",
+        "kx0020",
+        "--exclude",
+        "kx0021",
+        "--exclude",
+        "kx0022",
+        "--exclude",
+        "kx0023",
+        "--exclude",
+        "kx0024",
+        "--exclude",
+        "kx0025",
+        "--exclude",
+        "kx0026",
+        "--exclude",
+        "kx0027",
+        "--exclude",
+        "kx0005",
+        "--exclude",
+        "kx0006",
+        "--exclude",
+        "kx0007",
+        "--exclude",
+        "kx0008",
+        "--exclude",
+        "kx0002",
+        "--exclude",
+        "kx0003",
+        "--exclude",
+        "kx0015",
+        "--exclude",
+        "kx0016",
+        "--exclude",
+        "kx0017",
+        "--exclude",
+        "kx0029",
+        "--exclude",
+        "kx0030",
+        "--exclude",
+        "kx0001"
       ],
       "boundary": "Existing SIMS host/native/Go/device/performance capabilities",
       "timeout_seconds": 259200,
@@ -6456,7 +6552,7 @@
         "flutter"
       ],
       "ui_driver": "existing_campaign",
-      "ui_driver_reason": "Existing full regression retains protocol/native assertion owners; Appium MCP is preferred for separate live UI investigation.",
+      "ui_driver_reason": "Existing full regression retains protocol/native assertion owners. The owner-approved SE47 and iOS SE41 rows reuse existing Maestro journeys with owned SQLite/file evidence beyond UI assertions. Android call-profile KX rows run in the separate existing audio fixture cohort to reuse its APK and backend.",
       "host_preflight": "one-to-one-runner",
       "environment": {
         "SIMS_GROUP_MULTI_PARTY_SCENARIO": "all"
@@ -6467,6 +6563,26 @@
         "build.android.e2e.direct_media_custody",
         "build.android.e2e.production_call_local",
         "build.android.production_fcm.fixed_wake",
+        "kx0001",
+        "kx0002",
+        "kx0003",
+        "kx0005",
+        "kx0006",
+        "kx0007",
+        "kx0008",
+        "kx0015",
+        "kx0016",
+        "kx0017",
+        "kx0020",
+        "kx0021",
+        "kx0022",
+        "kx0023",
+        "kx0024",
+        "kx0025",
+        "kx0026",
+        "kx0027",
+        "kx0029",
+        "kx0030",
         "notifications.android_recovery_completion"
       ],
       "native_xctest_receipts": {
@@ -6554,7 +6670,7 @@
       "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
       "disposable_android_package": "com.mknoon.sims.productionaudio",
       "ui_driver": "existing_campaign",
-      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations; use Appium MCP for separate UI reproduction.",
+      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations. Its KX rows also correlate actual app-handler callback submission/redial/outcomes, canonical session state and native permission/notification evidence; UI taps and the existing host mocks alone cannot establish those app/native boundaries. Reuse the existing native notification-row parser and driver for the Call back child, plus existing Maestro journeys for update UI; retain independent row artifacts under one call-profile APK/backend lease.",
       "host_preflight": "one-to-one-runner",
       "id": "full-device-audio",
       "sims_mode": "major",
@@ -6565,7 +6681,30 @@
         "--mode",
         "major",
         "--scenario",
-        "android.production_1to1_audio_call"
+        "android.production_1to1_audio_call",
+        "--include-regressions"
+      ],
+      "additional_capabilities": [
+        "kx0001",
+        "kx0002",
+        "kx0003",
+        "kx0005",
+        "kx0006",
+        "kx0007",
+        "kx0008",
+        "kx0015",
+        "kx0016",
+        "kx0017",
+        "kx0020",
+        "kx0021",
+        "kx0022",
+        "kx0023",
+        "kx0024",
+        "kx0025",
+        "kx0026",
+        "kx0027",
+        "kx0029",
+        "kx0030"
       ]
     },
     {
@@ -6702,7 +6841,8 @@
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
-        "scripts/test/safe_sims_launcher_test.py"
+        "scripts/test/safe_sims_launcher_test.py",
+        "scripts/test/legacy_device_helpers_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -6733,7 +6873,8 @@
         "scripts/test/mknoon_full_legacy_binding_test.py",
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
-        "scripts/test/safe_sims_launcher_test.py"
+        "scripts/test/safe_sims_launcher_test.py",
+        "scripts/test/legacy_device_helpers_test.py"
       ],
       "resources": [
         "isolated:full-workflow"

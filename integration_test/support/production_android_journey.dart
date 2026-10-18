@@ -12,6 +12,8 @@ import 'production_journey_peer.dart';
 const productionJourneyAndroidProfile = 'android.e2e.production';
 const productionPerformanceAndroidProfile = 'android.e2e.performance_relay';
 const productionJourneyAndroidPackage = 'com.mknoon.sims.connectivity';
+const productionUpdateCheckAndroidProfile = 'android.e2e.production_call_local';
+const productionUpdateCheckAndroidPackage = 'com.mknoon.sims.productionaudio';
 const productionNotificationAndroidProfile = 'android.production_fcm.journey';
 const productionNotificationAndroidPackage = 'com.mknoon.app';
 
@@ -79,6 +81,7 @@ final class ProductionJourneyFlowRunner {
   }) async {
     if (!{
           productionJourneyAndroidPackage,
+          productionUpdateCheckAndroidPackage,
           productionNotificationAndroidPackage,
         }.contains(packageName) ||
         values.containsKey('APP_ID')) {
@@ -261,6 +264,11 @@ final class ProductionAndroidJourney implements ProductionJourney {
   }) : runner = runner ?? const SystemAndroidHostProcessRunner(),
        captureGuard = captureGuard ?? _captureProductionAndroidGuard {
     final values = environment ?? Platform.environment;
+    if (scenario == 'kx0028') {
+      throw ArgumentError(
+        'The TestFlight scenario requires the iOS simulator adapter.',
+      );
+    }
     String required(String name) {
       final value = values[name];
       if (value == null || value.isEmpty) throw StateError('missing $name');
@@ -269,6 +277,8 @@ final class ProductionAndroidJourney implements ProductionJourney {
 
     profileId = scenario == 'production.startup_resume_performance'
         ? productionPerformanceAndroidProfile
+        : productionUpdateCheckJourneys.contains(scenario)
+        ? productionUpdateCheckAndroidProfile
         : productionJourneyAndroidProfile;
     final primary = ProductionAndroidArtifact.fromEnvironment(
       profileId,
@@ -289,12 +299,22 @@ final class ProductionAndroidJourney implements ProductionJourney {
     }
     disposableAndroidJourneys =
         values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1';
+    final singleFixture =
+        productionUpdateCheckJourneys.contains(scenario) ||
+        productionContactDeleteJourneys.contains(scenario);
+    if (singleFixture && !disposableAndroidJourneys) {
+      throw StateError(
+        'Single-peer fixtures require an explicit disposable emulator.',
+      );
+    }
     physical = required(
-      disposableAndroidJourneys
+      singleFixture
+          ? 'SIMS_ANDROID_EMULATOR_DEVICE_ID'
+          : disposableAndroidJourneys
           ? 'SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'
           : 'SIMS_ANDROID_PHYSICAL_DEVICE_ID',
     );
-    emulator = scenario == 'production.startup_resume_performance'
+    emulator = isSinglePeer
         ? null
         : required('SIMS_ANDROID_EMULATOR_DEVICE_ID');
     if (!RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(physical) ||
@@ -306,7 +326,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
       throw StateError('physical Android and emulator must be pinned');
     }
     alice = peer(physical, 'alice');
-    if (scenario != 'production.startup_resume_performance') {
+    if (!isSinglePeer) {
       bob = peer(emulator!, 'bob');
     }
     if ({
@@ -402,9 +422,11 @@ final class ProductionAndroidJourney implements ProductionJourney {
   final additionalPeers = <String, ProductionJourneyPeer>{};
   @override
   List<ProductionJourneyPeer> get actors =>
-      scenario == 'production.startup_resume_performance'
-      ? [alice]
-      : [alice, bob, ...additionalPeers.values];
+      isSinglePeer ? [alice] : [alice, bob, ...additionalPeers.values];
+  bool get isSinglePeer =>
+      scenario == 'production.startup_resume_performance' ||
+      productionUpdateCheckJourneys.contains(scenario) ||
+      productionContactDeleteJourneys.contains(scenario);
   ProductionAndroidInstallGuard? _guard;
   final artifacts = <String, ProductionAndroidArtifact>{};
   final _guards = <String, ProductionAndroidInstallGuard>{};
@@ -419,6 +441,8 @@ final class ProductionAndroidJourney implements ProductionJourney {
       : profileId;
   String packageFor(String role) => usesProviderReceiver && role == 'bob'
       ? productionNotificationAndroidPackage
+      : profileId == productionUpdateCheckAndroidProfile
+      ? productionUpdateCheckAndroidPackage
       : productionJourneyAndroidPackage;
 
   ProductionJourneyPeer peer(String device, String role) {
@@ -657,7 +681,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
           'status': 'PASS',
           'exactRestorationVerified': true,
           'devices': actors.map((p) => p.device).toList(),
-          if (!usesProviderReceiver) 'package': productionJourneyAndroidPackage,
+          if (!usesProviderReceiver) 'package': packageFor('alice'),
           'packagesByDevice': {for (final p in actors) p.device: p.packageName},
         }),
       );

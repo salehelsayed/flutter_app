@@ -171,6 +171,53 @@ void main() {
   });
 
   test(
+    'encoded observer sees the exact signed forty-second wire and cannot alter it by throwing',
+    () async {
+      String? observed;
+      CallSignal? observedSignal;
+      var calls = 0;
+      final sender = SecureCallEnvelopeCodec(
+        crypto: crypto,
+        nowMs: () => _nowMs,
+        onEncoded: (signal, wire) {
+          calls++;
+          observed = wire;
+          observedSignal = signal;
+          throw StateError('observer unavailable');
+        },
+      );
+      final encoded = await sender.encode(
+        signal: _signal(expiresAtMs: _nowMs + 40000),
+        callHandle: _callHandle,
+        recipientMlKemPublicKey: 'recipient-mlkem-public',
+        senderSigningPrivateKey: _signingKey,
+      );
+      expect(observed, encoded);
+      expect(calls, 1);
+      expect(observedSignal!.expiresAtMs - observedSignal!.createdAtMs, 40000);
+      expect((jsonDecode(encoded) as Map)['expires_at_ms'], _nowMs + 40000);
+      final decoded = await codec.decode(
+        envelopeJson: encoded,
+        authority: _authority(),
+      );
+      expect(decoded.signal.expiresAtMs, _nowMs + 40000);
+      await expectLater(
+        SecureCallEnvelopeCodec(
+          crypto: crypto,
+          nowMs: () => _nowMs + 40001,
+        ).decode(envelopeJson: encoded, authority: _authority()),
+        throwsA(
+          isA<CallEnvelopeException>().having(
+            (e) => e.code,
+            'code',
+            CallEnvelopeErrorCode.expired,
+          ),
+        ),
+      );
+    },
+  );
+
+  test(
     'round trips a signed encrypted versioned device-targeted signal',
     () async {
       final encoded = await codec.encode(

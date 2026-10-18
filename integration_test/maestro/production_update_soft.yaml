@@ -1,0 +1,5 @@
+appId: ${APP_ID}
+name: production_update_soft
+---
+- assertVisible: '^A new version of Mknoon is ready\.$'
+- assertNotVisible: '^Please update Mknoon$'

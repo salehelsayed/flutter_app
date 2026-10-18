@@ -51,7 +51,10 @@
         "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
         "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
         "VOICE_CALL_FORCE_RELAY_ENABLED": "true",
-        "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true"
+        "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true",
+        "MKNOON_SE41_TEST_PROFILE": "true",
+        "MKNOON_UPDATE_CHECK": "on",
+        "MKNOON_SE41_TEST_PUBLIC_KEY_B64": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc="
       },
       "declaredException": false
     },
@@ -153,7 +156,10 @@
       "artifactKind": "simulator-runner-app",
       "buildRequired": true,
       "compileDefines": {
-        "E2E_TEST_MODE": "true"
+        "E2E_TEST_MODE": "true",
+        "MKNOON_SE41_TEST_PROFILE": "true",
+        "MKNOON_UPDATE_CHECK": "on",
+        "MKNOON_SE41_TEST_PUBLIC_KEY_B64": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc="
       },
       "declaredException": false
     },
@@ -7009,6 +7015,1916 @@
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "sha256-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0031",
+      "owner": "platform",
+      "proofBoundary": "host.legacy-bash-helper-guards",
+      "assertions": [
+        "legacy_helpers.explicit_target_and_empty_precedence",
+        "legacy_helpers.resolved_output_and_source_paths",
+        "legacy_helpers.exact_process_owner_program_command",
+        "legacy_helpers.missing_signing_key_failure_propagates",
+        "legacy_helpers.resign_failure_aborts_before_device_install"
+      ],
+      "lane": "unit",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "infra"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "-v",
+        "scripts/test/legacy_device_helpers_test.py"
+      ],
+      "buildProfile": "host.process",
+      "dependencies": [],
+      "resources": [
+        {
+          "name": "host.cpu",
+          "access": "read"
+        }
+      ],
+      "targetCapabilities": [
+        "host.python3",
+        "host.bash",
+        "host.git"
+      ],
+      "artifactRequired": false,
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0004",
+      "owner": "call",
+      "proofBoundary": "ios.physical.kx0004",
+      "assertions": [
+        "kx0004.minimize_and_return_preserves_active_call"
+      ],
+      "lane": "device",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "-c",
+        "raise SystemExit('BLOCKED kx0004: physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized.')"
+      ],
+      "buildProfile": "ios.device.production",
+      "dependencies": [
+        "build.ios.device.production"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.device.production",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-physical",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": false,
+      "automationReady": false,
+      "active": true,
+      "declaredBuildException": false,
+      "blockedReason": "physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized."
+    },
+    {
+      "id": "kx0009",
+      "owner": "call",
+      "proofBoundary": "ios.physical.kx0009",
+      "assertions": [
+        "kx0009.callback_currentness_across_ios_admission"
+      ],
+      "lane": "device",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "-c",
+        "raise SystemExit('BLOCKED kx0009: physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized.')"
+      ],
+      "buildProfile": "ios.device.production",
+      "dependencies": [
+        "build.ios.device.production"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.device.production",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-physical",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": false,
+      "automationReady": false,
+      "active": true,
+      "declaredBuildException": false,
+      "blockedReason": "physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized."
+    },
+    {
+      "id": "kx0018",
+      "owner": "call",
+      "proofBoundary": "ios.physical.kx0018",
+      "assertions": [
+        "kx0018.readable_label_on_incoming_callkit_surface"
+      ],
+      "lane": "device",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "-c",
+        "raise SystemExit('BLOCKED kx0018: physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized.')"
+      ],
+      "buildProfile": "ios.device.production",
+      "dependencies": [
+        "build.ios.device.production"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.device.production",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-physical",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": false,
+      "automationReady": false,
+      "active": true,
+      "declaredBuildException": false,
+      "blockedReason": "physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized."
+    },
+    {
+      "id": "kx0019",
+      "owner": "call",
+      "proofBoundary": "ios.physical.kx0019",
+      "assertions": [
+        "kx0019.peer_id_username_uses_readable_fallback"
+      ],
+      "lane": "device",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "python3",
+        "-c",
+        "raise SystemExit('BLOCKED kx0019: physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized.')"
+      ],
+      "buildProfile": "ios.device.production",
+      "dependencies": [
+        "build.ios.device.production"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.device.production",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-physical",
+          "access": "exclusive"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.physical"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": false,
+      "automationReady": false,
+      "active": true,
+      "declaredBuildException": false,
+      "blockedReason": "physical_data_preservation: the existing iOS native call fixture is not certified for install-over/data-preserving setup and restoration; no physical campaign is authorized."
+    },
+    {
+      "id": "kx0020",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0020",
+      "assertions": [
+        "kx0020.signed_soft_notice",
+        "kx0020.back_and_resume_navigation"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0020"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0020",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0021",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0021",
+      "assertions": [
+        "kx0021.signed_hard_overlay",
+        "kx0021.back_does_not_dismiss"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0021"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0021",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0022",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0022",
+      "assertions": [
+        "kx0022.soft_baseline",
+        "kx0022.tampered_hard_rejected",
+        "kx0022.same_payload_signature_repair_forces"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0022"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0022",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0023",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0023",
+      "assertions": [
+        "kx0023.newer_hard",
+        "kx0023.stale_soft_ignored",
+        "kx0023.newest_soft_accepted"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0023"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0023",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0024",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0024",
+      "assertions": [
+        "kx0024.old_issued_at_accepted",
+        "kx0024.lower_sequence_rejected",
+        "kx0024.higher_sequence_accepted"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0024"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0024",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0025",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0025",
+      "assertions": [
+        "kx0025.expired_budget_no_card",
+        "kx0025.unreadable_state_no_card",
+        "kx0025.exact_state_mode_restored",
+        "kx0025.eligible_native_card_play_target_default_channel"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0025"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0025",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0026",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0026",
+      "assertions": [
+        "kx0026.soft_notice",
+        "kx0026.higher_sequence_forced_overlay"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0026"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0026",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0027",
+      "owner": "update-check",
+      "proofBoundary": "android.emulator.signed-update-check.kx0027",
+      "assertions": [
+        "kx0027.soft_41001_posted",
+        "kx0027.hard_41002_posted_soft_absent",
+        "kx0027.exact_native_play_target"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0027"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0027",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0028",
+      "owner": "update-check",
+      "proofBoundary": "ios.simulator.signed-update-check.kx0028",
+      "assertions": [
+        "kx0028.simulator_hard_overlay",
+        "kx0028.actual_update_action_testflight_url"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "settings",
+        "notifications"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_update_check.dart",
+        "--scenario",
+        "kx0028"
+      ],
+      "buildProfile": "ios.simulator.app",
+      "dependencies": [
+        "build.ios.simulator.app"
+      ],
+      "resources": [
+        {
+          "name": "build:ios.simulator.app",
+          "access": "read"
+        },
+        {
+          "name": "device:ios-simulator-a",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0028",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "ios.simulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionUpdateCheck",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0010",
+      "owner": "contacts",
+      "proofBoundary": "android.emulator.contact-delete.kx0010",
+      "assertions": [
+        "kx0010.actual_conversation_deletion",
+        "kx0010.triggered_contact_delete_rolls_back_history",
+        "kx0010.only_a_history_purged_b_retained",
+        "kx0010.restart_preserves_purge",
+        "kx0010.exact_per_app_locale_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "contacts"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "--scenario",
+        "kx0010"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0010",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionContactDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0011",
+      "owner": "contacts",
+      "proofBoundary": "android.emulator.contact-delete.kx0011",
+      "assertions": [
+        "kx0011.actual_orbit_deletion",
+        "kx0011.triggered_contact_delete_rolls_back_history",
+        "kx0011.only_a_history_purged_b_retained",
+        "kx0011.restart_preserves_purge",
+        "kx0011.exact_per_app_locale_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "contacts"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "--scenario",
+        "kx0011"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0011",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionContactDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0012",
+      "owner": "contacts",
+      "proofBoundary": "android.emulator.contact-delete.kx0012",
+      "assertions": [
+        "kx0012.localized_body_includes_call_history",
+        "kx0012.actual_buttons_and_cancel_preservation",
+        "kx0012.ltr",
+        "kx0012.exact_per_app_locale_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "contacts"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "--scenario",
+        "kx0012"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0012",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionContactDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0013",
+      "owner": "contacts",
+      "proofBoundary": "android.emulator.contact-delete.kx0013",
+      "assertions": [
+        "kx0013.localized_body_includes_call_history",
+        "kx0013.actual_buttons_and_cancel_preservation",
+        "kx0013.ltr",
+        "kx0013.exact_per_app_locale_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "contacts"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "--scenario",
+        "kx0013"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0013",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionContactDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0014",
+      "owner": "contacts",
+      "proofBoundary": "android.emulator.contact-delete.kx0014",
+      "assertions": [
+        "kx0014.localized_body_includes_call_history",
+        "kx0014.actual_buttons_and_cancel_preservation",
+        "kx0014.arabic_rtl",
+        "kx0014.exact_per_app_locale_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "contacts"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "--scenario",
+        "kx0014"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0014",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionContactDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0005",
+      "owner": "call",
+      "proofBoundary": "android.production-call-callback.kx0005",
+      "assertions": [
+        "kx0005.actual_cold_notification_actions",
+        "kx0005.a_b_before_readiness",
+        "kx0005.only_b_admitted",
+        "kx0005.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_back.dart",
+        "--scenario",
+        "kx0005"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0005",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallBack",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0006",
+      "owner": "call",
+      "proofBoundary": "android.production-call-callback.kx0006",
+      "assertions": [
+        "kx0006.actual_native_unlock_boundary",
+        "kx0006.no_redial_while_locked",
+        "kx0006.only_b_after_unlock",
+        "kx0006.keyguard_and_app_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_back.dart",
+        "--scenario",
+        "kx0006"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0006",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallBack",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0007",
+      "owner": "call",
+      "proofBoundary": "android.production-call-callback.kx0007",
+      "assertions": [
+        "kx0007.actual_notification_callback_while_busy",
+        "kx0007.approved_unavailable_message",
+        "kx0007.same_canonical_active_call",
+        "kx0007.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_back.dart",
+        "--scenario",
+        "kx0007"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0007",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallBack",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0008",
+      "owner": "call",
+      "proofBoundary": "android.production-call-callback.kx0008",
+      "assertions": [
+        "kx0008.actual_os_microphone_denial",
+        "kx0008.typed_result_and_message",
+        "kx0008.owned_recording_positive_to_zero",
+        "kx0008.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_back.dart",
+        "--scenario",
+        "kx0008"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0008",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallBack",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0002",
+      "owner": "call",
+      "proofBoundary": "android.production-call-notification.kx0002",
+      "assertions": [
+        "kx0002.actual_caller_first_minimize",
+        "kx0002.quiet_ongoing_channel_and_sampled_no_heads_up",
+        "kx0002.notification_foregrounds_same_current_call",
+        "kx0002.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0002"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0002",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0003",
+      "owner": "call",
+      "proofBoundary": "android.production-call-notification.kx0003",
+      "assertions": [
+        "kx0003.actual_callee_first_minimize",
+        "kx0003.ongoing_post_before_ringing_cancel_os_events",
+        "kx0003.quiet_ongoing_channel_and_sampled_no_heads_up",
+        "kx0003.notification_foregrounds_same_current_call",
+        "kx0003.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0003"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0003",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0015",
+      "owner": "call",
+      "proofBoundary": "android.production-call-notification.kx0015",
+      "assertions": [
+        "kx0015.actual_authenticated_contact_incoming_name",
+        "kx0015.raw_peer_id_absent",
+        "kx0015.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0015"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0015",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0016",
+      "owner": "call",
+      "proofBoundary": "android.production-call-notification.kx0016",
+      "assertions": [
+        "kx0016.actual_authenticated_contact_incoming_name",
+        "kx0016.same_name_retained_ongoing",
+        "kx0016.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0016"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0016",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0017",
+      "owner": "call",
+      "proofBoundary": "android.production-call-notification.kx0017",
+      "assertions": [
+        "kx0017.actual_peer_id_username_only_fixture",
+        "kx0017.readable_native_fallback_without_raw_peer_id",
+        "kx0017.authority_columns_preserved",
+        "kx0017.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0017"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0017",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0029",
+      "owner": "call",
+      "proofBoundary": "android.production-call-settings.kx0029",
+      "assertions": [
+        "kx0029.visible_picker_matches_observed_available_coarse_routes",
+        "kx0029.actual_speaker_selection_and_source_defined_release",
+        "kx0029.absent_bluetooth_wired_marked_unavailable_only_when_absent",
+        "kx0029.no_native_endpoint_id_or_name_persisted",
+        "kx0029.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0029"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0029",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0030",
+      "owner": "call",
+      "proofBoundary": "android.production-call-settings.kx0030",
+      "assertions": [
+        "kx0030.actual_saved_preference_ui_toggle_and_readback",
+        "kx0030.copy_distinguishes_audio_relay_from_signaling_address",
+        "kx0030.preference_restored_before_outer_app_guard",
+        "kx0030.forced_relay_profile_no_network_route_claim",
+        "kx0030.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0030"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0030",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "kx0001",
+      "owner": "call",
+      "proofBoundary": "android.production-call-signed-wire-deadlines",
+      "assertions": [
+        "kx0001.actual_post_sign_wire_ttl40_and_protocol_headroom5",
+        "kx0001.actual_scheduled_noanswer30_and_startedAt_invite45",
+        "kx0001.exact_wire_delivery_gap_without_shared_origin_assumption",
+        "kx0001.authenticated_audio_and_restoration"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1",
+        "media",
+        "transport"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_call_regression.dart",
+        "--scenario",
+        "kx0001"
+      ],
+      "buildProfile": "android.e2e.production_call_local",
+      "dependencies": [
+        "build.android.e2e.production_call_local"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production_call_local",
+          "access": "read"
+        },
+        {
+          "name": "device:android-physical",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-production-call-coturn",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:production-call-pion-known-opus-oracle",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:kx0001",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.physical",
+        "android.emulator",
+        "android.microphone",
+        "host.docker",
+        "host.go1.27",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionCallRegression",
+      "automationReady": true,
       "active": true,
       "declaredBuildException": false
     }

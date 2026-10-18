@@ -299,6 +299,7 @@ void main() {
         canonical.beforeLookup = gate.hold;
         canonical.beforeAdmission = gate.hold;
         var readyCalls = 0;
+        final observations = <(CallBackActionObservation, CallId)>[];
         final handler = CallBackActionHandler(
           history: () => history,
           ready: () async {
@@ -315,6 +316,7 @@ void main() {
             },
           ),
           onResult: results.add,
+          observe: (event, id, _) => observations.add((event, id)),
         );
         final a = handler.submit(_id);
         await gate.entered.future;
@@ -328,12 +330,42 @@ void main() {
           isNot(anyOf(_id, _otherId)),
         );
         expect(canonical.requests.where((r) => r.isAdmitted), hasLength(1));
+        expect(
+          observations
+              .where((e) => e.$1 == CallBackActionObservation.submitted)
+              .map((e) => e.$2),
+          [_id, _otherId],
+        );
+        if (stage == 'startup-readiness' || stage == 'unlock-readiness') {
+          expect(
+            observations
+                .where((e) => e.$1 == CallBackActionObservation.redialRequested)
+                .map((e) => e.$2),
+            [_otherId],
+          );
+        }
         await handler.submit(_id);
         await handler.submit(_otherId);
         expect(canonical.starts, hasLength(1));
       },
     );
   }
+
+  test(
+    'a failing read-only observer cannot change callback admission',
+    () async {
+      final handler = CallBackActionHandler(
+        history: () => history,
+        ready: () async => true,
+        redial: redial,
+        onResult: results.add,
+        observe: (_, _, _) => throw StateError('diagnostic sink failed'),
+      );
+      await handler.submit(_id);
+      expect(owner.starts, ['synthetic-contact']);
+      expect(results, [OutgoingCallStartResult.started]);
+    },
+  );
 
   for (final stage in ['unlock-readiness', 'endpoint-lookup']) {
     test(

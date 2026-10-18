@@ -9,6 +9,50 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../integration_test/scripts/reaction_notification_proof_support.dart';
 
 void main() {
+  group('native callback action ownership', () {
+    const allowed = {'com.android.systemui'};
+    String row(
+      String title, {
+      bool action = true,
+      String package = 'com.android.systemui',
+    }) =>
+        '''
+<node package="$package" resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[0,0][300,400]">
+  <node package="$package" text="$title" bounds="[0,0][300,50]" />
+  <node package="$package" text="Missed call" bounds="[0,50][300,100]" />
+  ${action ? '<node package="$package" text="Call back" enabled="true" clickable="true" bounds="[100,300][200,350]" />' : ''}
+</node>''';
+    test('action belongs to the exact card and proven native package', () {
+      final result = findAndroidNotificationActionTapTarget(
+        '<hierarchy>${row('Other')}${row('Owned')}</hierarchy>',
+        title: 'Owned',
+        body: 'Missed call',
+        action: 'Call back',
+        allowedPackages: allowed,
+      );
+      expect(result?.actionCenter, (150, 325));
+      expect(result?.packageName, 'com.android.systemui');
+    });
+    test('a sibling action or foreign/ambiguous row cannot be tapped', () {
+      for (final xml in [
+        '<hierarchy>${row('Owned', action: false)}${row('Other')}</hierarchy>',
+        '<hierarchy>${row('Owned', package: 'fixture.foreign.app')}</hierarchy>',
+        '<hierarchy>${row('Owned')}${row('Owned')}</hierarchy>',
+      ]) {
+        expect(
+          findAndroidNotificationActionTapTarget(
+            xml,
+            title: 'Owned',
+            body: 'Missed call',
+            action: 'Call back',
+            allowedPackages: allowed,
+          ),
+          isNull,
+        );
+      }
+    });
+  });
+
   test(
     'unread read receipt requires the positive committed pair and omits identifiers',
     () {
@@ -2924,6 +2968,34 @@ Ranking Config:
       );
       expect(target?.cardCenter, (540, 2084));
       expect(target?.collapsedGroupExpandCenter, (956, 2025));
+    });
+
+    test('strict content tap rejects foreign and ambiguous native rows', () {
+      String row(String package) =>
+          '''
+<node package="$package" resource-id="com.android.systemui:id/expandableNotificationRow" bounds="[0,100][500,300]">
+  <node text="Fixture caller" bounds="[10,110][490,160]" />
+  <node text="Call in progress" bounds="[10,170][490,220]" />
+</node>
+''';
+      AndroidNotificationCardTapTarget? find(String rows) =>
+          findAndroidNotificationCardTapTarget(
+            '<hierarchy>$rows</hierarchy>',
+            title: 'Fixture caller',
+            body: 'Call in progress',
+            allowedPackages: {'com.android.systemui'},
+            requireUnique: true,
+          );
+      expect(find(row('com.android.systemui'))?.cardCenter, (250, 200));
+      expect(find(row('foreign.fixture')), isNull);
+      expect(
+        find(row('com.android.systemui') + row('com.android.systemui')),
+        isNull,
+      );
+      expect(
+        find(row('foreign.fixture') + row('com.android.systemui'))?.cardCenter,
+        (250, 200),
+      );
     });
 
     test('does not re-expand an already expanded ancestor group', () {

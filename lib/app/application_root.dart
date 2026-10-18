@@ -616,6 +616,13 @@ class MyApp extends StatefulWidget {
   final Future<void> Function()? pauseCallSignaling;
   final Future<void> Function()? shutdownCallSignaling;
   final VoidCallback? onForegroundCallPresentationReady;
+  final Future<bool> Function()? callBackReadinessBarrier;
+  final void Function(
+    CallBackActionObservation,
+    CallId,
+    OutgoingCallStartResult?,
+  )?
+  onCallBackObservation;
 
   static final navigatorKey = GlobalKey<NavigatorState>();
 
@@ -762,6 +769,8 @@ class MyApp extends StatefulWidget {
     this.pauseCallSignaling,
     this.shutdownCallSignaling,
     this.onForegroundCallPresentationReady,
+    this.callBackReadinessBarrier,
+    this.onCallBackObservation,
   });
 
   @override
@@ -1666,6 +1675,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<bool> _callBackReady() async {
     await _ensureRuntimeServicesReady();
+    final barrier = widget.callBackReadinessBarrier;
+    if (barrier != null && !await barrier()) return false;
     if (!mounted ||
         WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return false;
@@ -1714,6 +1725,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           SnackBar(content: Text(message)),
         );
       },
+      observe: widget.onCallBackObservation,
     );
     try {
       await handler.submit(CallId.parse(value));

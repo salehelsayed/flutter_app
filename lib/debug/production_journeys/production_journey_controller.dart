@@ -195,6 +195,7 @@ final class ProductionJourneyController {
         !e2eTestMode ||
         !{
           'android.e2e.production',
+          'android.e2e.production_call_local',
           'android.e2e.performance_relay',
           'android.production_fcm.journey',
           'ios.simulator.app',
@@ -205,8 +206,30 @@ final class ProductionJourneyController {
     final config = File('${directory.path}/runtime-config.json');
     if (!config.existsSync()) return null;
     final invocation = SimsRuntimeInvocation.decode(config.readAsStringSync());
+    final updateJourney = productionUpdateCheckJourneys.contains(
+      invocation.scenarioId,
+    );
+    final contactDeleteJourney = productionContactDeleteJourneys.contains(
+      invocation.scenarioId,
+    );
+    final callJourney = productionCallJourneys.contains(invocation.scenarioId);
     if (invocation.schema != simsRuntimeConfigSchema ||
         invocation.profileId != profileId ||
+        (profileId == 'android.e2e.production_call_local' &&
+            !updateJourney &&
+            !callJourney) ||
+        (callJourney &&
+            (profileId != 'android.e2e.production_call_local' ||
+                invocation.role != 'alice')) ||
+        (contactDeleteJourney &&
+            (profileId != 'android.e2e.production' ||
+                invocation.role != 'alice')) ||
+        (updateJourney &&
+            (invocation.role != 'alice' ||
+                profileId !=
+                    (invocation.scenarioId == 'kx0028'
+                        ? 'ios.simulator.app'
+                        : 'android.e2e.production_call_local'))) ||
         (profileId == 'android.production_fcm.journey' &&
             (invocation.role != 'bob' ||
                 !{
@@ -280,6 +303,9 @@ final class ProductionJourneyController {
           performanceJourney,
           transportCensusJourney,
           messageLatencyJourney,
+          ...productionUpdateCheckJourneys,
+          ...productionContactDeleteJourneys,
+          ...productionCallJourneys,
         }.contains(invocation.scenarioId) ||
         !(productionFourPeerJourneys.contains(invocation.scenarioId)
                 ? {'alice', 'bob', 'charlie', 'dana'}

@@ -6306,6 +6306,8 @@ AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
   String xml, {
   required String title,
   required String body,
+  Set<String>? allowedPackages,
+  bool requireUnique = false,
 }) {
   late final XmlDocument document;
   try {
@@ -6318,6 +6320,8 @@ AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
       <({XmlElement element, int x, int y, int depth, int area})>[];
   for (final element in document.descendants.whereType<XmlElement>()) {
     if (!_isAndroidNotificationRow(element) ||
+        (allowedPackages != null &&
+            !allowedPackages.contains(element.getAttribute('package'))) ||
         !_xmlSubtreeContainsSemanticTarget(element, title) ||
         !_xmlSubtreeContainsSemanticTarget(element, body)) {
       continue;
@@ -6336,6 +6340,15 @@ AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
     ));
   }
   if (candidates.isEmpty) return null;
+  if (requireUnique) {
+    final leaves = candidates.where(
+      (candidate) => !candidate.element.descendants.whereType<XmlElement>().any(
+        (descendant) =>
+            candidates.any((other) => identical(other.element, descendant)),
+      ),
+    );
+    if (leaves.length != 1) return null;
+  }
   candidates.sort((left, right) {
     final depth = right.depth.compareTo(left.depth);
     if (depth != 0) return depth;
@@ -6349,6 +6362,78 @@ AndroidNotificationCardTapTarget? findAndroidNotificationCardTapTarget(
     collapsedGroupExpandCenter: _findCollapsedAncestorGroupExpandCenter(
       selected.element,
     ),
+  );
+}
+
+/// Selects an action only inside the unique matching native notification row.
+/// A collapsed row/group must be expanded and re-read before any action tap.
+({(int, int)? actionCenter, (int, int)? expandCenter, String packageName})?
+findAndroidNotificationActionTapTarget(
+  String xml, {
+  required String title,
+  required String body,
+  required String action,
+  required Set<String> allowedPackages,
+}) {
+  late final XmlDocument document;
+  try {
+    document = XmlDocument.parse(xml);
+  } on XmlException {
+    return null;
+  }
+  bool exact(XmlElement root, String value) =>
+      <XmlElement>[root, ...root.descendants.whereType<XmlElement>()].any(
+        (element) =>
+            element.getAttribute('text') == value ||
+            element.getAttribute('content-desc') == value,
+      );
+  final rows = document.descendants
+      .whereType<XmlElement>()
+      .where(
+        (row) =>
+            _isAndroidNotificationRow(row) &&
+            allowedPackages.contains(row.getAttribute('package')) &&
+            exact(row, title) &&
+            exact(row, body),
+      )
+      .toList();
+  final leaves = rows
+      .where(
+        (row) => !row.descendants.whereType<XmlElement>().any(rows.contains),
+      )
+      .toList();
+  if (leaves.length != 1) return null;
+  final row = leaves.single;
+  final expand = _findCollapsedNotificationExpandCenter(row);
+  if (expand != null) {
+    return (
+      actionCenter: null,
+      expandCenter: expand,
+      packageName: row.getAttribute('package')!,
+    );
+  }
+  final actions = row.descendants
+      .whereType<XmlElement>()
+      .where(
+        (element) =>
+            identical(_nearestAndroidNotificationRow(element), row) &&
+            allowedPackages.contains(element.getAttribute('package')) &&
+            element.getAttribute('enabled') == 'true' &&
+            element.getAttribute('clickable') == 'true' &&
+            (element.getAttribute('text') == action ||
+                element.getAttribute('content-desc') == action),
+      )
+      .toList();
+  if (actions.length != 1) return null;
+  final selected = actions.single;
+  final bounds = _nodeBounds(selected.toXmlString(pretty: false));
+  if (bounds == null || bounds.$3 <= bounds.$1 || bounds.$4 <= bounds.$2) {
+    return null;
+  }
+  return (
+    actionCenter: ((bounds.$1 + bounds.$3) ~/ 2, (bounds.$2 + bounds.$4) ~/ 2),
+    expandCenter: null,
+    packageName: selected.getAttribute('package')!,
   );
 }
 

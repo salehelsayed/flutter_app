@@ -1,0 +1,7 @@
+appId: ${APP_ID}
+name: production_update_none
+---
+- launchApp:
+    stopApp: false
+- assertNotVisible: '^Please update Mknoon$'
+- assertNotVisible: '^A new version of Mknoon is ready\.$'

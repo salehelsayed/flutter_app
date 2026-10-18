@@ -1,0 +1,13 @@
+appId: ${APP_ID}
+name: production_call_privacy_open
+---
+- assertVisible: 'Start voice call'
+- back
+- tapOn:
+    id: shell.navigation.orbit
+- tapOn: 'Open settings'
+- tapOn: 'Always relay calls'
+- assertVisible: 'Direct audio can reveal your IP address to the other participant. Enable this setting to send audio through a relay. Changes apply to new calls. Direct signaling can still reveal an address independently of this setting.'
+- assertVisible: 'This version currently relays all calls. Your choice is saved for when direct calls become available.'
+- assertVisible:
+    id: settings-always-relay-calls-switch

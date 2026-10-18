@@ -290,11 +290,13 @@ void main() {
       bool debug = false,
       bool e2e = false,
       String sims = '',
+      bool testProfile = false,
     }) => UpdateCheckSwitch(
       mode: mode,
       isDebugBuild: debug,
       e2eTestMode: e2e,
       simsBuildProfileId: sims,
+      testProfileOptIn: testProfile,
     );
 
     test('defaults: on in release/profile, off in debug', () {
@@ -304,7 +306,69 @@ void main() {
       expect(sw(mode: 'off').enabled, isFalse);
     });
 
-    test('E2E and SIMS builds are always off', () {
+    test('fixture opt-in is debug E2E and exact-profile only', () {
+      for (final profile in [
+        'android.e2e.production_call_local',
+        'ios.simulator.app',
+      ]) {
+        expect(
+          sw(
+            mode: 'on',
+            debug: true,
+            e2e: true,
+            sims: profile,
+            testProfile: true,
+          ).enabled,
+          isTrue,
+        );
+        expect(
+          sw(
+            mode: 'off',
+            debug: true,
+            e2e: true,
+            sims: profile,
+            testProfile: true,
+          ).enabled,
+          isFalse,
+        );
+        expect(
+          sw(mode: 'on', debug: true, e2e: true, sims: profile).enabled,
+          isFalse,
+        );
+      }
+      for (final configuration in [
+        sw(
+          mode: 'on',
+          e2e: true,
+          sims: 'android.e2e.production_call_local',
+          testProfile: true,
+        ),
+        sw(
+          mode: 'off',
+          e2e: true,
+          sims: 'android.e2e.production_call_local',
+          testProfile: true,
+        ),
+        sw(
+          mode: 'on',
+          debug: true,
+          sims: 'android.e2e.production_call_local',
+          testProfile: true,
+        ),
+        sw(
+          mode: 'on',
+          debug: true,
+          e2e: true,
+          sims: 'android.e2e.production',
+          testProfile: true,
+        ),
+        sw(mode: 'on', debug: true, e2e: true, sims: '', testProfile: true),
+      ]) {
+        expect(() => configuration.enabled, throwsStateError);
+      }
+    });
+
+    test('E2E and SIMS stay off without an approved fixture opt-in', () {
       expect(sw(mode: 'on', e2e: true).enabled, isFalse);
       expect(sw(mode: 'on', sims: 'ios.device.production').enabled, isFalse);
     });

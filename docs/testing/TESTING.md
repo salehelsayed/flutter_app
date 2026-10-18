@@ -58,8 +58,12 @@ configuration and signed artifact, not just the Dart revision or version label.
   and never uninstall. Helper output guards resolve symlinks and permit only
   external or gitignored paths; installer results use `build/device-install/`.
   Local-server cleanup checks the exact PID, UID, interpreter and full command.
-  Synthetic target/stub probes establish these host boundaries; they do not
-  certify a real device installation or app signature. Fresh-worktree workflow
+  The registered legacy-helper tests exercise these boundaries in temporary
+  Git repositories with stubbed device/signing tools, plus exact-command checks
+  on their own child processes. Missing-key failures propagate without a signed
+  output; failed re-signing aborts before installation. These tests do not
+  certify a real device installation, app signature, or signature restoration.
+  Fresh-worktree workflow
   checks also need the pinned Flutter package configuration for standalone Dart
   contracts; resolve it with offline, lockfile-enforced `flutter pub get`.
 - `docs/**/*.md` is already indexed by `codex-memory/config.json`. No new memory
@@ -7127,6 +7131,39 @@ visible and cannot become an ordinary first-attempt PASS.
   Answer, bidirectional RTP, controls, cleanup/restoration and the separately
   bound known-Opus Pion oracle. This source/debug campaign does not establish
   physical audible sound, deployed-service behavior or signed distribution.
+  The KX regression additions reuse these existing suites and profiles: twenty
+  call-profile rows share the same APK and local backend through
+  `--include-regressions`, five contact-delete rows use
+  `android.e2e.production`, update row `kx0028` uses `ios.simulator.app`, and
+  `kx0031` is a host process-guard check. The four iOS physical proposals stay
+  registered BLOCKED for physical-state preservation. Host validation and a
+  registered command do not certify any new device scenario. Contact rollback
+  uses an owned SQLite abort trigger; callback admission uses the actual app
+  handler plus native notification/keyguard/permission observations. Quiet-call
+  proof requires owned native channel/priority state and complete SystemUI
+  heads-up-manager samples; observed publication order uses the always-on
+  `notification_enqueue` and `notification_canceled` events, not the
+  debug-conditional `notification_cancel`. Stored display names and current
+  canonical call bindings are checked independently. Audio picker evidence
+  contains coarse route kinds and selected state only, excluding native IDs
+  and endpoint names. The privacy-preference case changes the saved choice
+  through the UI, reads back only its boolean, and restores it; the forced-relay
+  profile cannot prove that choice caused a different network route.
+  Signed invite TTL and the coordinator deadline have different origins:
+  the current sender emits a forty-second wire TTL; the invite timer anchors
+  to `session.startedAt + 45 s`, while the thirty-second no-answer timer starts
+  at `outgoingInviteReady`. Preparation time therefore reduces the delivery
+  gap. Five seconds is protocol freshness headroom below the forty-five-second
+  maximum, not a guaranteed wire-versus-delivery gap. The runtime comparison
+  records post-sign wire metadata and the actual scheduled timer origins for
+  the same authenticated call, computes their gap, and preserves existing
+  behavior. It makes no delayed-admission or OS-offline delivery claim. The
+  fake-clock preservation test includes seven seconds of preparation and a
+  throwing observation sink; the signed-wire test still rejects the exact
+  envelope after expiry. Retain the focused host receipts under
+  `.codex-test-logs/suite-implementation-20261018/P1-light-001-checks.json`
+  through `P1-light-011-checks.json`, including the first failed compiler
+  attempt, separately from any later live-device receipts.
   A separate deployed EC2 follow-up reused that driver, observer and app-state
   guard with fresh identities and the default `mknoun.xyz` services. Two
   relay-only calls selected TURN/UDP; two normal calls selected direct media.

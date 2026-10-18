@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_call_return
+---
+- runFlow:
+    when:
+      visible: '^Return to call, .*$'
+    commands:
+      - tapOn: '^Return to call, .*$'
+- assertVisible: '^Call controls$'
+- assertVisible: '^Connected$'

@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../integration_test/support/android_app_state_guard.dart';
 import '../../integration_test/support/production_android_journey.dart';
+import '../../integration_test/support/production_ios_simulator_journey.dart';
+import '../../tool/sims/build_orchestrator.dart';
 
 final class _IdleDevices implements AndroidHostProcessRunner {
   @override
@@ -14,7 +16,7 @@ final class _IdleDevices implements AndroidHostProcessRunner {
     expect(arguments.first, '-s');
     expect(
       arguments[1],
-      anyOf('emulator-4004', '21071FDF600CSC', 'emulator-5556'),
+      anyOf('emulator-4004', 'fixture-phone-1', 'emulator-5556'),
     );
     expect(arguments, isNot(contains('start')));
     if (arguments.contains('getprop')) return ProcessResult(0, 0, '36\n', '');
@@ -59,7 +61,7 @@ void main() {
   late Directory cache;
   const primary = 'android.e2e.production';
   const receiver = 'android.production_fcm.journey';
-  const physical = '21071FDF600CSC';
+  const physical = 'fixture-phone-1';
   const emulator = 'emulator-5556';
   final input = sha256.convert(utf8.encode('source')).toString();
 
@@ -103,6 +105,111 @@ void main() {
       'SIMS_ANDROID_EMULATOR_DEVICE_ID': emulator,
     };
   }
+
+  test(
+    'SE41 uses one explicit emulator and refuses phone and iOS bindings',
+    () {
+      final values = environment()
+        ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
+        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+      final (apk, digest) = prepared(productionUpdateCheckAndroidProfile);
+      values['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_LOCAL'] = apk.path;
+      values['SIMS_ARTIFACT_SHA256'] = digest;
+      ProductionAndroidJourney create([String scenario = 'kx0020']) =>
+          ProductionAndroidJourney.fromEnvironment(
+            scenario,
+            temporary,
+            environment: values,
+            runner: _IdleDevices(),
+          );
+      final journey = create();
+      expect(journey.actors, hasLength(1));
+      expect(journey.alice.device, emulator);
+      expect(journey.alice.packageName, productionUpdateCheckAndroidPackage);
+      expect(journey.profileId, productionUpdateCheckAndroidProfile);
+      expect(journey.artifact.path, apk.path);
+      expect(() => create('kx0028'), throwsArgumentError);
+      values.remove('SIMS_DISPOSABLE_ANDROID_JOURNEYS');
+      values['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] = physical;
+      expect(create, throwsStateError);
+      values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+      values['SIMS_ANDROID_EMULATOR_DEVICE_ID'] = physical;
+      expect(create, throwsStateError);
+    },
+  );
+
+  test(
+    'TestFlight selection needs only one explicitly disposable simulator',
+    () {
+      final bundle = Directory(
+        '${cache.path}/ios.simulator.app/$input/Runner.app',
+      )..createSync(recursive: true);
+      File(
+        '${bundle.path}/fixture',
+      ).writeAsStringSync('synthetic simulator bundle');
+      final digest = sha256
+          .convert(simsPreparedArtifactDigestBytes(bundle))
+          .toString();
+      File('${bundle.parent.path}/attestation.json').writeAsStringSync(
+        jsonEncode({
+          'schemaVersion': 1,
+          'profileId': 'ios.simulator.app',
+          'inputDigest': input,
+          'artifactDigest': digest,
+          'artifactPath': bundle.path,
+          'redactedCommand': <String>[],
+          'createdAt': DateTime.utc(2026).toIso8601String(),
+        }),
+      );
+      const simulator = '11111111-1111-4111-8111-111111111111';
+      final values = {
+        'SIMS_CACHE_DIR': cache.path,
+        'SIMS_ARTIFACT_IOS_SIMULATOR_APP': bundle.path,
+        'SIMS_ARTIFACT_INPUT_DIGEST': input,
+        'SIMS_ARTIFACT_SHA256': digest,
+        'SIMS_IOS_SIMULATOR_A_DEVICE_ID': simulator,
+        'SIMS_IOS_DISPOSABLE_SIMULATOR_IDS': simulator,
+      };
+      ProductionIosSimulatorJourney create() =>
+          ProductionIosSimulatorJourney.fromEnvironment(
+            'kx0028',
+            temporary,
+            environment: values,
+            runner: _IdleDevices(),
+          );
+      final journey = create();
+      expect(journey.actors, hasLength(1));
+      expect(journey.alice.invocation.role, 'alice');
+      expect(journey.alice.device, simulator);
+      values.remove('SIMS_IOS_DISPOSABLE_SIMULATOR_IDS');
+      expect(create, throwsStateError);
+    },
+  );
+
+  test(
+    'contact deletion uses one disposable emulator and the existing journey APK',
+    () {
+      final values = environment()
+        ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
+        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+      ProductionAndroidJourney create(String id) =>
+          ProductionAndroidJourney.fromEnvironment(
+            id,
+            temporary,
+            environment: values,
+            runner: _IdleDevices(),
+          );
+      for (final id in ['kx0010', 'kx0011', 'kx0012', 'kx0013', 'kx0014']) {
+        final journey = create(id);
+        expect(journey.actors, hasLength(1));
+        expect(journey.alice.device, emulator);
+        expect(journey.profileId, productionJourneyAndroidProfile);
+        expect(journey.alice.packageName, productionJourneyAndroidPackage);
+      }
+      values['SIMS_ANDROID_EMULATOR_DEVICE_ID'] = physical;
+      expect(() => create('kx0010'), throwsStateError);
+    },
+  );
 
   test(
     'disposable journeys bind two explicit emulators without a phone alias',

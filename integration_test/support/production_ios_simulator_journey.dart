@@ -18,6 +18,7 @@ const productionJourneyIosBundle = 'com.mknoon.app';
 /// Catalog scenarios whose unchanged original oracle requires every role to
 /// run on the iOS simulator, with the roles in simulator order (a, b, c, d).
 const productionIosSimulatorScenarioRoles = <String, List<String>>{
+  'kx0028': ['alice'],
   'production.group_catalog.private_peer_disconnect_not_removal': [
     'alice',
     'bob',
@@ -113,7 +114,7 @@ final class ProductionIosSimulatorJourney implements ProductionJourney {
     }
 
     final roles = productionIosSimulatorScenarioRoles[scenario];
-    if (roles == null || roles.length < 2 || roles.length > 4) {
+    if (roles == null || roles.isEmpty || roles.length > 4) {
       throw StateError('scenario has no iOS simulator topology');
     }
     artifact = ProductionIosSimulatorArtifact.fromEnvironment(values);
@@ -135,7 +136,7 @@ final class ProductionIosSimulatorJourney implements ProductionJourney {
       devices.add(device);
     }
     alice = peer(devices[0], roles[0]);
-    bob = peer(devices[1], roles[1]);
+    if (roles.length > 1) bob = peer(devices[1], roles[1]);
     for (var i = 2; i < roles.length; i++) {
       additionalPeers[roles[i]] = peer(devices[i], roles[i]);
     }
@@ -160,7 +161,7 @@ final class ProductionIosSimulatorJourney implements ProductionJourney {
   @override
   List<ProductionJourneyPeer> get actors => [
     alice,
-    bob,
+    if (productionIosSimulatorScenarioRoles[scenario]!.length > 1) bob,
     ...additionalPeers.values,
   ];
   bool _installed = false;

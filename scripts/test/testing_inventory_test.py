@@ -59,6 +59,32 @@ class InventoryTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 inventory.sims_rows_for_check(byid, dict(kind='sims', capability='*', excluded_capabilities=exclusions))
 
+    def test_fixture_cohort_keeps_additional_cases_and_exact_dependency_owner(self):
+        rows = [dict(id='host', modes=['major']),
+                dict(id='build.fixture', modes=['major']),
+                dict(id='fixture.base', modes=['major'], dependencies=['build.fixture']),
+                dict(id='kx0020', modes=['major'], dependencies=['build.fixture'])]
+        self.file('tool/sims/critical_features.json', json.dumps({'capabilities': rows}))
+        excluded = ['build.fixture', 'fixture.base', 'kx0020']
+        commands = {
+            'main': dict(kind='sims', capability='*', excluded_capabilities=excluded,
+                         command=['dart', 'sims', *[a for key in excluded for a in ['--exclude', key]]]),
+            'fixture': dict(kind='sims', capability='fixture.base', additional_capabilities=['kx0020'],
+                            command=['dart', 'adapter', '--include-regressions']),
+        }
+        self.assertEqual(inventory.validate_sims_partitions(self.root, commands), [])
+        byid = {row['id']: row for row in rows}
+        selected = {key: {r['id'] for r in inventory.sims_rows_for_check(byid, value)}
+                    for key, value in commands.items()}
+        self.assertEqual(selected['fixture'], set(excluded))
+        self.assertEqual(selected['main'] & selected['fixture'], set())
+        self.assertEqual(selected['main'] | selected['fixture'], set(byid))
+        commands['fixture']['command'].remove('--include-regressions')
+        self.assertTrue(inventory.validate_sims_partitions(self.root, commands))
+        with self.assertRaises(ValueError):
+            inventory.sims_rows_for_check(byid, dict(capability='fixture.base',
+                                                    additional_capabilities=['unknown']))
+
     def test_cross_family_inventory_separates_support_vendor_and_unknown_cases(self):
         paths = {
             "test/app_test.dart": "flutter_host",

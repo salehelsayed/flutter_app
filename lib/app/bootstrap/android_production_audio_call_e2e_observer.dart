@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/domain/call_audio_output_device.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
@@ -51,6 +52,7 @@ final class AndroidProductionAudioCallObservationSource {
     required this.foregroundChanges,
     required this.readActiveConnectionSnapshot,
     required this.readOutgoingCallWakeAuthorityReady,
+    this.readOutputDevices,
   });
 
   final ReadProductionAudioCallSession readCurrentSession;
@@ -59,6 +61,7 @@ final class AndroidProductionAudioCallObservationSource {
   final Stream<ForegroundCallProjection?> foregroundChanges;
   final ReadProductionAudioCallConnection readActiveConnectionSnapshot;
   final ReadOutgoingCallWakeAuthorityReady readOutgoingCallWakeAuthorityReady;
+  final Future<List<CallAudioOutputDevice>> Function(CallId)? readOutputDevices;
 }
 
 /// Profile-gated observer for the installed production-app call journey.

@@ -136,6 +136,10 @@ def policy(manifest, mode):
                 for dependency in rows[key].get("dependencies", []):
                     include(dependency)
         include(MODES[mode])
+        if mode == "device-audio":
+            for key, row in list(rows.items()):
+                if key.startswith("kx") and row["buildProfile"] == "android.e2e.production_call_local":
+                    include(key)
         rows = {key: row for key, row in rows.items() if key in needed}
     profiles = {p["id"]: p for p in manifest["buildProfiles"]}
     blocked = {}
@@ -148,13 +152,16 @@ def policy(manifest, mode):
             for p in associated for flag in ("PRODUCTION_FCM", "PRODUCTION_APNS")
         )
         capabilities = row.get("targetCapabilities", [])
-        if credential_profile or any(c.startswith("credentials.") for c in capabilities):
+        if row.get("automationReady") is False and "ios.physical" in capabilities:
+            blocked[key] = "physical_data_preservation"
+        elif credential_profile or any(c.startswith("credentials.") for c in capabilities):
             blocked[key] = "credentials"
         elif (any(c in capabilities for c in ("android.physical", "ios.physical"))
               or any(r["name"].split(":")[-1] in ("android-physical", "ios-physical")
                      for r in row.get("resources", []))):
             blocked[key] = "physical_data_preservation"
-        elif mode == "major" and key in (MODES["device-audio"], MODES["device-media"]):
+        elif mode == "major" and (key in (MODES["device-audio"], MODES["device-media"])
+              or (key.startswith("kx") and row["buildProfile"] == "android.e2e.production_call_local")):
             blocked[key] = "local_fixture_mode_required"
         elif "legacy.protected-target-contract" in capabilities:
             blocked[key] = "nested_device_policy"
@@ -376,6 +383,8 @@ def main(arguments=None):
                    else "run_direct_media_blob_custody_sims.dart")
         command = ["dart", "run", "integration_test/scripts/" + adapter,
                    "--mode", "major", "--scenario", MODES[options.mode]]
+        if options.mode == "device-audio":
+            command.append("--include-regressions")
     elif options.mode != "major":
         command.extend(["--only", MODES[options.mode]])
     if options.mode == "major":

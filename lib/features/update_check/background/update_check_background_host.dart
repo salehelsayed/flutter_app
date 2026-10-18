@@ -57,11 +57,14 @@ class UpdateCheckBackgroundHost {
     unawaited(configure());
   }
 
-  /// Schedules (switch on) or cancels (switch off) the native background work.
+  /// Schedules ordinary enabled builds. The opted-in fixture cancels automatic
+  /// OS work and explicitly drives the production runner and native poster.
   Future<void> configure() async {
     try {
       await _channel.invokeMethod<void>('configure', {
-        'enabled': _switch.enabled,
+        // The opted-in fixture drives the real runner explicitly. A periodic
+        // worker on the real clock would race its controlled elapsed time.
+        'enabled': _switch.enabled && !_switch.testProfileEnabled,
       });
     } on PlatformException {
       // No native side (tests, desktop): nothing to schedule.
@@ -90,7 +93,9 @@ class UpdateCheckBackgroundHost {
             .then((result) => result.toWire())
             .whenComplete(() => _inFlight = null);
       case 'openStore':
-        return _launcher(updateStoreUrlForPlatform(_platform ?? _hostPlatform()));
+        return _launcher(
+          updateStoreUrlForPlatform(_platform ?? _hostPlatform()),
+        );
       default:
         throw MissingPluginException(call.method);
     }

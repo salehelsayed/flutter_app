@@ -1565,6 +1565,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
   AndroidCallTokenCoordinatorFactory? androidCallTokenCoordinatorFactory,
   AndroidCallTokenReader? androidCallTokenReader,
   ProductionCallSignalingGraphObserver? onGraphBuilt,
+  CallEncodedEnvelopeObserver? onCallEnvelopeEncoded,
+  CallScheduledTimerObserver? onCallTimerScheduled,
   bool Function()? isForeground,
   int Function()? nowMs,
   Stream<NetworkPathOutcome>? networkPathOutcomes,
@@ -1639,6 +1641,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
       final codec = SecureCallEnvelopeCodec(
         crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
         nowMs: clock,
+        onEncoded: onCallEnvelopeEncoded,
       );
       final mailbox = BridgeCallMailboxClient(bridge: bridge);
       final authority = BridgeCallAuthorityClient(bridge: bridge);
@@ -1732,6 +1735,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         effectExecutor: boundEffects,
         clock: callClock,
         idSource: _newCallId,
+        onTimerScheduled: onCallTimerScheduled,
         terminalEffectTimeout: const Duration(milliseconds: 500),
         terminalHistoryTimeout: const Duration(milliseconds: 250),
         onAppliedStateTransition: (trigger, resultingState, endReason) {

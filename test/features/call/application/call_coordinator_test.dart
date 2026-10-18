@@ -179,6 +179,7 @@ CallCoordinator _coordinator({
     CallEndReason? endReason,
   )?
   onAppliedStateTransition,
+  CallScheduledTimerObserver? onTimerScheduled,
 }) => CallCoordinator(
   reducer: const CallReducer(),
   cleanupCoordinator:
@@ -194,6 +195,7 @@ CallCoordinator _coordinator({
   terminalEffectTimeout: terminalEffectTimeout,
   onInternalFailure: onInternalFailure,
   onAppliedStateTransition: onAppliedStateTransition,
+  onTimerScheduled: onTimerScheduled,
 );
 
 final class _Scheduled {
@@ -235,6 +237,63 @@ final class _FakeTimerScheduler implements CallTimerScheduler {
 }
 
 void main() {
+  for (final throwing in [false, true]) {
+    test(
+      'scheduled deadline observation preserves actual origins and no-answer when sink throws=$throwing',
+      () async {
+        var now = _now;
+        final timers = _FakeTimerScheduler();
+        final observed =
+            <
+              CallTimeoutKind,
+              ({DateTime at, Duration requested, Duration effective})
+            >{};
+        final observedIds = <CallId>[];
+        final coordinator = _coordinator(
+          history: _MemoryHistoryRepository(),
+          timerScheduler: timers,
+          clock: () => now,
+          onTimerScheduled: (id, kind, at, requested, effective) {
+            observedIds.add(id);
+            observed[kind] = (
+              at: at,
+              requested: requested,
+              effective: effective,
+            );
+            if (throwing) {
+              throw StateError('observer unavailable');
+            }
+          },
+        );
+        addTearDown(coordinator.dispose);
+        await coordinator.placeCall(
+          contactPeerId: 'contact-a',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        now = _now.add(const Duration(seconds: 7));
+        await coordinator.dispatch(
+          _event(CallEventType.outgoingInviteReady, occurredAt: now),
+        );
+        expect(coordinator.activeSession?.state, CallState.inviting);
+        expect(observedIds, [_callId, _callId]);
+        final delivery = observed[CallTimeoutKind.inviteExpiry]!;
+        final unanswered = observed[CallTimeoutKind.noAnswer]!;
+        expect(delivery.requested, const Duration(seconds: 45));
+        expect(delivery.effective, const Duration(seconds: 38));
+        expect(
+          delivery.at.add(delivery.effective),
+          _now.add(const Duration(seconds: 45)),
+        );
+        expect(unanswered.requested, const Duration(seconds: 30));
+        expect(unanswered.effective, const Duration(seconds: 30));
+        expect(unanswered.at, now);
+        now = now.add(const Duration(seconds: 30));
+        await timers.fire(const Duration(seconds: 30));
+        expect(coordinator.lastSnapshot?.endReason, CallEndReason.noAnswer);
+      },
+    );
+  }
   test(
     'canceling a queued preflight prevents admission and preserves retry',
     () async {

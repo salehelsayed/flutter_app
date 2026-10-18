@@ -1,4 +1,5 @@
 import 'production_journeys/production_journey_controller.dart';
+import 'production_journeys/production_update_check_controls.dart';
 import 'production_journeys/production_group_fixture_controls.dart';
 import 'production_journeys/production_direct_journey_controls.dart';
 import 'production_journeys/production_sound_journey_controls.dart';
@@ -10,6 +11,14 @@ import 'production_journeys/production_provider_probe_control.dart';
 import 'production_journeys/production_group_invite_controls.dart';
 import 'production_journeys/production_group_invite_matrix_controls.dart';
 import 'production_journeys/production_group_delete_controls.dart';
+import 'production_journeys/production_contact_delete_controls.dart';
+import 'production_journeys/production_call_controls.dart';
+import 'package:flutter_app/features/call/application/call_redial_controller.dart';
+import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/application/call_coordinator.dart';
+import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import 'production_journeys/production_group_accept_controls.dart';
 import 'production_journeys/production_group_media_controls.dart';
 import 'production_journeys/production_group_online_remove_controls.dart';
@@ -71,6 +80,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -200,6 +210,7 @@ final class DebugE2EPollerDependencies {
     required this.outgoingCallCapability,
     required this.resolveCallWakeHandle,
     required this.onCallWakeHandleDistributed,
+    this.notificationService,
   });
 
   final Directory documentsDirectory;
@@ -216,6 +227,7 @@ final class DebugE2EPollerDependencies {
   final MediaFileManager mediaFileManager;
   final AudioRecorderService audioRecorderService;
   final sqlcipher.Database database;
+  final NotificationService? notificationService;
   final SecureKeyStore secureKeyStore;
   final WakeTokenStore wakeTokenStore;
   final ReceivedWakeTokenStore receivedWakeTokenStore;
@@ -327,6 +339,7 @@ final class DebugE2ECompositionRoot {
   DebugE2ECompositionRoot._({
     required this.activation,
     required this.productionJourney,
+    required ProductionUpdateCheckControls? updateCheckControls,
     required GroupMediaReliabilityE2EController
     groupMediaReliabilityE2EController,
     required GroupMediaIosBackgroundE2EController
@@ -335,7 +348,10 @@ final class DebugE2ECompositionRoot {
   }) : _groupMediaReliabilityE2EController = groupMediaReliabilityE2EController,
        _groupMediaIosBackgroundE2EController =
            groupMediaIosBackgroundE2EController,
-       _productionAudioCallObserver = productionAudioCallObserver;
+       _productionAudioCallObserver = productionAudioCallObserver,
+       _updateCheckControls = updateCheckControls {
+    _callControls = ProductionCallControls.tryCreate(productionJourney);
+  }
 
   final DebugE2EActivation activation;
   final ProductionJourneyController? productionJourney;
@@ -343,6 +359,36 @@ final class DebugE2ECompositionRoot {
   final GroupMediaIosBackgroundE2EController
   _groupMediaIosBackgroundE2EController;
   final AndroidProductionAudioCallE2EObserver? _productionAudioCallObserver;
+  final ProductionUpdateCheckControls? _updateCheckControls;
+  UpdateCheckController? get updateCheckController =>
+      _updateCheckControls?.controller;
+  late final ProductionCallControls? _callControls;
+  CallEncodedEnvelopeObserver? get callEnvelopeEncodedObserver {
+    final controls = _callControls;
+    return controls?.observesDeadlines == true
+        ? controls!.observeEncoded
+        : null;
+  }
+
+  CallScheduledTimerObserver? get callTimerScheduledObserver {
+    final controls = _callControls;
+    return controls?.observesDeadlines == true ? controls!.observeTimer : null;
+  }
+
+  Future<bool> Function()? get callBackReadinessBarrier {
+    final controls = _callControls;
+    return controls != null && controls.observesCallBack
+        ? controls.awaitReadiness
+        : null;
+  }
+
+  void Function(CallBackActionObservation, CallId, OutgoingCallStartResult?)?
+  get callBackObservation {
+    final controls = _callControls;
+    return controls != null && controls.observesCallBack
+        ? controls.observe
+        : null;
+  }
 
   PrivateMediaOutboxE2EController? _privateMediaOutboxE2EController;
   WakeTokenAcceptedAttachmentObserver? _wakeTokenAttachmentObserver;
@@ -409,6 +455,7 @@ final class DebugE2ECompositionRoot {
         e2eTestMode: resolvedActivation.e2eTestMode,
         profileId: resolvedActivation.installedSimsProfile,
       ),
+      updateCheckControls: ProductionUpdateCheckControls.tryCreate(),
       groupMediaReliabilityE2EController: createReliabilityController(
         stateDirectory,
       ),
@@ -426,6 +473,11 @@ final class DebugE2ECompositionRoot {
     AndroidProductionAudioCallObservationSource source,
   ) {
     if (_disposeFuture != null) return;
+    _callControls?.source = source;
+    _updateCheckControls?.readInCall = () {
+      final session = source.readCurrentSession();
+      return session != null && !session.isIdle && !session.isTerminal;
+    };
     try {
       _productionAudioCallObserver?.bind(source);
     } catch (_) {
@@ -437,6 +489,8 @@ final class DebugE2ECompositionRoot {
 
   Future<void> _dispose() async {
     productionJourney?.dispose();
+    _updateCheckControls?.dispose();
+    _callControls?.dispose();
     try {
       await stopIntroE2EPoller();
     } catch (_) {}
@@ -848,6 +902,22 @@ final class DebugE2ECompositionRoot {
     if (!activation.startsIntroPoller) return;
     final journey = productionJourney;
     if (journey != null) {
+      _updateCheckControls?.bind(journey);
+      final callbacks = _callControls;
+      if (callbacks != null) {
+        final notifications = dependencies.notificationService;
+        if (callbacks.observesCallBack && notifications == null) {
+          throw StateError('The production notification service is required.');
+        }
+        callbacks.bindFixture(
+          database: dependencies.database,
+          contacts: dependencies.contactRepository,
+          notifications: notifications,
+          readAlwaysRelay: () => loadAlwaysRelayCallsPreference(
+            secureKeyStore: dependencies.secureKeyStore,
+          ),
+        );
+      }
       bindProductionPerformanceControls(
         controller: journey,
         bridge: dependencies.bridge,
@@ -987,6 +1057,12 @@ final class DebugE2ECompositionRoot {
         messageRepository: dependencies.messageRepository,
         groupRepository: dependencies.groupRepository,
         groupMessageRepository: dependencies.groupMessageRepository,
+      );
+      bindProductionContactDeleteControls(
+        controller: journey,
+        navigatorKey: dependencies.navigatorKey,
+        contactRepository: dependencies.contactRepository,
+        database: dependencies.database,
       );
       bindProductionGroupAcceptControls(
         controller: journey,

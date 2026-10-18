@@ -69,6 +69,45 @@ final AndroidProductionAudioCallPionOracleEvidence _pionOracle =
 
 void main() {
   test(
+    'a regression-stage failure still restores fixtures and preserves its cause',
+    () async {
+      for (final failRestore in [false, true]) {
+        final driver = _FakeDriver(failRestore: failRestore);
+        final causal = StateError('injected callback stage failure');
+        await expectLater(
+          executeAndroidProductionAudioCallCampaign(
+            devices: ['synthetic-physical', 'emulator-callback-fixture'],
+            apkSha256: _apkSha,
+            profileSha256: _profileSha,
+            relayFixtureIdentitySha256: _fixtureSha,
+            turnAuthoritySha256: _turnAuthoritySha,
+            coturnInstanceIdentitySha256: _coturnInstanceSha,
+            pionOracle: _pionOracle,
+            driver: driver,
+            runId: 'run-399',
+            callerNonce: 'caller-nonce-399',
+            calleeNonce: 'callee-nonce-399',
+            onStage: (stage, caller, callee) async {
+              if (stage == AndroidProductionAudioCallStage.incoming) {
+                throw causal;
+              }
+            },
+          ),
+          failRestore
+              ? throwsA(
+                  isA<AndroidProductionAudioCallPrimaryFailure>().having(
+                    (error) => error.primaryError,
+                    'original stage error',
+                    same(causal),
+                  ),
+                )
+              : throwsA(same(causal)),
+        );
+        expect(driver.restoreCalls, 1);
+      }
+    },
+  );
+  test(
     'emulator pair topology requires explicit mode and two distinct emulators',
     () {
       const targets = [

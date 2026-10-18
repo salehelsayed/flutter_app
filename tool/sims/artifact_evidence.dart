@@ -194,3 +194,28 @@ bool _sameOrderedStrings(List<String> left, List<String> right) {
   }
   return true;
 }
+
+/// A flow receipt must belong to this attempt and name the actual checked flow.
+/// The existing Maestro adapter supplies and validates this same receipt.
+bool maestroFlowReceiptPassed(Object? path, Object? attempt, String name) {
+  if (path is! String || attempt is! String) return false;
+  try {
+    final file = File(path);
+    final root = Directory(attempt).resolveSymbolicLinksSync();
+    if (!file.resolveSymbolicLinksSync().startsWith(
+      '$root${Platform.pathSeparator}',
+    )) {
+      return false;
+    }
+    final raw = jsonDecode(file.readAsStringSync());
+    if (raw is! Map) return false;
+    final value = Map<String, Object?>.from(raw);
+    return value['status'] == 'PASS' &&
+        value['exit_status'] == 0 &&
+        value['flows'] is List &&
+        (value['flows'] as List).length == 1 &&
+        (value['flows'] as List).single == name;
+  } on Object {
+    return false;
+  }
+}

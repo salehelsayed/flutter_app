@@ -1,0 +1,5 @@
+appId: ${APP_ID}
+name: production_contact_cancel
+---
+- tapOn: ${CANCEL}
+- assertNotVisible: ${BODY}

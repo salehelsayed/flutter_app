@@ -1,0 +1,11 @@
+appId: ${APP_ID}
+name: production_update_soft_navigation
+---
+- assertVisible: '^A new version of Mknoon is ready\.$'
+- back
+- assertNotVisible: '^A new version of Mknoon is ready\.$'
+- launchApp:
+    stopApp: false
+- extendedWaitUntil:
+    visible: '^A new version of Mknoon is ready\.$'
+    timeout: 20000

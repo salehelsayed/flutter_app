@@ -182,6 +182,8 @@ class _CallAudioOutputPickerState extends State<CallAudioOutputPicker> {
                                   for (var i = 0; i < _devices.length; i++)
                                     Semantics(
                                       key: ValueKey('call-output-choice-$i'),
+                                      identifier:
+                                          'call-output-choice-${_devices[i].route.name}-$i',
                                       selected: _devices[i].selected,
                                       child: ListTile(
                                         key: ObjectKey(

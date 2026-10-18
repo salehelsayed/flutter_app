@@ -87,10 +87,13 @@ class _CallPrivacySettingsControlState
           SettingsListRow(
             icon: Icons.shield_outlined,
             label: l10n.settings_always_relay_calls,
-            trailing: Switch.adaptive(
-              key: const ValueKey('settings-always-relay-calls-switch'),
-              value: _alwaysRelay ?? true,
-              onChanged: _busy || _alwaysRelay == null ? null : _save,
+            trailing: Semantics(
+              identifier: 'settings-always-relay-calls-switch',
+              child: Switch.adaptive(
+                key: const ValueKey('settings-always-relay-calls-switch'),
+                value: _alwaysRelay ?? true,
+                onChanged: _busy || _alwaysRelay == null ? null : _save,
+              ),
             ),
           ),
           Text(

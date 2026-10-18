@@ -393,6 +393,9 @@ final class _InMemoryCallReplayReservation
   }
 }
 
+typedef CallEncodedEnvelopeObserver =
+    void Function(CallSignal signal, String signedEnvelope);
+
 final class SecureCallEnvelopeCodec {
   SecureCallEnvelopeCodec({
     required CallEnvelopeCrypto crypto,
@@ -400,6 +403,7 @@ final class SecureCallEnvelopeCodec {
     this.maxFutureClockSkew = const Duration(seconds: 30),
     this.replayTombstoneTtl = const Duration(minutes: 10),
     CallReplayProtectionStore? replayStore,
+    this.onEncoded,
   }) : _crypto = crypto,
        _nowMs = nowMs,
        _replayStore =
@@ -435,6 +439,7 @@ final class SecureCallEnvelopeCodec {
   final Duration maxFutureClockSkew;
   final Duration replayTombstoneTtl;
   final CallReplayProtectionStore _replayStore;
+  final CallEncodedEnvelopeObserver? onEncoded;
 
   Future<String> encode({
     required CallSignal signal,
@@ -499,6 +504,11 @@ final class SecureCallEnvelopeCodec {
       'signature': signature,
     });
     _enforceSize(encoded);
+    try {
+      onEncoded?.call(signal, encoded);
+    } catch (_) {
+      // Read-only observation cannot alter the signed wire or transport.
+    }
     return encoded;
   }
 
