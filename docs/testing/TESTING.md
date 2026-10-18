@@ -2158,6 +2158,22 @@ header, including shared journey catalog constants. The F9 retained failures
 trace the missed topology allowlist to C2 and the unsynchronized catalog
 declarations to P1, rather than to a protocol encoding change.
 
+Positive contact-request and QR admission fixtures must bind their `ns` peer ID
+to their `pk` Ed25519 public key. Reuse `TestEd25519Identity` in the shared fake
+crypto support, which derives the libp2p ID with the production codec; a bridge
+stub that accepts signatures does not bypass the independent identity check.
+The affected identity lane retains cross-family onboarding, notification-replay,
+Orbit scan, and share-startup consumers alongside the identity feature suites.
+Keep deliberately mismatched, malformed, and cross-protocol negative fixtures.
+Share-startup host fixtures also inject the existing microphone permission fake:
+after identity generation the real plugin status future can leave the progress
+route waiting under widget-test pumps. The granted fake verifies one status read
+and no prompt while preserving the subsequent first-contact/share assertions;
+the dedicated permission-step tests retain allow, denial, skip, and error paths.
+Focused causal failures and verified host results are retained under
+`.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
+native cryptography proofs.
+
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
 created three ignored wrapper files; the next build therefore had a different

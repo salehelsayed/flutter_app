@@ -35,6 +35,7 @@ import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -66,6 +67,7 @@ void main() {
   late ImageProcessor imageProcessor;
   late AppShellController appShellController;
   late PendingPostTargetStore pendingPostTargetStore;
+  late FakeMicPermissionGateway onboardingMicPermission;
 
   final identityWithContacts = IdentityModel(
     peerId: 'my-peer-id-12345',
@@ -129,6 +131,7 @@ void main() {
     // the bare default is orbit (orbit-as-home locked elsewhere).
     appShellController = AppShellController(initialTab: AppShellTab.feed);
     pendingPostTargetStore = PendingPostTargetStore();
+    onboardingMicPermission = FakeMicPermissionGateway();
     chatMessageListener = ChatMessageListener(
       chatMessageStream: const Stream<ChatMessage>.empty(),
       messageRepo: messageRepository,
@@ -225,6 +228,7 @@ void main() {
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
       shareIntentService: shareIntentService,
+      onboardingMicPermission: onboardingMicPermission,
       ensureRuntimeServicesReady: ensureRuntimeServicesReady,
       groupRepository: groupRepository,
       groupMessageRepository: groupMessageRepository,
@@ -523,6 +527,8 @@ void main() {
       await tester.tap(find.text("I'm new here"));
       await pumpFrames(tester, count: 30);
 
+      expect(onboardingMicPermission.statusCallCount, 1);
+      expect(onboardingMicPermission.requestCallCount, 0);
       expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
       expect(find.text('Share with...'), findsNothing);
 

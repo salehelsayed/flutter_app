@@ -14,6 +14,7 @@ import 'package:flutter_app/features/push/application/prepare_notification_open_
 import '../core/bridge/fake_bridge.dart';
 import '../features/contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../shared/fakes/ed25519_contact_request_crypto.dart';
 
 void main() {
   late StreamController<ChatMessage> contactRequestStream;
@@ -56,18 +57,19 @@ void main() {
   test(
     'warm push open plus inbox replay yields one materialization path, not a duplicate live request',
     () async {
-      const peerId = 'peer-request-123';
+      final sender = TestEd25519Identity.fromSeedByte(0x13);
+      final peerId = sender.peerId;
       ContactRequestNotificationTarget? resolvedTarget;
 
       presentationGate.suppress(peerId);
       try {
         await routeRemoteNotificationOpen(
-          data: const {'type': 'contact_request', 'sender_id': peerId},
+          data: {'type': 'contact_request', 'sender_id': peerId},
           onBeforeRouteTarget: (target) async {
             final result = await prepareNotificationOpen(
               routeTarget: target,
               drainOfflineInbox: () async {
-                contactRequestStream.add(_makeContactRequestMessage(peerId));
+                contactRequestStream.add(_makeContactRequestMessage(sender));
                 await _flushMicrotasks();
               },
               drainGroupOfflineInboxForGroup: (_) async {},
@@ -108,12 +110,14 @@ void main() {
   );
 
   test('suppression is scoped to the tapped peer only', () async {
-    const suppressedPeerId = 'peer-request-123';
-    const unsuppressedPeerId = 'peer-request-456';
+    final suppressed = TestEd25519Identity.fromSeedByte(0x13);
+    final unsuppressed = TestEd25519Identity.fromSeedByte(0x14);
+    final suppressedPeerId = suppressed.peerId;
+    final unsuppressedPeerId = unsuppressed.peerId;
 
     presentationGate.suppress(suppressedPeerId);
-    contactRequestStream.add(_makeContactRequestMessage(suppressedPeerId));
-    contactRequestStream.add(_makeContactRequestMessage(unsuppressedPeerId));
+    contactRequestStream.add(_makeContactRequestMessage(suppressed));
+    contactRequestStream.add(_makeContactRequestMessage(unsuppressed));
 
     await _flushMicrotasks();
     presentationGate.release(suppressedPeerId);
@@ -131,10 +135,11 @@ void main() {
   });
 }
 
-ChatMessage _makeContactRequestMessage(String peerId) {
+ChatMessage _makeContactRequestMessage(TestEd25519Identity sender) {
+  final peerId = sender.peerId;
   final payload = SplayTreeMap<String, dynamic>.from({
     'ns': peerId,
-    'pk': 'pk-$peerId',
+    'pk': sender.publicKey,
     'rv': '/dns4/rendezvous.example.com/tcp/4001/p2p/$peerId',
     'ts': '2026-04-03T12:00:00.000Z',
     'un': 'User $peerId',

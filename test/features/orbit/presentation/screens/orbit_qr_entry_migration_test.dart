@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -445,6 +446,7 @@ void main() {
       suppressNavAssetErrors();
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
+      final scannedIdentity = TestEd25519Identity.fromSeedByte(0x15);
       bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
       bridge.responses['payload.sign'] = {'ok': true, 'signature': 'sig'};
       bridge.responses['contactrequest.encrypt'] = {
@@ -484,7 +486,7 @@ void main() {
         find.byType(QRScannerScreen),
       );
       scanner.onScanned(
-        _buildValidQrData(peerId: 'scanned-peer-12345', username: 'Bob'),
+        _buildValidQrData(identity: scannedIdentity, username: 'Bob'),
       );
       await pumpOrbitFrames(tester, count: 6);
 
@@ -505,7 +507,7 @@ void main() {
       // and the scan-path side effects fired (signature verify + avatar
       // download attempt; the mutual-add contract itself is the BASELINE
       // qr_scanner_wired_test sentinel).
-      expect(await contactRepo.contactExists('scanned-peer-12345'), isTrue);
+      expect(await contactRepo.contactExists(scannedIdentity.peerId), isTrue);
       expect(bridge.commandLog, contains('payload.verify'));
       expect(bridge.commandLog, contains('profile:download'));
       expect(tester.takeException(), isNull);
@@ -660,13 +662,12 @@ String _buildMigrationQrData({
 }
 
 String _buildValidQrData({
-  String peerId = 'scanned-peer-id',
-  String publicKey = 'scanned-pk',
+  required TestEd25519Identity identity,
   String username = 'Bob',
 }) {
   final payload = SplayTreeMap<String, dynamic>.from({
-    'ns': peerId,
-    'pk': publicKey,
+    'ns': identity.peerId,
+    'pk': identity.publicKey,
     'rv': '/dns4/relay/tcp/443/p2p/relay',
     'ts': DateTime.now().toUtc().toIso8601String(),
     'un': username,

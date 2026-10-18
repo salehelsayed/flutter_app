@@ -14,11 +14,14 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../core/bridge/fake_bridge.dart';
 import '../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../shared/fakes/fake_p2p_network.dart';
+import '../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../shared/fakes/in_memory_contact_request_repository.dart';
 import '../shared/fakes/test_user.dart';
 
-const _alicePeerId = '12D3KooWAliceGoldenPath000000000001';
-const _bobPeerId = '12D3KooWBobGoldenPath00000000000002';
+final _aliceIdentity = TestEd25519Identity.fromSeedByte(0x11);
+final _bobIdentity = TestEd25519Identity.fromSeedByte(0x12);
+final _alicePeerId = _aliceIdentity.peerId;
+final _bobPeerId = _bobIdentity.peerId;
 
 const _mnemonic12 =
     'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -51,7 +54,7 @@ ChatMessage _buildContactRequestMessage() {
     to: _alicePeerId,
     content: _buildContactRequestEnvelope(
       peerId: _bobPeerId,
-      publicKey: 'pk-$_bobPeerId',
+      publicKey: _bobIdentity.publicKey,
       username: 'Bob',
       mlKemPublicKey: 'mlkem-$_bobPeerId',
     ),
@@ -98,8 +101,8 @@ void main() {
           'ok': true,
           'identity': {
             'peerId': _alicePeerId,
-            'publicKey': 'pk-$_alicePeerId',
-            'privateKey': 'sk-$_alicePeerId',
+            'publicKey': _aliceIdentity.publicKey,
+            'privateKey': _aliceIdentity.privateKey,
             'mnemonic12': _mnemonic12,
             'username': 'Alice',
             'createdAt': '2026-03-26T08:00:00Z',
