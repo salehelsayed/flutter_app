@@ -73,28 +73,33 @@ class GroupNamePanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              // Group name input
-              TextField(
-                controller: nameController,
-                style: TextStyle(
-                  color: readableColors.textPrimary,
-                  fontSize: 14,
-                ),
-                decoration: InputDecoration(
-                  hintText: AppLocalizations.of(context)!.group_name_optional,
-                  hintStyle: TextStyle(
-                    color: readableColors.placeholderText,
+              // Group name input. The container makes this the text field's
+              // own node, so the automation id lands on it.
+              Semantics(
+                container: true,
+                identifier: 'group_name_field',
+                child: TextField(
+                  controller: nameController,
+                  style: TextStyle(
+                    color: readableColors.textPrimary,
                     fontSize: 14,
                   ),
-                  filled: true,
-                  fillColor: readableColors.inputFill,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
+                  decoration: InputDecoration(
+                    hintText: AppLocalizations.of(context)!.group_name_optional,
+                    hintStyle: TextStyle(
+                      color: readableColors.placeholderText,
+                      fontSize: 14,
+                    ),
+                    filled: true,
+                    fillColor: readableColors.inputFill,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
                   ),
                 ),
               ),

@@ -8,10 +8,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 
 // --- Test data ---
 
-ContactModel makeContact({
-  required String peerId,
-  required String username,
-}) =>
+ContactModel makeContact({required String peerId, required String username}) =>
     ContactModel(
       peerId: peerId,
       publicKey: 'pk-$peerId',
@@ -58,37 +55,35 @@ void main() {
       );
     }
 
-    testWidgets('renders overlapping UserAvatars for selected contacts',
-        (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice, contactBob],
-      ));
+    testWidgets('renders overlapping UserAvatars for selected contacts', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildWidget(selectedContacts: [contactAlice, contactBob]),
+      );
 
       expect(find.byType(UserAvatar), findsNWidgets(2));
     });
 
     testWidgets('displays comma-separated usernames', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice, contactBob],
-      ));
+      await tester.pumpWidget(
+        buildWidget(selectedContacts: [contactAlice, contactBob]),
+      );
 
       expect(find.text('Alice, Bob'), findsOneWidget);
     });
 
     testWidgets('shows group name text field with placeholder', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-      ));
+      await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
 
       expect(find.byType(TextField), findsOneWidget);
       expect(find.text('Group name (optional)'), findsOneWidget);
     });
 
-    testWidgets('does not expose a second create-time description field',
-        (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-      ));
+    testWidgets('does not expose a second create-time description field', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
 
       expect(find.byType(TextField), findsOneWidget);
       expect(
@@ -98,9 +93,7 @@ void main() {
     });
 
     testWidgets('shows Start group chat button', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-      ));
+      await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
 
       expect(find.text('Start group chat'), findsOneWidget);
       expect(find.byIcon(Icons.people), findsOneWidget);
@@ -108,49 +101,67 @@ void main() {
 
     testWidgets('calls onStartGroup when button tapped', (tester) async {
       var called = false;
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-        onStartGroup: () => called = true,
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          selectedContacts: [contactAlice],
+          onStartGroup: () => called = true,
+        ),
+      );
 
       await tester.tap(find.text('Start group chat'));
       expect(called, isTrue);
     });
 
     testWidgets('passes text field value to nameController', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-      ));
+      await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
 
       await tester.enterText(find.byType(TextField), 'My Group');
       expect(nameController.text, 'My Group');
     });
 
     testWidgets('shows loading indicator when isCreating', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-        isCreating: true,
-      ));
+      await tester.pumpWidget(
+        buildWidget(selectedContacts: [contactAlice], isCreating: true),
+      );
 
       expect(find.byType(CircularProgressIndicator), findsOneWidget);
       // Button text should still be there but not tappable
     });
 
     testWidgets('renders correctly with 1 contact', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice],
-      ));
+      await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
 
       expect(find.byType(UserAvatar), findsOneWidget);
       expect(find.text('Alice'), findsOneWidget);
     });
 
     testWidgets('displays +N suffix for 3+ contacts', (tester) async {
-      await tester.pumpWidget(buildWidget(
-        selectedContacts: [contactAlice, contactBob, contactCharlie],
-      ));
+      await tester.pumpWidget(
+        buildWidget(
+          selectedContacts: [contactAlice, contactBob, contactCharlie],
+        ),
+      );
 
       expect(find.text('Alice, Bob +1'), findsOneWidget);
+    });
+
+    // Android 8.1 exposes a Flutter text field's hint to UI automation as
+    // neither text nor hint, so Maestro needs a stable id on the field itself.
+    testWidgets('group name field carries the group_name_field automation id', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        await tester.pumpWidget(buildWidget(selectedContacts: [contactAlice]));
+        await tester.pump();
+
+        final finder = find.bySemanticsIdentifier('group_name_field');
+        expect(finder, findsOneWidget);
+        final node = tester.getSemantics(finder).getSemanticsData();
+        expect(node.flagsCollection.isTextField, isTrue);
+      } finally {
+        semantics.dispose();
+      }
     });
   });
 }
