@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import '../../tool/sims/artifact_evidence.dart';
+import '../../tool/sims/capture_budget.dart';
 import '../../tool/sims/production_call_back_criteria.dart';
 import '../../tool/sims/production_call_regression_criteria.dart';
 import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
@@ -1263,6 +1264,9 @@ final class SystemAndroidProductionAudioCallCampaignDriver
   final String relayHost;
   final int relayPort;
   final Directory proofDirectory;
+  final _screenshotBudget = ScreenshotCaptureBudget(
+    budget: EvidenceCaptureBudget(),
+  );
   final AndroidHostProcessRunner _runner;
   final DateTime Function() _now;
   final int _startDispatchMaximumPolls;
@@ -2195,6 +2199,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     if (screenshot.isEmpty || screenshot.length > _maximumScreenshotBytes) {
       throw StateError('Bounded screenshot capture failed for $role.');
     }
+    _screenshotBudget.reserve(screenshot.length);
     final uiFile = File('${proofDirectory.path}/$stem-ui.xml');
     final logFile = File('${proofDirectory.path}/$stem-logcat.txt');
     final screenshotFile = File('${proofDirectory.path}/$stem.png');

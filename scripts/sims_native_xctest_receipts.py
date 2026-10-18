@@ -50,8 +50,14 @@ def _digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def _verified_payload_logs(root, verdict):
+def _verified_payload_logs(root, verdict, capture_directory=None, capture_root=None):
     scope = Path(root) / 'build/sims/proofs' / CAPABILITY
+    if capture_directory is not None:
+        capture = Path(capture_directory)
+        if (capture_root is None or not capture.is_absolute()
+                or not capture.resolve().is_relative_to(Path(capture_root).resolve())):
+            raise ValueError('Native capture directory is outside its invocation')
+        scope = capture / 'proofs' / CAPABILITY
     envelope = verdict['artifactEvidence']
     artifact_path = Path(envelope['path'])
     if not artifact_path.is_absolute():
@@ -87,7 +93,7 @@ def _verified_payload_logs(root, verdict):
     return '\n'.join(logs)
 
 
-def collect(root, report, attempt, specs):
+def collect(root, report, attempt, specs, capture_root=None):
     """Return typed, capability-scoped method receipts, never parent-only PASS."""
     from full_suite_adapters import native_xctest_receipts
     if validate_specs(specs):
@@ -110,7 +116,7 @@ def collect(root, report, attempt, specs):
             elif verdict.get('status') == 'PASS':
                 try:
                     observed = native_xctest_receipts(
-                        _verified_payload_logs(root, verdict), spec['counts'])
+                        _verified_payload_logs(root, verdict, report.get('capture_directory'), capture_root), spec['counts'])
                 except (OSError, ValueError, KeyError, TypeError, UnicodeError):
                     observed = None
                 status = 'PASS' if observed is not None else 'BLOCKED'

@@ -197,6 +197,30 @@ class NativeReceiptChainTest(unittest.TestCase):
         self.report['verdicts'][0]['artifactEvidence']['path'] = str(outside)
         self.assert_blocked()
 
+    def test_moved_capture_requires_the_callers_exact_invocation_root(self):
+        invocation = self.root / 'owned-invocation'
+        capture = invocation / 'sims-current'
+        destination = capture / 'proofs' / native.CAPABILITY
+        destination.parent.mkdir(parents=True)
+        self.scope.rename(destination)
+        self.scope = destination
+        self.capture = destination / 'capture-current'
+        self.artifact_path = destination / 'proof.json'
+        self.refresh_parent()
+        self.report['capture_directory'] = str(capture)
+        rows = native.collect(self.root, self.report, self.attempt, self.specs, capture_root=invocation)
+        self.assertEqual({row['status'] for row in rows}, {'PASS'})
+        self.assert_blocked()  # A report field alone grants no filesystem scope.
+        wrong = self.root / 'different-invocation'
+        rows = native.collect(self.root, self.report, self.attempt, self.specs, capture_root=wrong)
+        self.assertEqual({row['status'] for row in rows}, {'BLOCKED'})
+        link = wrong / 'linked-capture'
+        link.parent.mkdir()
+        link.symlink_to(capture, target_is_directory=True)
+        self.report['capture_directory'] = str(link)
+        rows = native.collect(self.root, self.report, self.attempt, self.specs, capture_root=wrong)
+        self.assertEqual({row['status'] for row in rows}, {'BLOCKED'})
+
     def test_methods_from_different_captures_cannot_be_stitched(self):
         destination = self.scope / 'capture-other'
         destination.mkdir()

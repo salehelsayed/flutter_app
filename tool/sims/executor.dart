@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'artifact_evidence.dart';
+import 'capture_budget.dart';
 import 'manifest.dart';
 import 'verdict.dart';
 
@@ -27,6 +30,7 @@ final class SimsCommandExecution {
 final class SimsProcessExecutor {
   SimsProcessExecutor({
     Directory? logDirectory,
+    Directory? proofDirectory,
     Map<String, String>? environment,
     Map<String, Map<String, String>> environmentByCapabilityId =
         const <String, Map<String, String>>{},
@@ -35,7 +39,13 @@ final class SimsProcessExecutor {
     this.preparedArtifactDigests = const <String, String>{},
     this.buildFailures = const <String, String>{},
     this.preflightVerdicts = const <String, SimsVerdict>{},
+    EvidenceCaptureBudget? captureBudget,
+    this.streamLimitBytes = simsStreamCaptureBytes,
+    ScreenshotCaptureBudget? screenshotBudget,
   }) : logDirectory = logDirectory ?? Directory('build/sims/logs'),
+       proofDirectory = proofDirectory ?? Directory('build/sims/proofs'),
+       _ownsProofDirectory = proofDirectory != null,
+       captureBudget = captureBudget ?? EvidenceCaptureBudget(),
        environment = Map<String, String>.unmodifiable(
          environment ?? Platform.environment,
        ),
@@ -45,9 +55,18 @@ final class SimsProcessExecutor {
                for (final entry in environmentByCapabilityId.entries)
                  entry.key: Map<String, String>.unmodifiable(entry.value),
              },
-           );
+           ) {
+    if (streamLimitBytes <= 0) {
+      throw ArgumentError.value(streamLimitBytes, 'streamLimitBytes');
+    }
+    this.screenshotBudget =
+        screenshotBudget ?? ScreenshotCaptureBudget(budget: this.captureBudget);
+  }
 
   final Directory logDirectory;
+  final Directory proofDirectory;
+  final bool _ownsProofDirectory;
+  late final ScreenshotCaptureBudget screenshotBudget;
   final Map<String, String> environment;
   final Map<String, Map<String, String>> environmentByCapabilityId;
   final Map<String, String> preparedArtifacts;
@@ -55,6 +74,8 @@ final class SimsProcessExecutor {
   final Map<String, String> preparedArtifactDigests;
   final Map<String, String> buildFailures;
   final Map<String, SimsVerdict> preflightVerdicts;
+  final EvidenceCaptureBudget captureBudget;
+  final int streamLimitBytes;
 
   Future<SimsCommandExecution> execute(CapabilitySpec row) async {
     final preflight = preflightVerdicts[row.id];
@@ -138,12 +159,10 @@ final class SimsProcessExecutor {
     childEnvironment.addAll(<String, String>{
       'SIMS_CAPABILITY_ID': row.id,
       'SIMS_ARTIFACT_PROFILE_ID': row.buildProfileId,
-      if (preparedInputDigests[row.buildProfileId] case final digest?)
-        'SIMS_ARTIFACT_INPUT_DIGEST': digest,
-      if (preparedArtifactDigests[row.buildProfileId] case final digest?)
-        'SIMS_ARTIFACT_SHA256': digest,
+      'SIMS_ARTIFACT_INPUT_DIGEST': ?preparedInputDigests[row.buildProfileId],
+      'SIMS_ARTIFACT_SHA256': ?preparedArtifactDigests[row.buildProfileId],
       'SIMS_PROOF_DIRECTORY': Directory(
-        'build/sims/proofs/${_safeFileName(row.id)}',
+        '${proofDirectory.path}/${_safeFileName(row.id)}',
       ).absolute.path,
       _artifactEnvironmentName(row.buildProfileId):
           ?preparedArtifacts[row.buildProfileId],
@@ -153,8 +172,9 @@ final class SimsProcessExecutor {
     // ambient paths and unrelated cached artifacts remain stripped above.
     for (final resource in row.resources) {
       if (!resource.name.startsWith('build:') ||
-          resource.access != ResourceAccess.read)
+          resource.access != ResourceAccess.read) {
         continue;
+      }
       final profile = resource.name.substring('build:'.length);
       if (!row.dependencies.contains('build.$profile')) continue;
       final artifact = preparedArtifacts[profile];
@@ -200,12 +220,18 @@ final class SimsProcessExecutor {
       return _internalBlocked(row, SimsBlockerKind.harness, error.message);
     }
 
-    ProcessResult result;
+    late final ({
+      ProcessResult result,
+      String logPath,
+      EvidenceCapacityFailure? capacity,
+    })
+    captured;
     try {
-      result = await Process.run(
+      captured = await _captureCommand(
+        row,
         executable,
         arguments,
-        environment: childEnvironment,
+        childEnvironment,
       );
     } on ProcessException catch (error) {
       return _internalBlocked(
@@ -213,21 +239,35 @@ final class SimsProcessExecutor {
         SimsBlockerKind.missingDriver,
         'Unable to start command: ${error.message}',
       );
+    } on StateError catch (error) {
+      return _internalBlocked(row, SimsBlockerKind.harness, error.message);
     }
 
+    var capacityFailure = captured.capacity;
+    try {
+      if (_ownsProofDirectory) {
+        await screenshotBudget.checkDirectory(proofDirectory);
+      }
+    } on EvidenceCapacityFailure catch (error) {
+      capacityFailure ??= error;
+    }
+    final result = captured.result;
     final stdoutText = '${result.stdout}';
     final stderrText = '${result.stderr}';
-    final logPath = _writeLog(
-      row,
-      stdoutText: stdoutText,
-      stderrText: stderrText,
-      exitCode: result.exitCode,
-    );
+    final logPath = captured.logPath;
     final sentinel = _sentinelFrom(stdoutText);
     final violation = buildViolationLog?.existsSync() == true
         ? buildViolationLog!.readAsStringSync().trim()
         : '';
-    final verdict = violation.isNotEmpty
+    final verdict = capacityFailure != null
+        ? SimsVerdict.fail(
+            row.id,
+            assertionsAttempted: 1,
+            exitCode: 93,
+            blocker: SimsBlockerKind.harness,
+            detail: '$capacityFailure',
+          )
+        : violation.isNotEmpty
         ? SimsVerdict.fail(
             row.id,
             assertionsAttempted: 1,
@@ -249,6 +289,186 @@ final class SimsProcessExecutor {
       stderrText: stderrText,
       logPath: logPath,
     );
+  }
+
+  Future<
+    ({ProcessResult result, String logPath, EvidenceCapacityFailure? capacity})
+  >
+  _captureCommand(
+    CapabilitySpec row,
+    String executable,
+    List<String> arguments,
+    Map<String, String> childEnvironment,
+  ) async {
+    logDirectory.createSync(recursive: true);
+    final file = File('${logDirectory.path}/${_safeFileName(row.id)}.log');
+    final log = file.openSync(mode: FileMode.write);
+    Process? process;
+    final subscriptions = <StreamSubscription<List<int>>>[];
+    final done = <Completer<void>>[];
+    final stdout = BytesBuilder(copy: false);
+    final stderr = BytesBuilder(copy: false);
+    final failureReady = Completer<void>();
+    EvidenceCapacityFailure? capacity;
+    Object? streamError;
+    var closed = false;
+    var childExitObserved = true;
+    try {
+      final permissions = Process.runSync('chmod', ['600', file.path]);
+      if (permissions.exitCode != 0) {
+        throw StateError('Private capture permissions unavailable.');
+      }
+      log.writeStringSync(
+        'capability=${row.id}\n--- combined stdout/stderr ---\n',
+      );
+      if (captureBudget.remainingBytes == 0) {
+        capacity = EvidenceCapacityFailure(
+          'run',
+          captureBudget.limitBytes,
+          captureBudget.usedBytes,
+        );
+        log.writeStringSync('$capacity\nexitCode=93\n');
+        return (
+          result: ProcessResult(0, 93, '', '$capacity'),
+          logPath: file.path,
+          capacity: capacity,
+        );
+      }
+      process = await Process.start(
+        executable,
+        arguments,
+        environment: childEnvironment,
+      );
+      final child = process;
+      void failed(Object error) {
+        if (error is EvidenceCapacityFailure) {
+          capacity ??= error;
+        } else {
+          streamError ??= error;
+        }
+        if (!failureReady.isCompleted) {
+          failureReady.complete();
+        }
+        child.kill(ProcessSignal.sigterm);
+      }
+
+      void subscribe(
+        Stream<List<int>> stream,
+        BytesBuilder buffer,
+        String name,
+      ) {
+        final completion = Completer<void>();
+        done.add(completion);
+        var retained = 0;
+        subscriptions.add(
+          stream.listen(
+            (chunk) {
+              if (closed || capacity != null || streamError != null) {
+                return;
+              }
+              try {
+                final room = streamLimitBytes - retained;
+                final allowed = chunk.length < room ? chunk.length : room;
+                final saved = captureBudget.claimPrefix(allowed);
+                final prefix = chunk.sublist(0, saved);
+                log.writeFromSync(prefix);
+                buffer.add(prefix);
+                retained += saved;
+                if (saved < chunk.length) {
+                  failed(
+                    EvidenceCapacityFailure(
+                      saved < allowed ? 'run' : name,
+                      saved < allowed
+                          ? captureBudget.limitBytes
+                          : streamLimitBytes,
+                      saved < allowed ? captureBudget.usedBytes : retained,
+                    ),
+                  );
+                }
+              } on Object catch (error) {
+                failed(error);
+              }
+            },
+            onDone: () {
+              if (!completion.isCompleted) {
+                completion.complete();
+              }
+            },
+            onError: (Object error) {
+              failed(error);
+              if (!completion.isCompleted) {
+                completion.complete();
+              }
+            },
+          ),
+        );
+      }
+
+      subscribe(child.stdout, stdout, 'stdout');
+      subscribe(child.stderr, stderr, 'stderr');
+      await child.stdin.close();
+      final exit = child.exitCode;
+      await Future.any<void>([exit.then((_) {}), failureReady.future]);
+      int code;
+      if (capacity != null || streamError != null) {
+        try {
+          code = await exit.timeout(const Duration(seconds: 3));
+        } on TimeoutException {
+          child.kill(ProcessSignal.sigkill);
+          code = await exit.timeout(
+            const Duration(seconds: 3),
+            onTimeout: () {
+              childExitObserved = false;
+              return 93;
+            },
+          );
+        }
+      } else {
+        code = await exit;
+        try {
+          await Future.any<void>([
+            Future.wait(done.map((c) => c.future)).then((_) {}),
+            failureReady.future,
+          ]).timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          streamError = StateError(
+            'Capture pipes remained open after command exit.',
+          );
+        }
+      }
+      closed = true;
+      await Future.wait(subscriptions.map((s) => s.cancel()));
+      for (final completion in done) {
+        if (!completion.isCompleted) {
+          completion.complete();
+        }
+      }
+      log.writeStringSync(
+        '\nexitCode=$code\nchildExitObserved=$childExitObserved\n${capacity == null ? '' : '$capacity\n'}',
+      );
+      log.flushSync();
+      if (streamError != null && capacity == null) {
+        throw StateError(
+          'Owned command capture failed: ${streamError.runtimeType}',
+        );
+      }
+      return (
+        result: ProcessResult(
+          child.pid,
+          capacity == null ? code : 93,
+          utf8.decode(stdout.takeBytes(), allowMalformed: true),
+          utf8.decode(stderr.takeBytes(), allowMalformed: true),
+        ),
+        logPath: file.path,
+        capacity: capacity,
+      );
+    } finally {
+      closed = true;
+      for (final subscription in subscriptions) {
+        await subscription.cancel();
+      }
+      log.closeSync();
+    }
   }
 
   _BuildGuardInstallation _installBuildGuard(

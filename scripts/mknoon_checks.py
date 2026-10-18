@@ -7,10 +7,12 @@ copied into shareable reports; structured completion facts are allowlisted.
 from __future__ import annotations
 
 import argparse
+import codecs
 from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 import threading
 import device_campaign_preflight as device_preflight
+from owned_run_retention import OwnedRuns, RetentionCapacityError, check_screenshots
 import datetime as dt
 import fnmatch
 import hashlib
@@ -18,6 +20,7 @@ import json
 import os
 from pathlib import Path
 import re
+import selectors
 import shutil
 import signal
 import subprocess
@@ -32,6 +35,32 @@ RULES = Path('tool/testing/selection.json')
 SIMS = Path('tool/sims/critical_features.json')
 EXIT = {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
 _LAUNCH_CONTEXT = threading.local()
+CAPTURE_STREAM_BYTES = 8 * 1024 * 1024
+CAPTURE_RUN_BYTES = 256 * 1024 * 1024
+
+
+class CaptureBudget:
+    """One shared raw-output allowance for all commands in an invocation."""
+    def __init__(self, stream_limit=CAPTURE_STREAM_BYTES, run_limit=CAPTURE_RUN_BYTES):
+        if stream_limit <= 0 or run_limit <= 0:
+            raise ValueError('Capture limits must be positive')
+        self.stream_limit, self.run_limit, self.used = stream_limit, run_limit, 0
+        self._lock = threading.Lock()
+
+    def claim(self, size):
+        with self._lock:
+            saved = min(size, self.run_limit - self.used)
+            self.used += saved
+            return saved
+
+    @property
+    def remaining(self):
+        with self._lock:
+            return self.run_limit - self.used
+
+
+class _EvidenceCapacityExceeded(Exception):
+    pass
 
 
 class InvalidPlan(ValueError):
@@ -467,40 +496,107 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
 def launch(command, cwd, timeout, env=None):
     """One bounded process group; always kill descendants on timeout/interruption."""
     start = time.monotonic()
-    with tempfile.TemporaryFile(mode='w+b') as output:
-        p = subprocess.Popen(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
+    budget = getattr(_LAUNCH_CONTEXT, 'capture_budget', None) or CaptureBudget()
+    capacity = None
+    capture_path = getattr(_LAUNCH_CONTEXT, 'raw_capture_path', None)
+    capture = Path(capture_path).open('a+b') if capture_path else tempfile.TemporaryFile(mode='w+b')
+    with capture as output:
+        output.seek(0, os.SEEK_END)
+        start_offset = output.tell()
+        p = subprocess.Popen(command, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              start_new_session=True)
         timed_out = False
-        try:
-            deadline = start + timeout
-            while p.poll() is None:
-                cancel = getattr(_LAUNCH_CONTEXT, 'cancel_event', None)
-                if cancel is not None and cancel.is_set():
-                    raise InterruptedError('run cancelled')
-                remaining = deadline - time.monotonic()
-                if remaining <= 0: raise subprocess.TimeoutExpired(command, timeout)
-                try: p.wait(timeout=min(.1, remaining))
-                except subprocess.TimeoutExpired: pass
-        except subprocess.TimeoutExpired:
-            timed_out = True
+        streams = {'stdout': p.stdout, 'stderr': p.stderr}
+        decoders = {name: codecs.getincrementaldecoder('utf-8')('replace') for name in streams}
+        retained = {name: 0 for name in streams}
+
+        def save(name, data, final=False):
+            nonlocal capacity
+            encoded = decoders[name].decode(data, final=final).encode('utf-8')
+            allowed = min(len(encoded), budget.stream_limit - retained[name])
+            saved = budget.claim(allowed)
+            # A quota may end inside a code point. Keep a complete UTF-8 prefix;
+            # the allowance remains conservatively charged for those few bytes.
+            prefix = encoded[:saved].decode('utf-8', 'ignore').encode('utf-8')
+            output.write(prefix)
+            output.flush()
+            retained[name] += len(prefix)
+            if saved < len(encoded):
+                capacity = {'stream': name, 'stream_limit_bytes': budget.stream_limit,
+                            'run_limit_bytes': budget.run_limit, 'run_charged_bytes': budget.used,
+                            'retained_stream_bytes': retained[name],
+                            'reason': 'run' if saved < allowed else 'stream'}
+                _LAUNCH_CONTEXT.capture_failure = capacity
+                raise _EvidenceCapacityExceeded()
+
+        def terminate_owned_group():
             try: os.killpg(p.pid, signal.SIGTERM)
             except ProcessLookupError: pass
             try: p.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                pass
-            # The leader may have exited while descendants ignored TERM.
+            except subprocess.TimeoutExpired: pass
+            # A descendant may retain its pipes after the leader exits.
             try: os.killpg(p.pid, signal.SIGKILL)
             except ProcessLookupError: pass
             p.wait(timeout=5)
+
+        try:
+            deadline = start + timeout
+            with selectors.DefaultSelector() as selector:
+                for name, stream in streams.items():
+                    selector.register(stream, selectors.EVENT_READ, name)
+                while selector.get_map() or p.poll() is None:
+                    cancel = getattr(_LAUNCH_CONTEXT, 'cancel_event', None)
+                    if cancel is not None and cancel.is_set():
+                        raise InterruptedError('run cancelled')
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0: raise subprocess.TimeoutExpired(command, timeout)
+                    for key, _ in selector.select(min(.1, remaining)):
+                        chunk = os.read(key.fd, 64 * 1024)
+                        save(key.data, chunk, final=not chunk)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            key.fileobj.close()
+                p.wait(timeout=5)
+        except _EvidenceCapacityExceeded:
+            terminate_owned_group()
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            terminate_owned_group()
         except BaseException as error:
             try: os.killpg(p.pid, signal.SIGKILL)
             except ProcessLookupError: pass
             p.wait(timeout=5)
             if not isinstance(error, InterruptedError): raise
             timed_out = True
-        output.seek(0)
+        finally:
+            for stream in streams.values():
+                stream.close()
+        if capacity:
+            output.write(('\nMKNOON_EVIDENCE_CAPACITY_EXCEEDED ' + json.dumps(capacity, sort_keys=True) + '\n').encode())
+        output.flush()
+        output.seek(start_offset)
         data = output.read().decode('utf-8', 'replace')
-    return data, p.returncode, timed_out, round(time.monotonic() - start, 3)
+    return data, 93 if capacity else p.returncode, timed_out, round(time.monotonic() - start, 3)
+
+
+def launch_to_log(command, cwd, timeout, env, path, *, append=False):
+    """Stream a command into its private durable log, retaining the launch API."""
+    path = Path(path)
+    if not append: path.write_bytes(b'')
+    elif path.stat().st_size:
+        with path.open('ab') as output: output.write(b'\n')
+    os.chmod(path, 0o600)
+    before = path.stat().st_size
+    previous = getattr(_LAUNCH_CONTEXT, 'raw_capture_path', None)
+    _LAUNCH_CONTEXT.raw_capture_path = path
+    try:
+        result = launch(command, cwd, timeout, env)
+        # Isolated adapter tests replace launch; preserve their raw receipt too.
+        if path.stat().st_size == before and result[0]:
+            with path.open('ab') as output: output.write(result[0].encode('utf-8'))
+        return result
+    finally:
+        _LAUNCH_CONTEXT.raw_capture_path = previous
 
 
 def aggregate(attempts):
@@ -632,7 +728,9 @@ def summarize(report, directory):
 def prior_full_failures(root):
     """Keep historical failures visible, without merging unrelated green runs."""
     receipts = []
-    for path in sorted((root / '.codex-test-logs').glob('*/results.json')):
+    paths = list((root / '.codex-test-logs').glob('*/results.json'))
+    paths += list((root / '.codex-test-logs/owned-runs').glob('*/results.json'))
+    for path in sorted(paths):
         try: data = json.loads(path.read_text())
         except (ValueError, OSError): continue
         if data.get('mode') == 'full' and data.get('status') != 'PASS':
@@ -683,6 +781,31 @@ def make_plan(args, root, rules, *, capture_toolchains=True):
 
 
 def main(argv=None):
+    managed = {}
+    try:
+        status = _main(argv, managed)
+    except BaseException:
+        if managed:
+            try: managed['owner'].finish(managed['path'], 'FAIL')
+            except (ValueError, OSError, RetentionCapacityError): pass
+        raise
+    if managed:
+        try:
+            managed['owner'].finish(managed['path'], 'PASS' if status == 0 else 'FAIL' if status == 1 else 'BLOCKED')
+        except (ValueError, OSError, RetentionCapacityError) as error:
+            print('FAIL:', str(error), file=sys.stderr)
+            result_path = managed['path'] / 'results.json'
+            if result_path.is_file():
+                report = json.loads(result_path.read_text())
+                report['status'] = 'FAIL'
+                report['run_failure'] = 'evidence_capacity'
+                report.setdefault('gaps', []).append('evidence_capacity: retained-run quota/ownership check failed')
+                summarize(report, managed['path'])
+            return 93
+    return status
+
+
+def _main(argv=None, managed=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=['discover','validate','plan','run','full','devices',
                                          'ci-plan','ci-run','ci-verify'])
@@ -707,11 +830,20 @@ def main(argv=None):
     args = parser.parse_args(argv)
     started = time.monotonic()
     root = ROOT
-    directory = args.output or root / '.codex-test-logs' / ('checks-' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8])
+    if args.output is None and args.action in ('run', 'full', 'ci-run') and not args.plan:
+        try:
+            owner = OwnedRuns(root)
+            directory = owner.start('checks')
+            managed.update(owner=owner, path=directory)
+        except (ValueError, OSError, RetentionCapacityError) as error:
+            print('FAIL:', str(error), file=sys.stderr)
+            return 93
+    else:
+        directory = args.output or root / '.codex-test-logs' / ('checks-' + dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8])
     directory = directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
     # Never overwrite or resume a ledger: preserve attempts and source identity.
-    if any(directory.iterdir()):
+    if any(path.name != '.owned-run.json' or not managed for path in directory.iterdir()):
         print('BLOCKED: output is not empty; use a fresh run directory', file=sys.stderr); return 2
     os.chmod(directory, 0o700)
     try:
@@ -903,7 +1035,7 @@ def safe_sims_facts(data, capability_ids=(), profile_ids=()):
     return dict(builds=safe_builds, schedule=safe_schedule)
 
 
-def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=(), native_specs=None, root=ROOT):
+def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=(), native_specs=None, root=ROOT, capture_root=None):
     if not path.is_file(): return {}
     data = json.loads(path.read_text())
     receipts = []
@@ -924,7 +1056,7 @@ def sims_receipt_details(path, attempt, capability_ids=(), profile_ids=(), nativ
     details = dict(capability_results=receipts, **safe_sims_facts(data, capability_ids, profile_ids), install_seconds=None)
     if native_specs:
         from sims_native_xctest_receipts import collect
-        native = collect(root, data, attempt, native_specs)
+        native = collect(root, data, attempt, native_specs, capture_root=capture_root)
         details.update(route_results=native,
             native_xctest_receipts_complete=all(r['status'] in ('PASS', 'N/A') for r in native))
     return details
@@ -966,9 +1098,13 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
         active = {}
         max_running = 0
         jobs = getattr(args, 'jobs', 1)
+        capture_budget = CaptureBudget()
+        screenshot_capacity_exceeded = threading.Event()
 
         def execute_check(c):
             _LAUNCH_CONTEXT.cancel_event = cancel_event
+            _LAUNCH_CONTEXT.capture_budget = capture_budget
+            _LAUNCH_CONTEXT.capture_failure = None
             check_started = time.monotonic()
             row = {'id':c['id'], 'kind':c['kind'], 'command':c['command'], 'selected_paths':c['selected_paths'],
                    'investigate':c.get('investigate', []), 'attempts':[]}
@@ -981,6 +1117,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     row.update(manual_result(c, evidence, plan['identity'], root, artifact_hashes))
             elif c.get('target_availability') == 'N/A':
                 row.update(status='N/A', checkpoint='target_unavailable_by_project_policy')
+            elif capture_budget.remaining <= 0 or screenshot_capacity_exceeded.is_set():
+                row.update(status='NOT RUN', checkpoint='evidence_capacity_run_budget_exhausted')
             elif c['kind'] == 'legacy' and c['command'][:2] != ['bash', 'scripts/run_flutter_full_regression.sh']:
                 row.update(status='BLOCKED', checkpoint='unknown_legacy_command')
             elif c.get('blocked_prerequisites'):
@@ -1011,6 +1149,9 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                             if per_route_legacy(c):
                                 env['MKNOON_LEGACY_CLEANUP_PENDING'] = '1' if device_cleanup_pending else '0'
                             if c['kind'] != 'full_adapter': env.update(c.get('environment', {}))
+                            # Nested SIMS evidence belongs to this invocation,
+                            # including explicit (unmanaged) --output folders.
+                            env['MKNOON_CAPTURE_ROOT'] = str(directory / (c['id'] + '-' + str(attempt + 1) + '-captures'))
                             if c['kind'] in ('sims', 'legacy'):
                                 env.pop('RELIABILITY_MULTI_DEVICE_IDS', None)
                             if c['kind'] == 'full_adapter' and c.get('device_roles'):
@@ -1043,34 +1184,33 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 if preflight['status'] != 'PASS':
                                     raise device_preflight.PreflightBlocked(preflight)
                             campaign_started = is_campaign(c)
+                            raw_path = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
                             if c['kind'] == 'full_adapter':
                                 from full_suite_adapters import bind, inspect, prepare_step
                                 adapter_dir = directory / (c['id'] + '-' + str(attempt + 1) + '-proof')
                                 adapter_dir.mkdir()
                                 steps, adapter_env = bind(c, device_config, root, adapter_dir)
                                 env.update(adapter_env)
-                                step_results, outputs, seconds = [], [], 0
+                                step_results, seconds = [], 0
                                 for step in steps:
                                     prepare_step(step)
                                     # Never accept stale native XML from an earlier Gradle invocation.
                                     before = {str(p):p.stat().st_mtime_ns for p in root.glob(step.get('report_glob','__no_reports__'))}
-                                    step_out, code, timeout, duration = launch(step['command'], root / step.get('cwd','.'), c['timeout_seconds'], env)
+                                    step_out, code, timeout, duration = launch_to_log(step['command'], root / step.get('cwd','.'), c['timeout_seconds'], env,
+                                                                                  raw_path, append=bool(step_results))
                                     seconds += duration
-                                    outputs.append(step_out)
-                                    partial_raw = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
-                                    partial_raw.write_text('\n'.join(outputs))
-                                    os.chmod(partial_raw, 0o600)
                                     proof = inspect(step, step_out, code, timeout, root)
+                                    if _LAUNCH_CONTEXT.capture_failure:
+                                        proof['evidence_capacity_failure'] = _LAUNCH_CONTEXT.capture_failure
+                                        if proof['status'] != 'FAIL': proof.update(status='FAIL', checkpoint='evidence_capacity')
                                     if step.get('format') == 'junit' and before and all(Path(p).exists() and Path(p).stat().st_mtime_ns == h for p,h in before.items()):
                                         proof.update(status='BLOCKED', checkpoint='stale_native_results')
                                     step_results.append(proof)
                                     if proof['status'] != 'PASS': break
-                                out = '\n'.join(outputs)
+                                out = step_out
                                 a = dict(step_results[-1], step_results=step_results)
                             else:
-                                out, code, timeout, seconds = launch(command, root / c.get('cwd','.'), c['timeout_seconds'], env)
-                            raw_path = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
-                            raw_path.write_text(out)
+                                out, code, timeout, seconds = launch_to_log(command, root / c.get('cwd','.'), c['timeout_seconds'], env, raw_path)
                             os.chmod(raw_path, 0o600)
                             if c['kind'] != 'full_adapter':
                                 a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
@@ -1083,7 +1223,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 # accepting any child receipt, even on failure.
                                 if report_path.is_file():
                                     verify_command = ['dart', 'tool/sims/sims.dart', 'verify-report', str(report_path)]
-                                    _, verify_code, verify_timeout, verify_seconds = launch(verify_command, root, 120, env)
+                                    verify_raw = directory / (c['id'] + '-' + str(attempt + 1) + '.verify.raw.log')
+                                    verify_out, verify_code, verify_timeout, verify_seconds = launch_to_log(verify_command, root, 120, env, verify_raw)
                                     seconds += verify_seconds
                                     if verify_code or verify_timeout:
                                         a['report_verification_failed'] = True
@@ -1093,7 +1234,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                         a['report_verification_observed'] = True
                                 a.update(sims_receipt_details(report_path, a, c['selected_paths'],
                                     [r['buildProfile'] for r in c.get('expanded_capabilities', []) if r.get('buildProfile')],
-                                    native_specs=c.get('native_xctest_receipts'), root=root))
+                                    native_specs=c.get('native_xctest_receipts'), root=root,
+                                    capture_root=env['MKNOON_CAPTURE_ROOT']))
                                 if a['status'] == 'PASS' and a.get('native_xctest_receipts_complete') is False:
                                     a.update(status='BLOCKED', checkpoint='native_xctest_evidence_incomplete')
                             if c.get('capability') == 'reliability.full.cleaned_legacy':
@@ -1123,9 +1265,22 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     except OSError as error:
                         a = {'status':'BLOCKED','checkpoint':'test_runner_startup','exit_status':None,'duration_seconds':0,
                              'os_error_errno':error.errno if type(error.errno) is int else None, 'attempt':attempt + 1}
+                    try:
+                        check_screenshots(directory)
+                    except RetentionCapacityError:
+                        screenshot_capacity_exceeded.set()
+                        _LAUNCH_CONTEXT.capture_failure = {'stream': 'screenshots',
+                            'reason': 'count_or_byte_quota_exceeded', 'per_run_count': 128,
+                            'per_run_bytes': 128 * 1024 ** 2, 'per_file_bytes': 20 * 1024 ** 2}
+                    capacity = getattr(_LAUNCH_CONTEXT, 'capture_failure', None)
+                    if capacity:
+                        a['evidence_capacity_failure'] = capacity
+                        if a['status'] != 'FAIL':
+                            a.update(status='FAIL', checkpoint='evidence_capacity')
                     if campaign_started and a['status'] != 'PASS':
                         a['cleanup_review_required'] = True
                     row['attempts'].append(a)
+                    if capacity: break
                 row.update(status=aggregate(row['attempts']), checkpoint=row['attempts'][0]['checkpoint'])
             row['wait_seconds'] = round(check_started - schedule_started, 3)
             row['execution_seconds'] = round(time.monotonic() - check_started, 3)
@@ -1201,6 +1356,10 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     # run its version probes after cancellation of an omitted/main-thread check.
     if hasattr(_LAUNCH_CONTEXT, 'cancel_event'):
         del _LAUNCH_CONTEXT.cancel_event
+    if hasattr(_LAUNCH_CONTEXT, 'capture_budget'):
+        del _LAUNCH_CONTEXT.capture_budget
+    if hasattr(_LAUNCH_CONTEXT, 'capture_failure'):
+        del _LAUNCH_CONTEXT.capture_failure
     current = source_identity(root, source_files(root), rules)
     if current != plan['identity']: gaps.append('Source/configuration changed during execution; candidate evidence invalidated')
     if plan.get('toolchains') and toolchain_identity(root) != plan['toolchains']:
@@ -1213,6 +1372,9 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
     report = {**{k:plan[k] for k in ('mode','baseline','candidate_build','identity','not_selected')},
               'obligations': obligation_results(plan.get('obligations', []), results_by_id),
               'scheduling': {'jobs': jobs, 'max_observed_concurrency': max_running},
+              'capture_budget': {'per_stream_bytes': capture_budget.stream_limit,
+                                 'per_run_bytes': capture_budget.run_limit,
+                                 'charged_bytes': capture_budget.used},
               'schema_version':1, 'automated_status':auto, 'status':overall,
               'plan_sha256':plan['plan_sha256'], 'ci':plan.get('ci'),
               'artifact_sha256':artifact_hashes, 'devices':matrix,
@@ -1347,6 +1509,8 @@ def sims_environment(config, report, check=None):
 
 
 def inspect_sims(path, capability, code, timeout, selected_capabilities=None):
+    if code == 93:
+        return {'status': 'FAIL', 'checkpoint': 'evidence_capacity', 'timed_out': timeout}
     if not path.is_file(): return {'status':'BLOCKED','checkpoint':'runner_timeout' if timeout else 'missing_sims_report'}
     data = json.loads(path.read_text())
     verdicts = data.get('verdicts', [])

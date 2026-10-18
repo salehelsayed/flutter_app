@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 import signal
 import subprocess
 import sys
@@ -696,6 +697,63 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             code = checks.execute_plan(args, self.root, self.rules, plan, files, {}, {}, directory, time.monotonic())
         return code, json.loads((directory / 'results.json').read_text())
 
+    def test_capacity_failure_cannot_pass_with_a_prior_success_marker(self):
+        self.write('fixture_test.py', "import unittest\nclass Fixture(unittest.TestCase):\n"
+                   "    def test_fixture(self):\n        print('Ran 1 test\\nOK', flush=True)\n"
+                   "        print('x' * 4096, flush=True)\n")
+        budget = checks.CaptureBudget(stream_limit=1024, run_limit=8192)
+        with mock.patch.object(checks, 'CaptureBudget', return_value=budget):
+            code, report = self.execute_fixture(only='fast')
+        row = next(row for row in report['results'] if row['id'] == 'fast')
+        self.assertEqual(code, 1)
+        self.assertEqual(row['status'], 'FAIL')
+        self.assertEqual(row['attempts'][0]['checkpoint'], 'evidence_capacity')
+        self.assertEqual(row['attempts'][0]['evidence_capacity_failure']['stream'], 'stdout')
+        self.assertLessEqual(report['capture_budget']['charged_bytes'], 8192)
+
+    def test_screenshot_capacity_invalidates_pass_and_is_not_retried(self):
+        self.write('fixture_test.py', 'import os,unittest\nfrom pathlib import Path\n'
+            'class Fixture(unittest.TestCase):\n    def test_fixture(self):\n'
+            '        p=Path(os.environ["MKNOON_CAPTURE_ROOT"]); p.mkdir(parents=True)\n'
+            '        (p/"one.png").write_bytes(b"x"*11)\n')
+        real_check = checks.check_screenshots
+        with mock.patch.object(checks, 'check_screenshots', side_effect=lambda path: real_check(path, file_limit=10)):
+            code, report = self.execute_fixture(only='fast', rerun_failed=True)
+        row = next(row for row in report['results'] if row['id'] == 'fast')
+        self.assertEqual(code, 1)
+        self.assertEqual(row['status'], 'FAIL')
+        self.assertEqual(len(row['attempts']), 1)
+        self.assertEqual(row['attempts'][0]['evidence_capacity_failure']['stream'], 'screenshots')
+
+    def test_retention_failure_invalidates_a_completed_passing_report(self):
+        _, report = self.execute_fixture(only='fast')
+        directory = self.root / '.codex-test-logs/retention-fixture'
+        directory.mkdir()
+        owner = mock.Mock()
+        owner.finish.side_effect = checks.RetentionCapacityError('evidence_capacity: protected evidence')
+        def inner(argv, managed):
+            managed.update(owner=owner, path=directory)
+            (directory / 'results.json').write_text(json.dumps(report))
+            return 0
+        with mock.patch.object(checks, '_main', side_effect=inner), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = checks.main([])
+        failed = json.loads((directory / 'results.json').read_text())
+        self.assertEqual(code, 93)
+        self.assertEqual(failed['status'], 'FAIL')
+        self.assertEqual(failed['run_failure'], 'evidence_capacity')
+        self.assertEqual(failed['automated_status'], 'PASS')
+        self.assertIn('overall: FAIL', (directory / 'summary.txt').read_text())
+
+    def test_native_capacity_exit_cannot_be_hidden_by_missing_or_passing_report(self):
+        path = self.root / 'sims.json'
+        for exists in (False, True):
+            if exists:
+                path.write_text(json.dumps({'verdicts': [ExternalReportRegressionTest.verdict('fixture.device')]}))
+            result = checks.inspect_sims(path, 'fixture.device', 93, False)
+            self.assertEqual(result['status'], 'FAIL')
+            self.assertEqual(result['checkpoint'], 'evidence_capacity')
+
     def test_cancelled_run_audits_toolchains_without_cancelling_version_probes(self):
         self.write('lib/shared.dart', 'changed for isolated cancellation fixture\n')
         args = self.args(only='chat')
@@ -932,6 +990,87 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             if pid is not None:
                 try: os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError: pass
+
+
+class CaptureBudgetTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.saved_context = {}
+        for name in ('capture_budget', 'capture_failure', 'cancel_event', 'raw_capture_path'):
+            self.saved_context[name] = getattr(checks._LAUNCH_CONTEXT, name, None)
+            setattr(checks._LAUNCH_CONTEXT, name, None)
+
+    def tearDown(self):
+        for name, value in self.saved_context.items():
+            if value is None:
+                if hasattr(checks._LAUNCH_CONTEXT, name): delattr(checks._LAUNCH_CONTEXT, name)
+            else: setattr(checks._LAUNCH_CONTEXT, name, value)
+
+    def run_script(self, script, budget):
+        checks._LAUNCH_CONTEXT.capture_budget = budget
+        checks._LAUNCH_CONTEXT.capture_failure = None
+        return checks.launch([sys.executable, '-c', script], self.root, 8)
+
+    def test_stdout_and_stderr_have_independent_bounds(self):
+        budget = checks.CaptureBudget(stream_limit=64, run_limit=128)
+        out, code, timed_out, _ = self.run_script("import os;os.write(1,b'a'*48);os.write(2,b'b'*48)", budget)
+        self.assertEqual((code, timed_out), (0, False))
+        self.assertEqual((out.count('a'), out.count('b'), budget.used), (48, 48, 96))
+
+    def test_stream_overflow_keeps_prefix_and_explicit_failure(self):
+        budget = checks.CaptureBudget(stream_limit=1024, run_limit=8192)
+        out, code, timed_out, _ = self.run_script(
+            "import os,time;os.write(1,b'PASS before overflow\\n'+b'x'*4096);time.sleep(30)", budget)
+        self.assertEqual((code, timed_out), (93, False))
+        self.assertTrue(out.startswith('PASS before overflow\n'))
+        self.assertIn('MKNOON_EVIDENCE_CAPACITY_EXCEEDED', out)
+        failure = checks._LAUNCH_CONTEXT.capture_failure
+        self.assertEqual(failure['stream'], 'stdout')
+        self.assertLessEqual(failure['retained_stream_bytes'], 1024)
+        self.assertLessEqual(budget.used, 8192)
+
+    def test_one_run_budget_is_shared_by_sequential_commands(self):
+        budget = checks.CaptureBudget(stream_limit=64, run_limit=80)
+        self.assertEqual(self.run_script("import os;os.write(1,b'a'*48)", budget)[1], 0)
+        out, code, timed_out, _ = self.run_script("import os;os.write(1,b'b'*48)", budget)
+        self.assertEqual((code, timed_out, budget.used), (93, False, 80))
+        self.assertTrue(out.startswith('b' * 32))
+        self.assertEqual(checks._LAUNCH_CONTEXT.capture_failure['reason'], 'run')
+
+    def test_replacement_decoding_cannot_expand_the_saved_byte_allowance(self):
+        budget = checks.CaptureBudget(stream_limit=64, run_limit=512)
+        out, code, _, _ = self.run_script("import os;os.write(1,bytes([255])*40)", budget)
+        self.assertEqual(code, 93)
+        self.assertTrue(out.startswith('\ufffd' * 21))
+        self.assertEqual(checks._LAUNCH_CONTEXT.capture_failure['retained_stream_bytes'], 63)
+
+    def test_private_raw_log_is_visible_before_the_child_finishes(self):
+        path = self.root / 'command.raw.log'
+        release = self.root / 'release'
+        budget = checks.CaptureBudget(stream_limit=1024, run_limit=8192)
+        script = ("import pathlib,sys,time;print('phase-one',flush=True);"
+                  "p=pathlib.Path(sys.argv[1]);\nwhile not p.exists():time.sleep(.01)\n"
+                  "print('phase-two',flush=True)")
+        def launch():
+            checks._LAUNCH_CONTEXT.capture_budget = budget
+            return checks.launch_to_log([sys.executable, '-c', script, str(release)], self.root, 8, None, path)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(launch)
+            try:
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and (not path.exists() or b'phase-one' not in path.read_bytes()):
+                    time.sleep(.01)
+                self.assertIn(b'phase-one', path.read_bytes())
+                self.assertFalse(future.done())
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            finally:
+                release.write_text('continue')
+            out, code, _, _ = future.result(timeout=10)
+        self.assertEqual(code, 0)
+        self.assertEqual(out, path.read_text())
+        self.assertIn('phase-two', out)
 
 
 if __name__ == '__main__':

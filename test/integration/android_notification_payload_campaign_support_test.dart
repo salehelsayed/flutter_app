@@ -587,12 +587,16 @@ void main() {
     // out — and an aged-out window is EMPTY, which reads as "the app never
     // emitted it". The reader must therefore be live and started up front.
     expect(source, contains('_startDeviceLogStream()'));
-    expect(source, contains('logcat -T 1 -v brief'));
+    expect(source, contains("'logcat',"));
+    expect(source, contains("'-T',"));
+    expect(source, contains("'brief',"));
     expect(source, contains('_stopDeviceLogStream'));
     // Cursors are byte offsets into that stream, and the window is a file
     // slice — no adb round trip, nothing that can rotate.
-    expect(source, contains('handle.setPosition(start)'));
-    // `adb` owns the write. Piping stdout into `file.openWrite()` races the
+    expect(source, contains('capture.readSince(start)'));
+    expect(source, contains('BoundedDiagnosticFile('));
+    expect(source, contains('on EvidenceCapacityFailure'));
+    // Synchronous chunk writes avoid the existing IOSink race. Piping stdout into `file.openWrite()` races the
     // cursor reads: `IOSink.flush()` sets `_isBound`, so a flush concurrent
     // with the stdout listener throws `StreamSink is bound to a stream` — it
     // killed a real run at assertion 1.

@@ -172,6 +172,9 @@ void _validateCheckpointWorkflowOptions(SimsCliOptions options) {
 }
 
 Future<void> main(List<String> arguments) async {
+  Directory? ownedCaptureDirectory;
+  var managedCapture = false;
+  var capturePassed = false;
   try {
     if (arguments.isNotEmpty && arguments.first == 'devices') {
       exitCode = await _runDevicesCommand(arguments.skip(1).toList());
@@ -204,6 +207,31 @@ Future<void> main(List<String> arguments) async {
     if (options.listOnly && !options.prepareBuilds) {
       _writePlan(plan, options.format);
       return;
+    }
+    var parentCaptureRoot = Platform.environment['MKNOON_CAPTURE_ROOT'];
+    final explicitStatePath =
+        Platform.environment['SIMS_REPORT_PATH']?.trim().isNotEmpty == true
+        ? Platform.environment['SIMS_REPORT_PATH']
+        : Platform.environment['SIMS_CHECKPOINT_PATH'];
+    if ((parentCaptureRoot == null || parentCaptureRoot.isEmpty) &&
+        explicitStatePath != null &&
+        explicitStatePath.trim().isNotEmpty) {
+      // Explicit evidence destinations stay unmanaged, like wrapper --output;
+      // their referenced captures must not disappear under default retention.
+      parentCaptureRoot =
+          '${File(explicitStatePath).absolute.parent.path}/sims-captures';
+    }
+    if (parentCaptureRoot != null && parentCaptureRoot.isNotEmpty) {
+      final parent = Directory(parentCaptureRoot);
+      if (FileSystemEntity.typeSync(parent.path, followLinks: false) ==
+          FileSystemEntityType.link) {
+        throw StateError('Parent capture root must not be a symlink.');
+      }
+      parent.createSync(recursive: true);
+      ownedCaptureDirectory = parent.createTempSync('sims-');
+    } else {
+      ownedCaptureDirectory = Directory(await _ownedCaptureCommand('start'));
+      managedCapture = true;
     }
 
     final checkpointFile = _checkpointPath();
@@ -257,12 +285,16 @@ Future<void> main(List<String> arguments) async {
       );
     }
     if (_hasSymbolicDeviceResources(plan) ||
-        Platform.environment.containsKey('SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON')) {
+        Platform.environment.containsKey(
+          'SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON',
+        )) {
       final unresolvedPlan = plan;
-      var inventory = discoveredInventory ?? SimsLiveDeviceInventory(
-        targets: const <SimsLiveDeviceTarget>[],
-        sourceResults: const <SimsDiscoverySourceResult>[],
-      );
+      var inventory =
+          discoveredInventory ??
+          SimsLiveDeviceInventory(
+            targets: const <SimsLiveDeviceTarget>[],
+            sourceResults: const <SimsDiscoverySourceResult>[],
+          );
       deviceBinding = SimsDevicePlanBinding.bind(
         unresolvedPlan,
         inventory,
@@ -358,6 +390,8 @@ Future<void> main(List<String> arguments) async {
     final maxParallel = _positiveEnvironmentInt('SIMS_MAX_PARALLEL', 4);
     final hostCapacity = _positiveEnvironmentInt('SIMS_HOST_CONCURRENCY', 4);
     final processExecutor = SimsProcessExecutor(
+      logDirectory: Directory('${ownedCaptureDirectory.path}/logs'),
+      proofDirectory: Directory('${ownedCaptureDirectory.path}/proofs'),
       environment: <String, String>{
         ...Platform.environment,
         ...?deviceBinding?.environment,
@@ -430,7 +464,15 @@ Future<void> main(List<String> arguments) async {
           : simsLiveDeviceInventoryDigest(discoveredInventory),
     );
     final reportPath = _reportPath();
-    _writeJsonAtomically(reportPath, report.toJson());
+    final reportJson = <String, Object?>{
+      ...report.toJson(),
+      'capture_directory': ownedCaptureDirectory.absolute.path,
+    };
+    _writeJsonAtomically(
+      File('${ownedCaptureDirectory.path}/report.json'),
+      reportJson,
+    );
+    _writeJsonAtomically(reportPath, reportJson);
     _writeReport(report, options.format, reportPath: reportPath.path);
 
     final suitePassed =
@@ -468,6 +510,7 @@ Future<void> main(List<String> arguments) async {
         priorCheckpoint: checkpointFlowRequested ? checkpoint : null,
         checkpointPlanRows: checkpointPlanRows,
         preferredFailureId: schedule.causalFailureId,
+        logDirectory: processExecutor.logDirectory,
       );
     } else if (checkpointFlowRequested && checkpoint != null && suitePassed) {
       _persistProgressCheckpoint(
@@ -497,6 +540,7 @@ Future<void> main(List<String> arguments) async {
     } else if (suitePassed && cleanFullRun && checkpointFile.existsSync()) {
       checkpointFile.deleteSync();
     }
+    capturePassed = suitePassed;
     if (!suitePassed) exitCode = 1;
   } on _HelpRequested {
     stdout.writeln(_usage);
@@ -506,11 +550,71 @@ Future<void> main(List<String> arguments) async {
     exitCode = 64;
   } on StateError catch (error) {
     stderr.writeln('Unable to compile or execute sims plan: ${error.message}');
-    exitCode = 65;
+    exitCode = error.message.startsWith('evidence_capacity:') ? 93 : 65;
   } on FileSystemException catch (error) {
     stderr.writeln('Unable to read/write sims state: ${error.message}');
     exitCode = 66;
+  } finally {
+    if (ownedCaptureDirectory != null && managedCapture) {
+      try {
+        await _ownedCaptureCommand(
+          'finish',
+          run: ownedCaptureDirectory,
+          status: capturePassed ? 'PASS' : 'FAIL',
+        );
+      } on StateError catch (error) {
+        stderr.writeln(error.message);
+        final ownReport = File('${ownedCaptureDirectory.path}/report.json');
+        if (ownReport.existsSync()) {
+          final failedReport =
+              jsonDecode(ownReport.readAsStringSync()) as Map<String, dynamic>;
+          failedReport['capture_failure'] = 'evidence_capacity';
+          failedReport['validationErrors'] = <Object?>[
+            ...?failedReport['validationErrors'] as List?,
+            'evidence_capacity: retained-run quota/ownership check failed',
+          ];
+          _writeJsonAtomically(ownReport, failedReport);
+          final currentReport = _reportPath();
+          if (currentReport.existsSync() &&
+              (jsonDecode(currentReport.readAsStringSync())
+                      as Map)['capture_directory'] ==
+                  ownedCaptureDirectory.absolute.path) {
+            _writeJsonAtomically(currentReport, failedReport);
+          }
+        }
+        exitCode = 93;
+      }
+    }
   }
+}
+
+Future<String> _ownedCaptureCommand(
+  String action, {
+  Directory? run,
+  String? status,
+}) async {
+  late final ProcessResult result;
+  try {
+    result = await Process.run('python3', <String>[
+      'scripts/owned_run_retention.py',
+      action,
+      '--repository',
+      Directory.current.path,
+      if (action == 'start') ...['--kind', 'sims'],
+      if (run != null) ...['--run', run.absolute.path],
+      if (status != null) ...['--status', status],
+    ]);
+  } on ProcessException {
+    throw StateError(
+      'Owned capture retention requires the project Python 3 runtime.',
+    );
+  }
+  if (result.exitCode != 0) {
+    throw StateError(
+      'evidence_capacity: owned capture retention failed: ${result.stderr}',
+    );
+  }
+  return '${result.stdout}'.trim();
 }
 
 final class _ExecutionSelection {
@@ -711,6 +815,7 @@ void _persistFailureCheckpoint(
   required SimsCheckpoint? priorCheckpoint,
   required List<CapabilitySpec> checkpointPlanRows,
   required String? preferredFailureId,
+  required Directory logDirectory,
 }) {
   CapabilitySpec? failed;
   if (preferredFailureId != null) {
@@ -779,7 +884,7 @@ void _persistFailureCheckpoint(
     targetAssignments: targetAssignments,
     targetStateDigests: targetStateDigests,
     logPaths: <String>[
-      'build/sims/logs/'
+      '${logDirectory.path}/'
           '${failed.id.replaceAll(RegExp('[^A-Za-z0-9_.-]'), '_')}.log',
     ],
     failureClass: _failureClass(failedVerdict),

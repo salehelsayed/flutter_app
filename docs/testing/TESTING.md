@@ -7686,6 +7686,52 @@ Legacy/SIMS raw nested logs remain private local evidence. CI exports only the
 wrapper's restricted plan/result/partial/error/summary files; inspect and redact
 any additional screenshots or diagnostic artifacts before sharing them.
 
+Native SIMS execution and `mknoon_checks` now stream private raw output while
+children run, with independent 8 MiB stdout/stderr limits and a shared 256 MiB
+capture budget per executor/wrapper invocation. Overflow preserves the observed
+prefix and produces `evidence_capacity` FAIL even after a success marker. Native
+capture closes stdin, drains pipes with deadlines, and reaps its own child after
+TERM/KILL; the wrapper retains its process-group timeout/cancellation handling.
+The Android payload campaign keeps complete live logcat history on disk up to
+its 256 MiB campaign budget, with 8 MiB decoded cursor windows and stderr. It
+uses synchronous chunk writes, avoiding the measured IOSink.flush/listener
+race. Capacity, truncation and invalid cursors cannot establish absent events.
+Default iOS group syslog streams have 8 MiB raw limits; the separately bounded
+Plan 398 trace capture retains its existing path and semantics.
+
+Default capture retention owns only marked runs under
+`.codex-test-logs/owned-runs/`. It preserves active runs, the last two passing
+runs by completion time, the first untriaged unsuccessful run, the current
+handoff, tracked-prose/canonical-state references, transitive report references,
+and managed-root symlink targets or hard-linked evidence. Unmarked directories
+are never adopted or deleted. Nested SIMS captures belong to their wrapper run;
+explicit wrapper output or SIMS report/checkpoint destinations remain unmanaged.
+The roughly 2 GiB target is checked at run boundaries: protected evidence over
+quota fails explicitly and is preserved. Capacity exit 93 cannot be hidden by
+a passing or missing SIMS report; wrapper retention failure changes the overall
+report to FAIL while retaining the actual check outcomes. Native retention
+failure invalidates the current capture's own report and canonical copy.
+An interrupted active marker stays
+protected until its ownership is reviewed; this policy does not clean historical
+build caches or unrelated processes.
+
+Screenshot limits are 128 files / 128 MiB per run, with the existing 20 MiB
+per-file bound. The production audio producer reserves before persistence;
+native/wrapper boundaries audit external producers between checks. Their first
+oversized artifact remains evidence of a failed capture, rather than being
+silently removed or treated as passing proof. These audits bound retained
+outputs, not the transient work of an arbitrary external screenshot producer.
+
+Capture/retention host evidence is
+`.codex-test-logs/suite-implementation-20261018/P3-light-005-checks.json`:
+73 Python tests and 286 focused Flutter tests passed. The first retention test
+failure in LIGHT004 is preserved; it exposed start-time ordering, corrected to
+completion-time ordering. The final wrapper/retention run in LIGHT008 passed
+75 tests, including late retention failure after green checks and capacity exit
+with a missing or passing native report. All retention deletion checks used
+owned temporary fixtures. These results do not certify device capture, native builds, a full
+workflow, or signed release artifacts.
+
 The local Git exclude file ignored AGENTS.md and .agents/. Narrow tracked
 .gitignore exceptions now expose AGENTS.md and the three Mknoon skills while
 leaving other local skill directories excluded. Their instructions and adapters

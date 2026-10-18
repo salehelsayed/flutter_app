@@ -8,6 +8,8 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/group_reaction_notification_ios_setup_profile.dart';
 
+import '../../tool/sims/capture_budget.dart';
+
 import '../support/android_notification_payload_campaign.dart'
     show
         bindRelayAcceptedGroupMessageProviderAttempt,
@@ -1033,6 +1035,10 @@ class _Plan257Capture {
   bool _plan397SetupContainerPreserved = false;
   final Map<String, File> _iosInstallReceipts = <String, File>{};
   Process? _iosSystemLogProcess;
+  final _defaultIosCaptureBudget = EvidenceCaptureBudget();
+  BoundedDiagnosticFile? _defaultIosStdoutCapture;
+  BoundedDiagnosticFile? _defaultIosStderrCapture;
+  Object? _defaultIosCaptureFailure;
   int _iosRegistrationLogCursor = 0;
   final StringBuffer _iosSystemLogStdout = StringBuffer();
   final StringBuffer _iosSystemLogStderr = StringBuffer();
@@ -1587,7 +1593,7 @@ class _Plan257Capture {
       'existing iOS notification authorization',
       const Duration(minutes: 1),
       () async {
-        final complete = _iosSystemLogStdout.toString();
+        final complete = _readIosStdout();
         final cursor = _iosRegistrationLogCursor.clamp(0, complete.length);
         return plan398ExistingStateNotificationAuthorizationReady(
           complete.substring(cursor),
@@ -3708,7 +3714,7 @@ class _Plan257Capture {
       'Plan 397 $phase NSE terminal evidence',
       const Duration(minutes: 2),
       () async {
-        final complete = _iosSystemLogStdout.toString();
+        final complete = _readIosStdout();
         final boundedCursor = cursor.clamp(0, complete.length);
         final window = complete.substring(boundedCursor);
         final lines = window.split('\n');
@@ -5086,16 +5092,62 @@ class _Plan257Capture {
       }
       return;
     }
-    _iosSystemLogProcess = await Process.start(
-      _iosSystemLogExecutable,
-      <String>['--udid', recipientId, '--no-colors'],
+    _defaultIosStdoutCapture = BoundedDiagnosticFile(
+      File('${artifactDirectory.path}/ios-syslog.stdout.raw.log'),
+      budget: _defaultIosCaptureBudget,
+      limitBytes: simsStreamCaptureBytes,
     );
-    _iosSystemLogStdoutDone = _iosSystemLogProcess!.stdout
-        .transform(utf8.decoder)
-        .forEach(_iosSystemLogStdout.write);
-    _iosSystemLogStderrDone = _iosSystemLogProcess!.stderr
-        .transform(utf8.decoder)
-        .forEach(_iosSystemLogStderr.write);
+    _defaultIosStderrCapture = BoundedDiagnosticFile(
+      File('${artifactDirectory.path}/ios-syslog.stderr.raw.log'),
+      budget: _defaultIosCaptureBudget,
+      limitBytes: simsStreamCaptureBytes,
+    );
+    final process = await Process.start(_iosSystemLogExecutable, <String>[
+      '--udid',
+      recipientId,
+      '--no-colors',
+    ]);
+    _iosSystemLogProcess = process;
+    Future<void> pump(
+      Stream<List<int>> source,
+      BoundedDiagnosticFile capture,
+      StringBuffer decoded,
+    ) async {
+      final decoder = const Utf8Decoder(
+        allowMalformed: true,
+      ).startChunkedConversion(StringConversionSink.fromStringSink(decoded));
+      try {
+        await for (final chunk in source) {
+          capture.add(chunk);
+          decoder.add(chunk);
+        }
+      } on Object catch (error) {
+        _defaultIosCaptureFailure ??= error;
+        process.kill();
+      } finally {
+        decoder.close();
+      }
+    }
+
+    _iosSystemLogStdoutDone = pump(
+      process.stdout,
+      _defaultIosStdoutCapture!,
+      _iosSystemLogStdout,
+    );
+    _iosSystemLogStderrDone = pump(
+      process.stderr,
+      _defaultIosStderrCapture!,
+      _iosSystemLogStderr,
+    );
+    unawaited(
+      process.exitCode.then((code) {
+        if (identical(_iosSystemLogProcess, process)) {
+          _defaultIosCaptureFailure ??= StateError(
+            'iOS logger exited $code during capture.',
+          );
+        }
+      }),
+    );
   }
 
   Future<void> _requirePlan398IosLoggerLive(String boundary) async {
@@ -5134,22 +5186,55 @@ class _Plan257Capture {
     Plan398IosLoggerLivenessFailure.exited => 'exited',
   };
 
+  void _requireDefaultIosCaptureComplete() {
+    if (traceOnlyExistingState) return;
+    final failure =
+        _defaultIosCaptureFailure ??
+        _defaultIosStdoutCapture?.failure ??
+        _defaultIosStderrCapture?.failure;
+    if (failure != null) {
+      throw _CaptureFailure.capture(
+        stage,
+        failure is EvidenceCapacityFailure
+            ? failure.toString()
+            : 'ios_system_log_incomplete_${failure.runtimeType}',
+      );
+    }
+  }
+
+  String _readIosStdout() {
+    _requireDefaultIosCaptureComplete();
+    return _iosSystemLogStdout.toString();
+  }
+
   Future<void> _stopIosSystemLog() async {
     final process = _iosSystemLogProcess;
     if (!traceOnlyExistingState) {
-      if (process == null) return;
+      if (process == null) {
+        _defaultIosStdoutCapture?.close();
+        _defaultIosStderrCapture?.close();
+        _requireDefaultIosCaptureComplete();
+        return;
+      }
+      _iosSystemLogProcess = null;
       process.kill();
       final exitCode = await process.exitCode.timeout(
         const Duration(seconds: 10),
         onTimeout: () {
           process.kill(ProcessSignal.sigkill);
-          return -1;
+          return process.exitCode.timeout(const Duration(seconds: 5));
         },
       );
-      await Future.wait(<Future<void>>[
-        ?_iosSystemLogStdoutDone,
-        ?_iosSystemLogStderrDone,
-      ]);
+      try {
+        await Future.wait(<Future<void>>[
+          ?_iosSystemLogStdoutDone,
+          ?_iosSystemLogStderrDone,
+        ]).timeout(const Duration(seconds: 10));
+      } finally {
+        _defaultIosStdoutCapture?.close();
+        _defaultIosStderrCapture?.close();
+      }
+      _requireDefaultIosCaptureComplete();
       _iosSystemLog =
           '${_iosSystemLogStdout.toString()}\n${_iosSystemLogStderr.toString()}';
       _recordCommandAtStage('ios_system_log', _iosSystemLogExecutable, <String>[
@@ -9015,7 +9100,7 @@ class _Plan257Capture {
       'recipient ios token registration',
       const Duration(minutes: 3),
       () async {
-        final complete = _iosSystemLogStdout.toString();
+        final complete = _readIosStdout();
         final cursor = _iosRegistrationLogCursor.clamp(0, complete.length);
         return groupReactionIosRelayRegistrationSucceeded(
           complete.substring(cursor),

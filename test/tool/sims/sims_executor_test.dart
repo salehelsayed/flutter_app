@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../integration_test/support/production_sims_result.dart';
 import '../../../tool/sims/executor.dart';
+import '../../../tool/sims/capture_budget.dart';
 import '../../../tool/sims/manifest.dart';
 import '../../../tool/sims/verdict.dart';
 
@@ -38,8 +39,10 @@ CapabilitySpec _buildRow(String profileId) => CapabilitySpec(
 CapabilitySpec _processRow({
   required bool declaredBuildException,
   bool allowTargetUnavailable = false,
+  String? id,
+  List<String>? command,
 }) => CapabilitySpec(
-  id: declaredBuildException ? 'fixture.allowed' : 'fixture.guarded',
+  id: id ?? (declaredBuildException ? 'fixture.allowed' : 'fixture.guarded'),
   owner: 'test',
   proofBoundaryId: declaredBuildException
       ? 'boundary.allowed'
@@ -49,14 +52,16 @@ CapabilitySpec _processRow({
   modes: const <SimsMode>{SimsMode.major},
   families: const <String>{'test'},
   required: true,
-  command: const <String>[
-    'bash',
-    '-c',
-    'flutter build apk || true; '
-        'printf \'SIMS_RESULT_JSON={"status":"PASS",'
-        '"assertionsAttempted":1,"artifactPresent":true,'
-        '"printOnly":false}\\n\'',
-  ],
+  command:
+      command ??
+      const <String>[
+        'bash',
+        '-c',
+        'flutter build apk || true; '
+            'printf \'SIMS_RESULT_JSON={"status":"PASS",'
+            '"assertionsAttempted":1,"artifactPresent":true,'
+            '"printOnly":false}\\n\'',
+      ],
   buildProfileId: 'host.fixture',
   dependencies: const <String>[],
   resources: const <ResourceLock>[
@@ -110,6 +115,316 @@ void main() {
     if (temporaryDirectory.existsSync()) {
       temporaryDirectory.deleteSync(recursive: true);
     }
+  });
+
+  const success =
+      'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPresent":true,"printOnly":false}';
+  group('bounded diagnostic artifacts', () {
+    test(
+      'directory audits do not double charge and catch screenshot growth',
+      () async {
+        final directory = Directory('${temporaryDirectory.path}/pictures')
+          ..createSync();
+        final screenshot = File('${directory.path}/one.png')
+          ..writeAsBytesSync(List.filled(8, 1));
+        final budget = EvidenceCaptureBudget(limitBytes: 32);
+        final screenshots = ScreenshotCaptureBudget(
+          budget: budget,
+          fileLimitBytes: 10,
+        );
+        await screenshots.checkDirectory(directory);
+        await screenshots.checkDirectory(directory);
+        expect(screenshots.count, 1);
+        expect(budget.usedBytes, 8);
+        screenshot.writeAsBytesSync(List.filled(11, 1));
+        await expectLater(
+          screenshots.checkDirectory(directory),
+          throwsA(isA<EvidenceCapacityFailure>()),
+        );
+      },
+    );
+    test('directory audits ignore linked foreign screenshots', () async {
+      final directory = Directory('${temporaryDirectory.path}/pictures')
+        ..createSync();
+      final foreign = File('${temporaryDirectory.path}/foreign.png')
+        ..writeAsBytesSync(List.filled(64, 1));
+      Link('${directory.path}/linked.png').createSync(foreign.path);
+      final screenshots = ScreenshotCaptureBudget(
+        budget: EvidenceCaptureBudget(limitBytes: 8),
+      );
+      await screenshots.checkDirectory(directory);
+      expect(screenshots.count, 0);
+    });
+    BoundedDiagnosticFile capture({int limit = 64, int window = 16}) {
+      final value = BoundedDiagnosticFile(
+        File('${temporaryDirectory.path}/stream.log'),
+        budget: EvidenceCaptureBudget(limitBytes: 128),
+        limitBytes: limit,
+        windowLimitBytes: window,
+      );
+      addTearDown(value.close);
+      return value;
+    }
+
+    test('cursor windows see incremental bytes without an IOSink flush', () {
+      final value = capture();
+      value.add(utf8.encode('first'));
+      final cursor = value.cursor;
+      value.add(utf8.encode('later'));
+      expect(value.readSince(cursor), 'later');
+      expect(value.file.readAsStringSync(), 'firstlater');
+      value.close();
+      expect(value.readSince(0), 'firstlater');
+    });
+    test(
+      'a full file keeps its prefix and cannot masquerade as empty evidence',
+      () {
+        final value = capture(limit: 8);
+        expect(
+          () => value.add(utf8.encode('123456789')),
+          throwsA(isA<EvidenceCapacityFailure>()),
+        );
+        expect(value.file.readAsStringSync(), '12345678');
+        expect(() => value.cursor, throwsA(isA<EvidenceCapacityFailure>()));
+        expect(
+          () => value.readSince(8),
+          throwsA(isA<EvidenceCapacityFailure>()),
+        );
+      },
+    );
+    test(
+      'an oversized memory window fails instead of silently taking a tail',
+      () {
+        final value = capture(window: 8);
+        value.add(utf8.encode('123456789'));
+        expect(
+          () => value.readSince(0),
+          throwsA(isA<EvidenceCapacityFailure>()),
+        );
+        expect(
+          () => value.readSince(9),
+          throwsA(isA<EvidenceCapacityFailure>()),
+        );
+      },
+    );
+    test('truncation and future cursors cannot prove an absent event', () {
+      final value = capture();
+      value.add(utf8.encode('before'));
+      expect(() => value.readSince(7), throwsFormatException);
+      value.file.writeAsStringSync('cut');
+      expect(() => value.readSince(6), throwsStateError);
+    });
+    test('screenshots have independent count, file, total and run bounds', () {
+      final budget = EvidenceCaptureBudget(limitBytes: 24);
+      final screenshots = ScreenshotCaptureBudget(
+        budget: budget,
+        maxCount: 2,
+        limitBytes: 16,
+        fileLimitBytes: 10,
+      );
+      screenshots.reserve(8);
+      expect(
+        () => screenshots.reserve(11),
+        throwsA(isA<EvidenceCapacityFailure>()),
+      );
+      expect(screenshots.count, 1);
+      screenshots.reserve(8);
+      expect(
+        () => screenshots.reserve(1),
+        throwsA(isA<EvidenceCapacityFailure>()),
+      );
+      expect(screenshots.usedBytes, 16);
+      final total = ScreenshotCaptureBudget(
+        budget: budget,
+        maxCount: 4,
+        limitBytes: 7,
+        fileLimitBytes: 10,
+      );
+      expect(() => total.reserve(8), throwsA(isA<EvidenceCapacityFailure>()));
+      final run = ScreenshotCaptureBudget(budget: budget);
+      expect(() => run.reserve(9), throwsA(isA<EvidenceCapacityFailure>()));
+      expect(budget.usedBytes, 16);
+    });
+  });
+  test(
+    'an external producer cannot pass after exceeding screenshot capacity',
+    () async {
+      final execution =
+          await SimsProcessExecutor(
+            logDirectory: Directory('${temporaryDirectory.path}/logs'),
+            proofDirectory: Directory('${temporaryDirectory.path}/proofs'),
+            screenshotBudget: ScreenshotCaptureBudget(
+              budget: EvidenceCaptureBudget(),
+              fileLimitBytes: 10,
+            ),
+          ).execute(
+            _processRow(
+              declaredBuildException: true,
+              command: [
+                'python3',
+                '-c',
+                'import os,pathlib,sys; p=pathlib.Path(os.environ["SIMS_PROOF_DIRECTORY"]); p.mkdir(parents=True); (p/"one.png").write_bytes(b"x"*11); print(sys.argv[1])',
+                success,
+              ],
+            ),
+          );
+      expect(execution.verdict.status, SimsVerdictStatus.fail);
+      expect(execution.verdict.exitCode, 93);
+      expect(execution.verdict.detail, contains('evidence_capacity'));
+    },
+  );
+  test('streaming execution preserves the original closed stdin', () async {
+    final execution =
+        await SimsProcessExecutor(logDirectory: temporaryDirectory).execute(
+          _processRow(
+            declaredBuildException: true,
+            command: [
+              'bash',
+              '-c',
+              r'''read -r -t 2 ignored; rc=$?; printf 'stdin_status=%s\n' "$rc"; printf '%s\n' "$1"''',
+              'fixture',
+              success,
+            ],
+          ),
+        );
+    expect(execution.verdict.status, SimsVerdictStatus.pass);
+    expect(execution.stdoutText, contains('stdin_status=1'));
+  });
+  test('stdout and stderr each have their own capture allowance', () async {
+    final execution =
+        await SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+          streamLimitBytes: 128,
+          captureBudget: EvidenceCaptureBudget(limitBytes: 512),
+        ).execute(
+          _processRow(
+            declaredBuildException: true,
+            command: [
+              'bash',
+              '-c',
+              "printf '%s\\n' '$success'; printf '%64s' '' >&2",
+            ],
+          ),
+        );
+    expect(execution.verdict.status, SimsVerdictStatus.pass);
+    expect(execution.stderrText.length, 64);
+  });
+  test('a success sentinel before overflow cannot pass the row', () async {
+    final execution =
+        await SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+          streamLimitBytes: 256,
+          captureBudget: EvidenceCaptureBudget(limitBytes: 2048),
+        ).execute(
+          _processRow(
+            declaredBuildException: true,
+            command: [
+              'bash',
+              '-c',
+              "printf '%s\\n' '$success'; printf '%4096s' ''; /bin/sleep 30",
+            ],
+          ),
+        );
+    expect(execution.stdoutText, contains(success));
+    expect(execution.stdoutText.length, lessThanOrEqualTo(256));
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.verdict.detail, contains('evidence_capacity'));
+    expect(
+      File(execution.logPath).readAsStringSync(),
+      contains('evidence_capacity'),
+    );
+  });
+  test('capacity cleanup reaps an owned child that ignores TERM', () async {
+    final execution =
+        await SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+          streamLimitBytes: 256,
+          captureBudget: EvidenceCaptureBudget(limitBytes: 2048),
+        ).execute(
+          _processRow(
+            declaredBuildException: true,
+            command: [
+              'python3',
+              '-c',
+              "import os,signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);os.write(1,b'x'*4096);time.sleep(30)",
+            ],
+          ),
+        );
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.verdict.detail, contains('evidence_capacity'));
+    final log = File(execution.logPath).readAsStringSync();
+    expect(log, contains('exitCode=-9'));
+    expect(log, contains('childExitObserved=true'));
+  });
+  test('different rows share the same invocation allowance', () async {
+    final budget = EvidenceCaptureBudget(limitBytes: 150);
+    final executor = SimsProcessExecutor(
+      logDirectory: temporaryDirectory,
+      streamLimitBytes: 256,
+      captureBudget: budget,
+    );
+    Future<SimsCommandExecution> run(String id) => executor.execute(
+      _processRow(
+        declaredBuildException: true,
+        id: id,
+        command: ['bash', '-c', "printf '%s\\n' '$success'"],
+      ),
+    );
+    expect((await run('capture.first')).verdict.status, SimsVerdictStatus.pass);
+    final second = await run('capture.second');
+    expect(second.verdict.status, SimsVerdictStatus.fail);
+    expect(second.verdict.detail, contains('run limit=150'));
+    expect(budget.usedBytes, 150);
+  });
+  test('malformed raw bytes stay exact and bounded on disk', () async {
+    final execution =
+        await SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+          streamLimitBytes: 16,
+          captureBudget: EvidenceCaptureBudget(limitBytes: 128),
+        ).execute(
+          _processRow(
+            declaredBuildException: true,
+            command: ['bash', '-c', r"printf '\377%.0s' {1..40}"],
+          ),
+        );
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.stdoutText, List.filled(16, '\ufffd').join());
+    expect(
+      File(execution.logPath).readAsBytesSync().where((b) => b == 255).length,
+      16,
+    );
+  });
+  test('the private raw prefix is durable before command completion', () async {
+    final release = File('${temporaryDirectory.path}/release');
+    final executor = SimsProcessExecutor(logDirectory: temporaryDirectory);
+    final running = executor.execute(
+      _processRow(
+        declaredBuildException: true,
+        command: [
+          'bash',
+          '-c',
+          r'''printf 'phase-one\n'; while [ ! -f "$1" ]; do /bin/sleep .02; done; printf '%s\n' "$2"''',
+          'capture-fixture',
+          release.path,
+          success,
+        ],
+      ),
+    );
+    final file = File('${temporaryDirectory.path}/fixture.allowed.log');
+    try {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (DateTime.now().isBefore(deadline) &&
+          (!file.existsSync() ||
+              !file.readAsStringSync().contains('phase-one'))) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(file.readAsStringSync(), contains('phase-one'));
+      expect(file.statSync().mode & 0x1ff, 0x180);
+    } finally {
+      release.writeAsStringSync('continue');
+    }
+    expect((await running).verdict.status, SimsVerdictStatus.pass);
   });
 
   test('prepared APK file satisfies a build row', () async {

@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/debug/android_notification_payload_e2e_protocol.dart';
 
 import '../../tool/sims/artifact_evidence.dart';
+import '../../tool/sims/capture_budget.dart';
 import '../../tool/sims/device_criteria.dart';
 import '../support/android_app_state_guard.dart';
 import '../support/android_notification_payload_campaign.dart';
@@ -222,7 +223,12 @@ final class _AndroidNotificationCampaign {
   int _assertionsAttempted = 0;
   String _phase = 'construction';
   Process? _deviceLogProcess;
-  File? _deviceLogFile;
+  final _captureBudget = EvidenceCaptureBudget();
+  BoundedDiagnosticFile? _deviceLogCapture;
+  BoundedDiagnosticFile? _deviceLogStderr;
+  Future<void>? _deviceLogStdoutDone;
+  Future<void>? _deviceLogStderrDone;
+  EvidenceCapacityFailure? _deviceLogCapacityFailure;
   String? _deviceLogFailure;
   // Plan 388 (G21): the cold leg's own log cursor, kept on the instance so a
   // failure raised INSIDE the leg can still be classified against the graded
@@ -255,7 +261,6 @@ final class _AndroidNotificationCampaign {
     }
     await proofDirectory.create(recursive: true);
     await _removeScenarioArtifacts();
-    await _startDeviceLogStream();
 
     final captured = <Map<String, Object?>>[];
     final diagnosticCaptures = <Map<String, Object?>>[];
@@ -269,6 +274,7 @@ final class _AndroidNotificationCampaign {
     // failure so both are reported.
     Object? legFailure;
     try {
+      await _startDeviceLogStream();
       _phase = 'state-capture-and-setup';
       appStateGuard = await AndroidAppStateGuard.capture(
         devices: <String>[physical, emulator],
@@ -453,6 +459,11 @@ final class _AndroidNotificationCampaign {
       // before the guard is captured, so a blocker in between would leak the
       // `adb logcat` child if this only ran on the guarded path.
       await attempt('receiver-log-stream', _stopDeviceLogStream);
+      final capacityFailure =
+          _deviceLogCapacityFailure ?? _deviceLogCapture?.failure;
+      if (capacityFailure != null) {
+        restorationFailures.add(capacityFailure.toString());
+      }
       if (!proofCompleted || restorationFailures.isNotEmpty) {
         await attempt('partial-artifacts', _removeScenarioArtifacts);
       }
@@ -3635,29 +3646,44 @@ final class _AndroidNotificationCampaign {
   /// and let a stale line satisfy a predicate.
   Future<void> _startDeviceLogStream() async {
     final file = File('${proofDirectory.path}/device-logcat.txt');
-    // `adb` writes the file itself through a shell redirect; Dart never
-    // touches the bytes.
-    //
-    // The obvious implementation — pipe `process.stdout` into an IOSink from
-    // `File.openWrite` — is WRONG here and fails under load: `IOSink.flush`
-    // sets `_isBound`, so every cursor read (which flushed to make the tail
-    // visible) raced the stdout listener and threw
-    // `Bad state: StreamSink is bound to a stream`. Measured: it killed a run
-    // at assertion 1. Letting the OS own the write removes the sink, the flush
-    // and the race together, and the log lands on disk incrementally so it
-    // survives even a hard crash.
-    final process = await Process.start('/bin/sh', <String>[
-      '-c',
-      // Positional parameters, never interpolation: the device id and path go
-      // in as argv, so nothing here is shell-quoted or injectable.
-      'exec adb -s "\$1" logcat -T 1 -v brief >"\$2"',
-      'sims-device-log',
+    // Synchronous chunk writes keep live byte cursors visible without the
+    // previously measured IOSink.flush/listener race. Keep the complete log
+    // on disk up to the run quota, and bound each decoded window to 8 MiB.
+    _deviceLogCapture = BoundedDiagnosticFile(file, budget: _captureBudget);
+    _deviceLogStderr = BoundedDiagnosticFile(
+      File('${proofDirectory.path}/device-logcat.stderr.txt'),
+      budget: _captureBudget,
+      limitBytes: simsStreamCaptureBytes,
+    );
+    final process = await Process.start('adb', <String>[
+      '-s',
       emulator,
-      file.path,
+      'logcat',
+      '-T',
+      '1',
+      '-v',
+      'brief',
     ]);
-    _deviceLogFile = file;
     _deviceLogProcess = process;
-    unawaited(process.stderr.drain<void>());
+    Future<void> pump(
+      Stream<List<int>> stream,
+      BoundedDiagnosticFile capture,
+    ) async {
+      try {
+        await for (final chunk in stream) {
+          capture.add(chunk);
+        }
+      } on EvidenceCapacityFailure catch (error) {
+        _deviceLogCapacityFailure ??= error;
+        process.kill();
+      } on Object catch (error) {
+        _deviceLogFailure ??= 'log writer failed: ${error.runtimeType}';
+        process.kill();
+      }
+    }
+
+    _deviceLogStdoutDone = pump(process.stdout, _deviceLogCapture!);
+    _deviceLogStderrDone = pump(process.stderr, _deviceLogStderr!);
     unawaited(
       process.exitCode.then((code) {
         // Only an exit we did not ask for is a failure; `_stopDeviceLogStream`
@@ -3671,7 +3697,8 @@ final class _AndroidNotificationCampaign {
     // stream that produces nothing is broken rather than merely quiet.
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (DateTime.now().isBefore(deadline)) {
-      if (await file.exists() && await file.length() > 0) return;
+      _requireDeviceLogCapacity();
+      if (_deviceLogCapture!.cursor > 0) return;
       if (_deviceLogFailure != null) break;
       await Future<void>.delayed(const Duration(milliseconds: 250));
     }
@@ -3686,10 +3713,40 @@ final class _AndroidNotificationCampaign {
   Future<void> _stopDeviceLogStream() async {
     final process = _deviceLogProcess;
     _deviceLogProcess = null;
-    process?.kill();
+    try {
+      if (process != null) {
+        process.kill();
+        await process.exitCode.timeout(
+          const Duration(seconds: 3),
+          onTimeout: () async {
+            process.kill(ProcessSignal.sigkill);
+            return process.exitCode.timeout(const Duration(seconds: 5));
+          },
+        );
+      }
+      await Future.wait(<Future<void>>[
+        ?_deviceLogStdoutDone,
+        ?_deviceLogStderrDone,
+      ]).timeout(const Duration(seconds: 5));
+    } finally {
+      _deviceLogCapture?.close();
+      _deviceLogStderr?.close();
+    }
+    _requireDeviceLogCapacity();
   }
 
-  Future<File> _requireDeviceLogStream() async {
+  void _requireDeviceLogCapacity() {
+    final failure = _deviceLogCapacityFailure ?? _deviceLogCapture?.failure;
+    if (failure != null) {
+      throw _Failure(
+        failure.toString(),
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+  }
+
+  BoundedDiagnosticFile _requireDeviceLogStream() {
+    _requireDeviceLogCapacity();
     final failure = _deviceLogFailure;
     if (failure != null) {
       throw _Blocked(
@@ -3698,14 +3755,14 @@ final class _AndroidNotificationCampaign {
             'window from here on would be silently truncated.',
       );
     }
-    final file = _deviceLogFile;
-    if (file == null) {
+    final capture = _deviceLogCapture;
+    if (capture == null) {
       throw const _Blocked(
         'deviceLogStream',
         'The receiver log stream was never started.',
       );
     }
-    return file;
+    return capture;
   }
 
   /// A cursor is a BYTE OFFSET into the live stream, not a device timestamp.
@@ -3714,10 +3771,10 @@ final class _AndroidNotificationCampaign {
   /// (`notification_tap_campaign_adapter_contract_test.sh:239` requires a
   /// non-destructive log window); the mechanism underneath it is what changed.
   Future<String> _deviceLogcatCursor() async =>
-      '${await (await _requireDeviceLogStream()).length()}';
+      '${_requireDeviceLogStream().cursor}';
 
   Future<String> _logcatSince(String cursor) async {
-    final file = await _requireDeviceLogStream();
+    final capture = _requireDeviceLogStream();
     final start = int.tryParse(cursor);
     if (start == null) {
       throw _Failure(
@@ -3725,17 +3782,20 @@ final class _AndroidNotificationCampaign {
         assertionsAttempted: _assertionsAttempted,
       );
     }
-    final length = await file.length();
-    if (start >= length) return '';
-    final handle = await file.open();
     try {
-      await handle.setPosition(start);
-      return utf8.decode(
-        await handle.read(length - start),
-        allowMalformed: true,
+      return capture.readSince(start);
+    } on EvidenceCapacityFailure catch (error) {
+      _deviceLogCapacityFailure ??= error;
+      _deviceLogProcess?.kill();
+      throw _Failure(
+        error.toString(),
+        assertionsAttempted: _assertionsAttempted,
       );
-    } finally {
-      await handle.close();
+    } on Object catch (error) {
+      throw _Failure(
+        'Invalid or incomplete Android log window: ${error.runtimeType}',
+        assertionsAttempted: _assertionsAttempted,
+      );
     }
   }
 

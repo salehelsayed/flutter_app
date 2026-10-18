@@ -640,7 +640,8 @@
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
-        "scripts/test/legacy_device_helpers_test.py"
+        "scripts/test/legacy_device_helpers_test.py",
+        "scripts/test/owned_run_retention_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -652,7 +653,8 @@
         "scripts/mknoon_checks.py",
         "scripts/testing_inventory.py",
         "scripts/device_campaign_preflight.py",
-        "scripts/full_suite_adapters.py"
+        "scripts/full_suite_adapters.py",
+        "scripts/owned_run_retention.py"
       ],
       "runtime_basis": {
         "kind": "measured",
@@ -5117,7 +5119,9 @@
         "docker-ws/se41_test_log.sh",
         "docker-ws/se55_iphone11_deploy.sh",
         "docker-ws/mknoon_checks_host.sh",
-        "docker-ws/fetch_codex_artifact.sh"
+        "docker-ws/fetch_codex_artifact.sh",
+        "scripts/owned_run_retention.py",
+        "scripts/test/owned_run_retention_test.py"
       ],
       "checks": [
         "workflow",
@@ -6842,7 +6846,8 @@
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
-        "scripts/test/legacy_device_helpers_test.py"
+        "scripts/test/legacy_device_helpers_test.py",
+        "scripts/test/owned_run_retention_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -6853,7 +6858,8 @@
       "investigate": [
         "scripts/mknoon_checks.py",
         "scripts/testing_inventory.py",
-        "scripts/device_campaign_preflight.py"
+        "scripts/device_campaign_preflight.py",
+        "scripts/owned_run_retention.py"
       ],
       "id": "full-workflow",
       "command": [
@@ -6874,7 +6880,8 @@
         "scripts/test/mknoon_full_benchmark_boundary_test.py",
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
-        "scripts/test/legacy_device_helpers_test.py"
+        "scripts/test/legacy_device_helpers_test.py",
+        "scripts/test/owned_run_retention_test.py"
       ],
       "resources": [
         "isolated:full-workflow"
