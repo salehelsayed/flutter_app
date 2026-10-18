@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:audio_session/audio_session.dart';
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -9,6 +11,13 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'media_display_helpers.dart';
 import 'waveform_seek_bar.dart';
+
+/// Emitted only when the widget's reported playing state changes.
+const audioPlayerPlaybackStateEvent = 'AUDIO_PLAYER_PLAYBACK_STATE';
+const audioPlayerActionEvent = 'AUDIO_PLAYER_ACTION';
+const _playbackObservationEnabled =
+    !kReleaseMode &&
+    (kE2ETestMode || String.fromEnvironment('SIMS_BUILD_PROFILE_ID') != '');
 
 /// Cross-platform audio-session rules for voice messages whose playback was
 /// explicitly started by the user.
@@ -286,7 +295,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     _interruptionHandler = UserInitiatedVoiceInterruptionHandler(
       isPlaying: () => mounted && _player.playing,
       pause: () async {
-        if (mounted) await _player.pause();
+        if (mounted) {
+          _recordAudioAction('stop', cause: 'interruption');
+          await _player.pause();
+        }
       },
       resume: () async {
         if (!mounted ||
@@ -304,6 +316,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
     _playerStateSubscription = _player.playerStateStream.listen((state) {
       if (!mounted) return;
+      final wasPlaying = _isPlaying;
       if (state.processingState == ProcessingState.completed) {
         _interruptionHandler.cancelPendingResume();
       }
@@ -315,12 +328,27 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       setState(() {
         _isPlaying = state.playing;
         if (state.processingState == ProcessingState.completed) {
+          _recordAudioAction('stop', cause: 'completed');
           _isPlaying = false;
           _position = Duration.zero;
           _player.seek(Duration.zero);
           _player.pause();
         }
       });
+      if (_playbackObservationEnabled && _isPlaying != wasPlaying) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: audioPlayerPlaybackStateEvent,
+          details: {
+            'attachmentId': widget.attachment.id,
+            'messageId': widget.attachment.messageId,
+            'playing': _isPlaying,
+            'processingState': state.processingState.name,
+            'positionMs': _player.position.inMilliseconds,
+            'durationMs': _player.duration?.inMilliseconds,
+          },
+        );
+      }
       updateKeepAlive();
     });
 
@@ -394,6 +422,15 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
         oldWidget.attachment.downloadStatus != widget.attachment.downloadStatus;
 
     if (sourceChanged) {
+      _recordAudioAction(
+        'stop',
+        attachment: oldWidget.attachment,
+        cause: oldWidget.attachment.id != widget.attachment.id
+            ? 'sourceId'
+            : oldWidget.attachment.localPath != widget.attachment.localPath
+            ? 'sourcePath'
+            : 'sourceStatus',
+      );
       unawaited(_reloadAudioForNewAttachment());
       return;
     }
@@ -431,6 +468,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
   @override
   void dispose() {
+    _recordAudioAction('stop', cause: 'disposed');
     _isDisposing = true;
     _stopPositionTimer();
     _interruptionHandler.cancelPendingResume();
@@ -478,9 +516,11 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   void _togglePlayPause() {
+    _recordAudioAction('tap');
     if (!_isLoaded) return;
     _interruptionHandler.cancelPendingResume();
     if (_isPlaying) {
+      _recordAudioAction('stop', cause: 'pauseTap');
       unawaited(_player.pause());
     } else {
       unawaited(_startUserInitiatedPlayback());
@@ -489,6 +529,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
   Future<void> _startUserInitiatedPlayback() async {
     if (_playStartPending || !_isLoaded || _isPlaying) return;
+    _recordAudioAction('play');
     _playStartPending = true;
     final loadVersion = _loadVersion;
     try {
@@ -522,8 +563,35 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     final position = Duration(
       milliseconds: (value * _duration.inMilliseconds).round(),
     );
+    _recordAudioAction('seek', seekToMs: position.inMilliseconds);
     setState(() => _position = position);
     unawaited(_player.seek(position));
+  }
+
+  void _recordAudioAction(
+    String action, {
+    String? cause,
+    MediaAttachment? attachment,
+    int? seekToMs,
+  }) {
+    if (!_playbackObservationEnabled) return;
+    final source = attachment ?? widget.attachment;
+    emitFlowEvent(
+      layer: 'FL',
+      event: audioPlayerActionEvent,
+      details: {
+        'attachmentId': source.id,
+        'messageId': source.messageId,
+        'action': action,
+        'cause': ?cause,
+        'seekToMs': ?seekToMs,
+        'isLoaded': _isLoaded,
+        'playing': _player.playing,
+        'processingState': _player.processingState.name,
+        'positionMs': _player.position.inMilliseconds,
+        'durationMs': _player.duration?.inMilliseconds,
+      },
+    );
   }
 
   @override

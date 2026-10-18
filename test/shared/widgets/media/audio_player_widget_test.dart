@@ -425,6 +425,7 @@ void main() {
     bool requireVerifiedContentHash = false,
     VoidCallback? onRetryUnavailableMedia,
     String? renderedSemanticsLabel,
+    Stream<AudioInterruptionEvent>? interruptionEvents,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -436,6 +437,7 @@ void main() {
           requireVerifiedContentHash: requireVerifiedContentHash,
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           renderedSemanticsLabel: renderedSemanticsLabel,
+          interruptionEvents: interruptionEvents,
         ),
       ),
     );
@@ -588,6 +590,68 @@ void main() {
       // Should find the play icon
       expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
     });
+
+    testWidgets(
+      'publishes playing for subsecond voice on initial and reopened rows',
+      (tester) async {
+        const observationsEnabled =
+            bool.fromEnvironment('E2E_TEST_MODE') ||
+            String.fromEnvironment('SIMS_BUILD_PROFILE_ID') != '';
+        final states = <Map<String, dynamic>>[];
+        final actions = <Map<String, dynamic>>[];
+        debugSetFlowEventSink((event) {
+          if (event['event'] == audioPlayerPlaybackStateEvent) {
+            states.add(Map<String, dynamic>.from(event['details'] as Map));
+          }
+          if (event['event'] == audioPlayerActionEvent) {
+            actions.add(Map<String, dynamic>.from(event['details'] as Map));
+          }
+        });
+        addTearDown(() => debugSetFlowEventSink(null));
+        for (var pass = 0; pass < 2; pass++) {
+          final load = fakePlatform.enqueueLoad(
+            reportedDuration: const Duration(milliseconds: 560),
+          );
+          await tester.pumpWidget(
+            buildApp(
+              availableAttachment(
+                id: 'subsecond-voice',
+                localPath: '/tmp/subsecond-voice.mp3',
+                durationMs: 560,
+              ),
+              interruptionEvents: const Stream<AudioInterruptionEvent>.empty(),
+            ),
+          );
+          await tester.pump();
+          await load.started;
+          load.complete();
+          await settleCompletedLoad(tester);
+          await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+          for (var i = 0; i < 5 && fakePlatform.playCallCount <= pass; i++) {
+            await flushAsyncPlayerTasks(tester);
+          }
+          expect(fakePlatform.playCallCount, pass + 1);
+          expect(find.byIcon(Icons.pause_rounded), findsOneWidget);
+          if (observationsEnabled) {
+            expect(states.last['playing'], isTrue);
+            expect(states.last['messageId'], 'msg-subsecond-voice');
+          }
+          await tester.pump(const Duration(milliseconds: 200));
+          await tester.tap(find.byIcon(Icons.pause_rounded));
+          await flushAsyncPlayerTasks(tester);
+          expect(find.byIcon(Icons.play_arrow_rounded), findsOneWidget);
+          if (observationsEnabled) expect(states.last['playing'], isFalse);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await flushAsyncPlayerTasks(tester);
+          expect(fakePlatform.activePlayerIds, isEmpty);
+        }
+        expect(
+          states.map((state) => state['playing']),
+          observationsEnabled ? [true, false, true, false] : isEmpty,
+        );
+        expect(actions, observationsEnabled ? isNotEmpty : isEmpty);
+      },
+    );
 
     testWidgets(
       'transient pause retains an offscreen player through its owned resume',

@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -46,9 +47,19 @@ void bindProductionGroupMediaControls({
   final groupId = productionMediaGroupId(run);
   var seeded = false;
   Timer? watcher;
+  E2EFlowEventSinkLease? playbackLease;
   int? playingSeenAtMs;
   Stopwatch? watchClock;
-  controller.bindDisposer(() => watcher?.cancel());
+  final playbackObservations = <String, Map<String, Object?>>{};
+  void stopWatching() {
+    watcher?.cancel();
+    watcher = null;
+    playbackLease?.release();
+    playbackLease = null;
+    watchClock?.stop();
+  }
+
+  controller.bindDisposer(stopWatching);
 
   String string(Map<String, Object?> values, String name) {
     final value = values[name];
@@ -294,25 +305,65 @@ void bindProductionGroupMediaControls({
     };
   });
 
-  // The fixture voice clip is 1 s long, longer-latency host polling would miss
-  // it: arm an in-app watcher before the tap, read the result after.
+  // Observe actual published state changes, including transitions between UI
+  // frames. Keep the bounded window open to record what requests a later stop.
   controller.bindAction('media_watch_playing', (_) async {
-    watcher?.cancel();
+    stopWatching();
     playingSeenAtMs = null;
+    playbackObservations.clear();
     watchClock = Stopwatch()..start();
-    watcher = Timer.periodic(const Duration(milliseconds: 40), (timer) {
-      if (treeCounts()['playingAudioPlayers']! > 0) {
-        playingSeenAtMs = watchClock!.elapsedMilliseconds;
-        timer.cancel();
-      } else if (watchClock!.elapsed > const Duration(seconds: 20)) {
-        timer.cancel();
+    final messages = {
+      'incoming-post-join-media-$run',
+      'outgoing-new-member-media-$run',
+    };
+    playbackLease = installScopedE2EFlowEventSink((event) {
+      final details = event['details'];
+      if (details is! Map ||
+          !messages.contains(details['messageId']) ||
+          details['attachmentId'] != '${details['messageId']}-voice') {
+        return;
+      }
+      String? observation;
+      if (event['event'] == audioPlayerPlaybackStateEvent) {
+        if (details['playing'] == true &&
+            details['processingState'] is String &&
+            details['processingState'] != 'completed') {
+          playingSeenAtMs ??= watchClock!.elapsedMilliseconds;
+          observation = 'firstPlayingState';
+        } else if (details['playing'] == false && playingSeenAtMs != null) {
+          observation = 'firstStoppedState';
+        }
+      } else if (event['event'] == audioPlayerActionEvent) {
+        observation = switch (details['action']) {
+          'tap' => 'firstControlTap',
+          'play' => 'firstPlayRequest',
+          'seek' => 'firstSeekRequest',
+          'stop' => 'firstStopRequest',
+          _ => null,
+        };
+      }
+      if (observation != null) {
+        playbackObservations.putIfAbsent(
+          observation,
+          () => {
+            ...Map<String, Object?>.from(details),
+            'atMs': watchClock!.elapsedMilliseconds,
+          },
+        );
       }
     });
+    watcher = Timer(const Duration(seconds: 20), stopWatching);
     return {'armed': true};
   });
 
   controller.bindAction('media_playing_result', (_) async {
-    watcher?.cancel();
-    return {'playingObserved': playingSeenAtMs != null, 'seenAtMs': playingSeenAtMs};
+    stopWatching();
+    return {
+      'playingObserved': playingSeenAtMs != null,
+      'seenAtMs': playingSeenAtMs,
+      'observationSource': 'audio-player-state',
+      // At most six records, regardless of the number of playback events.
+      'observations': Map<String, Object?>.from(playbackObservations),
+    };
   });
 }

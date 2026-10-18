@@ -3323,6 +3323,21 @@ do not count `test(...)` strings as executions. Runner listings took about
   Ten Appium playback/navigation cycles on the USB iPhone 13 profile build
   also completed without a visible error or crash; the causal pending-load
   assertion remains the host test rather than an inference from those cycles.
+- The production new-member-media voice watch latches actual player-state
+  publications for the exact seeded message/attachment IDs within its original
+  20-second window. A play request alone is not playback evidence; a 40 ms
+  element-tree poll can miss a complete playing/stopped transition. The host
+  regression reproduces that miss with an initial and reopened 560 ms player,
+  then verifies the latch, stale/unrelated-event rejection, deadline, and sink
+  restoration. Its bounded observations retain the first playing/stopped states
+  and tap/play/seek/stop requests, including stop cause and player position.
+  These host tests do not identify the cause of the retained device run's
+  AudioTrack stop log or establish audible playback duration; that verdict
+  requires a corresponding player-state/caller trace. Widget observations are
+  compile-time gated to non-release E2E/SIMS builds before constructing event
+  maps; ordinary builds emit neither state nor action observations. The widget
+  adds no observer timer. Default, E2E, and SIMS host configurations exercise
+  the disabled/enabled paths separately.
 - Archived direct-message arrivals still publish the conversation change event
   before suppressing notifications. The listener regression covers both effects.
   On USB iPhone 13, the open Archived list updated the iPhone 11 row to a fresh
