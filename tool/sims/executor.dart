@@ -76,6 +76,7 @@ final class SimsProcessExecutor {
   final Map<String, SimsVerdict> preflightVerdicts;
   final EvidenceCaptureBudget captureBudget;
   final int streamLimitBytes;
+  EvidenceCapacityFailure? _screenshotCapacityFailure;
 
   Future<SimsCommandExecution> execute(CapabilitySpec row) async {
     final preflight = preflightVerdicts[row.id];
@@ -249,6 +250,7 @@ final class SimsProcessExecutor {
         await screenshotBudget.checkDirectory(proofDirectory);
       }
     } on EvidenceCapacityFailure catch (error) {
+      _screenshotCapacityFailure ??= error;
       capacityFailure ??= error;
     }
     final result = captured.result;
@@ -321,12 +323,15 @@ final class SimsProcessExecutor {
       log.writeStringSync(
         'capability=${row.id}\n--- combined stdout/stderr ---\n',
       );
-      if (captureBudget.remainingBytes == 0) {
-        capacity = EvidenceCapacityFailure(
-          'run',
-          captureBudget.limitBytes,
-          captureBudget.usedBytes,
-        );
+      if (_screenshotCapacityFailure != null ||
+          captureBudget.remainingBytes == 0) {
+        capacity =
+            _screenshotCapacityFailure ??
+            EvidenceCapacityFailure(
+              'run',
+              captureBudget.limitBytes,
+              captureBudget.usedBytes,
+            );
         log.writeStringSync('$capacity\nexitCode=93\n');
         return (
           result: ProcessResult(0, 93, '', '$capacity'),

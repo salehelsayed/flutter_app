@@ -273,6 +273,60 @@ void main() {
       expect(execution.verdict.detail, contains('evidence_capacity'));
     },
   );
+  for (final quota in ['screenshot', 'raw-run']) {
+    test('known $quota exhaustion prevents later producers', () async {
+      final marker = File('${temporaryDirectory.path}/later-producer.txt');
+      final budget = EvidenceCaptureBudget(
+        limitBytes: quota == 'screenshot' ? 4096 : 32,
+      );
+      final executor = SimsProcessExecutor(
+        logDirectory: Directory('${temporaryDirectory.path}/logs'),
+        proofDirectory: Directory('${temporaryDirectory.path}/proofs'),
+        captureBudget: budget,
+        screenshotBudget: ScreenshotCaptureBudget(
+          budget: budget,
+          fileLimitBytes: 10,
+        ),
+      );
+      final first = await executor.execute(
+        _processRow(
+          id: 'fixture.quota-first',
+          declaredBuildException: true,
+          command: [
+            'python3',
+            '-c',
+            quota == 'screenshot'
+                ? 'import os,pathlib,sys; p=pathlib.Path(os.environ["SIMS_PROOF_DIRECTORY"]); p.mkdir(parents=True); (p/"one.png").write_bytes(b"x"*11); print(sys.argv[1])'
+                : 'print("x"*128)',
+            success,
+          ],
+        ),
+      );
+      final later = await executor.execute(
+        _processRow(
+          id: 'fixture.quota-later',
+          declaredBuildException: true,
+          command: [
+            'python3',
+            '-c',
+            'import pathlib,sys; pathlib.Path(sys.argv[1]).write_text("started"); print(sys.argv[2])',
+            marker.path,
+            success,
+          ],
+        ),
+      );
+      expect(first.verdict.exitCode, 93);
+      expect(later.verdict.status, SimsVerdictStatus.fail);
+      expect(later.verdict.exitCode, 93);
+      expect(later.verdict.detail, contains('evidence_capacity'));
+      expect(
+        marker.existsSync(),
+        isFalse,
+        reason:
+            'A continuation must not launch another producer after capture exhaustion.',
+      );
+    });
+  }
   test('streaming execution preserves the original closed stdin', () async {
     final execution =
         await SimsProcessExecutor(logDirectory: temporaryDirectory).execute(

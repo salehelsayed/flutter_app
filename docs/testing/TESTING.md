@@ -7721,6 +7721,14 @@ native/wrapper boundaries audit external producers between checks. Their first
 oversized artifact remains evidence of a failed capture, rather than being
 silently removed or treated as passing proof. These audits bound retained
 outputs, not the transient work of an arbitrary external screenshot producer.
+Native continuation latches an observed screenshot-quota failure and reuses the
+existing pre-launch capacity guard, so later producers cannot add more files.
+P3b's two-row host probe exposed the prior gap: both rows failed, but the second
+producer still ran and increased retained fake PNG bytes from 11 to 22 after a
+10-byte file quota failure. The focused executor file now passes 43 tests,
+including continuation prevention and preservation of the existing exhausted
+raw-run guard; see `P3-light-010-checks.json`, `P3-light-011-checks.json` and
+`P3-light-012-checks.json` in the same private evidence directory below.
 
 Capture/retention host evidence is
 `.codex-test-logs/suite-implementation-20261018/P3-light-005-checks.json`:
