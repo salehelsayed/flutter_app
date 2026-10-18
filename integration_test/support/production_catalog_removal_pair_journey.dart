@@ -6,6 +6,7 @@ import '../../tool/sims/production_catalog_send_sequence.dart';
 import '../../tool/sims/production_group_removal_pair_criteria.dart';
 import 'production_android_journey.dart';
 import 'production_catalog_session.dart';
+import 'production_sims_result.dart';
 
 /// Runs one removal-then-remaining-pair catalog journey: UI creation and
 /// acceptance, Alice removes Charlie through group info, then the case's
@@ -131,7 +132,7 @@ Future<void> runProductionRemovalPairJourney({
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production ${removalCase.scenario} passed' : 'production ${removalCase.scenario} failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production ${removalCase.scenario} passed' : 'production ${removalCase.scenario} failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }
