@@ -171,7 +171,8 @@ expected_dart_count="$(printf '%s\n' "$expected_dart_paths" | count_lines)"
 
 # RED/GREEN 0: the wrapper's zero-extra-argument path remains nounset-safe,
 # while the same curated gate rejects a host-batch control before dispatch.
-zero_arg_output="$(./scripts/run_test_gates.sh completeness-check)"
+zero_arg_output="$(./scripts/run_test_gates.sh completeness-check)" ||
+  fail 'completeness-check failed'
 grep -Fq 'Completeness check PASS.' <<<"$zero_arg_output" ||
   fail 'zero-argument completeness-check did not complete successfully'
 expect_error 'Host batch options are not supported for gate: completeness-check' \
