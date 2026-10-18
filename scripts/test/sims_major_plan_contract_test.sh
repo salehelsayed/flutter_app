@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ADAPTER="$ROOT_DIR/.claude/skills/sims/scripts/run_with_devices.sh"
+ADAPTER="$ROOT_DIR/scripts/run_with_devices.sh"
 cd "$ROOT_DIR"
 
 fail() {

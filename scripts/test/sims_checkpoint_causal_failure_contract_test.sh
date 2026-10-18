@@ -60,6 +60,7 @@ def row(capability_id, resources):
         "required": True,
         "command": ["bash", runner, capability_id],
         "buildProfile": "host.fixture",
+        "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG"],
         "dependencies": [],
         "resources": resources,
         "targetCapabilities": [],

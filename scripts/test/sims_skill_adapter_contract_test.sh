@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-ADAPTER="$ROOT_DIR/.claude/skills/sims/scripts/run_with_devices.sh"
+ADAPTER="$ROOT_DIR/scripts/run_with_devices.sh"
 TMP_DIR="$(mktemp -d)"
 FAKE_REPO="$TMP_DIR/repo"
 SHIM_DIR="$TMP_DIR/bin"
@@ -155,6 +155,16 @@ set -e
 [ "$status" -eq 2 ] ||
   fail "canonical sims accepted legacy --start-at (status $status)"
 
+# Legacy execution cannot silently acquire a private or production relay default.
+set +e
+run_adapter 1to1 --print-env
+status=$?
+set -e
+[ "$status" -eq 2 ] || fail 'legacy execution accepted missing relay configuration'
+[ ! -s "$DISCOVERY_LOG" ] || fail 'missing relay configuration triggered discovery'
+grep -q 'Set MKNOON_RELAY_ADDRESSES' "$OUTPUT_LOG" ||
+  fail 'missing relay configuration has no actionable error'
+
 # The retained compatibility resolver follows the project live-matrix default:
 # physical Android + Android emulator, even when Flutter lists iOS first.
 rm -f "$DISCOVERY_LOG" "$OUTPUT_LOG"
@@ -168,6 +178,7 @@ rm -f "$DISCOVERY_LOG" "$OUTPUT_LOG"
   PATH="$SHIM_DIR:$PATH" \
     SIMS_DISCOVERY_LOG="$DISCOVERY_LOG" \
     SIMS_FAKE_DISCOVERY=1 \
+    MKNOON_RELAY_ADDRESSES='/dns4/relay.invalid/tcp/4001' \
     "$ADAPTER" 1to1 --print-env
 ) >"$OUTPUT_LOG" 2>&1
 grep -q '^export RELIABILITY_SINGLE_DEVICE_ID=android-physical$' "$OUTPUT_LOG" ||

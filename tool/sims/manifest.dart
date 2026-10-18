@@ -123,6 +123,7 @@ class CapabilitySpec {
     required this.families,
     required this.required,
     required this.command,
+    this.inheritedEnvironmentKeys = const <String>[],
     required this.buildProfileId,
     required this.dependencies,
     required this.resources,
@@ -146,6 +147,9 @@ class CapabilitySpec {
     families: _stringList(json['families']).toSet(),
     required: _requiredBool(json, 'required'),
     command: _stringList(json['command']),
+    inheritedEnvironmentKeys: _environmentKeyList(
+      json['inheritedEnvironmentKeys'],
+    ),
     buildProfileId: _requiredString(json, 'buildProfile'),
     dependencies: _stringList(json['dependencies']),
     resources: _objectList(
@@ -173,6 +177,7 @@ class CapabilitySpec {
   final Set<String> families;
   final bool required;
   final List<String> command;
+  final List<String> inheritedEnvironmentKeys;
   final String buildProfileId;
   final List<String> dependencies;
   final List<ResourceLock> resources;
@@ -198,6 +203,7 @@ class CapabilitySpec {
     String? id,
     String? proofBoundaryId,
     List<String>? command,
+    List<String>? inheritedEnvironmentKeys,
     List<String>? dependencies,
     List<ResourceLock>? resources,
     List<String>? targetCapabilities,
@@ -214,6 +220,8 @@ class CapabilitySpec {
     families: families,
     required: required ?? this.required,
     command: command ?? this.command,
+    inheritedEnvironmentKeys:
+        inheritedEnvironmentKeys ?? this.inheritedEnvironmentKeys,
     buildProfileId: buildProfileId,
     dependencies: dependencies ?? this.dependencies,
     resources: resources ?? this.resources,
@@ -237,6 +245,8 @@ class CapabilitySpec {
     'families': families.toList()..sort(),
     'required': required,
     'command': command,
+    if (inheritedEnvironmentKeys.isNotEmpty)
+      'inheritedEnvironmentKeys': inheritedEnvironmentKeys,
     'buildProfile': buildProfileId,
     'dependencies': dependencies,
     'resources': resources.map((resource) => resource.toJson()).toList(),
@@ -618,6 +628,14 @@ List<String> _stringList(Object? value) {
         return item.trim();
       })
       .toList(growable: false);
+}
+
+List<String> _environmentKeyList(Object? value) {
+  final keys = value == null ? const <String>[] : _stringList(value);
+  if (keys.any((key) => !RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(key))) {
+    throw const FormatException('Expected environment variable names.');
+  }
+  return keys;
 }
 
 List<Map<String, Object?>> _objectList(Object? value) {

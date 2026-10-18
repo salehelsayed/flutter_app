@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
 adapter='integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart'
+topology='integration_test/support/android_campaign_topology.dart'
 manifest='tool/sims/critical_features.json'
 endpoint='lib/core/debug/private_media_outbox_e2e.dart'
 conversation_endpoint='lib/core/debug/private_media_outbox_e2e_conversation.dart'
@@ -21,7 +22,7 @@ fail() {
   exit 1
 }
 
-for path in "$adapter" "$endpoint" "$conversation_endpoint" "$protocol" \
+for path in "$adapter" "$topology" "$endpoint" "$conversation_endpoint" "$protocol" \
   "$observer" "$bootstrap_wiring" "$application_root_wiring" \
   "$composition_wiring" "$conversation_wiring"; do
   [[ -f "$path" ]] || fail "required production proof file is missing: $path"
@@ -29,8 +30,8 @@ done
 
 rg -q 'SIMS_ARTIFACT_ANDROID_E2E_MAIN' "$adapter" ||
   fail 'adapter does not consume the centrally prepared main APK'
-rg -q 'SIMS_ANDROID_PHYSICAL_DEVICE_ID' "$adapter" ||
-  fail 'adapter does not consume the physical Android control target'
+rg -Fq 'androidCampaignFirstTargetEnvironment(Platform.environment)' "$adapter" ||
+  fail 'adapter does not consume the explicit Android topology binding'
 rg -q 'SIMS_ANDROID_EMULATOR_DEVICE_ID' "$adapter" ||
   fail 'adapter does not consume the Android recipient target'
 rg -q 'privateMediaOutboxE2EAction' "$adapter" ||
@@ -60,11 +61,23 @@ if rg -q "Process\.(run|start)\(['\"]flutter|flutter (build|drive|run)" "$adapte
   fail 'adapter contains a child Flutter invocation'
 fi
 
-python3 - "$adapter" <<'PY'
+python3 - "$adapter" "$topology" <<'PY'
 import re
 import sys
 
 source = open(sys.argv[1], encoding='utf-8').read()
+topology = open(sys.argv[2], encoding='utf-8').read()
+compact_topology = ''.join(topology.split())
+for expected in (
+    "bool usesDisposableAndroidPair(Map<String, String> environment) => "
+    "environment['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1';",
+    "String androidCampaignFirstTargetEnvironment(Map<String, String> environment) => "
+    "usesDisposableAndroidPair(environment) ? 'SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID' "
+    ": 'SIMS_ANDROID_PHYSICAL_DEVICE_ID';",
+):
+    assert ''.join(expected.split()) in compact_topology, (
+        'physical default and explicit disposable topology must remain exact'
+    )
 phase_start = source.index('Future<Map<String, Object?>> _runPhase(')
 phase_end = source.index('Map<String, Object?> _buildPhaseArtifact(', phase_start)
 phase = source[phase_start:phase_end]

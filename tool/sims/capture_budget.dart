@@ -4,6 +4,13 @@ import 'dart:io';
 const simsStreamCaptureBytes = 8 * 1024 * 1024;
 const simsRunCaptureBytes = 256 * 1024 * 1024;
 
+// Complete retained runs measured ~19 MiB for Dart and ~15 MiB for iOS native.
+// Each stream keeps a hard ceiling; all rows still share the run budget above.
+const simsStreamCaptureBytesByCapability = <String, int>{
+  'host.dart.all': 64 * 1024 * 1024,
+  'native.ios.runner_tests': 32 * 1024 * 1024,
+};
+
 final class EvidenceCapacityFailure implements Exception {
   const EvidenceCapacityFailure(this.boundary, this.limit, this.retained);
   final String boundary;

@@ -226,8 +226,10 @@ const _privacySha256 =
 // resume handler is the push coordinator's read-only refreshOnResume instead
 // of retryNow, so closing the system permission dialog cannot ask again. No
 // owner or resume dispatch moves.
+// P1 adds optional debug callback readiness/observations to this same app owner.
+// No lifecycle, repository, or resume ownership moves.
 const _applicationRootNormalizedSha256 =
-    '554610c85de1b49e50019aeecca44a8113f248233f4212275d4312ddde270c51';
+    'f9a8aa05d6548ef99d7f2f3d9ea4087d6fecf6c78d5ff0b70adce531172f3e9b';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -279,6 +281,8 @@ const _applicationRootNormalizedSha256 =
 // cleanup; the canonical lease remains owned here until normal teardown.
 // SE-46 additionally posts the durable terminal call ID through the existing
 // local missed-call notifier. No provider payload or ownership boundary moves.
+// P1 wires debug call envelope/timer/output observers and existing fixture
+// controls through this app-owned composition; ordinary callbacks stay null.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -382,7 +386,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '0962a5d84e3d58eb30f0740ce51474c295aeea766bb8318fe31944e9efe8db9c';
+    'c0b181437fe2bcfc5b8aac315f3aa0105ea54bd97c6c9980a14f22be1b36d764';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -397,8 +401,10 @@ const _productionBootstrapNormalizedSha256 =
 // reply-once repair wiring described at the bootstrap digest above move this
 // digest; the database proof callback is unchanged. Task 20 owner decision A
 // restores the legacy reciprocal closure described above.
+// The same P1 observation/fixture wiring updates this remainder; the scoped
+// historical-notification database callback stays byte-identical.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '8d1d35c1bbe4e0fe05acff57fb1d16fa96ca46adfe6a6f3dfcc4234817c1a0c5';
+    '75223461a12d3ac295d7ebd24ca6bb304a954e135e6984ff19bc14bd03e5befa';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

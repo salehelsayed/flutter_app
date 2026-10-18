@@ -344,6 +344,100 @@ void main() {
     expect(execution.verdict.status, SimsVerdictStatus.pass);
     expect(execution.stdoutText, contains('stdin_status=1'));
   });
+  for (final sample in <String, int>{
+    'host.dart.all': 20 * 1024 * 1024,
+    'native.ios.runner_tests': 16 * 1024 * 1024,
+  }.entries) {
+    test(
+      'canonical ${sample.key} output fits default capture policy',
+      () async {
+        final row =
+            SimsManifest.loadSync(File('tool/sims/critical_features.json'))
+                .capabilities
+                .singleWhere((row) => row.id == sample.key)
+                .copyWith(
+                  command: [
+                    'python3',
+                    '-c',
+                    'import sys; sys.stdout.write(("x"*1023+"\\n")*'
+                        '${sample.value ~/ 1024}); '
+                        'sys.stdout.write(${jsonEncode('$success\n')})',
+                  ],
+                );
+        final execution = await SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+        ).execute(row);
+        expect(execution.verdict.status, SimsVerdictStatus.pass);
+        expect(execution.stdoutText.length, sample.value + success.length + 1);
+        expect(execution.stdoutText.endsWith('$success\n'), isTrue);
+        expect(File(execution.logPath).lengthSync(), greaterThan(sample.value));
+      },
+    );
+  }
+
+  test('large host allowance cannot bypass the shared run budget', () async {
+    final row = SimsManifest.loadSync(File('tool/sims/critical_features.json'))
+        .capabilities
+        .singleWhere((row) => row.id == 'host.dart.all')
+        .copyWith(
+          command: [
+            'python3',
+            '-c',
+            'import sys; sys.stdout.write(${jsonEncode('$success\n')}); '
+                'sys.stdout.write("x"*4096)',
+          ],
+        );
+    final budget = EvidenceCaptureBudget(limitBytes: 1024);
+    final execution = await SimsProcessExecutor(
+      logDirectory: temporaryDirectory,
+      captureBudget: budget,
+    ).execute(row);
+    expect(execution.stdoutText, contains(success));
+    expect(execution.verdict.status, SimsVerdictStatus.fail);
+    expect(execution.verdict.exitCode, 93);
+    expect(execution.verdict.detail, contains('evidence_capacity: run'));
+    expect(budget.usedBytes, 1024);
+  });
+
+  test(
+    'declared host environment bindings survive scrub only for their row',
+    () async {
+      final command = <String>[
+        'bash',
+        '-c',
+        r"""printf '%s|%s\n' "${SIMS_FIXTURE_EXECUTION_LOG-missing}" "${MKNOON_PRESERVE_PHYSICAL_APP_DATA-absent}"; """
+            "printf '%s\\n' '$success'",
+      ];
+      final row = CapabilitySpec.fromJson({
+        ..._processRow(declaredBuildException: true, command: command).toJson(),
+        'inheritedEnvironmentKeys': ['SIMS_FIXTURE_EXECUTION_LOG'],
+      });
+      final executor = SimsProcessExecutor(
+        logDirectory: temporaryDirectory,
+        environment: {
+          ...Platform.environment,
+          'SIMS_FIXTURE_EXECUTION_LOG': 'intentional-host-binding',
+          'MKNOON_PRESERVE_PHYSICAL_APP_DATA': '1',
+        },
+      );
+      final declared = await executor.execute(row);
+      expect(declared.verdict.status, SimsVerdictStatus.pass);
+      expect(declared.stdoutText, contains('intentional-host-binding|absent'));
+      final other = await executor.execute(
+        _processRow(
+          declaredBuildException: true,
+          id: 'fixture.other',
+          command: command,
+        ),
+      );
+      expect(other.stdoutText, contains('missing|absent'));
+      expect(
+        row.copyWith(id: 'fixture.copy').toJson()['inheritedEnvironmentKeys'],
+        ['SIMS_FIXTURE_EXECUTION_LOG'],
+      );
+    },
+  );
+
   test('stdout and stderr each have their own capture allowance', () async {
     final execution =
         await SimsProcessExecutor(

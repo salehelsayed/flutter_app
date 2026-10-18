@@ -40,7 +40,7 @@ final class SimsProcessExecutor {
     this.buildFailures = const <String, String>{},
     this.preflightVerdicts = const <String, SimsVerdict>{},
     EvidenceCaptureBudget? captureBudget,
-    this.streamLimitBytes = simsStreamCaptureBytes,
+    this.streamLimitBytes,
     ScreenshotCaptureBudget? screenshotBudget,
   }) : logDirectory = logDirectory ?? Directory('build/sims/logs'),
        proofDirectory = proofDirectory ?? Directory('build/sims/proofs'),
@@ -56,7 +56,7 @@ final class SimsProcessExecutor {
                  entry.key: Map<String, String>.unmodifiable(entry.value),
              },
            ) {
-    if (streamLimitBytes <= 0) {
+    if ((streamLimitBytes ?? 1) <= 0) {
       throw ArgumentError.value(streamLimitBytes, 'streamLimitBytes');
     }
     this.screenshotBudget =
@@ -75,7 +75,7 @@ final class SimsProcessExecutor {
   final Map<String, String> buildFailures;
   final Map<String, SimsVerdict> preflightVerdicts;
   final EvidenceCaptureBudget captureBudget;
-  final int streamLimitBytes;
+  final int? streamLimitBytes;
   EvidenceCapacityFailure? _screenshotCapacityFailure;
 
   Future<SimsCommandExecution> execute(CapabilitySpec row) async {
@@ -158,6 +158,10 @@ final class SimsProcessExecutor {
       if (hostOnly) ...Platform.environment,
       ...environment,
     };
+    final declaredInheritedEnvironment = <String, String>{
+      for (final key in row.inheritedEnvironmentKeys)
+        if (childEnvironment.containsKey(key)) key: childEnvironment[key]!,
+    };
     if (hostOnly) {
       // Host fixtures must use their own device/relay configuration. Keep the
       // ordinary SDK/process environment and the launcher's host worker bounds.
@@ -171,6 +175,7 @@ final class SimsProcessExecutor {
     }
     // Explicit row bindings are intentional, unlike inherited launcher state.
     childEnvironment
+      ..addAll(declaredInheritedEnvironment)
       ..addAll(environmentByCapabilityId[row.id] ?? const <String, String>{})
       ..removeWhere((name, _) => name.startsWith('SIMS_ARTIFACT_'));
     childEnvironment.addAll(<String, String>{
@@ -321,6 +326,10 @@ final class SimsProcessExecutor {
     logDirectory.createSync(recursive: true);
     final file = File('${logDirectory.path}/${_safeFileName(row.id)}.log');
     final log = file.openSync(mode: FileMode.write);
+    final streamLimit =
+        streamLimitBytes ??
+        simsStreamCaptureBytesByCapability[row.id] ??
+        simsStreamCaptureBytes;
     Process? process;
     final subscriptions = <StreamSubscription<List<int>>>[];
     final done = <Completer<void>>[];
@@ -389,7 +398,7 @@ final class SimsProcessExecutor {
                 return;
               }
               try {
-                final room = streamLimitBytes - retained;
+                final room = streamLimit - retained;
                 final allowed = chunk.length < room ? chunk.length : room;
                 final saved = captureBudget.claimPrefix(allowed);
                 final prefix = chunk.sublist(0, saved);
@@ -400,9 +409,7 @@ final class SimsProcessExecutor {
                   failed(
                     EvidenceCapacityFailure(
                       saved < allowed ? 'run' : name,
-                      saved < allowed
-                          ? captureBudget.limitBytes
-                          : streamLimitBytes,
+                      saved < allowed ? captureBudget.limitBytes : streamLimit,
                       saved < allowed ? captureBudget.usedBytes : retained,
                     ),
                   );

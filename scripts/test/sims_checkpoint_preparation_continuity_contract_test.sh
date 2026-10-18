@@ -166,6 +166,7 @@ cat >"$manifest" <<JSON
       "required": true,
       "command": ["bash", "$runner", "fixture.failure"],
       "buildProfile": "host.fixture",
+      "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG", "SIMS_FIXTURE_FAIL_ID"],
       "dependencies": [],
       "resources": [{"name": "host.cpu", "access": "read"}],
       "targetCapabilities": [],

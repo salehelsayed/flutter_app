@@ -263,7 +263,7 @@ jq -e '
     {"name": "relay-mutation:production-call-pion-known-opus-oracle", "access": "exclusive"},
     {"name": "artifact:production-1to1-audio-call", "access": "write"}
   ] and
-  .[0].targetCapabilities == ["android.physical", "android.emulator", "android.microphone", "host.docker", "host.go1.27"] and
+  .[0].targetCapabilities == ["android.physical", "android.emulator", "android.microphone", "host.docker", "host.go1.27", "android.emulator.rebindable"] and
   .[0].allowedNaReason == "target_unavailable_by_project_policy" and
   .[0].artifactRequired == true and
   .[0].artifactValidator == "validateAndroidProductionAudioCallArtifact" and
@@ -293,14 +293,32 @@ jq -e '
 ' tool/sims/critical_features.json >/dev/null ||
   fail 'Plan 399 production-call artifact resource is not globally unique'
 
+# P1 call regressions share the fixture leases; pin their exact owner set.
+production_call_shared_owners='[
+  "android.production_1to1_audio_call",
+  "kx0001",
+  "kx0002",
+  "kx0003",
+  "kx0005",
+  "kx0006",
+  "kx0007",
+  "kx0008",
+  "kx0015",
+  "kx0016",
+  "kx0017",
+  "kx0029",
+  "kx0030"
+]'
 for resource in \
   relay-mutation:local-production-call-coturn \
   relay-mutation:production-call-pion-known-opus-oracle; do
-  count="$(jq --arg resource "$resource" \
-    '[.capabilities[].resources[]? | select(.name == $resource)] | length' \
-    tool/sims/critical_features.json)"
-  [ "$count" -eq 1 ] ||
-    fail "Plan 399 resource $resource expected exactly once, found $count"
+  jq -e --arg resource "$resource" --argjson owners "$production_call_shared_owners" '
+    [.capabilities[] as $row | $row.resources[]? |
+      select(.name == $resource) | {owner: $row.id, access: .access}] as $bindings |
+    ($bindings | map(.owner) | sort) == $owners and
+    all($bindings[]; .access == "exclusive")
+  ' tool/sims/critical_features.json >/dev/null ||
+    fail "Plan 399 resource $resource lost its exact P1 owners or exclusive access"
 done
 
 jq -e '

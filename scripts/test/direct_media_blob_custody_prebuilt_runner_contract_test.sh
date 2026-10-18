@@ -43,7 +43,7 @@ jq -e '
     .dependencies == ["build.android.e2e.direct_media_custody"] and
     .command == ["dart", "run", "integration_test/scripts/run_1to1_device_real.dart", "--scenario", "android.direct_media_blob_custody"] and
     .artifactValidator == "validateDirectMediaBlobCustodyArtifact" and
-    .targetCapabilities == ["android.physical", "android.emulator"] and
+    .targetCapabilities == ["android.physical", "android.emulator", "android.emulator.rebindable"] and
     any(.resources[]; .name == "device:android-physical" and .access == "exclusive") and
     any(.resources[]; .name == "device:android-emulator" and .access == "exclusive") and
     any(.resources[]; .name == "relay-mutation:local-direct-media-fixture" and .access == "exclusive"))

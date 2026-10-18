@@ -384,9 +384,16 @@ forces that token shape without changing production randomness; it reproduced
 the failure and passed after the fix. The first owning SIMS contract attempt
 remains 53 passed/one failed until its full recheck completes.
 
-An isolated checkout must retain the SIMS shell adapter used by its contracts,
-even when `.claude/skills/sims/scripts/run_with_devices.sh` is ignored by Git.
-Restore the exact repository copy rather than dropping the adapter contracts.
+The SIMS shell adapter is tracked at `scripts/run_with_devices.sh`; isolated
+checkouts and the detached launcher use that path. This supersedes restoring an
+ignored `.claude/skills/sims/scripts/run_with_devices.sh` before running contracts.
+The promoted implementation removes its embedded relay default. Legacy execution
+requires caller-provided `MKNOON_RELAY_ADDRESSES` (the safe launcher can load the
+ignored `docker-ws/local_devices.env`); canonical modes and listing return before
+local device discovery. The public-content scan records no embedded real device,
+network, account or credential identifiers in the promoted script; source and
+candidate hashes are in
+`.codex-test-logs/F10-host-fixes-20261018/adapter-public-content-scan.json`.
 Physical-iOS group media custody also requires the configured fixture driver to
 resolve inside the execution checkout; an identical executable in the main
 checkout is rejected. These are preparation requirements, not device proof.
@@ -943,6 +950,19 @@ contract cases still enforce the 22 adapter locations, stale-consumer/source-loc
 rejection and exact dependency floor. Causal source hashes and the passing
 contract are retained in `.codex-test-logs/S2-baseline-fixes-20261018/F4/`.
 
+Exact SIMS source contracts also need the P1 update-test defines on the two
+existing debug profiles and C2's explicit rebindable Android target. The DTR-13
+profile table keeps all seventeen rows in order with every other property exact.
+The private-outbox adapter delegates target selection to the shared topology
+helper; its contract preserves the physical default and the explicit disposable
+flag rather than requiring the physical-target literal in the adapter itself.
+The production-call discovery row retains every assertion, resource and validator
+while adding C2's target. P1's thirteen named call-fixture owners share the coturn
+and Pion leases with exclusive access; their exact owner lists replace the former
+single-owner assumption. The base production-call artifact stays globally unique.
+Provenance for these changes is retained under
+`.codex-test-logs/F10-host-fixes-20261018/`.
+
 The full inventory routes direct-media custody, production one-to-one audio,
 and fixed-wake recovery through their existing outer fixture adapters. These
 adapters start the local service before compiling the relay address into the
@@ -950,7 +970,12 @@ APK. The main SIMS partition excludes those three scenarios and their dedicated
 build rows; full-inventory validation requires an alternate owner for every
 excluded row and verifies that command flags match the declared partition.
 Partition metadata survives binding and report verification, and a filtered
-SIMS plan cannot claim release eligibility. The current full plan records the
+SIMS plan cannot claim release eligibility. The Plan 347 prebuilt-runner contract
+also requires the C2 `android.emulator.rebindable` target alongside the physical
+phone and ordinary emulator targets. Keep its exact profile/defines, artifact
+validation, resource and teardown assertions; updating that target set does not
+relax custody proof. The original mismatch and focused passing runner contract
+are retained in `.codex-test-logs/F10-host-fixes-20261018/`. The current full plan records the
 complete check and obligation counts. The routing repair passed 182 workflow tests
 and all 192 SIMS host tests in
 `.codex-test-logs/all-tests-y227gs8x/fixture-routing-run-001/`; these host results
@@ -1075,8 +1100,17 @@ Host-only SIMS test rows (non-artifact `host.*` profiles with only `host.*`
 targets) remove inherited `MKNOON_*`/`SIMS_*` run settings while preserving
 `MKNOON_HOST_*`, `SIMS_HOST_*`, `SIMS_MAX_PARALLEL` and ordinary SDK/process
 variables. Their subprocesses disable automatic parent-environment inheritance
-so removed settings cannot reappear. Explicit per-capability bindings are
-applied afterward; synthetic sentinel inputs use that existing binding API.
+so removed settings cannot reappear. A capability can declare
+`inheritedEnvironmentKeys` for the exact inherited host inputs it needs; manifests
+store variable names, never their values, and the default declaration is empty.
+Only that row regains those keys after scrubbing. Existing explicit per-capability
+bindings apply afterward. Artifact bindings remain centrally owned. Checkpoint
+process fixtures declare their execution-log, proof and fault controls; the
+regression demonstrates that a declared control reaches its row, another row
+cannot inherit it, and device-preservation flags stay scrubbed. The original
+missing-control failures and RED/GREEN unit evidence are retained under
+`.codex-test-logs/F10-host-fixes-20261018/`. Synthetic sentinel inputs use the
+existing explicit binding API.
 Device, artifact and mixed-target rows retain their preservation and relay
 settings. In `.codex-test-logs/S2-baseline-fixes-20261018/F2/`, the real host row
 with incoming `MKNOON_PRESERVE_PHYSICAL_APP_DATA=1` changed from 31 passing/33
@@ -3054,8 +3088,9 @@ RED/GREEN receipts. Native manifest contracts require both the original host CPU
 resource and the shared native build lock. SDK-dependent verification uses the
 real pinned Flutter 3.47.2 SDK. The existing Python timeout test still requires
 `ps`, which this worker sandbox denies; its assertion remains intact. The legacy
-simultaneous shell contract still depends on the absent
-`.claude/skills/sims/scripts/run_with_devices.sh`. The standalone iOS bootstrap
+simultaneous shell contract previously depended on the absent
+`.claude/skills/sims/scripts/run_with_devices.sh`; that preparation limitation is
+superseded by the tracked `scripts/run_with_devices.sh` adapter. The standalone iOS bootstrap
 contract checks the current group request v2/result v3/host receipt v3 schemas;
 projection fixtures include `authorizedTransportPeerIds`, including its empty
 list value, in exact projection comparisons. Support/manual source exceptions
@@ -5013,6 +5048,24 @@ visible and cannot become an ordinary first-attempt PASS.
   fails the SQL manifest/plaintext-size join. Correct the fake framing, retain
   that first failure, and keep actual cryptography outside the host proof claim.
 
+- **Protected-authority fixture clocks:** a fixed issuance date plus a real
+  receiver clock becomes a time bomb after the 30-day authority lifetime. The
+  canonical replay fixture issued on September 18, 2026 failed three cases after
+  October 18 at 12:00 UTC despite identical dependency inputs across the applied
+  patch chain. Inject the same clock into authority construction and replay
+  validation. Fixtures created through production creation still use the real
+  clock on both sides. Keep the explicit expiry-boundary test: rejected authority
+  cannot mutate the key, authority history or pending repairs. The application
+  and transport files pass all 27 tests; causal provenance, first failures and
+  the bounded invitation/manifest/update/wake/custody expiry audit are retained in
+  `.codex-test-logs/F10-host-fixes-20261018/`.
+
+- **Call-name fixture transactions:** debug journey SQL writes use
+  `dbWriteTransaction`, with every query/update in the callback made through its
+  transaction handle. The runtime test executes the real FFI database action,
+  checks that only `username` changes, and bounds completion to detect a
+  connection deadlock. Retain the repository-wide raw-transaction source guard.
+
 - **Bootstrap fingerprint review:** DTR-18 is a structural ownership contract,
   not a runtime crash test. The secure-key scope and direct/group retry bindings
   add dependencies at the existing app bootstrap; they do not move an owner.
@@ -5020,7 +5073,12 @@ visible and cannot become an ordinary first-attempt PASS.
   and reconstructing the old identities. Keep the notification callback count,
   URI rewrites, import sets and relocation assertions intact. The September 11
   review demonstrates three stale-fingerprint failures and a four-test pass;
-  behavior remains covered by the separate startup and media tests.
+  behavior remains covered by the separate startup and media tests. The P1
+  journey readiness and observation callbacks subsequently changed the app-root
+  and both bootstrap fingerprints. Exact owner-diff tracing reproduces the old
+  pins before P1 and accounts for all three changes. The four DTR-18 cases pass
+  with callback uniqueness, import/relocation and exception sets unchanged;
+  evidence is in `.codex-test-logs/F10-host-fixes-20261018/c-pin-chain-proof.json`.
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now
@@ -7795,10 +7853,20 @@ Legacy/SIMS raw nested logs remain private local evidence. CI exports only the
 wrapper's restricted plan/result/partial/error/summary files; inspect and redact
 any additional screenshots or diagnostic artifacts before sharing them.
 
-Native SIMS execution and `mknoon_checks` now stream private raw output while
-children run, with independent 8 MiB stdout/stderr limits and a shared 256 MiB
-capture budget per executor/wrapper invocation. Overflow preserves the observed
-prefix and produces `evidence_capacity` FAIL even after a success marker. Native
+Native SIMS execution and `mknoon_checks` stream private raw output while
+children run, with independent stdout/stderr limits and a shared 256 MiB capture
+budget per executor/wrapper invocation. The default stream limit is 8 MiB.
+SIMS declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
+stream for `host.dart.all` and 32 MiB for `native.ios.runner_tests`. Complete
+retained runs measured 19,848,816 and 15,953,210 bytes respectively; the former
+default aborted a fresh full-host attempt at 8 MiB. Measured Go and Android
+native logs remain below the default. Canonical-row replay tests retain 20 MiB
+and 16 MiB with the real default executor, and a shared-budget negative keeps
+larger rows inside the same run ceiling. These are source-owned policies, with
+no environment override or new manifest schema. Overflow preserves the observed
+prefix and produces `evidence_capacity` FAIL even after a success marker. The
+first capacity stop, measurements and causal tests are retained under
+`.codex-test-logs/F10-host-fixes-20261018/`. Native
 capture closes stdin, drains pipes with deadlines, and reaps its own child after
 TERM/KILL; the wrapper retains its process-group timeout/cancellation handling.
 The Android payload campaign keeps complete live logcat history on disk up to

@@ -43,7 +43,7 @@ export SIMS_ACTIVITY_LOG="$activity_log"
 # bound it without having to know the lower-level host gate flags.
 host_plan="$({
   SIMS_HOST_CONCURRENCY=3 \
-    ./.claude/skills/sims/scripts/run_with_devices.sh \
+    ./scripts/run_with_devices.sh \
       host-all --repo "$ROOT_DIR" --simultaneous --list
 })"
 grep -Fq 'Simultaneous policy: host Flutter tests use bounded concurrency=3; Go tails remain serial.' \
@@ -55,7 +55,7 @@ grep -Fq 'concurrency=3, reporter=failures-only' <<<"$host_plan" ||
 # Performance measurements are deliberately exclusive even when the flag is
 # supplied; concurrent neighbors would make their budgets meaningless.
 performance_plan="$({
-  ./.claude/skills/sims/scripts/run_with_devices.sh \
+  ./scripts/run_with_devices.sh \
     performance-host --repo "$ROOT_DIR" --simultaneous --list
 })"
 grep -Fq 'Simultaneous policy: performance-host is exclusive; running serially.' \

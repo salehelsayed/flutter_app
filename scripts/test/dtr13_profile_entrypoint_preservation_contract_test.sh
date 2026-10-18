@@ -70,7 +70,11 @@ expected_profiles = [
             "VOICE_CALL_ANDROID_NATIVE_ENABLED": "true",
             "VOICE_CALL_ALWAYS_RELAY_ENABLED": "true",
             "VOICE_CALL_FORCE_RELAY_ENABLED": "true",
-            "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true"
+            "ANDROID_PRODUCTION_AUDIO_CALL_E2E_ENABLED": "true",
+            # P1 update journeys use the explicit public test verifier profile.
+            "MKNOON_SE41_TEST_PROFILE": "true",
+            "MKNOON_UPDATE_CHECK": "on",
+            "MKNOON_SE41_TEST_PUBLIC_KEY_B64": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc="
         },
         "declaredException": False
     },
@@ -171,7 +175,10 @@ expected_profiles = [
         "artifactKind": "simulator-runner-app",
         "buildRequired": True,
         "compileDefines": {
-            "E2E_TEST_MODE": "true"
+            "E2E_TEST_MODE": "true",
+            "MKNOON_SE41_TEST_PROFILE": "true",
+            "MKNOON_UPDATE_CHECK": "on",
+            "MKNOON_SE41_TEST_PUBLIC_KEY_B64": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc="
         },
         "declaredException": False
     },

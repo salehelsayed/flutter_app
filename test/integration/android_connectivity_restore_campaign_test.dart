@@ -18,6 +18,10 @@ void main() {
     expect(androidCampaignFirstTargetKind(mode), 'emulator');
     expect(androidCampaignFirstTargetKind({}), 'physical');
     expect(
+      androidCampaignFirstTargetEnvironment({}),
+      'SIMS_ANDROID_PHYSICAL_DEVICE_ID',
+    );
+    expect(
       androidCampaignPairMatchesQemu(first: '1', second: '1', disposable: true),
       isTrue,
     );

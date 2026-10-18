@@ -3,10 +3,14 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/notification_request_observation.dart';
+import 'package:flutter_app/debug/production_journeys/production_call_controls.dart';
 import 'package:flutter_app/debug/production_journeys/foreground_group_push_control.dart';
 import 'package:flutter_app/debug/production_journeys/production_journey_controller.dart';
 import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../shared/fakes/in_memory_contact_repository.dart';
 
 void main() {
   late Directory directory;
@@ -45,6 +49,68 @@ void main() {
     controller.dispose();
     await directory.delete(recursive: true);
   });
+
+  test(
+    'call-name fixture commits only username without a connection deadlock',
+    () async {
+      sqfliteFfiInit();
+      final db = await databaseFactoryFfi.openDatabase(
+        inMemoryDatabasePath,
+        options: OpenDatabaseOptions(singleInstance: false),
+      );
+      addTearDown(db.close);
+      await db.execute(
+        'CREATE TABLE contacts (peer_id TEXT PRIMARY KEY, username TEXT, public_key TEXT, is_blocked INTEGER)',
+      );
+      const before = {
+        'peer_id': 'fixture-peer',
+        'username': 'Fixture name',
+        'public_key': 'fixture-public-key',
+        'is_blocked': 0,
+      };
+      await db.insert('contacts', before);
+      const callInvocation = SimsRuntimeInvocation(
+        schema: simsRuntimeConfigSchema,
+        profileId: 'android.e2e.production_call_local',
+        scenarioId: 'kx0017',
+        role: 'alice',
+        runId: 'run-1',
+        nonce: 'nonce-1',
+        values: {},
+      );
+      controller.dispose();
+      controller = ProductionJourneyController(
+        directory: directory,
+        profileId: callInvocation.profileId,
+        invocation: callInvocation,
+      );
+      ProductionCallControls.tryCreate(controller)!.bindFixture(
+        database: db,
+        contacts: InMemoryContactRepository(),
+        notifications: null,
+      );
+      controller.foregroundPush.bind((_) async {});
+      controller.markRuntimeReady();
+      await controller.start();
+      final result = await controller
+          .execute({
+            'invocation': callInvocation.toJson(),
+            'sequence': 1,
+            'operation': 'call_name.peer_id_username',
+            'arguments': {'peerId': 'fixture-peer'},
+          })
+          .timeout(const Duration(seconds: 2));
+      expect(result['afterUsernameEqualsPeerId'], isTrue);
+      expect(
+        result['beforeOtherColumnsSha256'],
+        result['afterOtherColumnsSha256'],
+      );
+      expect((await db.query('contacts')).single, {
+        ...before,
+        'username': 'fixture-peer',
+      });
+    },
+  );
 
   test(
     'readiness acknowledgement does not complete a scenario or permit early actions',

@@ -146,6 +146,22 @@ void main() {
     },
   );
   test(
+    'expired protected authority cannot mutate key or authority history',
+    () async {
+      final f = await _Fixture.create();
+      final message = await f.authorityMessage();
+      f.clockAt = _eventAt.add(protectedGroupAuthorityLifetime);
+      final result = await f.composition.replay(message);
+      expect(
+        result.disposition,
+        ProtectedGroupReplayDisposition.terminalRejected,
+      );
+      expect((await f.groups.getLatestKey(_groupId))!.keyGeneration, 1);
+      expect(await f.db.query('group_event_log'), isEmpty);
+      expect(f.pendingRepairCalls, 0);
+    },
+  );
+  test(
     'protected group runtime transport strict media commits before automatic dispatch without awaiting transfer and duplicate cannot dispatch twice',
     () async {
       final f = await _Fixture.create();
@@ -519,6 +535,8 @@ class _Fixture {
        localTransportPeerId = transportPeerId ?? _receiver.transportPeerId;
   final Database db;
   final GroupRepositoryImpl groups;
+  DateTime? clockAt;
+  DateTime clock() => clockAt ?? DateTime.now().toUtc();
   final bridge = _ContentRejectBridge();
   static final _receiverIdentity = IdentityModel(
     peerId: _receiverAccount,
@@ -598,6 +616,7 @@ class _Fixture {
     groupMessageListener: messages,
     groupKeyUpdateListener: keys,
     authoritySupport: support,
+    now: clock,
     loadIdentity: () async => identity,
     loadLinkedAuthority: (_) async => const LinkedInstallationAuthoritySnapshot(
       disposition: LinkedInstallationDisposition.primary,
@@ -699,6 +718,7 @@ class _Fixture {
       await db.close();
     });
     if (!seedGroup) return f;
+    f.clockAt = _eventAt;
     final joinedAt = _eventAt.subtract(const Duration(days: 1));
     await groups.saveGroup(
       GroupModel(
@@ -1114,7 +1134,7 @@ class _Fixture {
             recipientMlKemPublicKey: recipientMlKemPublicKey,
             plaintext: plaintext,
           ),
-      now: () => _eventAt,
+      now: clock,
     );
     expect(prepared.hasAuthenticatedAuthority, isTrue);
     expect(prepared.rows, hasLength(1));

@@ -35,7 +35,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-HELPER="$REPO_ROOT/.claude/skills/sims/scripts/run_with_devices.sh"
+HELPER="$REPO_ROOT/scripts/run_with_devices.sh"
 
 env_file=""
 log_file=""

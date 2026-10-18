@@ -356,6 +356,7 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
     required this.readCurrentTransportPeerId,
     required this.applySystemAuthorityReplay,
     required this.retryPendingKeyRepairs,
+    this.now,
   });
 
   final Database database;
@@ -366,6 +367,9 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
   final ProductionCanonicalProtectedGroupAuthoritySupport authoritySupport;
   final Future<IdentityModel?> Function() loadIdentity;
   final LoadProductionLinkedInstallationAuthority loadLinkedAuthority;
+
+  /// Clock for authority validity; null retains the handler's real clock.
+  final DateTime Function()? now;
 
   /// Independently authorized active local node identity, never an incoming
   /// envelope's recipient. Foreground and recovery roots read the same service.
@@ -669,6 +673,7 @@ final class ProductionCanonicalProtectedGroupReplayComposition {
     GroupPendingKeyRepairRetryRequest? deferredKeyRepair;
     final result = await handleProtectedGroupAuthority(
       message: message,
+      now: now,
       ownTransportPeerId: localTransportPeerId,
       ownMlKemSecretKey: identity.mlKemSecretKey!,
       groupRepository: groupRepository,

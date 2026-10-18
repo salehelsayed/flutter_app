@@ -161,6 +161,7 @@ write_manifest() {
     '      "required": true,' \
     "      \"command\": [\"bash\", \"$runner\", \"fixture.first\"]," \
     '      "buildProfile": "host.fixture",' \
+    '      "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG", "SIMS_FIXTURE_FAIL_ID", "SIMS_FIXTURE_PROOF_PATH", "SIMS_FIXTURE_PROOF_DIGEST"],' \
     '      "dependencies": [],' \
     '      "resources": [{"name": "host.cpu", "access": "read"}],' \
     '      "targetCapabilities": [],' \
@@ -180,6 +181,7 @@ write_manifest() {
     '      "required": true,' \
     "      \"command\": [\"bash\", \"$runner\", \"fixture.unrelated\"]," \
     '      "buildProfile": "host.fixture",' \
+    '      "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG", "SIMS_FIXTURE_FAIL_ID", "SIMS_FIXTURE_UNRELATED_PROOF_PATH", "SIMS_FIXTURE_UNRELATED_PROOF_DIGEST"],' \
     '      "dependencies": [],' \
     '      "resources": [{"name": "host.cpu", "access": "read"}],' \
     '      "targetCapabilities": [],' \
@@ -199,6 +201,7 @@ write_manifest() {
     '      "required": true,' \
     "      \"command\": [\"bash\", \"$runner\", \"fixture.middle\"]," \
     '      "buildProfile": "host.fixture",' \
+    '      "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG", "SIMS_FIXTURE_FAIL_ID"],' \
     '      "dependencies": ["fixture.first"],' \
     '      "resources": [{"name": "host.cpu", "access": "read"}],' \
     '      "targetCapabilities": [],' \
@@ -238,6 +241,7 @@ write_manifest() {
     '      "required": true,' \
     "      \"command\": [\"bash\", \"$runner\", \"fixture.last\"]," \
     '      "buildProfile": "host.fixture",' \
+    '      "inheritedEnvironmentKeys": ["SIMS_FIXTURE_EXECUTION_LOG", "SIMS_FIXTURE_FAIL_ID"],' \
     '      "dependencies": ["fixture.device"],' \
     '      "resources": [{"name": "host.cpu", "access": "read"}],' \
     '      "targetCapabilities": [],' \

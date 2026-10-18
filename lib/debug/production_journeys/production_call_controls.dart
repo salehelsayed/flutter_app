@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
@@ -211,7 +212,7 @@ final class ProductionCallControls {
         if (peer is! String || peer.isEmpty) {
           throw StateError('An existing fixture peer is required.');
         }
-        return database.transaction((transaction) async {
+        return dbWriteTransaction(database, (transaction) async {
           final before = await transaction.query(
             'contacts',
             where: 'peer_id = ?',

@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../integration_test/support/update_check_test_keys.dart';
 import '../../../integration_test/scripts/run_production_audio_call_sims.dart'
     show productionAudioCallCohortExclusions;
+import '../../../tool/sims/capture_budget.dart';
 import '../../../tool/sims/manifest.dart';
 import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/sims.dart';
@@ -16,6 +17,40 @@ void main() {
   setUpAll(() {
     manifest = SimsManifest.loadSync(File('tool/sims/critical_features.json'));
   });
+
+  test(
+    'large-stream policies name real rows and fit the shared run budget',
+    () {
+      final ids = manifest.capabilities.map((row) => row.id).toSet();
+      for (final entry in simsStreamCaptureBytesByCapability.entries) {
+        expect(ids, contains(entry.key));
+        expect(entry.value, greaterThan(simsStreamCaptureBytes));
+        expect(entry.value * 2, lessThanOrEqualTo(simsRunCaptureBytes));
+      }
+      expect(simsStreamCaptureBytes, 8 * 1024 * 1024);
+      expect(simsRunCaptureBytes, 256 * 1024 * 1024);
+    },
+  );
+
+  test(
+    'inherited environment declarations contain names, not values or patterns',
+    () {
+      final base = manifest.capabilities.first.toJson();
+      for (final invalid in ['*', 'SIMS_FIXTURE_LOG=value', 'SIMS-FIXTURE']) {
+        expect(
+          () => CapabilitySpec.fromJson({
+            ...base,
+            'inheritedEnvironmentKeys': [invalid],
+          }),
+          throwsFormatException,
+        );
+      }
+      expect(
+        CapabilitySpec.fromJson(base).toJson(),
+        isNot(contains('inheritedEnvironmentKeys')),
+      );
+    },
+  );
 
   test(
     'call fixture cohort shares one APK across base call, regressions and Android updates',
