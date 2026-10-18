@@ -2147,6 +2147,16 @@ registered replacement runners and shared adapters. Six causal negative probes
 reject implicit/explicit constructors, prefixed legacy-stack calls and named
 repository factories (`composition-guard-host-scope-001.log`, nine tests total).
 Its scope does not constrain intentionally isolated original component harnesses.
+The exact allowlist also admits `android_campaign_topology.dart`, the pure
+explicit-target selector shared by original and replacement Android runners;
+similarly named harnesses remain forbidden. The P1 host adapters also reuse the
+existing active-notification-card parser, call-evidence schema/oracles, and
+host-only update fixture keys through exact allowlist entries. Application
+modules remain forbidden from importing integration-test helpers. Keep the application-safe and
+legacy `sims_runtime_protocol.dart` copies byte-identical after the application
+header, including shared journey catalog constants. The F9 retained failures
+trace the missed topology allowlist to C2 and the unsynchronized catalog
+declarations to P1, rather than to a protocol encoding change.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build

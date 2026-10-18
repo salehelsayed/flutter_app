@@ -55,12 +55,19 @@ final class _GraphConstructionVisitor extends RecursiveAstVisitor<void> {
 
 // Test and tool code a replacement journey may import besides other
 // `production_` modules: the unchanged original oracles and the SIMS artifact,
-// build and device-state helpers. Any other harness, legacy stack or test
+// build, device-state and target-topology helpers. Any other harness, legacy stack or test
 // helper must stay with the original route.
 const _allowedSupportImports = {
   'integration_test/scripts/group_multi_party_device_criteria.dart',
   'integration_test/scripts/routing_smoke_group_criteria.dart',
+  // Existing read-only notification-card parser, imported with a show clause.
+  'integration_test/scripts/reaction_notification_proof_support.dart',
   'integration_test/support/android_app_state_guard.dart',
+  // Pure pinned-target selection; creates no app services or legacy test stack.
+  'integration_test/support/android_campaign_topology.dart',
+  // Existing call-evidence schema/oracles and host-only update fixture keys.
+  'integration_test/support/android_production_audio_call_evidence.dart',
+  'integration_test/support/update_check_test_keys.dart',
   'integration_test/support/ios_xctestrun_relocator.dart',
   'tool/sims/artifact_evidence.dart',
   'tool/sims/build_cache.dart',
@@ -186,6 +193,10 @@ void main() {
       'tool/sims/production_x.dart',
       '../../integration_test/scripts/group_multi_party_device_real_harness.dart',
     ),
+    (
+      'integration_test/scripts/run_production_x.dart',
+      '../support/android_campaign_topology_harness.dart',
+    ),
   ]) {
     test('import guard rejects $uri from $from', () {
       expect(_legacyImportViolation(from, uri), isNotNull);
@@ -206,6 +217,22 @@ void main() {
       'package:flutter_app/main.dart',
     ),
     ('lib/debug/production_journeys/x.dart', 'production_y.dart'),
+    (
+      'integration_test/scripts/run_production_x.dart',
+      '../support/android_campaign_topology.dart',
+    ),
+    (
+      'integration_test/support/production_x.dart',
+      '../scripts/reaction_notification_proof_support.dart',
+    ),
+    (
+      'tool/sims/production_x.dart',
+      '../../integration_test/support/android_production_audio_call_evidence.dart',
+    ),
+    (
+      'tool/sims/production_x.dart',
+      '../../integration_test/support/update_check_test_keys.dart',
+    ),
   ]) {
     test('import guard allows $uri from $from', () {
       expect(_legacyImportViolation(from, uri), isNull);
