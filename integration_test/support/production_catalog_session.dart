@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'production_journey.dart';
 import 'production_journey_peer.dart';
+import 'production_verbatim_keyboard.dart';
 
 /// Shared host-side steps for production group-catalog journeys: readiness,
 /// UI flows with receipts, read-only waits, quiet-group waits, user-like
@@ -30,7 +31,7 @@ final class ProductionCatalogSession {
   /// Host-named texts watched by `catalog_watch_snapshot`.
   Map<String, Object?> watch = const {};
 
-  static const verbatimIme = 'io.appium.settings/.AppiumIME';
+  static const verbatimIme = productionVerbatimIme;
 
   Future<void> persist() =>
       File('${output.path}/observations.json').writeAsString(jsonEncode(proof));
@@ -212,27 +213,18 @@ final class ProductionCatalogSession {
       await flow(role, 'production_verbatim_send', label, values);
       return;
     }
-    final installed =
-        '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
-            .contains(verbatimIme);
-    if (!installed) {
-      imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
-      await flow(role, 'production_direct_send', label, values);
-      return;
-    }
-    final original =
-        '${(await peer.adb(['shell', 'settings', 'get', 'secure', 'default_input_method'])).stdout}'
-            .trim();
-    await peer.adb(['shell', 'ime', 'enable', verbatimIme]);
-    await peer.adb(['shell', 'ime', 'set', verbatimIme]);
-    imeSwitches.add({'role': role, 'label': label, 'restoreTo': original});
-    try {
-      await flow(role, 'production_verbatim_send', label, values);
-    } finally {
-      if (original.isNotEmpty && original != verbatimIme) {
-        await peer.adb(['shell', 'ime', 'set', original]);
-      }
-    }
+    await withProductionVerbatimKeyboard(
+      peer.adb,
+      label,
+      imeSwitches,
+      extra: {'role': role},
+      (verbatim) => flow(
+        role,
+        verbatim ? 'production_verbatim_send' : 'production_direct_send',
+        label,
+        values,
+      ),
+    );
   }
 
   /// Runs a text-entry flow with the device switched to the verbatim Appium
@@ -253,27 +245,13 @@ final class ProductionCatalogSession {
       await flow(role, name, label, values);
       return;
     }
-    final installed =
-        '${(await peer.adb(['shell', 'ime', 'list', '-a', '-s'])).stdout}'
-            .contains(verbatimIme);
-    if (!installed) {
-      imeSwitches.add({'role': role, 'label': label, 'restoreTo': null});
-      await flow(role, fallbackName, label, values);
-      return;
-    }
-    final original =
-        '${(await peer.adb(['shell', 'settings', 'get', 'secure', 'default_input_method'])).stdout}'
-            .trim();
-    await peer.adb(['shell', 'ime', 'enable', verbatimIme]);
-    await peer.adb(['shell', 'ime', 'set', verbatimIme]);
-    imeSwitches.add({'role': role, 'label': label, 'restoreTo': original});
-    try {
-      await flow(role, name, label, values);
-    } finally {
-      if (original.isNotEmpty && original != verbatimIme) {
-        await peer.adb(['shell', 'ime', 'set', original]);
-      }
-    }
+    await withProductionVerbatimKeyboard(
+      peer.adb,
+      label,
+      imeSwitches,
+      extra: {'role': role},
+      (verbatim) => flow(role, verbatim ? name : fallbackName, label, values),
+    );
   }
 
   Future<void> invitedAndAccept(

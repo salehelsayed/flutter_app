@@ -174,6 +174,21 @@ final class ProductionJourneyFlowRunner {
           _driverNeverStarted.any(log.readAsStringSync().contains)) {
         throw const _DriverNeverStarted();
       }
+      // Maestro's console omits the cause; its debug log names a device
+      // server that died or failed while reading device info, before any UI
+      // step.
+      final debug = Directory('${destination.path}/debug');
+      if (debug.existsSync() &&
+          debug
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((file) => file.path.endsWith('/maestro.log'))
+              .any((file) {
+                final text = file.readAsStringSync();
+                return _deviceInfoFailed.any(text.contains);
+              })) {
+        throw const _DriverNeverStarted();
+      }
       throw StateError('$label Maestro flow failed');
     }
     final receipt = File('${destination.path}/result.json');
@@ -196,6 +211,13 @@ const _driverNeverStarted = [
   'driver not ready in time',
   'DeviceServerDiedException',
   'Unable to launch',
+];
+
+// Maestro debug-log causes of a flow that failed while fetching device
+// information, which it does before the first step.
+const _deviceInfoFailed = [
+  "Device server died during 'deviceInfo'",
+  "'deviceInfo' failed:",
 ];
 
 bool _isSimulator(String device) => RegExp(
@@ -464,13 +486,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
         'production-journey/runtime-config.json',
         p.invocation.toJson(),
       );
-      await p.adb([
-        'shell',
-        'pm',
-        'grant',
-        p.packageName,
-        'android.permission.POST_NOTIFICATIONS',
-      ]);
+      await p.grantPostNotifications();
     }
     for (final p in actors) {
       await p.adb([
@@ -546,13 +562,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
       'production-journey/runtime-config.json',
       next.invocation.toJson(),
     );
-    await next.adb([
-      'shell',
-      'pm',
-      'grant',
-      productionJourneyAndroidPackage,
-      'android.permission.POST_NOTIFICATIONS',
-    ]);
+    await next.grantPostNotifications();
     await flow(next, 'production_resume', 'alice-fresh-performance');
     await next.awaitReady();
     return next;

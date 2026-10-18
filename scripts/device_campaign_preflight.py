@@ -161,6 +161,8 @@ def instrumentation_state(output):
     ProcessList.dumpProcessesLSP runs dumpActiveInstruments before calling
     ActivityManagerService.dumpOtherProcessesInfoLSP. That routine prints the
     process-ready state and ends unconditionally with mForceBackgroundCheck.
+    Android 8.1 (API 27) predates mForceBackgroundCheck; its census ends with
+    mLastIdleTime/mLowRamSinceLastIdle instead.
     Unknown/truncated formats cannot establish an idle instrumentation census.
     """
     if re.search(r'^\s*(?:Active instrumentation:|Instrumentation #\d+:)', output, re.M):
@@ -174,7 +176,8 @@ def instrumentation_state(output):
     lines = [line for line in output.splitlines() if line.strip()]
     header = 'ACTIVITY MANAGER RUNNING PROCESSES (dumpsys activity processes)'
     if (not lines or lines[0] != header or lines.count(header) != 1
-            or not re.fullmatch(r'\s+mForceBackgroundCheck=(?:true|false)', lines[-1])):
+            or not re.fullmatch(r'\s+(?:mForceBackgroundCheck=(?:true|false)|'
+                                r'mLastIdleTime=\S+ mLowRamSinceLastIdle=\S+)', lines[-1])):
         return 'unavailable'
     ready = r'^\s+mProcessesReady=(?:true|false) mSystemReady=(?:true|false) '
     ready += r'mBooted=(?:true|false) mFactoryTest=-?\d+$'

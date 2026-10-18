@@ -6,7 +6,8 @@ name: production_catalog_group_create_verbatim
 - tapOn: New Group
 - tapOn: '(?s)^Journeybob\n.*$'
 - tapOn: '(?s)^Journeycharlie\n.*$'
-- tapOn: 'Group name \(optional\)'
+- tapOn:
+    id: group_name_field
 - inputText: ${GROUP_NAME}
 - assertVisible: ${GROUP_NAME}
 - tapOn: Start group chat

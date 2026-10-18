@@ -313,7 +313,11 @@ void main() {
       );
       await tester.pump();
       _activate(tester, _action(tester, names[0]));
-      _activate(tester, _action(tester, infoName));
+      final info = _action(tester, infoName);
+      // Android 8.1 exposes a tooltip-only label as "\nGroup information";
+      // Maestro taps the stable id instead, on the same exact node.
+      expect(info.getSemanticsData().identifier, 'group_info_button');
+      _activate(tester, info);
       expect([backs, infos], [1, 1]);
       handle.dispose();
     });

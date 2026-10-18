@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../integration_test/support/production_sims_result.dart';
 import '../../../tool/sims/executor.dart';
 import '../../../tool/sims/manifest.dart';
 import '../../../tool/sims/verdict.dart';
@@ -572,6 +573,58 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
     'exitCode': 0,
     'artifactEvidence': ?evidence,
   };
+
+  test('production journey FAIL result is a classified test failure', () async {
+    final failed = await executeStructuredSentinel(
+      productionSimsResult(
+        passed: false,
+        assertionsAttempted: 3,
+        detail: 'production routing failed',
+      ),
+      processExitCode: 1,
+    );
+    expect(failed.verdict.status, SimsVerdictStatus.fail);
+    expect(failed.verdict.blocker, SimsBlockerKind.test);
+    expect(failed.verdict.detail, isNot(contains('Invalid structured result')));
+
+    final setupFailure = await executeStructuredSentinel(
+      productionSimsResult(
+        passed: false,
+        assertionsAttempted: 0,
+        detail: 'production routing failed',
+      ),
+      processExitCode: 1,
+    );
+    expect(setupFailure.verdict.blocker, SimsBlockerKind.test);
+    expect(
+      setupFailure.verdict.detail,
+      isNot(contains('Invalid structured result')),
+    );
+
+    final passed = productionSimsResult(
+      passed: true,
+      assertionsAttempted: 3,
+      detail: 'production routing passed',
+    );
+    expect(passed['status'], 'PASS');
+    expect(passed.containsKey('blocker'), isFalse);
+    expect(passed['exitCode'], 0);
+  });
+
+  test('production journey runners emit results only through the helper', () {
+    final inline = Directory('integration_test')
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.dart'))
+        .where(
+          (file) => file.readAsStringSync().contains(
+            "SIMS_RESULT_JSON=\${jsonEncode({'status'",
+          ),
+        )
+        .map((file) => file.path)
+        .toList();
+    expect(inline, isEmpty);
+  });
 
   test(
     'FAIL sentinel accepts restoration and rejects unknown blocker names',

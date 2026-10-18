@@ -4,6 +4,7 @@ import 'dart:io';
 import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_message_latency_criteria.dart';
 import '../support/production_android_journey.dart';
+import '../support/production_sims_result.dart';
 
 const _scenario = 'production.message_latency';
 Map<String, Object?> _object(Object? v) => Map<String, Object?>.from(v as Map);
@@ -213,7 +214,7 @@ Future<void> main(List<String> arguments) async {
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production message latency passed' : 'production message latency failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production message latency passed' : 'production message latency failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }

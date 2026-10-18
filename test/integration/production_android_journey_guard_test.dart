@@ -17,6 +17,7 @@ final class _IdleDevices implements AndroidHostProcessRunner {
       anyOf('emulator-4004', '21071FDF600CSC', 'emulator-5556'),
     );
     expect(arguments, isNot(contains('start')));
+    if (arguments.contains('getprop')) return ProcessResult(0, 0, '36\n', '');
     return ProcessResult(
       0,
       0,

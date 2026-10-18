@@ -11,7 +11,14 @@ name: production_group_send
 - tapOn:
     id: chat_send
 - assertVisible: '(?s)^.*\n${MESSAGE_PATTERN}\n.*$'
-- hideKeyboard
-- back
+# The first Back may only close the keyboard left open by the send. Some
+# devices' hideKeyboard already leaves the chat, so it is not used here.
+- repeat:
+    times: 2
+    while:
+      notVisible:
+        id: orbit.view.inner_circle
+    commands:
+      - back
 - assertVisible:
     id: orbit.view.inner_circle

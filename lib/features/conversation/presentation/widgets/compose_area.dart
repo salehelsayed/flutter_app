@@ -101,7 +101,7 @@ class ComposeArea extends StatefulWidget {
 }
 
 class _ComposeAreaState extends State<ComposeArea>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   TextDirection _inputDirection = TextDirection.ltr;
@@ -131,6 +131,7 @@ class _ComposeAreaState extends State<ComposeArea>
     _controller.addListener(_onTextChanged);
     _controller.addListener(_updateInputDirection);
     _focusNode.addListener(_onFocusChanged);
+    WidgetsBinding.instance.addObserver(this);
 
     if (widget.initialText != null && widget.initialText!.isNotEmpty) {
       _controller.text = widget.initialText!;
@@ -327,8 +328,28 @@ class _ComposeAreaState extends State<ComposeArea>
     );
   }
 
+  /// Keyboard inset seen at the last metrics change, in physical pixels.
+  double _lastKeyboardInset = 0;
+
+  /// Android Back (or the IME's own hide key) closes the keyboard but keeps
+  /// the field focused. Closing any overlay or route over the chat then
+  /// restored that focus and reopened the keyboard. Treat the keyboard
+  /// closing as the user leaving the field. Only a closing inset counts, so a
+  /// floating IME that never reports one keeps the focus.
+  @override
+  void didChangeMetrics() {
+    if (!mounted) return;
+    final inset = View.of(context).viewInsets.bottom;
+    final keyboardClosed = _lastKeyboardInset > 0 && inset == 0;
+    _lastKeyboardInset = inset;
+    if (keyboardClosed && _focusNode.hasFocus) {
+      _focusNode.unfocus();
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_updateInputDirection);
     _controller.dispose();
     _focusNode.dispose();

@@ -5,7 +5,8 @@ name: production_group_create
     id: orbit_create_group_fab
 - tapOn: New Group
 - tapOn: '(?s)^${CONTACT_NAME}\n.*$'
-- tapOn: 'Group name \(optional\)'
+- tapOn:
+    id: group_name_field
 - inputText: ${GROUP_NAME}
 - assertVisible: ${GROUP_NAME}
 - hideKeyboard
