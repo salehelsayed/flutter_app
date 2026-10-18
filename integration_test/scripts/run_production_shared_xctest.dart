@@ -5,6 +5,7 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_shared_xctest_criteria.dart';
 import '../support/ios_xctestrun_relocator.dart';
 import '../support/production_shared_xctest.dart';
+import '../support/production_sims_result.dart';
 
 const _scenario = 'production.shared_xctest';
 const _profile = 'ios.device.production';
@@ -240,7 +241,7 @@ Future<void> main(List<String> arguments) async {
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production shared XCTest passed' : 'production shared XCTest failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production shared XCTest passed' : 'production shared XCTest failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }
