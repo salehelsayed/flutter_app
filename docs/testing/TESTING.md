@@ -1068,6 +1068,20 @@ scenario mappings remain visible gaps, not successful wrapper registrations.
 The static reliability classification listing does not start Dart or execute
 scenarios; detailed `--records-tsv`/`--checks-tsv` retain their expansion checks.
 
+The direct gate classifier recognizes update-check background/tool tests as the
+existing `feature-host-all` sweep. The pure SE42 D12 fixture contract is curated
+in `1to1`; its device seed/snapshot stays manual support, so completeness never
+automatically runs a database-mutating seed. `completeness-check` is the direct
+classification authority. The Plan 374 native source-method manifest includes
+the SE41 exact update-push ingress test (76 methods across nine classes); native
+JVM execution remains a separate gate, not a source-inventory result. Android
+wrapper launchers and their jar are versioned so a clean native checkout does
+not need a prior Flutter build to create them; distribution/checksum stays in
+`android/gradle/wrapper/gradle-wrapper.properties`. Root analysis excludes the
+standalone vendored `video_compress/example` package, while the plugin library
+and tests retain their existing analysis scope.
+
+
 Full SIMS commands now execute proofs: `--prepare-builds` is not an execution
 command. SIMS automatically prepares unique build profiles and hands attested
 artifacts to its existing adapters. Cache validation still binds source,
