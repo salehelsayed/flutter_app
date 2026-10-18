@@ -1641,6 +1641,79 @@
           "value": "integration_test/scripts/run_production_group_removed_reaction.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_call_back.dart",
+      "owner": "QA / production call and update journeys",
+      "reason": "The central SIMS capability invokes this production journey runner with a shared prepared build profile.",
+      "condition": "Retain until its exact capability command and equivalent journey proof are retired together.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.137.command.2",
+          "value": "integration_test/scripts/run_production_call_back.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_call_regression.dart",
+      "owner": "QA / production call and update journeys",
+      "reason": "The central SIMS capability invokes this production journey runner with a shared prepared build profile.",
+      "condition": "Retain until its exact capability command and equivalent journey proof are retired together.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.141.command.2",
+          "value": "integration_test/scripts/run_production_call_regression.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_contact_delete.dart",
+      "owner": "QA / production call and update journeys",
+      "reason": "The central SIMS capability invokes this production journey runner with a shared prepared build profile.",
+      "condition": "Retain until its exact capability command and equivalent journey proof are retired together.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.132.command.2",
+          "value": "integration_test/scripts/run_production_contact_delete.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_update_check.dart",
+      "owner": "QA / production call and update journeys",
+      "reason": "The central SIMS capability invokes this production journey runner with a shared prepared build profile.",
+      "condition": "Retain until its exact capability command and equivalent journey proof are retired together.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.123.command.2",
+          "value": "integration_test/scripts/run_production_update_check.dart"
+        }
+      ]
+    },
+    {
+      "path": "tool/sign_version_file.dart",
+      "owner": "SE-41 / update-check release tooling",
+      "reason": "Reviewed manual version-manifest signing and verification CLI; its signing helpers are covered by host tests.",
+      "condition": "Retain until an approved signing CLI replacement and its host tests take ownership. This declaration does not invoke signing or key generation.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "tool/sign_version_file.dart"
+        }
+      ]
     }
   ],
   "declarations": [
@@ -2764,6 +2837,10 @@
     {
       "id": "resource.web-manifest",
       "rootKind": "resource"
+    },
+    {
+      "id": "callback.android.update-check-minimal",
+      "rootKind": "vm-callback"
     }
   ],
   "restrictedRoots": [
@@ -3221,6 +3298,30 @@
           "source": "web/manifest.json",
           "keyPath": "name",
           "value": "flutter_app"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.update-check-minimal",
+      "path": "lib/main.dart",
+      "rootKind": "vm-callback",
+      "owner": "SE-41 / Android update-check background work",
+      "reason": "The update-check WorkManager worker launches the pragma-protected minimal engine through its exact constant-bound DartEntrypoint.",
+      "condition": "Retain while the native update-check worker uses this minimal engine; removal requires equivalent registered background execution proof.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/main.dart",
+          "symbol": "androidUpdateCheckMinimalMain",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "android/app/src/main/kotlin/com/mknoon/app/UpdateCheckBackgroundWork.kt",
+          "callee": "DartExecutor.DartEntrypoint",
+          "argument": "androidUpdateCheckMinimalMain",
+          "argumentToken": "UpdateCheckBackgroundWork.MINIMAL_ENTRYPOINT"
         }
       ]
     }

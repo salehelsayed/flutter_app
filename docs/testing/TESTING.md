@@ -1132,6 +1132,16 @@ signed iOS bundle and Android companion dependencies/read resources. Only those
 attested artifacts reach the child; ambient artifact paths remain rejected.
 New capabilities append without shifting existing array indices used by runtime
 root mappings; discovery contracts check the preserved indices and new suffix.
+Runtime-root declarations bind the call-back, call-regression, contact-delete
+and update-check runner mains to their exact SIMS command entries. The manual
+version-file signer is declared without claiming an automatic tooling invocation.
+The minimal update-check callback is required and binds its pragma to the native
+call through `UpdateCheckBackgroundWork.MINIMAL_ENTRYPOINT`. Source-call evidence
+with `argumentToken` accepts only the named top-level Kotlin object's literal
+`const val` used as an actual call argument; aliases and expressions remain
+unsupported. Wrong values, other owners, comment decoys, unused constants and
+quoted tokens are rejected. All 21 inventory cases and the repository check
+passed in `.codex-test-logs/S2-baseline-fixes-20261018/F3/`.
 
 Production-bootstrap migration Wave 2 resumed on 2026-09-28. Waves 3–5 remain
 paused except the shared registrations required by Wave 2 gates. The current

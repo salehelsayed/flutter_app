@@ -429,6 +429,93 @@ void main() {}
   );
 
   test(
+    'native callback roots bind the called Kotlin object constant to the exact function',
+    () {
+      const nativeSource = '''
+object Worker {
+  const val ENTRYPOINT = "nativeBackgroundHandler"
+  fun launch(loader: Loader) {
+    DartEntrypoint(loader.findAppBundlePath(), Worker.ENTRYPOINT)
+  }
+}
+''';
+      final fixture = _Fixture(<String, String>{
+        'pubspec.yaml': 'name: constant_callback_fixture\n',
+        'lib/main.dart': 'void main() {}\n',
+        'lib/background.dart': '''
+@pragma('vm:entry-point')
+void nativeBackgroundHandler(List<String> arguments) {}
+''',
+        'android/Worker.kt': nativeSource,
+      });
+      addTearDown(fixture.dispose);
+      final manifest = _manifest(
+        restrictedRoots: <Map<String, Object?>>[
+          _restricted('callback.native', 'lib/background.dart', 'vm-callback', [
+            {
+              'kind': 'dart-annotation',
+              'source': 'lib/background.dart',
+              'symbol': 'nativeBackgroundHandler',
+              'annotation': 'pragma',
+              'value': 'vm:entry-point',
+            },
+            {
+              'kind': 'source-call-token',
+              'source': 'android/Worker.kt',
+              'callee': 'DartEntrypoint',
+              'argument': 'nativeBackgroundHandler',
+              'argumentToken': 'Worker.ENTRYPOINT',
+            },
+          ]),
+        ],
+      );
+      final green = fixture.scan(manifest);
+      expect(
+        green.restrictedRoots.single.validated,
+        isTrue,
+        reason: _issues(green),
+      );
+
+      final rejected = <String, String>{
+        'wrong value': nativeSource.replaceFirst(
+          '"nativeBackgroundHandler"',
+          '"wrongHandler"',
+        ),
+        'another owner':
+            'object Decoy { const val ENTRYPOINT = "nativeBackgroundHandler" }\n'
+            '${nativeSource.replaceFirst('"nativeBackgroundHandler"', '"wrongHandler"')}',
+        'comment decoy': nativeSource.replaceFirst(
+          'const val ENTRYPOINT = "nativeBackgroundHandler"',
+          '// const val ENTRYPOINT = "nativeBackgroundHandler"\n'
+              '  const val ENTRYPOINT = "wrongHandler"',
+        ),
+        'unused constant': nativeSource.replaceFirst(
+          '(), Worker.ENTRYPOINT)',
+          '(), "wrongHandler")',
+        ),
+        'quoted token': nativeSource.replaceFirst(
+          '(), Worker.ENTRYPOINT)',
+          '(), "Worker.ENTRYPOINT")',
+        ),
+      };
+      for (final entry in rejected.entries) {
+        fixture.write('android/Worker.kt', entry.value);
+        final red = fixture.scan(manifest);
+        expect(
+          red.restrictedRoots.single.validated,
+          isFalse,
+          reason: entry.key,
+        );
+        expect(
+          red.issues.map((issue) => issue.code),
+          contains('stale-source-call-token'),
+          reason: entry.key,
+        );
+      }
+    },
+  );
+
+  test(
     'native manifest and principal-class evidence yields native-registration tags',
     () {
       final fixture = _Fixture(<String, String>{

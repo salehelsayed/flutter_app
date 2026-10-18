@@ -1680,8 +1680,22 @@ class RuntimeRootInventory {
           return fail('source-call-token needs callee and argument.');
         }
         final content = File(_repoPath(source!)).readAsStringSync();
-        return _hasCommentAwareCall(content, callee, argument) ||
-            fail('Exact non-Dart call/token relation is absent.');
+        final argumentToken = evidence['argumentToken'];
+        final bound = argumentToken == null
+            ? _hasCommentAwareCall(content, callee, argument)
+            : source.endsWith('.kt') &&
+                  _hasCommentAwareCall(
+                    content,
+                    callee,
+                    argumentToken,
+                    symbolOnly: true,
+                  ) &&
+                  _hasKotlinObjectStringConstant(
+                    content,
+                    argumentToken,
+                    argument,
+                  );
+        return bound || fail('Exact non-Dart call/token relation is absent.');
       case 'json-value':
         final keyPath = evidence['keyPath'];
         final value = evidence['value'];
@@ -1810,8 +1824,9 @@ class RuntimeRootInventory {
   static bool _hasCommentAwareCall(
     String source,
     String callee,
-    String argument,
-  ) {
+    String argument, {
+    bool symbolOnly = false,
+  }) {
     final masked = _maskLexicalNoise(source);
     final calleePattern = RegExp(
       '${RegExp.escape(callee)}\\s*\\(',
@@ -1828,13 +1843,62 @@ class RuntimeRootInventory {
           depth--;
         }
       }
-      final call = masked.values.substring(
+      final call = (symbolOnly ? masked.structure : masked.values).substring(
         match.start,
         end.clamp(0, masked.values.length),
       );
       if (_containsEvidenceArgument(call, argument)) return true;
     }
     return false;
+  }
+
+  // Only a literal const val on the named top-level Kotlin object is accepted.
+  // This does not infer aliases, expressions, imports or nested object bindings.
+  static bool _hasKotlinObjectStringConstant(
+    String source,
+    String token,
+    String value,
+  ) {
+    final names = token.split('.');
+    if (names.length != 2 ||
+        names.any(
+          (name) => !RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(name),
+        )) {
+      return false;
+    }
+    final masked = _maskLexicalNoise(source);
+    int depthBetween(int start, int end) {
+      final text = masked.structure.substring(start, end);
+      return '{'.allMatches(text).length - '}'.allMatches(text).length;
+    }
+
+    final objects = RegExp('\\bobject\\s+${RegExp.escape(names.first)}\\s*\\{')
+        .allMatches(masked.structure)
+        .where((match) => depthBetween(0, match.start) == 0)
+        .toList();
+    if (objects.length != 1) return false;
+    final start = objects.single.end;
+    var end = start;
+    var depth = 1;
+    for (; end < masked.structure.length && depth > 0; end++) {
+      if (masked.structure[end] == '{') depth++;
+      if (masked.structure[end] == '}') depth--;
+    }
+    if (depth != 0) return false;
+    final assignments =
+        RegExp('\\bconst\\s+val\\s+${RegExp.escape(names.last)}\\s*=')
+            .allMatches(masked.structure, start)
+            .where(
+              (match) =>
+                  match.start < end - 1 &&
+                  depthBetween(start, match.start) == 0,
+            )
+            .toList();
+    if (assignments.length != 1) return false;
+    final literal = RegExp(
+      r'[ \t]*"([A-Za-z_][A-Za-z0-9_]*)"[ \t]*;?[ \t]*(?:\r?\n|$)',
+    ).matchAsPrefix(masked.values, assignments.single.end);
+    return literal?.group(1) == value;
   }
 
   static bool _hasShellCommandArgument(
