@@ -33,6 +33,8 @@ readonly ONE_TO_ONE_TESTS=(
   # VC2-01: plugin-independent call foundation, fakeable WebRTC adapter, and
   # the additive short-lived TURN credential bridge contract. The real
   # PeerConnection create/close proof remains a separately pinned device leg.
+  # SE42 D12 pure host fixture contract lives outside the feature/core globs.
+  "test/integration_support/se42_d12_mixed_precision_fixture_test.dart"
   "test/features/call/domain/call_engine_contract_test.dart"
   "test/features/call/infrastructure/flutter_webrtc_build_contract_test.dart"
   "test/core/bridge/p2p_bridge_client_turn_credentials_test.dart"
@@ -1681,6 +1683,19 @@ classify_path() {
 
   if [[ "$path" =~ ^test/features/[^/]+/integration/.*_test\.dart$ ]]; then
     printf 'feature integration direct suite'
+    return 0
+  fi
+
+  # Update-check background/tool tests are already swept by feature-host-all.
+  if [[ "$path" =~ ^test/features/update_check/(background|tool)/.*_test\.dart$ ]]; then
+    printf 'update-check background/tool host suite'
+    return 0
+  fi
+
+  # D12 seed/snapshot mutates an explicitly selected disposable device; it is
+  # support for the campaign, never an automatically scheduled host test.
+  if [[ "$path" == "integration_test/se42_d12_mixed_precision_seed_test.dart" ]]; then
+    printf 'manual SE42 D12 seed/snapshot support fixture'
     return 0
   fi
 
