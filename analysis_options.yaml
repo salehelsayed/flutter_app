@@ -26,6 +26,7 @@ analyzer:
     # dependencies are deliberately not part of the app workspace; the
     # vendored plugin library and tests remain in the root analysis scope.
     - third_party/sqflite_sqlcipher/example/**
+    - third_party/video_compress/example/**
     - android/**
     - ios/**
     - web/**

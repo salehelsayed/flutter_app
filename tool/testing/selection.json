@@ -4752,6 +4752,27 @@
       "boundary": "SE-41 T4a Android background update check: lease routing (handoff, minimal engine, defer), unique periodic work with the kill switch, budget abort, the minimal engine's plugin set, the main-engine bridge, and the update notification (own channel, no prompt, fixed tag and id, direct Play intent); T4b check-now push: exact {type:update_check} match before the opaque and rich branches, topic membership with the kill switch, unique KEEP one-time work and the hourly app-side limit",
       "limitations": "Robolectric/JVM tests do not run WorkManager on a device, Doze or OEM battery savers, or a real Flutter engine. Run with the repository Flutter/JDK toolchain on the Mac (host-run).",
       "inspected": true
+    },
+    "analysis": {
+      "kind": "command",
+      "command": [
+        "flutter",
+        "analyze",
+        "--no-pub"
+      ],
+      "boundary": "Root Dart static analysis under the tracked analyzer configuration, including vendored plugin libraries and excluding standalone demo packages",
+      "limitations": "Static analysis only; does not execute tests, build a candidate or certify device behavior.",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "analysis_options.yaml",
+        "third_party/video_compress/example/pubspec.yaml"
+      ],
+      "inspected": true,
+      "success_marker": "No issues found!"
     }
   },
   "areas": [
@@ -6325,6 +6346,16 @@
         "workflow"
       ],
       "why": "Standalone host launcher: explicit disposable pins, credential/phone policy, native command delegation, private bounded output and setup checks; no app/native implementation changes."
+    },
+    {
+      "id": "analyzer-configuration",
+      "patterns": [
+        "analysis_options.yaml"
+      ],
+      "checks": [
+        "analysis"
+      ],
+      "why": "Analyzer configuration changes must run actual static analysis instead of falling through to unrelated behavioral test lanes."
     }
   ],
   "documentation_only": [
