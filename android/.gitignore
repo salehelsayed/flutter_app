@@ -1,8 +1,6 @@
-gradle-wrapper.jar
+# Keep Gradle wrapper launchers/jar versioned for clean native checkouts.
 /.gradle
 /captures/
-/gradlew
-/gradlew.bat
 /local.properties
 GeneratedPluginRegistrant.java
 .cxx/
