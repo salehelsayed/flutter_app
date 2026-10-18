@@ -532,6 +532,7 @@ class FullLegacyCLITest(RepositoryFixture):
         self.rules['full_commands']=[task]
         self.rules['full_inventory']={}
         for path in ['scripts/device_campaign_preflight.py','scripts/legacy_target_contracts.py',
+                     'scripts/owned_run_retention.py',
                      'scripts/run_flutter_full_regression.sh','scripts/testing_inventory.py',
                      'tool/testing/legacy_target_contracts.json']:
             target=self.root/path;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/path,target)

@@ -64,7 +64,7 @@ void main() {
       );
       expect(node.getSemanticsData().label, contains('Sent to inbox'));
       expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
-      tester.binding.pipelineOwner.semanticsOwner!.performAction(
+      node.owner!.performAction(
         node.id,
         SemanticsAction.tap,
       );

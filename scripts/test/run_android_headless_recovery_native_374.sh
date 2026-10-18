@@ -221,8 +221,8 @@ for row in sorted(observed):
     print(row)
 PY
 
-[[ "$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')" -eq 75 ]] ||
-  fail "the parsed JUnit method manifest did not contain exactly 75 methods"
+# The parser above enforces the exact frozen method list, including its count.
+readonly METHOD_COUNT="$(wc -l <"$OBSERVED_MANIFEST" | tr -d '[:space:]')"
 [[ "$(rg -c '\|TC-374-(05|08) ' "$OBSERVED_MANIFEST")" -eq 7 ]] ||
   fail "the seven planned native TC-374 methods were not observed exactly once"
 [[ "$(rg -c '\|(testTC375|TC-375-)' "$OBSERVED_MANIFEST")" -eq 5 ]] ||
@@ -358,5 +358,5 @@ readonly BRIDGE_SOURCE="$REPO_ROOT/android/app/src/main/kotlin/com/mknoon/app/Dr
 [[ "$(rg -F -c '"headlessAcknowledgeRecovery" ->' "$BRIDGE_SOURCE")" -eq 1 ]] ||
   fail "native bridge must expose one headless acknowledgement method"
 
-printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / 76 methods; artifacts: %s\n' \
-  "$RESULT_DIR"
+printf 'PASS: Plan 374/375/393 Android native suite selected 9 classes / %s methods; artifacts: %s\n' \
+  "$METHOD_COUNT" "$RESULT_DIR"

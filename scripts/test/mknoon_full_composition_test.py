@@ -58,7 +58,10 @@ class OwnershipCompositionTest(RepositoryFixture):
             'android.direct_media_blob_custody', 'android.production_1to1_audio_call',
             'notifications.android_recovery_completion'})
         for row in adapters:
-            self.assertEqual(row['command'], ['dart', 'run', row['adapter'], '--mode', 'major', '--scenario', row['capability']])
+            expected_command = ['dart', 'run', row['adapter'], '--mode', 'major', '--scenario', row['capability']]
+            if row['capability'] == 'android.production_1to1_audio_call':
+                expected_command.append('--include-regressions')
+            self.assertEqual(row['command'], expected_command)
         recovery = commands['full-notification-recovery']
         self.assertTrue(recovery['requires_firebase_android_client'])
         self.assertNotIn('disposable_android_package', recovery)

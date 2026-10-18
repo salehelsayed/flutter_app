@@ -1083,7 +1083,23 @@ wrapper launchers and their jar are versioned so a clean native checkout does
 not need a prior Flutter build to create them; distribution/checksum stays in
 `android/gradle/wrapper/gradle-wrapper.properties`. Root analysis excludes the
 standalone vendored `video_compress/example` package, while the plugin library
-and tests retain their existing analysis scope.
+and tests remain analyzed. The plugin's own analysis options inherit the root
+settings and disable only four upstream style rules (`constant_identifier_names`,
+`unnecessary_library_name`, `use_super_parameters`, and
+`avoid_types_as_parameter_names`); application lint settings remain strict.
+The Plan 374 adapter validates the exact frozen JUnit method list once and
+derives its displayed count from that validated manifest, avoiding a second
+independent shell count. Its native compilation and merged-manifest checks
+remain required after the JUnit check.
+
+Full workflow composition expects `--include-regressions` only on the
+production-audio fixture adapter: that supported option runs the base proof
+and its KX cohort through one shared call-profile build. Disposable CLI fixtures
+that copy `mknoon_checks.py` also need its imported `owned_run_retention.py`
+helper. The strict analyzer, 18 LinkableText semantics/widget cases, 302 workflow
+cases, and nine-class/76-method native adapter passed in
+`.codex-test-logs/S2-baseline-fixes-20261018/F8/`; the original 45 analyzer infos,
+two workflow failures, and post-JUnit stale-count failure remain retained there.
 
 
 Full SIMS commands now execute proofs: `--prepare-builds` is not an execution

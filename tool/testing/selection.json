@@ -6394,7 +6394,8 @@
     {
       "id": "analyzer-configuration",
       "patterns": [
-        "analysis_options.yaml"
+        "analysis_options.yaml",
+        "third_party/video_compress/analysis_options.yaml"
       ],
       "checks": [
         "analysis"
