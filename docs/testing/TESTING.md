@@ -1115,6 +1115,14 @@ derives its displayed count from that validated manifest, avoiding a second
 independent shell count. Its native compilation and merged-manifest checks
 remain required after the JUnit check.
 
+`RecoveryStringResourcesSourceTest` freezes all 25 recovery/call resource keys,
+including the existing `call_ongoing_channel_name`, and checks exact key parity
+and nonblank values in English, German and Arabic. Its prior 24-key expectation
+failed on the default locale before checking translations; all three resource
+files already had the same 25 keys and matching format placeholders. Updating
+only that expectation passed the actual one-case JVM test in
+`.codex-test-logs/S2-baseline-fixes-20261018/F5/`; no resource text changed.
+
 Full workflow composition expects `--include-regressions` only on the
 production-audio fixture adapter: that supported option runs the base proof
 and its KX cohort through one shared call-profile build. Disposable CLI fixtures

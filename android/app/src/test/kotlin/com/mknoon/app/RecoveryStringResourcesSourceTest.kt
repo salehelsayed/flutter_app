@@ -15,6 +15,7 @@ class RecoveryStringResourcesSourceTest {
             "dropped_push_recovery_notification_body",
             "dropped_push_recovery_worker_body",
             "call_notification_channel_name",
+            "call_ongoing_channel_name",
             "call_notification_channel_description",
             "call_notification_title",
             "call_notification_person",
