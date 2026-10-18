@@ -1,3 +1,4 @@
+import '../../integration_test/support/android_campaign_topology.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,46 @@ import '../../integration_test/support/android_transport_campaign.dart';
 import '../../integration_test/support/sims_runtime_protocol.dart';
 
 void main() {
+  test('emulator topology is explicit and rejects physical qemu values', () {
+    const mode = {'SIMS_DISPOSABLE_ANDROID_JOURNEYS': '1'};
+    expect(
+      androidCampaignFirstTargetEnvironment(mode),
+      'SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID',
+    );
+    expect(androidCampaignFirstTargetKind(mode), 'emulator');
+    expect(androidCampaignFirstTargetKind({}), 'physical');
+    expect(
+      androidCampaignPairMatchesQemu(first: '1', second: '1', disposable: true),
+      isTrue,
+    );
+    expect(
+      androidCampaignPairMatchesQemu(first: '0', second: '1', disposable: true),
+      isFalse,
+    );
+    expect(
+      androidCampaignPairMatchesQemu(
+        first: '1',
+        second: '1',
+        disposable: false,
+      ),
+      isFalse,
+    );
+    final sender = _invocation(role: simsTransportSenderRole);
+    final disposable = sender.copyWith(
+      values: {
+        ...sender.values,
+        'targetKind': 'emulator',
+        'topology': 'emulator_pair',
+      },
+    );
+    expect(validateConnectivityRestoreInvocation(disposable), isNull);
+    expect(
+      validateConnectivityRestoreInvocation(
+        sender.copyWith(values: {...sender.values, 'targetKind': 'emulator'}),
+      ),
+      isNotNull,
+    );
+  });
   group('Android connectivity launcher', () {
     const package = 'com.mknoon.sims.fixture';
     const component = '$package/com.mknoon.app.MainActivity';

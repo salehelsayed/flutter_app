@@ -36,7 +36,10 @@ String? validateKeepaliveCampaignInvocation(SimsRuntimeInvocation invocation) {
   final digest = invocation.values['buildArtifactSha256'];
   if (targetId is! String ||
       targetId.isEmpty ||
-      targetKind != 'physical' ||
+      targetKind !=
+          (invocation.values['topology'] == 'emulator_pair'
+              ? 'emulator'
+              : 'physical') ||
       digest is! String ||
       !RegExp(r'^[0-9a-f]{64}$').hasMatch(digest)) {
     return 'keepalive runtime values are invalid';

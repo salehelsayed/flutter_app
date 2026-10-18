@@ -111,6 +111,7 @@ Map<String, Object?> _aggregate({
   String callerIdentitySha256 = _callerIdentity,
   String calleeIdentitySha256 = _calleeIdentity,
   bool nativeCallsReleasedBothEndpoints = true,
+  bool emulatorPair = false,
   List<AndroidProductionAudioCallArtifactDigest>? artifacts,
 }) => aggregateAndroidProductionAudioCallEvidence(
   callerReceipt: caller ?? _receipt(role: androidProductionAudioCallCallerRole),
@@ -139,6 +140,7 @@ Map<String, Object?> _aggregate({
   nativeCallsReleasedBothEndpoints: nativeCallsReleasedBothEndpoints,
   appStateRestored: true,
   artifacts: artifacts ?? _expectedArtifacts(),
+  emulatorPair: emulatorPair,
 );
 
 List<AndroidProductionAudioCallArtifactDigest> _expectedArtifacts() =>
@@ -176,6 +178,29 @@ List<AndroidProductionAudioCallArtifactDigest> _expectedArtifacts() =>
     ];
 
 void main() {
+  test(
+    'emulator audio evidence cannot satisfy the original physical validator',
+    () {
+      final proof = _aggregate(emulatorPair: true);
+      expect((proof['topology'] as Map)['calleeKind'], 'emulator');
+      expect(validateAndroidProductionAudioCallEvidence(proof).ok, isFalse);
+      expect(
+        validateAndroidProductionAudioCallEvidence(
+          proof,
+          emulatorPair: true,
+        ).ok,
+        isTrue,
+      );
+      final physical = _aggregate();
+      expect(
+        validateAndroidProductionAudioCallEvidence(
+          physical,
+          emulatorPair: true,
+        ).ok,
+        isFalse,
+      );
+    },
+  );
   test('accepts only nonce-bound bidirectional production RTP receipts', () {
     final proof = _aggregate();
 

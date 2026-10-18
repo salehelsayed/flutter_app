@@ -33,7 +33,7 @@ final class AndroidDirectMediaBlobCustodyCampaignResult {
       'printOnly': false,
       'exitCode': 0,
       'detail':
-          'The physical-Android sender and Android-emulator receiver proved '
+          'The two explicitly bound Android targets proved '
           'restart-safe direct-media custody against the disposable relay.',
       'artifactEvidence': evidence.toJson(),
     },

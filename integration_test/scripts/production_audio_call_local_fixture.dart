@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -324,6 +325,7 @@ final class ProductionAudioCallLocalFixtureLease {
   Future<void> verifyAndroidPairAndReachability({
     required String adbExecutable,
     required List<String> devices,
+    bool emulatorPair = false,
   }) async {
     if (devices.length != 2 || devices.first == devices.last) {
       throw const FormatException(
@@ -345,7 +347,11 @@ final class ProductionAudioCallLocalFixtureLease {
       }
       classifications.add('${result.stdout}'.trim());
     }
-    if (classifications.first == '1' || classifications.last != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: classifications.first,
+      second: classifications.last,
+      disposable: emulatorPair,
+    )) {
       throw StateError(
         'Target order must be physical Android then Android emulator.',
       );

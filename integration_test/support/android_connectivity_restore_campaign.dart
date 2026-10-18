@@ -35,7 +35,11 @@ String? validateConnectivityRestoreInvocation(
   if (!const <String>{'sender', 'receiver'}.contains(invocation.role)) {
     return 'connectivity invocation requires sender or receiver role';
   }
-  final expectedKind = invocation.role == 'sender' ? 'physical' : 'emulator';
+  final expectedKind =
+      invocation.role == 'sender' &&
+          invocation.values['topology'] != 'emulator_pair'
+      ? 'physical'
+      : 'emulator';
   if (invocation.values['targetKind'] != expectedKind) {
     return 'connectivity ${invocation.role} requires targetKind $expectedKind';
   }

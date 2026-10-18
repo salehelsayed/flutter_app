@@ -47,6 +47,7 @@ Map<String, Object?> _presenter() => <String, Object?>{
 Map<String, Object?> _aggregate({
   Map<String, Object?>? issuer,
   Map<String, Object?>? presenter,
+  bool disposable = false,
 }) => aggregateAndroidWakeTokenDirectionalityEvidence(
   issuerEndpoint: issuer ?? _issuer(),
   presenterEndpoint: presenter ?? _presenter(),
@@ -54,11 +55,21 @@ Map<String, Object?> _aggregate({
   issuerNonce: 'issuer-nonce-1',
   presenterNonce: 'presenter-nonce-1',
   artifactSha256: _artifactDigest,
+  disposable: disposable,
   physicalDeviceId: 'pixel-physical',
   emulatorDeviceId: 'emulator-5554',
 );
 
 void main() {
+  test(
+    'emulator wake proof reports actual issuer kind with the same hash oracle',
+    () {
+      final proof = _aggregate(disposable: true);
+      expect((proof['targetKinds'] as Map)['issuer'], 'emulator');
+      expect(validateWakeTokenArtifact(proof).ok, isTrue);
+      expect((_aggregate()['targetKinds'] as Map)['issuer'], 'physical');
+    },
+  );
   test('staged command survives the old poller shutdown', () async {
     var running = true;
     var pending = false;

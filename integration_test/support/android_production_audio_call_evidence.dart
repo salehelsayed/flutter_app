@@ -244,6 +244,7 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
   required bool nativeCallsReleasedBothEndpoints,
   required bool appStateRestored,
   required List<AndroidProductionAudioCallArtifactDigest> artifacts,
+  bool emulatorPair = false,
 }) {
   _validateFinalReceipt(
     callerReceipt,
@@ -298,7 +299,7 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
     },
     'topology': <String, Object?>{
       'callerKind': 'emulator',
-      'calleeKind': 'physical',
+      'calleeKind': emulatorPair ? 'emulator' : 'physical',
       'callerDeviceSha256': _sha256Text(emulatorDeviceId),
       'calleeDeviceSha256': _sha256Text(physicalDeviceId),
       'distinctTargets': true,
@@ -333,14 +334,18 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
     'mediaProof': pionOracle.toJson(),
     'assertionsAttempted': androidProductionAudioCallAssertionCount,
   };
-  final validation = validateAndroidProductionAudioCallEvidence(proof);
+  final validation = validateAndroidProductionAudioCallEvidence(
+    proof,
+    emulatorPair: emulatorPair,
+  );
   if (!validation.ok) throw FormatException(validation.detail);
   return Map<String, Object?>.unmodifiable(proof);
 }
 
 AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
-  Map<String, Object?> artifact,
-) {
+  Map<String, Object?> artifact, {
+  bool emulatorPair = false,
+}) {
   if (!_hasExactKeys(artifact, _rootKeys) ||
       artifact['schema'] != androidProductionAudioCallEvidenceSchema ||
       artifact['scenario'] != androidProductionAudioCallScenarioId ||
@@ -383,7 +388,7 @@ AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
         'distinctTargets',
       }) ||
       topology['callerKind'] != 'emulator' ||
-      topology['calleeKind'] != 'physical' ||
+      topology['calleeKind'] != (emulatorPair ? 'emulator' : 'physical') ||
       !_isSha256(topology['callerDeviceSha256']) ||
       !_isSha256(topology['calleeDeviceSha256']) ||
       topology['callerDeviceSha256'] == topology['calleeDeviceSha256'] ||
@@ -486,20 +491,30 @@ AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
 }
 
 Map<String, Object?> androidProductionAudioCallDurablePayload(
-  Map<String, Object?> runtimeProof,
-) => validatedAndroidRuntimeProofPayload(
+  Map<String, Object?> runtimeProof, {
+  bool emulatorPair = false,
+}) => validatedAndroidRuntimeProofPayload(
   runtimeProof: runtimeProof,
-  validate: validateAndroidProductionAudioCallEvidence,
+  validate: (proof) => validateAndroidProductionAudioCallEvidence(
+    proof,
+    emulatorPair: emulatorPair,
+  ),
 );
 
 AndroidCampaignEvidenceValidation
 validateAndroidProductionAudioCallDurableArtifact(
-  Map<String, Object?> artifact,
-) => validateDurableAndroidCampaignArtifact(
+  Map<String, Object?> artifact, {
+  bool emulatorPair = false,
+}) => validateDurableAndroidCampaignArtifact(
   artifact: artifact,
   capabilityId: androidProductionAudioCallScenarioId,
-  validatorId: androidProductionAudioCallArtifactValidatorId,
-  validateRuntimeProof: validateAndroidProductionAudioCallEvidence,
+  validatorId: emulatorPair
+      ? 'validateAndroidProductionAudioCallEmulatorArtifact'
+      : androidProductionAudioCallArtifactValidatorId,
+  validateRuntimeProof: (proof) => validateAndroidProductionAudioCallEvidence(
+    proof,
+    emulatorPair: emulatorPair,
+  ),
 );
 
 void _validateFinalReceipt(

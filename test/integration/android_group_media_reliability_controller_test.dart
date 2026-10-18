@@ -13,6 +13,22 @@ import '../../integration_test/support/android_app_state_guard.dart';
 import '../../integration_test/support/group_media_android_disposable_app.dart';
 
 void main() {
+  test('emulator group-media artifact cannot pass the physical default', () {
+    final artifact = _aggregateFixture();
+    ((artifact['device_roles'] as Map)['sender'] as Map)['kind'] = 'emulator';
+    expect(validateGroupMediaReliabilityArtifact(artifact).ok, isFalse);
+    expect(
+      validateGroupMediaReliabilityArtifact(artifact, emulatorPair: true).ok,
+      isTrue,
+    );
+    expect(
+      validateGroupMediaReliabilityArtifact(
+        _aggregateFixture(),
+        emulatorPair: true,
+      ).ok,
+      isFalse,
+    );
+  });
   test(
     'P269 wait timeout reaches the existing runner with a closed phase',
     () async {

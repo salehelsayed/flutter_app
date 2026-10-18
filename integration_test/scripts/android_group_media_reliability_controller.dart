@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -602,9 +603,10 @@ final class _AndroidGroupMediaHost {
         'Both explicit Android targets must be attached in device state.',
       );
     }
-    if (!senderFields
-        .skip(2)
-        .any((field) => field.startsWith('usb:') && field.length > 4)) {
+    if (!context.emulatorPair &&
+        !senderFields
+            .skip(2)
+            .any((field) => field.startsWith('usb:') && field.length > 4)) {
       throw const GroupMediaReliabilityBlocked(
         'targetUnavailable',
         'The Android sender must be an attached USB physical device.',
@@ -618,9 +620,11 @@ final class _AndroidGroupMediaHost {
       'getprop',
       'ro.kernel.qemu',
     ], preMutation: true);
-    const physicalQemuValues = <String>{'', '0'};
-    if (!physicalQemuValues.contains(senderQemu.trim()) ||
-        receiverQemu.trim() != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: senderQemu,
+      second: receiverQemu,
+      disposable: context.emulatorPair,
+    )) {
       throw const GroupMediaReliabilityBlocked(
         'targetUnavailable',
         'Android roles must be USB physical sender then emulator receiver.',
@@ -2244,7 +2248,7 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
     'device_roles': <String, Object?>{
       'sender': <String, Object?>{
         'platform': 'android',
-        'kind': 'physical',
+        'kind': context.emulatorPair ? 'emulator' : 'physical',
         'device_sha256': senderTransportDigest,
       },
       'receiver': <String, Object?>{
@@ -2355,7 +2359,10 @@ Map<String, Object?> aggregateAndroidGroupMediaReliabilityEvidence({
       }),
     ],
   };
-  final validation = validateGroupMediaReliabilityArtifact(artifact);
+  final validation = validateGroupMediaReliabilityArtifact(
+    artifact,
+    emulatorPair: context.emulatorPair,
+  );
   if (!validation.ok) throw FormatException(validation.detail);
   return Map<String, Object?>.unmodifiable(artifact);
 }

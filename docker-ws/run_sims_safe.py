@@ -36,7 +36,8 @@ TARGETS = {
     **{f"ios-simulator-{letter.lower()}": f"SIMS_IOS_SIMULATOR_{letter}_DEVICE_ID"
        for letter in "ABCD"},
 }
-ALLOWED_INPUTS = {*TARGETS.values(), "SIMS_IOS_SIMULATOR_ID", "KAYAN_TEST_RELAY_FILE"}
+ALLOWED_INPUTS = {*TARGETS.values(), "SIMS_IOS_SIMULATOR_ID", "KAYAN_TEST_RELAY_FILE",
+                  "PLAN399_FIXTURE_HOST_IP", "PLAN347_FIXTURE_HOST_IP"}
 LOG_LIMIT = 8 * 1024 * 1024
 
 
@@ -107,6 +108,16 @@ def disposable_manifest(manifest):
                                      if c != "android.physical"]
         if "android.emulator" not in row["targetCapabilities"]:
             row["targetCapabilities"].append("android.emulator")
+        variants = {
+            "android.production_1to1_audio_call": "validateAndroidProductionAudioCallEmulatorArtifact",
+            "android.connectivity_restore_media_outbox": "validatePrivateMediaOutboxRestoreEmulatorArtifact",
+            "groups.media_send_reliability": "validateGroupMediaReliabilityEmulatorArtifact",
+        }
+        if row["id"] in variants:
+            row["artifactValidator"] = variants[row["id"]]
+        if row["id"] == "android.production_1to1_audio_call":
+            row["assertions"] = [a.replace("physical_emulator_topology", "emulator_pair_topology")
+                                 for a in row["assertions"]]
         for lock in row.get("resources", []):
             kind, _, role = lock["name"].partition(":")
             if role == "android-physical":
@@ -143,6 +154,8 @@ def policy(manifest, mode):
               or any(r["name"].split(":")[-1] in ("android-physical", "ios-physical")
                      for r in row.get("resources", []))):
             blocked[key] = "physical_data_preservation"
+        elif mode == "major" and key in (MODES["device-audio"], MODES["device-media"]):
+            blocked[key] = "local_fixture_mode_required"
         elif "legacy.protected-target-contract" in capabilities:
             blocked[key] = "nested_device_policy"
         elif key == "go.relay.integration":
@@ -345,12 +358,29 @@ def main(arguments=None):
         "SIMS_CHECKPOINT_PATH": str(directory / "checkpoint.json"),
         "GIT_SSH_COMMAND": str(deny_remote / "ssh"),
     })
+    if options.mode in ("device-audio", "device-media"):
+        first, second = selected.get("android-emulator-fourth"), selected.get("android-emulator")
+        if not first or not second:
+            raise ValueError("fixture mode requires two explicit emulator pins")
+        host_key = "PLAN399_FIXTURE_HOST_IP" if options.mode == "device-audio" else "PLAN347_FIXTURE_HOST_IP"
+        host = values.get(host_key, "")
+        import ipaddress
+        if not host or not ipaddress.ip_address(host).is_private:
+            raise ValueError("an explicit private fixture interface is required")
+        environment[host_key] = host
+        environment["RELIABILITY_MULTI_DEVICE_IDS"] = first + "," + second
     # There is no shell invocation and no local-only skill launcher/device fallback.
     command = ["dart", "run", "tool/sims/sims.dart", "major", "--continue-on-failure"]
-    if options.mode != "major":
+    if options.mode in ("device-audio", "device-media"):
+        adapter = ("run_production_audio_call_sims.dart" if options.mode == "device-audio"
+                   else "run_direct_media_blob_custody_sims.dart")
+        command = ["dart", "run", "integration_test/scripts/" + adapter,
+                   "--mode", "major", "--scenario", MODES[options.mode]]
+    elif options.mode != "major":
         command.extend(["--only", MODES[options.mode]])
-    for key in blocked:
-        command.extend(["--exclude", key])
+    if options.mode == "major":
+        for key in blocked:
+            command.extend(["--exclude", key])
     with prepared_devices(selected, environment, directory):
         code, dropped = run_child(command, environment, directory)
     summary.update(child_exit=code, discarded_log_bytes=dropped,

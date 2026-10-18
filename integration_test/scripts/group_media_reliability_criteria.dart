@@ -109,8 +109,9 @@ final class GroupMediaReliabilityValidation {
 /// paths. It deliberately cannot carry peer IDs, credentials, media bytes, or
 /// user-specific absolute database paths.
 GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
-  Object? value,
-) {
+  Object? value, {
+  bool emulatorPair = false,
+}) {
   final failures = <String>[];
   final artifact = _object(value, r'$', failures);
   if (artifact == null) return GroupMediaReliabilityValidation(failures);
@@ -156,6 +157,7 @@ GroupMediaReliabilityValidation validateGroupMediaReliabilityArtifact(
   final deviceDigests = _validateDeviceRoles(
     artifact['device_roles'],
     failures,
+    emulatorPair: emulatorPair,
   );
   final identityDigests = _validateIdentityFingerprints(
     artifact['identity_fingerprints'],
@@ -248,7 +250,11 @@ void _validatePreparedArtifact(Object? value, List<String> failures) {
   _expectValue(artifact, 'child_builds', 0, path, failures);
 }
 
-Map<String, String> _validateDeviceRoles(Object? value, List<String> failures) {
+Map<String, String> _validateDeviceRoles(
+  Object? value,
+  List<String> failures, {
+  bool emulatorPair = false,
+}) {
   const path = r'$.device_roles';
   final roles = _object(value, path, failures);
   final result = <String, String>{};
@@ -269,7 +275,7 @@ Map<String, String> _validateDeviceRoles(Object? value, List<String> failures) {
     _expectValue(
       binding,
       'kind',
-      role == 'sender' ? 'physical' : 'emulator',
+      role == 'sender' && !emulatorPair ? 'physical' : 'emulator',
       rolePath,
       failures,
     );

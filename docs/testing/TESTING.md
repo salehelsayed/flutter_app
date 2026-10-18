@@ -72,11 +72,16 @@ provider configuration. Execution is a filtered diagnostic: credential and
 physical-phone routes remain BLOCKED rather than becoming a passing full major
 run. It accepts explicit disposable pins and an ignored test-relay file, reuses
 the existing device leases/setup checks, and serializes the native scheduler.
-The launcher rebinds 56 explicitly marked production protocol/data journeys to
+The launcher rebinds 64 explicitly marked protocol/data campaigns and journeys to
 emulators in an ignored manifest, preserving their build profiles and oracles.
 Alice uses the fourth emulator role; a two-peer journey needs only primary and
 fourth pins. No VM is automatically started, and no physical timing/audio claim
 is converted. The native resolver verifies leases and target classes before builds.
+Audio/group-media/outbox variants carry distinct validator identities and report
+emulator topology; physical-default evidence validation remains strict. Audio and
+direct-media fixture modes delegate their existing local fixture controllers;
+generic major lists these as `local_fixture_mode_required`. Fixture modes require
+explicit primary/fourth emulator pins and a private interface in env/local config.
 `AndroidInstallOverGuard` admits an existing single APK at the same version code,
 backs it up and uses only `adb install -r` for install/restoration. It does not
 reset app data or create fresh fixtures; current fresh-reset phone campaigns stay

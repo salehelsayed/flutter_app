@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -156,6 +157,7 @@ runAndroidWakeTokenDirectionalityCampaign({
       artifactSha256: artifactSha256,
       packageName: resolveAndroidAppPackage(),
       proofDirectory: _proofDirectory(env),
+      disposable: usesDisposableAndroidPair(env),
     );
     await host.verifyPrerequisites();
   } on _WakeBlocked catch (blocked) {
@@ -207,6 +209,7 @@ Map<String, Object?> aggregateAndroidWakeTokenDirectionalityEvidence({
   required String artifactSha256,
   required String physicalDeviceId,
   required String emulatorDeviceId,
+  bool disposable = false,
 }) {
   _validateWakeEndpoint(
     issuerEndpoint,
@@ -264,8 +267,8 @@ Map<String, Object?> aggregateAndroidWakeTokenDirectionalityEvidence({
     'storedTokenSha256': stored,
     'attachedTokenSha256': attached,
     'deviceIds': <String>[physicalDeviceId, emulatorDeviceId],
-    'targetKinds': const <String, Object?>{
-      'issuer': 'physical',
+    'targetKinds': <String, Object?>{
+      'issuer': disposable ? 'emulator' : 'physical',
       'presenter': 'emulator',
     },
     'sharedArtifact': <String, Object?>{
@@ -291,8 +294,10 @@ final class _AndroidWakeTokenHost {
     required this.artifactSha256,
     required this.packageName,
     required this.proofDirectory,
+    this.disposable = false,
   });
 
+  final bool disposable;
   final String physicalDeviceId;
   final String emulatorDeviceId;
   final File artifact;
@@ -335,7 +340,11 @@ final class _AndroidWakeTokenHost {
       'getprop',
       'ro.kernel.qemu',
     ], mutate: false)).trim();
-    if (physicalQemu == '1' || emulatorQemu != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: disposable,
+    )) {
       throw _WakeBlocked(
         'targetUnavailable',
         'Target ordering is invalid: $physicalDeviceId must be physical and '
@@ -447,6 +456,7 @@ final class _AndroidWakeTokenHost {
         artifactSha256: artifactSha256,
         physicalDeviceId: physicalDeviceId,
         emulatorDeviceId: emulatorDeviceId,
+        disposable: disposable,
       );
     } on AndroidAppStateFailure catch (error) {
       throw _WakeFailure('environment', error.detail, assertionsAttempted: 2);

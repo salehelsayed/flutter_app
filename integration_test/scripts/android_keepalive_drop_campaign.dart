@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -157,7 +158,9 @@ final class _KeepaliveCampaign {
       nonce: nonce,
       values: <String, Object?>{
         'targetId': physical,
-        'targetKind': 'physical',
+        'targetKind': androidCampaignFirstTargetKind(Platform.environment),
+        if (usesDisposableAndroidPair(Platform.environment))
+          'topology': 'emulator_pair',
         'buildArtifactSha256': artifactSha256,
       },
     );
@@ -214,7 +217,10 @@ final class _KeepaliveCampaign {
     }
     final payload = <String, Object?>{
       ...observedProof,
-      'targetKinds': const <String>['physical', 'emulator'],
+      'targetKinds': <String>[
+        androidCampaignFirstTargetKind(Platform.environment),
+        'emulator',
+      ],
       'preparedBuild': <String, Object?>{
         'profileId': _mainArtifactProfile,
         'sha256': artifactSha256,
@@ -524,7 +530,11 @@ final class _KeepaliveCampaign {
       'getprop',
       'ro.kernel.qemu',
     ]);
-    if (physicalQemu.trim() == '1' || emulatorQemu.trim() != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: usesDisposableAndroidPair(Platform.environment),
+    )) {
       throw const _CampaignBlocked(
         'Targets do not match physical-sender/emulator-receiver ordering.',
         blocker: 'targetUnavailable',

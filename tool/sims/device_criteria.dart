@@ -107,19 +107,21 @@ DeviceCriteriaResult validateConnectivityRestoreArtifact(
 /// Latency is retained as an informational trend value. PASS is determined by
 /// source-qualified causality, exact issuance counts, and receiver delivery.
 DeviceCriteriaResult validatePrivateMediaOutboxRestoreArtifact(
-  Map<String, Object?> artifact,
-) {
+  Map<String, Object?> artifact, {
+  bool emulatorPair = false,
+}) {
   final common = _passedScenario(
     artifact,
     'android.connectivity_restore_media_outbox',
   );
   if (!common.ok) return common;
-  const topLevelKeys = <String>{
+  final topLevelKeys = <String>{
     'schemaVersion',
     'scenario',
     'status',
     'physicalSenderTargetSha256',
     'emulatorReceiverTargetSha256',
+    if (emulatorPair) 'senderTargetKind',
     'phases',
   };
   if (artifact.keys.toSet().difference(topLevelKeys).isNotEmpty ||
@@ -131,6 +133,11 @@ DeviceCriteriaResult validatePrivateMediaOutboxRestoreArtifact(
   if (artifact['schemaVersion'] != 1) {
     return const DeviceCriteriaResult.fail(
       'private-media outbox artifact requires schemaVersion 1',
+    );
+  }
+  if (emulatorPair && artifact['senderTargetKind'] != 'emulator') {
+    return const DeviceCriteriaResult.fail(
+      'emulator outbox requires an emulator sender',
     );
   }
   final physicalSenderTargetSha256 = artifact['physicalSenderTargetSha256'];

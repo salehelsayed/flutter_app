@@ -1,5 +1,6 @@
 #!/usr/bin/env dart
 
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -16,7 +17,6 @@ import 'run_connectivity_restore_sims.dart' show launchConnectivityRestoreApp;
 const String _capabilityId = privateMediaOutboxE2EScenario;
 const String _validatorId = 'validatePrivateMediaOutboxRestoreArtifact';
 const String _artifactEnvironment = 'SIMS_ARTIFACT_ANDROID_E2E_MAIN';
-const String _physicalEnvironment = 'SIMS_ANDROID_PHYSICAL_DEVICE_ID';
 const String _emulatorEnvironment = 'SIMS_ANDROID_EMULATOR_DEVICE_ID';
 const Duration _endpointTimeout = Duration(minutes: 4);
 const Duration _offlineObservationDwell = Duration(seconds: 2);
@@ -61,13 +61,17 @@ final class _Campaign {
         FileSystemEntityType.file) {
       throw const _Blocked('The centrally prepared main-app APK is missing.');
     }
-    final physical = requiredValue(_physicalEnvironment);
+    final physical = requiredValue(
+      androidCampaignFirstTargetEnvironment(Platform.environment),
+    );
     final emulator = requiredValue(_emulatorEnvironment);
     final safeTarget = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
     if (!safeTarget.hasMatch(physical) ||
         !safeTarget.hasMatch(emulator) ||
         physical == emulator ||
-        physical.startsWith('emulator-') ||
+        (usesDisposableAndroidPair(Platform.environment)
+            ? !RegExp(r'^emulator-[0-9]+$').hasMatch(physical)
+            : physical.startsWith('emulator-')) ||
         !emulator.startsWith('emulator-')) {
       throw const _Blocked(
         'Private-media outbox proof requires one explicit physical Android '
@@ -159,6 +163,8 @@ final class _Campaign {
         'schemaVersion': 1,
         'scenario': _capabilityId,
         'status': 'passed',
+        if (usesDisposableAndroidPair(Platform.environment))
+          'senderTargetKind': 'emulator',
         'physicalSenderTargetSha256': privateMediaOutboxTargetSha256(
           role: privateMediaOutboxPhysicalSenderTargetRole,
           adbTargetId: physical,
@@ -171,6 +177,7 @@ final class _Campaign {
       };
       final validation = validatePrivateMediaOutboxRestoreArtifact(
         acceptedArtifact,
+        emulatorPair: usesDisposableAndroidPair(Platform.environment),
       );
       if (!validation.ok) throw _Failure(validation.detail);
     } on AndroidAppStateFailure catch (error) {
@@ -199,7 +206,11 @@ final class _Campaign {
     final evidence = _writeExactArtifact(acceptedArtifact);
     final audit = auditSimsArtifactEvidence(
       evidence: evidence,
-      expectedValidatorIds: const <String>[_validatorId],
+      expectedValidatorIds: <String>[
+        usesDisposableAndroidPair(Platform.environment)
+            ? 'validatePrivateMediaOutboxRestoreEmulatorArtifact'
+            : _validatorId,
+      ],
     );
     if (!audit.isValid) throw _Failure(audit.detail);
     final decoded = _object(
@@ -207,6 +218,7 @@ final class _Campaign {
     );
     final durableValidation = validatePrivateMediaOutboxRestoreArtifact(
       decoded,
+      emulatorPair: usesDisposableAndroidPair(Platform.environment),
     );
     if (!durableValidation.ok) throw _Failure(durableValidation.detail);
     return _Result.pass(evidence, apkSha256: apkSha256);
@@ -510,7 +522,11 @@ final class _Campaign {
       'getprop',
       'ro.kernel.qemu',
     ]);
-    if (physicalQemu.trim() == '1' || emulatorQemu.trim() != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: usesDisposableAndroidPair(Platform.environment),
+    )) {
       throw const _Blocked(
         'Live Android targets do not match physical-sender/emulator-receiver.',
       );
@@ -976,7 +992,11 @@ final class _Campaign {
     return SimsArtifactEvidence(
       path: canonicalPath,
       sha256Digest: digest,
-      validatorIds: const <String>[_validatorId],
+      validatorIds: <String>[
+        usesDisposableAndroidPair(Platform.environment)
+            ? 'validatePrivateMediaOutboxRestoreEmulatorArtifact'
+            : _validatorId,
+      ],
     );
   }
 

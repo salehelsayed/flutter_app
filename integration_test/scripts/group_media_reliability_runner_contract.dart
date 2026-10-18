@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -92,7 +93,11 @@ final class GroupMediaReliabilityRunnerArguments {
         ? const <String>[]
         : devices.split(',').map((value) => value.trim()).toList();
     if (deviceIds.isNotEmpty) {
-      _validateDevices(scenario!, deviceIds);
+      _validateDevices(
+        scenario!,
+        deviceIds,
+        emulatorPair: usesDisposableAndroidPair(Platform.environment),
+      );
     }
     return GroupMediaReliabilityRunnerArguments(
       listScenarios: false,
@@ -137,6 +142,7 @@ final class GroupMediaReliabilityRunContext {
     required this.buildGuardLog,
     this.androidCompanionArtifact,
     this.authorityMode = groupMediaDistinctAuthorityMode,
+    this.emulatorPair = false,
   });
 
   final String scenario;
@@ -147,6 +153,7 @@ final class GroupMediaReliabilityRunContext {
   final File? buildGuardLog;
   final GroupMediaReliabilityPreparedArtifact? androidCompanionArtifact;
   final String authorityMode;
+  final bool emulatorPair;
 
   bool get childBuildsAllowed => false;
 }
@@ -265,7 +272,9 @@ Future<GroupMediaReliabilityRunnerResult> runGroupMediaReliabilityRunner({
 
     final validatorId =
         context.scenario == groupMediaForegroundRetryAclRoundtripScenario
-        ? groupMediaReliabilityArtifactValidatorId
+        ? (context.emulatorPair
+              ? 'validateGroupMediaReliabilityEmulatorArtifact'
+              : groupMediaReliabilityArtifactValidatorId)
         : groupMediaIosBackgroundRecoveryArtifactValidatorId;
     final validationDetail = _validateScenarioArtifact(context, artifact);
     if (validationDetail != null) {
@@ -383,7 +392,10 @@ String? _validateScenarioArtifact(
             context.authorityMode) {
       return 'Artifact authority mode does not match runner custody.';
     }
-    final validation = validateGroupMediaReliabilityArtifact(artifact);
+    final validation = validateGroupMediaReliabilityArtifact(
+      artifact,
+      emulatorPair: context.emulatorPair,
+    );
     if (!validation.ok) return validation.detail;
   } else {
     final validation = validateGroupMediaIosBackgroundRecoveryArtifact(
@@ -487,7 +499,11 @@ GroupMediaReliabilityRunContext _buildContext(
   final deviceIds = parsed.deviceIds.isNotEmpty
       ? parsed.deviceIds
       : _environmentDevices(scenario, environment);
-  _validateDevices(scenario, deviceIds);
+  _validateDevices(
+    scenario,
+    deviceIds,
+    emulatorPair: usesDisposableAndroidPair(environment),
+  );
   final relay = environment['MKNOON_RELAY_ADDRESSES']?.trim();
   if (relay == null || relay.isEmpty || relay.contains(RegExp(r'[\r\n]'))) {
     throw const GroupMediaReliabilityBlocked(
@@ -528,6 +544,7 @@ GroupMediaReliabilityRunContext _buildContext(
         : File(buildGuardPath).absolute,
     androidCompanionArtifact: androidCompanionArtifact,
     authorityMode: authorityMode,
+    emulatorPair: usesDisposableAndroidPair(environment),
   );
 }
 
@@ -553,18 +570,26 @@ List<String> _environmentDevices(
   String scenario,
   Map<String, String> environment,
 ) {
-  final sender = environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']?.trim() ?? '';
+  final sender =
+      environment[androidCampaignFirstTargetEnvironment(environment)]?.trim() ??
+      '';
   final receiver = scenario == groupMediaForegroundRetryAclRoundtripScenario
       ? environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']?.trim() ?? ''
       : environment['SIMS_IOS_PHYSICAL_DEVICE_ID']?.trim() ?? '';
   return <String>[sender, receiver];
 }
 
-void _validateDevices(String scenario, List<String> deviceIds) {
+void _validateDevices(
+  String scenario,
+  List<String> deviceIds, {
+  bool emulatorPair = false,
+}) {
   if (deviceIds.length != 2 ||
       deviceIds.any((value) => !_safeTargetPattern.hasMatch(value)) ||
       deviceIds[0] == deviceIds[1] ||
-      _androidEmulatorPattern.hasMatch(deviceIds[0])) {
+      (emulatorPair
+          ? !_androidEmulatorPattern.hasMatch(deviceIds[0])
+          : _androidEmulatorPattern.hasMatch(deviceIds[0]))) {
     throw const FormatException(
       'Exactly two distinct safe targets are required in sender,receiver order',
     );

@@ -1,5 +1,6 @@
 #!/usr/bin/env dart
 
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -61,6 +62,7 @@ Future<int> _runDirectMediaBlobCustodySimsAdapter(
           ? environment['PLAN347_ADB_EXECUTABLE']!.trim()
           : 'adb',
       devices: devices,
+      emulatorPair: usesDisposableAndroidPair(environment),
       host: fixture.host,
       port: fixture.port,
     );
@@ -68,7 +70,7 @@ Future<int> _runDirectMediaBlobCustodySimsAdapter(
     final centralEnvironment = <String, String>{
       ...environment,
       'RELIABILITY_MULTI_DEVICE_IDS': devices.join(','),
-      'SIMS_ANDROID_PHYSICAL_DEVICE_ID': devices.first,
+      androidCampaignFirstTargetEnvironment(environment): devices.first,
       'SIMS_ANDROID_EMULATOR_DEVICE_ID': devices.last,
       'MKNOON_RELAY_ADDRESSES': fixture.multiaddr,
       _fixtureIdentityEnvironment: fixture.fixtureIdentitySha256,
@@ -206,6 +208,7 @@ Future<void> _verifyAndroidTopologyAndReachability({
   required List<String> devices,
   required String host,
   required int port,
+  bool emulatorPair = false,
 }) async {
   final qemuValues = <String>[];
   for (final device in devices) {
@@ -221,7 +224,11 @@ Future<void> _verifyAndroidTopologyAndReachability({
     }
     qemuValues.add('${result.stdout}'.trim());
   }
-  if (qemuValues.first == '1' || qemuValues.last != '1') {
+  if (!androidCampaignPairMatchesQemu(
+    first: qemuValues.first,
+    second: qemuValues.last,
+    disposable: emulatorPair,
+  )) {
     throw StateError(
       'Target order must be physical Android then Android emulator',
     );

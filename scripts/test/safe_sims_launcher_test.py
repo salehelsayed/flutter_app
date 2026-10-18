@@ -85,11 +85,11 @@ print('private-child-marker')
                 changed.append(row["id"])
                 self.assertIn("android.emulator.rebindable", before["targetCapabilities"])
                 self.assertNotIn("android.physical", row["targetCapabilities"])
-                self.assertTrue(any(r["name"] == "device:android-emulator-fourth"
+                self.assertTrue(any(r["name"].split(":")[-1] == "android-emulator-fourth"
                                     for r in row["resources"]))
-                for field in set(before) - {"resources", "targetCapabilities"}:
+                for field in set(before) - {"resources", "targetCapabilities", "artifactValidator", "assertions"}:
                     self.assertEqual(row[field], before[field], (row["id"], field))
-        self.assertEqual(len(changed), 56)
+        self.assertEqual(len(changed), 64)
         self.assertEqual(rebound["buildProfiles"], self.manifest["buildProfiles"])
         self.assertEqual(launcher.disposable_manifest(rebound), rebound)
 
@@ -99,7 +99,8 @@ print('private-child-marker')
         generated = self.repo / "build/kayan-safe/manifest.json"
         rows = {r["id"]: r for r in json.loads(generated.read_text())["capabilities"]}
         self.assertNotIn("android.physical", rows["production.routing_smoke"]["targetCapabilities"])
-        self.assertIn("android.physical", rows["android.production_1to1_audio_call"]["targetCapabilities"])
+        self.assertNotIn("android.physical", rows["android.production_1to1_audio_call"]["targetCapabilities"])
+        self.assertEqual(rows["android.production_1to1_audio_call"]["artifactValidator"], "validateAndroidProductionAudioCallEmulatorArtifact")
         self.assertEqual(generated.stat().st_mode & 0o777, 0o600)
         self.assertIn("SIMS_DISPOSABLE_ANDROID_JOURNEYS", self.native()["environment_names"])
 
@@ -122,13 +123,40 @@ print('private-child-marker')
             self.assertEqual(rows[key]["blocker"], "credentials", key)
 
     def test_phone_proofs_do_not_turn_into_emulator_proofs(self):
-        for mode in ("device-audio", "device-media", "notification-recovery"):
+        for mode in ("notification-recovery",):
             with self.subTest(mode=mode), mock.patch.object(
                 launcher, "run_child", side_effect=AssertionError("phone campaign launched")
             ):
                 code, output = self.invoke(mode)
             self.assertEqual(code, 78)
             self.assertIn("BLOCKED", output)
+
+    def test_fixture_modes_delegate_existing_controllers_with_two_emulator_pins(self):
+        os.environ.update({"SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID": "emulator-4004",
+                           "PLAN399_FIXTURE_HOST_IP": "127.0.0.1",
+                           "PLAN347_FIXTURE_HOST_IP": "127.0.0.1"})
+        for mode, adapter in (("device-audio", "run_production_audio_call_sims.dart"),
+                              ("device-media", "run_direct_media_blob_custody_sims.dart")):
+            with self.subTest(mode=mode):
+                code, output = self.invoke(mode)
+                self.assertEqual(code, 0)
+                args = self.native()["argv"]
+                self.assertIn("integration_test/scripts/" + adapter, args)
+                self.assertNotIn("--exclude", args)
+                self.assertNotIn("--prepare-builds", args)
+                self.assertNotIn("127.0.0.1", output)
+        _, output = self.invoke("major", "--list")
+        rows = {r["id"]: r for r in json.loads(output)["rows"]}
+        self.assertEqual(rows["android.production_1to1_audio_call"]["blocker"], "local_fixture_mode_required")
+        self.assertEqual(rows["android.direct_media_blob_custody"]["blocker"], "local_fixture_mode_required")
+
+    def test_fixture_mode_refuses_missing_pair_or_explicit_interface(self):
+        for values in ({}, {"SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID": "emulator-4004"}):
+            with mock.patch.dict(os.environ, values), mock.patch.object(
+                launcher, "run_child", side_effect=AssertionError("fixture unexpectedly launched")
+            ):
+                with self.assertRaises(ValueError):
+                    self.invoke("device-audio")
 
     def test_explicit_target_beats_local_file(self):
         (self.repo / "docker-ws/local_devices.env").write_text(
@@ -254,17 +282,6 @@ print('private-child-marker')
         self.assertEqual((directory / "first-failure.log").read_bytes(), first)
         for name in ("launcher.log", "launcher.previous.log", "first-failure.log"):
             self.assertLessEqual((directory / name).stat().st_size, 32)
-
-    def test_mode_selects_its_exact_capability_if_it_becomes_disposable(self):
-        row = next(c for c in self.manifest["capabilities"]
-                   if c["id"] == launcher.MODES["device-audio"])
-        row["targetCapabilities"] = ["android.emulator"]
-        row["resources"] = [r for r in row["resources"]
-                            if r["name"].split(":")[-1] != "android-physical"]
-        self.save_manifest()
-        self.invoke("device-audio")
-        args = self.native()["argv"]
-        self.assertEqual(args[args.index("--only") + 1], row["id"])
 
     def test_bad_cli_argument_does_not_echo_its_value(self):
         with self.assertRaises(ValueError), contextlib.redirect_stderr(io.StringIO()) as error:

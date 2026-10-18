@@ -1,5 +1,6 @@
 #!/usr/bin/env dart
 
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -18,7 +19,6 @@ const _capabilityId = connectivityRestoreScenarioId;
 const _profileId = simsAndroidMainProfileId;
 const _validatorId = 'validateConnectivityRestoreArtifact';
 const _artifactEnvironment = 'SIMS_ARTIFACT_ANDROID_E2E_MAIN';
-const _physicalEnvironment = 'SIMS_ANDROID_PHYSICAL_DEVICE_ID';
 const _emulatorEnvironment = 'SIMS_ANDROID_EMULATOR_DEVICE_ID';
 
 /// Launches the prepared application; identity readiness is checked separately
@@ -54,8 +54,8 @@ Future<bool> launchConnectivityRestoreApp({
       ).hasMatch(output) ||
       !RegExp(
         r'(?:\bcmp=|^Activity:[ \t]+)'
-            '(?:${reportedComponents.map(RegExp.escape).join('|')})'
-            r'(?=[\s}]|$)',
+        '(?:${reportedComponents.map(RegExp.escape).join('|')})'
+        r'(?=[\s}]|$)',
         multiLine: true,
       ).hasMatch(output)) {
     return false;
@@ -105,7 +105,9 @@ final class _Campaign {
         FileSystemEntityType.file) {
       throw const _Blocked('The centrally prepared main-app APK is missing.');
     }
-    final physical = requiredValue(_physicalEnvironment);
+    final physical = requiredValue(
+      androidCampaignFirstTargetEnvironment(Platform.environment),
+    );
     final emulator = requiredValue(_emulatorEnvironment);
     final safeTarget = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
     if (!safeTarget.hasMatch(physical) ||
@@ -146,7 +148,7 @@ final class _Campaign {
     final senderInvocation = _invocation(
       role: 'sender',
       targetId: physical,
-      targetKind: 'physical',
+      targetKind: androidCampaignFirstTargetKind(Platform.environment),
       runId: runId,
       nonce: nonce,
       apkSha256: apkSha256,
@@ -310,7 +312,10 @@ final class _Campaign {
       };
       acceptedPayload = <String, Object?>{
         ...coreArtifact,
-        'targetKinds': const <String>['physical', 'emulator'],
+        'targetKinds': <String>[
+          androidCampaignFirstTargetKind(Platform.environment),
+          'emulator',
+        ],
         'preparedBuild': <String, Object?>{
           'profileId': _profileId,
           'sha256': apkSha256,
@@ -366,6 +371,8 @@ final class _Campaign {
     values: <String, Object?>{
       'targetId': targetId,
       'targetKind': targetKind,
+      if (usesDisposableAndroidPair(Platform.environment))
+        'topology': 'emulator_pair',
       'buildArtifactSha256': apkSha256,
     },
   );
@@ -393,7 +400,11 @@ final class _Campaign {
       'getprop',
       'ro.kernel.qemu',
     ]);
-    if (physicalQemu.trim() == '1' || emulatorQemu.trim() != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: usesDisposableAndroidPair(Platform.environment),
+    )) {
       throw const _Blocked(
         'Live Android targets do not match physical-sender/emulator-receiver.',
       );

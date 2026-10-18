@@ -68,6 +68,39 @@ final AndroidProductionAudioCallPionOracleEvidence _pionOracle =
     );
 
 void main() {
+  test(
+    'emulator pair topology requires explicit mode and two distinct emulators',
+    () {
+      const targets = [
+        AndroidProductionAudioCallTarget(
+          deviceId: 'emulator-4001',
+          kind: AndroidProductionAudioCallTargetKind.emulator,
+        ),
+        AndroidProductionAudioCallTarget(
+          deviceId: 'emulator-4004',
+          kind: AndroidProductionAudioCallTargetKind.emulator,
+        ),
+      ];
+      expect(
+        () => validateAndroidProductionAudioCallTopology(targets),
+        throwsFormatException,
+      );
+      expect(
+        () => validateAndroidProductionAudioCallTopology(
+          targets,
+          emulatorPair: true,
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => validateAndroidProductionAudioCallTopology([
+          targets.first,
+          targets.first,
+        ], emulatorPair: true),
+        throwsFormatException,
+      );
+    },
+  );
   test('host constants remain exact with the read-only app observer', () {
     expect(
       androidProductionAudioCallObserverAction,

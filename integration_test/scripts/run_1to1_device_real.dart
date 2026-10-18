@@ -1,4 +1,5 @@
 #!/usr/bin/env dart
+
 //
 // FDC-16 / CV-07 — 1:1 device-real scenario catalog and typed dispatcher.
 //
@@ -52,6 +53,7 @@
 //   vc02.dcutr_upgrade                          Future VC-02       inactive/BLOCKED
 //   vc02.dcutr_symmetric_cgnat_negative         Future VC-02       inactive/BLOCKED
 
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -480,10 +482,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -502,10 +511,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -525,10 +541,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -547,10 +570,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -570,10 +600,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -602,10 +639,17 @@ Future<void> runOneToOneDeviceReal(
     final pairDevices = cliDevices.isNotEmpty
         ? cliDevices
         : <String>[
-            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+            if ((Platform.environment[androidCampaignFirstTargetEnvironment(
+                      Platform.environment,
+                    )] ??
+                    '')
                 .trim()
                 .isNotEmpty)
-              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+              Platform
+                  .environment[androidCampaignFirstTargetEnvironment(
+                    Platform.environment,
+                  )]!
+                  .trim(),
             if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
                 .trim()
                 .isNotEmpty)
@@ -1703,7 +1747,7 @@ SimsRuntimeInvocation _newCriticalPerformanceInvocation({
     nonce: _runtimeToken('SIMS_RUNTIME_NONCE', 'nonce'),
     values: <String, Object?>{
       'targetId': device,
-      'targetKind': 'physical',
+      'targetKind': androidCampaignFirstTargetKind(Platform.environment),
       'buildArtifactSha256': artifactSha256,
     },
   );

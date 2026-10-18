@@ -5260,6 +5260,7 @@
       "patterns": [
         "integration_test/scripts/run_connectivity_restore_sims.dart",
         "integration_test/support/android_connectivity_restore_campaign.dart",
+        "integration_test/support/android_campaign_topology.dart",
         "test/integration/android_connectivity_restore_campaign_test.dart",
         "integration_test/scripts/run_connectivity_restore_media_outbox_sims.dart"
       ],

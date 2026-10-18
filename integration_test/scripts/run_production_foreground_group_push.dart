@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -92,10 +93,14 @@ final class _Campaign {
         sha256.convert(artifact.readAsBytesSync()).toString() != digest) {
       throw StateError('prepared artifact or input digest mismatch');
     }
-    final physical = required('SIMS_ANDROID_PHYSICAL_DEVICE_ID');
+    final physical = required(
+      androidCampaignFirstTargetEnvironment(Platform.environment),
+    );
     final emulator = required('SIMS_ANDROID_EMULATOR_DEVICE_ID');
     if (!RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(physical) ||
-        physical.startsWith('emulator-') ||
+        (usesDisposableAndroidPair(Platform.environment)
+            ? !RegExp(r'^emulator-[0-9]+$').hasMatch(physical)
+            : physical.startsWith('emulator-')) ||
         !RegExp(r'^emulator-[0-9]+$').hasMatch(emulator)) {
       throw StateError('one physical Android and one emulator must be pinned');
     }
@@ -141,6 +146,18 @@ final class _Campaign {
       final result = await runner.run('adb', ['-s', target, 'get-state']);
       if (result.exitCode != 0 || '${result.stdout}'.trim() != 'device') {
         throw StateError('pinned target unavailable');
+      }
+      if (usesDisposableAndroidPair(Platform.environment)) {
+        final kind = await runner.run('adb', [
+          '-s',
+          target,
+          'shell',
+          'getprop',
+          'ro.kernel.qemu',
+        ]);
+        if (kind.exitCode != 0 || '${kind.stdout}'.trim() != '1') {
+          throw StateError('disposable foreground journey requires emulators');
+        }
       }
     }
     final runId = 'fgpush-${DateTime.now().microsecondsSinceEpoch}';

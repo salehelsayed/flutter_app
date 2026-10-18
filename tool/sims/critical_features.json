@@ -1213,7 +1213,8 @@
       "targetCapabilities": [
         "android.physical",
         "android.emulator",
-        "adb.network-control"
+        "adb.network-control",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -1281,7 +1282,8 @@
       "targetCapabilities": [
         "android.physical",
         "android.emulator",
-        "adb.network-control"
+        "adb.network-control",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -1344,7 +1346,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -1407,7 +1410,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -1589,7 +1593,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -2084,7 +2089,8 @@
       "targetCapabilities": [
         "android.physical",
         "android.emulator",
-        "relay.staging"
+        "relay.staging",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -2709,7 +2715,8 @@
         "android.emulator",
         "android.microphone",
         "host.docker",
-        "host.go1.27"
+        "host.go1.27",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
@@ -2835,7 +2842,8 @@
       ],
       "targetCapabilities": [
         "android.physical",
-        "android.emulator"
+        "android.emulator",
+        "android.emulator.rebindable"
       ],
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,

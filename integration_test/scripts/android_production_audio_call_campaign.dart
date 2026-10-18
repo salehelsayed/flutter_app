@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -61,7 +62,7 @@ final class AndroidProductionAudioCallCampaignResult {
       'printOnly': false,
       'exitCode': 0,
       'detail':
-          'The cached production APK completed one emulator-to-physical '
+          'The cached production APK completed one explicitly bound Android '
           'Android audio call through the disposable local relay.',
       'artifactEvidence': evidence.toJson(),
     },
@@ -143,13 +144,17 @@ final class AndroidProductionAudioCallTarget {
 }
 
 void validateAndroidProductionAudioCallTopology(
-  List<AndroidProductionAudioCallTarget> targets,
-) {
+  List<AndroidProductionAudioCallTarget> targets, {
+  bool emulatorPair = false,
+}) {
   if (targets.length != 2 ||
       targets.first.deviceId.isEmpty ||
       targets.last.deviceId.isEmpty ||
       targets.first.deviceId == targets.last.deviceId ||
-      targets.first.kind != AndroidProductionAudioCallTargetKind.physical ||
+      targets.first.kind !=
+          (emulatorPair
+              ? AndroidProductionAudioCallTargetKind.emulator
+              : AndroidProductionAudioCallTargetKind.physical) ||
       targets.last.kind != AndroidProductionAudioCallTargetKind.emulator) {
     throw const FormatException(
       'Production audio call requires one explicit physical Android followed '
@@ -511,6 +516,7 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
   required String runId,
   required String callerNonce,
   required String calleeNonce,
+  bool emulatorPair = false,
   Duration rtpObservationTimeout = const Duration(seconds: 20),
   Duration rtpObservationPollInterval = const Duration(milliseconds: 250),
 }) async {
@@ -536,7 +542,10 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
     ),
     growable: false,
   );
-  validateAndroidProductionAudioCallTopology(targets);
+  validateAndroidProductionAudioCallTopology(
+    targets,
+    emulatorPair: emulatorPair,
+  );
   await Future.wait<void>(devices.map(driver.verifyRelayReachable));
 
   final physicalDeviceId = devices.first;
@@ -859,6 +868,7 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
     nativeCallsReleasedBothEndpoints: nativeCallsReleasedBothEndpoints,
     appStateRestored: stateRestored,
     artifacts: artifacts,
+    emulatorPair: emulatorPair,
   );
 }
 
@@ -943,6 +953,7 @@ runAndroidProductionAudioCallCampaign({
   try {
     runtimeProof = await executeAndroidProductionAudioCallCampaign(
       devices: devices,
+      emulatorPair: usesDisposableAndroidPair(env),
       apkSha256: apkSha256,
       profileSha256: profileSha256,
       relayFixtureIdentitySha256: relay.fixtureIdentitySha256,
@@ -982,17 +993,22 @@ runAndroidProductionAudioCallCampaign({
     );
   }
 
+  final emulatorPair = usesDisposableAndroidPair(env);
+  final validatorId = emulatorPair
+      ? 'validateAndroidProductionAudioCallEmulatorArtifact'
+      : androidProductionAudioCallArtifactValidatorId;
   final durable = writeSimsArtifactEvidenceSync(
     directory: _proofDirectory(env),
     capabilityId: androidProductionAudioCallScenarioId,
-    validatorIds: const <String>[androidProductionAudioCallArtifactValidatorId],
-    payload: androidProductionAudioCallDurablePayload(runtimeProof),
+    validatorIds: <String>[validatorId],
+    payload: androidProductionAudioCallDurablePayload(
+      runtimeProof,
+      emulatorPair: emulatorPair,
+    ),
   );
   final audit = auditSimsArtifactEvidence(
     evidence: durable,
-    expectedValidatorIds: const <String>[
-      androidProductionAudioCallArtifactValidatorId,
-    ],
+    expectedValidatorIds: <String>[validatorId],
   );
   if (!audit.isValid) {
     return AndroidProductionAudioCallCampaignResult.fail(
@@ -1005,6 +1021,7 @@ runAndroidProductionAudioCallCampaign({
   if (decoded is! Map ||
       !validateAndroidProductionAudioCallDurableArtifact(
         decoded.map<String, Object?>((key, value) => MapEntry('$key', value)),
+        emulatorPair: emulatorPair,
       ).ok) {
     return AndroidProductionAudioCallCampaignResult.fail(
       blocker: 'harness',

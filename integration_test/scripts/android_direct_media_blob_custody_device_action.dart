@@ -1,3 +1,4 @@
+import '../support/android_campaign_topology.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -141,7 +142,11 @@ final class _AndroidDirectMediaBlobCustodyHost {
       const <String>['getprop', 'ro.kernel.qemu'],
       mutate: false,
     )).trim();
-    if (physicalQemu == '1' || emulatorQemu != '1') {
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: usesDisposableAndroidPair(Platform.environment),
+    )) {
       throw AndroidDirectMediaBlobCustodyCampaignBlocked(
         'targetUnavailable',
         'Target ordering is invalid: ${context.physicalDeviceId} must be '

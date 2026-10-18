@@ -1,5 +1,6 @@
 #!/usr/bin/env dart
 
+import '../support/android_campaign_topology.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -125,6 +126,7 @@ final class AndroidProductionAudioCallSimsAdapterDependencies {
                       ? environment['PLAN399_ADB_EXECUTABLE']!.trim()
                       : 'adb',
                   devices: devices,
+                  emulatorPair: usesDisposableAndroidPair(environment),
                 );
                 final oracle = await fixture.runAudioOracle(
                   goExecutable: goExecutable,
@@ -226,7 +228,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
           androidProductionAudioCallAppPackage,
       'GOTOOLCHAIN': androidProductionAudioCallGoToolchain,
       'RELIABILITY_MULTI_DEVICE_IDS': devices.join(','),
-      'SIMS_ANDROID_PHYSICAL_DEVICE_ID': devices.first,
+      androidCampaignFirstTargetEnvironment(environment): devices.first,
       'SIMS_ANDROID_EMULATOR_DEVICE_ID': devices.last,
       'MKNOON_RELAY_ADDRESSES': fixture.multiaddr,
       _fixtureIdentityEnvironment: fixture.fixtureIdentitySha256,
