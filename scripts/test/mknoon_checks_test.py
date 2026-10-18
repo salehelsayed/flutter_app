@@ -992,6 +992,148 @@ class EvidenceAndExecutionTest(RepositoryFixture):
                 except ProcessLookupError: pass
 
 
+class FlutterFileReuseTest(RepositoryFixture):
+    paths = ['test/chat_test.dart', 'test/groups_test.dart', 'test/bridge_test.dart']
+
+    def execute_lanes(self, mutate=None, first_outcome=None, retry=False):
+        rules = copy.deepcopy(self.rules)
+        rules['fast'] = ['lane-a', 'lane-b', 'lane-c']
+        for cid, paths in zip(rules['fast'], ([self.paths[0], self.paths[1]],
+                [self.paths[1], self.paths[2]], [self.paths[0], self.paths[2]])):
+            rules['checks'][cid] = dict(kind='flutter', paths=paths, boundary='host-only replay fixture',
+                timeout_seconds=10, resources=['isolated:flutter-fixture'])
+        args = self.args(rerun_failed=retry)
+        directory = self.root / '.codex-test-logs' / ('reuse-' + str(time.monotonic_ns()))
+        directory.mkdir(parents=True)
+        with mock.patch.object(checks, 'toolchain_identity', return_value={'fixture': 'no SDK execution'}):
+            plan, files = checks.make_plan(args, self.root, rules)
+        for check in plan['selected']:
+            check['blocked_prerequisites'] = []
+        if mutate:
+            mutate({c['id']: c for c in plan['selected']})
+        commands = []
+
+        def replay(command, cwd, timeout, env=None):
+            self.assertEqual(command[:2], ['flutter', 'test'])
+            commands.append(list(command))
+            paths = [p for p in command if p in self.paths]
+            self.assertTrue(paths)
+            events = []
+            failure = first_outcome == 'FAIL' and len(commands) == 1
+            skipped = first_outcome == 'SKIP' and len(commands) == 1
+            for sid, path in enumerate(paths):
+                events.extend([
+                    dict(type='suite', suite=dict(id=sid, path=str(self.root / path))),
+                    dict(type='testStart', time=sid * 10, test=dict(id=sid, suiteID=sid, name='fixture assertion')),
+                    dict(type='testDone', time=sid * 10 + 1, testID=sid,
+                         result='failure' if failure and sid == 0 else 'success', skipped=skipped and sid == 0),
+                ])
+            events.append(dict(type='done', time=30, success=not failure))
+            if first_outcome == 'CAPACITY' and len(commands) == 1:
+                checks._LAUNCH_CONTEXT.capture_failure = {'stream': 'stdout', 'reason': 'fixture_capacity'}
+            return '\n'.join(json.dumps(event) for event in events) + '\n', int(failure), False, .01
+
+        with contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(checks, 'launch', side_effect=replay), \
+                mock.patch.object(checks, 'toolchain_identity', return_value={'fixture': 'no SDK execution'}):
+            code = checks.execute_plan(args, self.root, rules, plan, files, {}, {}, directory, time.monotonic())
+        self.last_plan = plan
+        return code, json.loads((directory / 'results.json').read_text()), commands, {c['id']: c for c in plan['selected']}
+
+    def test_partial_and_complete_reuse_preserve_lanes_counts_and_direct_raw_owners(self):
+        code, report, commands, selected = self.execute_lanes()
+        self.assertEqual(code, 0)
+        self.assertEqual([[p for p in c if p in self.paths] for c in commands],
+                         [self.paths[:2], [self.paths[2]]])
+        self.assertEqual(report['flutter_file_reuse'], {'eligible_file_executions': 3, 'reused_file_receipts': 3})
+        rows = {row['id']: row for row in report['results']}
+        for row in rows.values():
+            self.assertEqual(row['command'], selected[row['id']]['command'])
+            self.assertEqual(row['selected_paths'], selected[row['id']]['selected_paths'])
+            self.assertEqual(row['attempts'][0]['counts'], dict(passed=2, failed=0, skipped=0))
+        later = rows['lane-c']['attempts'][0]
+        self.assertIsNone(later['raw_output_sha256'], 'reuse must not invent a new raw-output hash')
+        self.assertEqual(later['executed_command'], [])
+        self.assertTrue(checks.verify_flutter_reuse(rows['lane-c'], later, selected, rows))
+        self.assertFalse(checks.verify_flutter_reuse(rows['lane-b'], rows['lane-b']['attempts'][0], selected, rows))
+        context = {'mode': 'change'}
+        expected = copy.deepcopy(self.last_plan)
+        expected['ci'] = context
+        expected['plan_sha256'] = checks.plan_fingerprint(expected)
+        ci_report = copy.deepcopy(report)
+        ci_report.update(ci=context, plan_sha256=expected['plan_sha256'])
+        verdict = checks.verify_ci_results(expected, expected, ci_report, context,
+            expected['plan_sha256'], 'success', 'success')
+        self.assertEqual(verdict['status'], 'PASS')
+
+    def test_environment_flags_and_filtered_commands_do_not_share_receipts(self):
+        def environment(selected): selected['lane-b']['environment'] = {'FIXTURE_MODE': 'different'}
+        def flags(selected): selected['lane-b']['command'][4] = '--concurrency=2'
+        def filtered(selected): selected['lane-b']['command'] += ['--name', 'fixture assertion']
+        for mutation in (environment, flags, filtered):
+            with self.subTest(mutation=mutation.__name__):
+                code, report, commands, _ = self.execute_lanes(mutate=mutation)
+                self.assertEqual(code, 0)
+                self.assertEqual([p for p in commands[1] if p in self.paths], sorted(self.paths[1:]))
+                self.assertEqual(report['flutter_file_reuse']['eligible_file_executions'], 3 if mutation is filtered else 5)
+                self.assertEqual([p for p in commands[-1] if p in self.paths], [self.paths[2]])
+
+    def test_failed_skipped_and_capacity_limited_attempts_never_seed_reuse(self):
+        for outcome in ('FAIL', 'SKIP', 'CAPACITY'):
+            with self.subTest(outcome=outcome):
+                _, report, commands, _ = self.execute_lanes(first_outcome=outcome)
+                self.assertNotEqual(report['results'][0]['status'], 'PASS')
+                self.assertEqual(sum(self.paths[1] in command for command in commands), 2)
+
+    def test_explicit_retry_runs_and_preserves_the_first_failure(self):
+        _, report, commands, _ = self.execute_lanes(first_outcome='FAIL', retry=True)
+        first = report['results'][0]
+        self.assertEqual([a['status'] for a in first['attempts']], ['FAIL', 'PASS'])
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertEqual([p for p in commands[1] if p in self.paths], self.paths[:2])
+        self.assertEqual(sum(self.paths[1] in command for command in commands), 3)
+
+    def test_cache_is_invocation_local(self):
+        for _ in range(2):
+            code, _, commands, _ = self.execute_lanes()
+            self.assertEqual(code, 0)
+            self.assertEqual(len(commands), 2)
+
+    def test_ci_rejects_forged_source_context_counts_hash_or_membership(self):
+        _, report, _, selected = self.execute_lanes()
+        for key, value in [('source_check_id', 'absent'), ('source_log_sha256', 'a' * 64),
+                           ('context_sha256', 'b' * 64), ('file_sha256', 'c' * 64),
+                           ('counts', dict(passed=99, failed=0, skipped=0))]:
+            with self.subTest(key=key):
+                altered = copy.deepcopy(report)
+                rows = {row['id']: row for row in altered['results']}
+                attempt = rows['lane-c']['attempts'][0]
+                attempt['reused_files'][0][key] = value
+                with self.assertRaises(checks.InvalidPlan):
+                    checks.verify_flutter_reuse(rows['lane-c'], attempt, selected, rows)
+        rows = {row['id']: row for row in report['results']}
+        rows['lane-c']['attempts'][0]['executed_paths'] = [self.paths[0]]
+        with self.assertRaises(checks.InvalidPlan):
+            checks.verify_flutter_reuse(rows['lane-c'], rows['lane-c']['attempts'][0], selected, rows)
+
+    def test_changed_source_or_raw_log_cannot_reuse_an_old_receipt(self):
+        ledger = checks.FlutterFileReceipts({'source': 'fixture'}, {})
+        path = self.paths[0]
+        log = self.root / 'first.raw.log'
+        log.write_text('original raw fixture')
+        counts = dict(passed=1, failed=0, skipped=0)
+        attempt = dict(status='PASS', counts=counts,
+                       file_results=[dict(path=path, status='PASS', counts=counts)])
+        ledger.remember('context', self.root, [path], {path: checks.file_hash(self.root / path)},
+                        attempt, 'owner', log, self.root)
+        self.assertIsNotNone(ledger.find('context', self.root, path))
+        log.write_text('changed raw fixture')
+        self.assertIsNone(ledger.find('context', self.root, path))
+        log.write_text('original raw fixture')
+        self.write(path, 'changed source')
+        self.assertIsNone(ledger.find('context', self.root, path))
+
+
 class CaptureBudgetTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()

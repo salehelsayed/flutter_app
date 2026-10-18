@@ -7732,6 +7732,32 @@ with a missing or passing native report. All retention deletion checks used
 owned temporary fixtures. These results do not certify device capture, native builds, a full
 workflow, or signed release artifacts.
 
+Within one wrapper invocation, canonical unfiltered Flutter file commands can
+reuse successful, complete first-attempt file receipts. The fingerprint covers
+the candidate/toolchains, source file, working directory, actual environment,
+command flags, resources and dependencies. Runtime lookup verifies the original
+private raw-log hash. The cache contains typed counts and ownership references,
+not output text, and does not survive the invocation. Filtered commands,
+failed/skipped/incomplete/capacity-limited attempts and explicit retries do not
+seed reuse. A whole-lane deadline does not invalidate an already completed
+passing file proof; the fixed per-test deadline remains in the command key.
+Each lane retains its original command and selected paths. `executed_paths`,
+`executed_counts` and `reused_counts` distinguish fresh execution from reused
+membership. A fully reused lane has no fabricated new raw-output hash. CI
+reconciles each reused count/file/context/log hash against a direct successful
+source execution and refuses mismatched or missing ownership.
+
+P2 host evidence in
+`.codex-test-logs/suite-implementation-20261018/P2-light-002-checks.json`
+records 94 wrapper/CI tests passing. A real diagnostic with three existing SIMS
+unit files executed 28 tests once through two Flutter commands while preserving
+six lane memberships (22, 24 and 10 cases). Its overall status remains `NOT RUN`
+for omitted checks, with no candidate gaps; see `P2-real-flutter-receipt.json`
+and the private `P2-real-flutter-002/results.json`. These counts are lane
+memberships and must not be summed as unique executions. The initial replay
+fixture failures expected insertion order instead of the selector's sorted
+paths; assertions were corrected and the original failure log retained.
+
 The local Git exclude file ignored AGENTS.md and .agents/. Narrow tracked
 .gitignore exceptions now expose AGENTS.md and the three Mknoon skills while
 leaving other local skill directories excluded. Their instructions and adapters

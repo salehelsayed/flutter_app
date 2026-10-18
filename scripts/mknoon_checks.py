@@ -369,6 +369,83 @@ def command_for(check, root, files):
     return check.get('command', []), check.get('paths', [])
 
 
+def whole_flutter_prefix(check):
+    """Recognize only the existing unfiltered, explicit-file command recipe."""
+    paths, command = check.get('selected_paths', []), check.get('command', [])
+    if (check.get('kind') != 'flutter' or check.get('names') or not paths
+            or any(not p.startswith('test/') or not p.endswith('_test.dart') for p in paths)
+            or command[-len(paths):] != paths):
+        return None
+    prefix = command[:-len(paths)]
+    if (len(prefix) != 6 or prefix[:4] != ['flutter', 'test', '--no-pub', '--machine']
+            or not re.fullmatch(r'--concurrency=[1-9]\d*', prefix[4])
+            or prefix[5] != '--timeout=2m'):
+        return None
+    return prefix
+
+
+class FlutterFileReceipts:
+    """Invocation-local successful whole-file receipts, never cached output text."""
+    def __init__(self, identity, toolchains):
+        self.candidate = digest([identity, toolchains])
+        self.entries = {}
+        self.executed_files = self.reused_files = 0
+
+    def context(self, check, cwd, env):
+        prefix = whole_flutter_prefix(check)
+        return digest([self.candidate, str(cwd.resolve()), prefix, env,
+                       sorted(check_resources(check)), sorted(check.get('dependencies', []))]) if prefix else None
+
+    def find(self, context, root, path):
+        if context is None:
+            return None
+        item = self.entries.get((context, path, file_hash(root / path)))
+        if item is None:
+            return None
+        try:
+            if file_hash(item['log']) != item['receipt']['source_log_sha256']:
+                return None
+        except OSError:
+            return None
+        self.reused_files += 1
+        return dict(item['receipt'])
+
+    def remember(self, context, root, paths, source_hashes, attempt, check_id, raw_path, directory):
+        if context is None or attempt['status'] != 'PASS' or not paths:
+            return
+        facts = {fact['path']: fact for fact in attempt.get('file_results', [])}
+        if any(path not in facts or facts[path]['status'] != 'PASS' for path in paths):
+            return
+        expected = attempt.get('executed_counts', attempt['counts'])
+        if any(sum(facts[path]['counts'][key] for path in paths) != expected[key] for key in expected):
+            return
+        if any(file_hash(root / path) != source_hashes[path] for path in paths):
+            return
+        raw_sha = file_hash(raw_path)
+        attempt.update(raw_log_path=str(raw_path.relative_to(directory)), raw_log_sha256=raw_sha)
+        for path in paths:
+            source_sha = source_hashes[path]
+            facts[path]['file_sha256'] = source_sha
+            receipt = dict(path=path, counts=dict(facts[path]['counts']),
+                context_sha256=context, file_sha256=source_sha, source_check_id=check_id,
+                source_attempt=1, source_log_path=attempt['raw_log_path'], source_log_sha256=raw_sha)
+            self.entries.setdefault((context, path, source_sha), dict(log=raw_path, receipt=receipt))
+
+
+def combine_flutter_receipts(attempt, reused, executed_paths, executed_command, selected_paths):
+    if not reused:
+        return attempt
+    fresh_counts = dict(attempt['counts'])
+    reused_counts = {key: sum(r['counts'][key] for r in reused) for key in fresh_counts}
+    attempt['counts'] = {key: fresh_counts[key] + reused_counts[key] for key in fresh_counts}
+    attempt.update(executed_counts=fresh_counts, reused_counts=reused_counts,
+        reused_files=reused, executed_paths=executed_paths, executed_command=executed_command)
+    facts = {fact['path']: fact for fact in attempt.get('file_results', [])}
+    facts.update({r['path']: dict(path=r['path'], status='PASS', counts=r['counts']) for r in reused})
+    attempt['file_results'] = [facts[path] for path in selected_paths if path in facts]
+    return attempt
+
+
 def parse_execution(kind, output, returncode, timed_out=False, selected_paths=None, success_marker=None):
     """Only observed completion facts leave this function. No log text/test names."""
     counts = {'passed': 0, 'failed': 0, 'skipped': 0}
@@ -386,13 +463,18 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
         item = {'source_path':path, 'line':int(match[2]), 'column':int(match[3]), 'error_kind':'compilation_error'}
         if item not in compilation_diagnostics: compilation_diagnostics.append(item)
     observed_paths = set()
+    file_counts = {}
     if kind == 'flutter':
-        tests, suites = {}, {}
+        tests, suites, selected_suites = {}, {}, {}
         for line in output.splitlines():
             try: e = json.loads(line)
             except ValueError: continue
             if not isinstance(e, dict): continue
-            if e.get('type') == 'suite': suites[e['suite']['id']] = e['suite'].get('path', '')
+            if e.get('type') == 'suite':
+                sid, path = e['suite']['id'], e['suite'].get('path', '')
+                suites[sid] = path
+                matches = [p for p in selected_paths or [] if path == p or path.endswith('/' + p)]
+                if len(matches) == 1: selected_suites[sid] = matches[0]
             if e.get('type') == 'testStart':
                 tests[e['test']['id']] = e['test']
                 if first_case_ms is None and not e['test'].get('name','').startswith('loading '):
@@ -405,6 +487,10 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
                     continue
                 result = 'skipped' if e.get('skipped') else ('passed' if e.get('result') == 'success' else 'failed')
                 counts[result] += 1
+                path = selected_suites.get(t.get('suiteID'))
+                if path is not None:
+                    per_file = file_counts.setdefault(path, dict(passed=0, failed=0, skipped=0))
+                    per_file[result] += 1
                 if result == 'failed' and first_failure is None: first_failure = 'test_assertion'
                 if result in ('failed', 'skipped'):
                     location = t.get('url') or ''
@@ -483,7 +569,7 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
         status, checkpoint = 'BLOCKED', 'incomplete_or_zero_test_execution'
     else:
         status, checkpoint = 'PASS', 'runner_completed'
-    return {'status': status, 'checkpoint': checkpoint, 'counts': counts,
+    details = {'status': status, 'checkpoint': checkpoint, 'counts': counts,
             'completion_observed': completed, 'missing_test_files': missing,
             'failed_cases': failed_cases, 'skipped_cases': skipped_cases,
             'timed_out': timed_out,
@@ -491,6 +577,11 @@ def parse_execution(kind, output, returncode, timed_out=False, selected_paths=No
             'observed_test_span_seconds': max(0, runner_done_ms - first_case_ms) / 1000
                 if isinstance(first_case_ms, (int,float)) and isinstance(runner_done_ms, (int,float)) else None,
             'raw_output_sha256': hashlib.sha256(output.encode()).hexdigest()}
+    if kind == 'flutter':
+        details['file_results'] = [dict(path=p, counts=c,
+            status='PASS' if status == 'PASS' and c['passed'] > 0 and not c['failed'] and not c['skipped'] else 'FAIL' if c['failed'] else 'BLOCKED')
+            for p, c in sorted(file_counts.items())]
+    return details
 
 
 def launch(command, cwd, timeout, env=None):
@@ -1100,6 +1191,7 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
         jobs = getattr(args, 'jobs', 1)
         capture_budget = CaptureBudget()
         screenshot_capacity_exceeded = threading.Event()
+        flutter_files = FlutterFileReceipts(plan['identity'], plan.get('toolchains', {}))
 
         def execute_check(c):
             _LAUNCH_CONTEXT.cancel_event = cancel_event
@@ -1136,12 +1228,13 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     # Device failures need diagnosis and cleanup review before a fresh run.
                     if attempt and (row['attempts'][0]['status'] == 'PASS' or is_campaign(c)): break
                     campaign_started = False
+                    flutter_context, flutter_reused, flutter_fresh, flutter_hashes = None, [], [], {}
                     try:
                         with ExitStack() as owners:
                             if 'shared-native-build' in check_resources(c):
                                 owners.enter_context(device_preflight.device_leases(['mknoon.shared-native-build']))
                             env = os.environ.copy()
-                            env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + c['id']
+                            env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + ('flutter' if c['kind'] == 'flutter' else c['id'])
                             env['MKNOON_HOST_FLUTTER_WORKERS'] = str(getattr(args, 'flutter_workers', 1))
                             env['SIMS_MAX_PARALLEL'] = str(getattr(args, 'sims_jobs', 1))
                             env['SIMS_HOST_CONCURRENCY'] = str(getattr(args, 'flutter_workers', 1))
@@ -1151,7 +1244,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                             if c['kind'] != 'full_adapter': env.update(c.get('environment', {}))
                             # Nested SIMS evidence belongs to this invocation,
                             # including explicit (unmanaged) --output folders.
-                            env['MKNOON_CAPTURE_ROOT'] = str(directory / (c['id'] + '-' + str(attempt + 1) + '-captures'))
+                            env['MKNOON_CAPTURE_ROOT'] = str(directory / ('flutter-captures' if c['kind'] == 'flutter'
+                                else c['id'] + '-' + str(attempt + 1) + '-captures'))
                             if c['kind'] in ('sims', 'legacy'):
                                 env.pop('RELIABILITY_MULTI_DEVICE_IDS', None)
                             if c['kind'] == 'full_adapter' and c.get('device_roles'):
@@ -1185,6 +1279,20 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                     raise device_preflight.PreflightBlocked(preflight)
                             campaign_started = is_campaign(c)
                             raw_path = directory / (c['id'] + '-' + str(attempt + 1) + '.raw.log')
+                            if c['kind'] == 'flutter' and attempt == 0:
+                                flutter_context = flutter_files.context(c, root / c.get('cwd', '.'), env)
+                                if flutter_context is not None:
+                                    for path in c['selected_paths']:
+                                        receipt = flutter_files.find(flutter_context, root, path)
+                                        if receipt is not None:
+                                            flutter_reused.append(receipt)
+                                        else:
+                                            flutter_fresh.append(path)
+                                            flutter_hashes[path] = file_hash(root / path)
+                                    command = whole_flutter_prefix(c) + flutter_fresh if flutter_fresh else []
+                                    flutter_files.executed_files += len(flutter_fresh)
+                            elif whole_flutter_prefix(c) is not None:
+                                flutter_files.executed_files += len(c['selected_paths'])
                             if c['kind'] == 'full_adapter':
                                 from full_suite_adapters import bind, inspect, prepare_step
                                 adapter_dir = directory / (c['id'] + '-' + str(attempt + 1) + '-proof')
@@ -1210,10 +1318,23 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                                 out = step_out
                                 a = dict(step_results[-1], step_results=step_results)
                             else:
-                                out, code, timeout, seconds = launch_to_log(command, root / c.get('cwd','.'), c['timeout_seconds'], env, raw_path)
-                            os.chmod(raw_path, 0o600)
+                                if command:
+                                    out, code, timeout, seconds = launch_to_log(command, root / c.get('cwd','.'), c['timeout_seconds'], env, raw_path)
+                                else:
+                                    out, code, timeout, seconds = '', 0, False, 0
+                            if command or c['kind'] == 'full_adapter': os.chmod(raw_path, 0o600)
                             if c['kind'] != 'full_adapter':
-                                a = parse_execution(c['kind'], out, code, timeout, c['selected_paths'], c.get('success_marker'))
+                                selected_paths = flutter_fresh if flutter_context is not None else c['selected_paths']
+                                if flutter_context is not None and not flutter_fresh:
+                                    a = dict(status='PASS', checkpoint='runner_completed', counts=dict(passed=0, failed=0, skipped=0),
+                                        completion_observed=True, missing_test_files=[], failed_cases=[], skipped_cases=[],
+                                        compilation_diagnostics=[], timed_out=False, observed_test_span_seconds=None,
+                                        raw_output_sha256=None, file_results=[])
+                                else:
+                                    a = parse_execution(c['kind'], out, code, timeout, selected_paths, c.get('success_marker'))
+                                if flutter_context is not None:
+                                    a.update(context_sha256=flutter_context, executed_paths=flutter_fresh, executed_command=command)
+                                    combine_flutter_receipts(a, flutter_reused, flutter_fresh, command, c['selected_paths'])
                             if c['kind'] == 'sims':
                                 if report_path.is_file(): os.chmod(report_path, 0o600)
                                 a = inspect_sims(report_path, '*' if c.get('additional_capabilities') else c['capability'], code, timeout,
@@ -1279,6 +1400,9 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                             a.update(status='FAIL', checkpoint='evidence_capacity')
                     if campaign_started and a['status'] != 'PASS':
                         a['cleanup_review_required'] = True
+                    if flutter_context is not None and a['status'] == 'PASS':
+                        flutter_files.remember(flutter_context, root, flutter_fresh, flutter_hashes,
+                            a, c['id'], raw_path, directory)
                     row['attempts'].append(a)
                     if capacity: break
                 row.update(status=aggregate(row['attempts']), checkpoint=row['attempts'][0]['checkpoint'])
@@ -1375,6 +1499,8 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
               'capture_budget': {'per_stream_bytes': capture_budget.stream_limit,
                                  'per_run_bytes': capture_budget.run_limit,
                                  'charged_bytes': capture_budget.used},
+              'flutter_file_reuse': {'eligible_file_executions': flutter_files.executed_files,
+                                     'reused_file_receipts': flutter_files.reused_files},
               'schema_version':1, 'automated_status':auto, 'status':overall,
               'plan_sha256':plan['plan_sha256'], 'ci':plan.get('ci'),
               'artifact_sha256':artifact_hashes, 'devices':matrix,
@@ -1732,6 +1858,59 @@ def require_ci(condition, message):
         raise InvalidPlan(message)
 
 
+def verify_flutter_reuse(row, attempt, checks, rows):
+    """Reconcile reused facts with a direct, successful source execution."""
+    reused = attempt.get('reused_files', [])
+    if not reused:
+        return False
+    check = checks[row['id']]
+    prefix = whole_flutter_prefix(check)
+    is_hash = lambda value: isinstance(value, str) and bool(re.fullmatch(r'[0-9a-f]{64}', value))
+    label = 'CI Flutter file evidence for ' + row['id']
+    require_ci(prefix is not None and attempt.get('attempt') == 1, label + ' is not an unfiltered first attempt')
+    paths = [ref.get('path') for ref in reused]
+    fresh = attempt.get('executed_paths', [])
+    require_ci(len(set(paths)) == len(paths) and set(paths).isdisjoint(fresh)
+               and set(paths) | set(fresh) == set(check['selected_paths']), label + ' has incorrect file membership')
+    require_ci(attempt.get('executed_command') == (prefix + fresh if fresh else []), label + ' has mismatched executed command')
+    counts = dict(passed=0, failed=0, skipped=0)
+    for ref in reused:
+        source = rows.get(ref.get('source_check_id'))
+        require_ci(source is not None and source['id'] != row['id'] and source.get('status') == 'PASS'
+                   and ref.get('source_attempt') == 1 and source.get('attempts'), label + ' has no passing source owner')
+        origin = source['attempts'][0]
+        require_ci(origin.get('status') == 'PASS' and ref['path'] in origin.get('executed_paths', [])
+                   and whole_flutter_prefix(checks[source['id']]) == prefix
+                   and is_hash(ref.get('context_sha256'))
+                   and ref.get('context_sha256') == origin.get('context_sha256') == attempt.get('context_sha256'),
+                   label + ' has incompatible source context')
+        fact = [f for f in origin.get('file_results', []) if f.get('path') == ref['path']]
+        require_ci(len(fact) == 1 and fact[0].get('status') == 'PASS'
+                   and fact[0].get('counts') == ref.get('counts')
+                   and fact[0].get('file_sha256') == ref.get('file_sha256')
+                   and is_hash(ref.get('file_sha256')),
+                   label + ' has no complete source file receipt')
+        require_ci(ref.get('source_log_path') == origin.get('raw_log_path')
+                   and isinstance(ref.get('source_log_path'), str)
+                   and Path(ref['source_log_path']).name == ref['source_log_path']
+                   and ref.get('source_log_sha256') == origin.get('raw_log_sha256')
+                   and is_hash(ref.get('source_log_sha256')),
+                   label + ' has mismatched source raw-log evidence')
+        for key in counts:
+            value = ref['counts'].get(key)
+            require_ci(type(value) is int and value >= 0, label + ' has invalid reused counts')
+            counts[key] += value
+        require_ci(ref['counts']['passed'] > 0 and not ref['counts']['failed'] and not ref['counts']['skipped'],
+                   label + ' has incomplete reused cases')
+    require_ci(attempt.get('reused_counts') == counts, label + ' has inconsistent reused totals')
+    executed_counts = attempt.get('executed_counts', {})
+    require_ci(all(type(executed_counts.get(key)) is int and executed_counts[key] >= 0 for key in counts)
+               and attempt.get('counts') == {key: counts[key] + executed_counts[key] for key in counts},
+               label + ' has inconsistent lane counts')
+    require_ci(bool(fresh) or not any(executed_counts.values()), label + ' invents fresh cases')
+    return not fresh
+
+
 def verify_ci_results(expected, execution_plan, report, context, fingerprint,
                       metadata_result, execution_result):
     """Fail closed on job conclusions, complete membership and original execution facts."""
@@ -1764,6 +1943,7 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
     require_ci(bool(selected) and len(selected) == len(execution_plan['selected'])
                and len(rows) == len(selected) and {r['id'] for r in rows} == set(selected),
                'CI selected results are missing, duplicated or unexpected')
+    rows_by_id = {row['id']: row for row in rows}
     is_hash = lambda value: isinstance(value, str) and bool(re.fullmatch(r'[0-9a-f]{64}', value))
     if context['mode'] == 'release':
         artifacts = report.get('artifact_sha256', {})
@@ -1800,6 +1980,7 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
                            label + ' lacks complete full-regression evidence')
             else:
                 counts = attempt.get('counts', {})
+                reused_only = verify_flutter_reuse(row, attempt, selected, rows_by_id) if kind == 'flutter' else False
                 require_ci(kind in ('flutter', 'python', 'node', 'go', 'command')
                            and attempt.get('checkpoint') == 'runner_completed'
                            and attempt.get('completion_observed') is True
@@ -1808,7 +1989,7 @@ def verify_ci_results(expected, execution_plan, report, context, fingerprint,
                            and attempt.get('missing_test_files') == []
                            and attempt.get('failed_cases') == []
                            and attempt.get('compilation_diagnostics') == []
-                           and is_hash(attempt.get('raw_output_sha256')),
+                           and (is_hash(attempt.get('raw_output_sha256')) or reused_only),
                            label + ' lacks complete substantive execution')
     return {'status':'PASS', 'plan_sha256':fingerprint, 'ci':context, 'completed_checks':len(rows)}
 
