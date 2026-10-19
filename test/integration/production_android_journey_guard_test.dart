@@ -107,6 +107,51 @@ void main() {
   }
 
   test(
+    'physical performance keeps its phone pin under the global disposable journey flag',
+    () async {
+      final values = environment()..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+      final (apk, digest) = prepared(productionPerformanceAndroidProfile);
+      values['SIMS_ARTIFACT_ANDROID_E2E_PERFORMANCE_RELAY'] = apk.path;
+      values['SIMS_ARTIFACT_SHA256'] = digest;
+      final events = <String>[];
+      ProductionAndroidJourney create() =>
+          ProductionAndroidJourney.fromEnvironment(
+            'production.startup_resume_performance',
+            temporary,
+            environment: values,
+            runner: _IdleDevices(),
+            captureGuard:
+                ({
+                  required devices,
+                  required packageName,
+                  required backupLabel,
+                  required preparedArtifact,
+                  required expectedArtifactSha256,
+                }) async {
+                  expect(devices, [physical]);
+                  return _Guard(packageName, events, failInstall: true);
+                },
+          );
+      final journey = create();
+      expect(journey.disposableAndroidJourneys, isFalse);
+      expect(journey.physical, physical);
+      expect(journey.actors, hasLength(1));
+      expect(journey.profileId, productionPerformanceAndroidProfile);
+      await expectLater(journey.prepare(), throwsStateError);
+      expect(
+        events.single,
+        startsWith('install:$productionJourneyAndroidPackage:$physical:'),
+      );
+      await journey.restore();
+      values['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] = 'emulator-4004';
+      expect(create, throwsStateError);
+      values.remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID');
+      values['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
+      expect(create, throwsStateError);
+    },
+  );
+
+  test(
     'SE41 uses one explicit emulator and refuses phone and iOS bindings',
     () {
       final values = environment()

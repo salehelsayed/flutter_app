@@ -422,6 +422,7 @@ final class _AndroidForegroundWebRtcAudioHost {
         devices: _devices,
         packageName: packageName,
         backupLabel: 'foreground-webrtc-audio',
+        stagePPhysicalIdentityRequired: false,
         runner: const SystemAndroidHostProcessRunner(
           commandTimeout: Duration(minutes: 10),
           terminationGrace: Duration(seconds: 5),
@@ -757,6 +758,7 @@ final class _AndroidForegroundWebRtcAudioHost {
         devices: _devices,
         packageName: packageName,
         backupLabel: 'foreground-webrtc-audio-${mode.name}',
+        stagePPhysicalIdentityRequired: false,
       );
     } on AndroidAppStateBlocked catch (blocked) {
       throw _AudioProofBlocked(

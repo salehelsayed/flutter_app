@@ -88,8 +88,11 @@ generic major lists these as `local_fixture_mode_required`. Fixture modes requir
 explicit primary/fourth emulator pins and a private interface in env/local config.
 `AndroidInstallOverGuard` admits an existing single APK at the same version code,
 backs it up and uses only `adb install -r` for install/restoration. It does not
-reset app data or create fresh fixtures; current fresh-reset phone campaigns stay
-blocked. Host-only launcher contracts are registered in workflow/full-workflow;
+reset app data or create fresh fixtures. Protected fresh-reset phone campaigns
+stay blocked. The owner-approved disposable Pixel exception uses the existing
+native/wrapper commands with preservation still enabled and one locally supplied
+`MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS` value; the safe launcher still
+blocks physical rows. Host-only launcher contracts are registered in workflow/full-workflow;
 resolver, journey and install-over contracts are host proof, not device results. Its current, previous and first-failure stdout
 logs are each capped at 8 MiB; native campaign output/build retention is separate.
 
@@ -846,6 +849,21 @@ including legacy binding), and `live-guard-probe-repaired.json` with verified
 capture/restoration on the connected Pixel 6 and existing API 35 emulator.
 This does not establish restoration of the earlier API 37 emulator's original
 private data; its incomplete backup remains an unresolved recovery limitation.
+
+Disposable physical admission requires exactly one valid serial in
+`MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS` and an exact match for every phone
+in that capture. No serial is tracked in source. The five stage-P Android runners
+confirm that their phone identity is not needed by another stage-P row; iOS calls
+use an emulator caller. Unknown or required identity dependencies fail before
+device commands. With `MKNOON_PRESERVE_PHYSICAL_APP_DATA=1`, all other phones
+remain protected. A `physical-admission-*.json` receipt is flushed before the
+first capture mutation, under `SIMS_PROOF_DIRECTORY` when supplied (otherwise
+the recovery directory). Existing APK/data/permission/process capture and
+restoration remain in use. Startup performance retains its physical pin even
+when ordinary disposable journeys use the global emulator flag. Its six distinct
+cold identities, processes, thresholds and runtime assertions are unchanged.
+Host admission/restoration and target-selection contracts do not prove a device
+scenario or signed artifact.
 
 The TC-07 background-crypto campaign has a separate attached-process activity
 parser. It must also match the component's exact package, including when a

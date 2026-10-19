@@ -1125,6 +1125,7 @@ Future<_RunnerResult> _runVoiceRecorder({
       devices: <String>[device],
       packageName: packageName,
       backupLabel: 'voice-recorder',
+      stagePPhysicalIdentityRequired: false,
     );
   } on AndroidAppStateBlocked catch (error) {
     return _RunnerResult.blocked(
@@ -1276,6 +1277,7 @@ Future<_RunnerResult> _runCriticalPerformance({
       devices: <String>[device],
       packageName: packageName,
       backupLabel: 'critical-performance',
+      stagePPhysicalIdentityRequired: false,
     );
   } on AndroidAppStateBlocked catch (error) {
     return _RunnerResult.blocked(

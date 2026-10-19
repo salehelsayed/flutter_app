@@ -62,6 +62,8 @@ Future<ProductionAndroidInstallGuard> _captureProductionAndroidGuard({
     backupLabel: backupLabel,
     preparedArtifact: preparedArtifact,
     expectedArtifactSha256: expectedArtifactSha256,
+    stagePPhysicalIdentityRequired:
+        packageName == productionJourneyAndroidPackage ? false : null,
   ),
 );
 
@@ -301,6 +303,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
           );
     }
     disposableAndroidJourneys =
+        scenario != 'production.startup_resume_performance' &&
         values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1';
     final singleFixture =
         productionUpdateCheckJourneys.contains(scenario) ||

@@ -395,6 +395,8 @@ final class AndroidAppStateGuard {
     File? preparedArtifact,
     String? expectedArtifactSha256,
     bool preservePhysicalAppData = false,
+    bool? stagePPhysicalIdentityRequired,
+    Map<String, String>? environment,
     AndroidHostProcessRunner runner = const SystemAndroidHostProcessRunner(),
     AndroidPrivateArchiveCapturer? privateArchiveCapturer,
     AndroidPrivateArchiveProcessStarter? privateArchiveProcessStarter,
@@ -402,15 +404,38 @@ final class AndroidAppStateGuard {
     Duration privateArchiveTimeout = _defaultLargeBackupOperationTimeout,
     Duration processTerminationGrace = _defaultProcessTerminationGrace,
   }) async {
+    final values = environment ?? Platform.environment;
+    final physical = devices
+        .where((device) => !RegExp(r'^emulator-[0-9]+$').hasMatch(device))
+        .toSet();
+    var disposablePhysicalAdmission = false;
     if ((preservePhysicalAppData ||
-            Platform.environment['MKNOON_PRESERVE_PHYSICAL_APP_DATA'] == '1') &&
-        devices.any(
-          (device) => !RegExp(r'^emulator-[0-9]+$').hasMatch(device),
-        )) {
-      throw const AndroidAppStateBlocked(
-        'Fresh fixture resets are forbidden on physical phones; use the '
-        'install-over guard with an existing-state fixture.',
-      );
+            values['MKNOON_PRESERVE_PHYSICAL_APP_DATA'] == '1') &&
+        physical.isNotEmpty) {
+      final configured = values['MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS'];
+      final allowed = configured == null || configured.trim().isEmpty
+          ? <String>[]
+          : configured.split(',').map((s) => s.trim()).toList();
+      if (allowed.length != 1 ||
+          allowed.any(
+            (s) =>
+                !RegExp(r'^[A-Za-z0-9._:-]{1,160}$').hasMatch(s) ||
+                s.startsWith('emulator-'),
+          ) ||
+          allowed.toSet().length != allowed.length ||
+          !physical.every(allowed.contains)) {
+        throw const AndroidAppStateBlocked(
+          'Fresh fixture resets are forbidden on protected physical phones; '
+          'only an explicitly allow-listed disposable serial is admitted.',
+        );
+      }
+      if (stagePPhysicalIdentityRequired != false) {
+        throw const AndroidAppStateBlocked(
+          'Disposable physical admission requires the runner to confirm that '
+          'no other stage-P row needs this phone identity.',
+        );
+      }
+      disposablePhysicalAdmission = true;
     }
     final safeDevice = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
     final safePackage = RegExp(r'^[A-Za-z][A-Za-z0-9_.]{2,199}$');
@@ -442,6 +467,29 @@ final class AndroidAppStateGuard {
       privateArchiveTimeout: privateArchiveTimeout,
       processTerminationGrace: processTerminationGrace,
     );
+    if (disposablePhysicalAdmission) {
+      // Durable before capture's first force-stop and before any fixture reset.
+      // iOS stage-P calls use an Android emulator caller, never this identity.
+      final proofPath = values['SIMS_PROOF_DIRECTORY']?.trim();
+      final receiptDirectory = proofPath == null || proofPath.isEmpty
+          ? backupDirectory
+          : await Directory(proofPath).create(recursive: true);
+      await File(
+        '${receiptDirectory.path}/physical-admission-$safeLabel-'
+        '${DateTime.now().microsecondsSinceEpoch}.json',
+      ).writeAsString(
+        jsonEncode({
+          'schema': 'mknoon.disposable-physical-admission.v1',
+          'package': packageName,
+          'devices': physical.toList()..sort(),
+          'explicitLocalSerialAllowList': true,
+          'stagePPhysicalIdentityRequired': false,
+          'stagePIosCaller': 'android-emulator',
+          'policy': 'owner-approved-disposable-android',
+        }),
+        flush: true,
+      );
+    }
     if (preparedArtifact == null && expectedArtifactSha256 != null) {
       backupDirectory.deleteSync(recursive: true);
       throw const AndroidAppStateBlocked(

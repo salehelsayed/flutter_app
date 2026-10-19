@@ -358,6 +358,7 @@ final class _AndroidVoiceHost {
         devices: <String>[physicalDeviceId, emulatorDeviceId],
         packageName: packageName,
         backupLabel: 'voice-message',
+        stagePPhysicalIdentityRequired: false,
       );
     } on AndroidAppStateBlocked catch (error) {
       throw _VoiceBlocked('environment', error.detail);

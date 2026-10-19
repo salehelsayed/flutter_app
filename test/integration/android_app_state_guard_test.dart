@@ -11,6 +11,153 @@ import '../../integration_test/support/android_app_state_guard.dart';
 
 void main() {
   test(
+    'local disposable phone admission records identity dependency before mutation',
+    () async {
+      final proof = await Directory.systemTemp.createTemp(
+        'physical-admission-test-',
+      );
+      addTearDown(() => proof.delete(recursive: true));
+      final artifact = File('${proof.path}/candidate.apk')
+        ..writeAsBytesSync([9, 8, 7]);
+      var observedBeforeMutation = false;
+      final adb = _FakeAdbState.absent()
+        ..beforeCommand = (command) {
+          if (!command.contains('force-stop')) return;
+          final receipts = proof
+              .listSync()
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.json'))
+              .toList();
+          expect(receipts, hasLength(1));
+          final receipt = jsonDecode(receipts.single.readAsStringSync()) as Map;
+          expect(receipt['devices'], ['physical-1']);
+          expect(receipt['stagePPhysicalIdentityRequired'], isFalse);
+          expect(receipt['stagePIosCaller'], 'android-emulator');
+          observedBeforeMutation = true;
+        };
+      final guard = await AndroidAppStateGuard.capture(
+        devices: ['physical-1'],
+        packageName: _packageName,
+        runner: adb,
+        stagePPhysicalIdentityRequired: false,
+        environment: {
+          'MKNOON_PRESERVE_PHYSICAL_APP_DATA': '1',
+          'MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS': 'physical-1',
+          'SIMS_PROOF_DIRECTORY': proof.path,
+        },
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+      await guard.prepareFreshInstall(device: 'physical-1', artifact: artifact);
+      expect(adb.installed, isTrue);
+      await guard.restoreAll();
+      expect(observedBeforeMutation, isTrue);
+      expect(guard.restored, isTrue);
+      expect(adb.installed, isFalse);
+      expect(
+        proof.listSync().whereType<File>().where(
+          (f) => f.path.endsWith('.json'),
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  for (final allowed in [
+    '',
+    '*',
+    'physical',
+    'physical-10',
+    'physical-1,',
+    'physical-1,physical-1',
+    'physical-1,other-phone',
+    'emulator-5554',
+  ]) {
+    test(
+      'disposable allow-list rejects unsafe or different serial: $allowed',
+      () async {
+        final adb = _FakeAdbState.absent();
+        await expectLater(
+          AndroidAppStateGuard.capture(
+            devices: ['physical-1'],
+            packageName: _packageName,
+            runner: adb,
+            preservePhysicalAppData: true,
+            stagePPhysicalIdentityRequired: false,
+            environment: {
+              'MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS': allowed,
+            },
+          ),
+          throwsA(isA<AndroidAppStateBlocked>()),
+        );
+        expect(adb.commands, isEmpty);
+      },
+    );
+  }
+  for (final requiredElsewhere in [null, true]) {
+    test(
+      'allow-list cannot discard a needed or unknown physical identity: $requiredElsewhere',
+      () async {
+        final adb = _FakeAdbState.absent();
+        await expectLater(
+          AndroidAppStateGuard.capture(
+            devices: ['physical-1'],
+            packageName: _packageName,
+            runner: adb,
+            preservePhysicalAppData: true,
+            stagePPhysicalIdentityRequired: requiredElsewhere,
+            environment: {
+              'MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS': 'physical-1',
+            },
+          ),
+          throwsA(isA<AndroidAppStateBlocked>()),
+        );
+        expect(adb.commands, isEmpty);
+      },
+    );
+  }
+  test(
+    'one admitted phone never admits another phone in the same capture',
+    () async {
+      final adb = _FakeAdbState.absent();
+      await expectLater(
+        AndroidAppStateGuard.capture(
+          devices: ['physical-1', 'other-phone'],
+          packageName: _packageName,
+          runner: adb,
+          preservePhysicalAppData: true,
+          stagePPhysicalIdentityRequired: false,
+          environment: {
+            'MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS': 'physical-1',
+          },
+        ),
+        throwsA(isA<AndroidAppStateBlocked>()),
+      );
+      expect(adb.commands, isEmpty);
+    },
+  );
+  test(
+    'preservation still permits ordinary emulator capture without a phone exemption',
+    () async {
+      final guard = await AndroidAppStateGuard.capture(
+        devices: ['emulator-5554'],
+        packageName: _packageName,
+        runner: _FakeAdbState.absent(),
+        environment: {'MKNOON_PRESERVE_PHYSICAL_APP_DATA': '1'},
+      );
+      addTearDown(() async {
+        if (guard.backupDirectory.existsSync()) {
+          await guard.backupDirectory.delete(recursive: true);
+        }
+      });
+      await guard.restoreAll();
+      expect(guard.restored, isTrue);
+    },
+  );
+  test(
     'physical preservation rejects fresh reset before any host command',
     () async {
       final adb = _FakeAdbState.absent();
@@ -2745,10 +2892,12 @@ final class _FakeAdbState implements AndroidHostProcessRunner {
   String? _stagedArchiveDigest;
   String? _stagedMemberListDigest;
   final List<String> commands = <String>[];
+  void Function(String command)? beforeCommand;
   var _pid = 1;
 
   @override
   Future<ProcessResult> run(String executable, List<String> arguments) async {
+    beforeCommand?.call('$executable ${arguments.join(' ')}');
     commands.add('$executable ${arguments.join(' ')}');
     if (executable.split(Platform.pathSeparator).last == 'apkanalyzer') {
       if (arguments.length == 3 &&
