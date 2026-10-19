@@ -87,9 +87,10 @@ List<Map<String, Object?>> parseProductionUpdateCheckNotifications({
     }
     final token = tokens.single;
     // AOSP PendingIntentRecord.dump uses toShortString(false, ...), retaining
-    // the full request URI. Bind that record to the token on this active card.
+    // the full request URI. Its package-grouped dump prefixes records with #N:;
+    // retain legacy bare/asterisk headers and bind only this active card token.
     final headers = RegExp(
-      r'^\s*\*?\s*PendingIntentRecord\{([0-9a-fA-F]+)\b[^\n]*',
+      r'^[ \t]*(?:\*[ \t]*|#[0-9]+:[ \t]*)?PendingIntentRecord\{([0-9a-fA-F]+)\b[^\n]*',
       multiLine: true,
     ).allMatches(pendingIntentDump).toList();
     final blocks = <String>[];

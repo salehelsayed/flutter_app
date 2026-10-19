@@ -329,14 +329,70 @@ Ranking Config:
     requestIntent=act=android.intent.action.VIEW dat=$updateStoreUrlAndroid flg=0x10000000
     sent=false canceled=false
 ''';
-    List<Map<String, Object?>> parse(String dump, [String action = intent]) =>
-        parseProductionUpdateCheckNotifications(
-          notificationDump: dump,
-          pendingIntentDump: action,
-          packageName: packageName,
-          uid: uid,
-          sdk: 35,
+    List<Map<String, Object?>> parse(
+      String dump, [
+      String action = intent,
+      int sdk = 35,
+    ]) => parseProductionUpdateCheckNotifications(
+      notificationDump: dump,
+      pendingIntentDump: action,
+      packageName: packageName,
+      uid: uid,
+      sdk: sdk,
+    );
+
+    String indexedIntent(String token, int index) => intent.replaceFirst(
+      '  * PendingIntentRecord{aaa',
+      '    #$index: PendingIntentRecord{$token',
+    );
+
+    test(
+      'SDK37 indexed headers bind only the exact token between other records',
+      () {
+        final dump =
+            'ACTIVITY MANAGER PENDING INTENTS (dumpsys activity intents)\n'
+            '  * $packageName: 3 items\n'
+            '${indexedIntent('aaab', 0).replaceAll('requestCode=41001', 'requestCode=41002')}'
+            '${indexedIntent('aaa', 1)}'
+            '${indexedIntent('bbb', 2).replaceAll('canceled=false', 'canceled=true')}';
+        final card = parse(notification(), dump, 37).single;
+        expect(card['id'], 41001);
+        expect(card['sdk'], 37);
+        expect(card['route'], updateStoreUrlAndroid);
+        expect(
+          card['pendingIntentSha256'],
+          sha256.convert(utf8.encode('aaa')).toString(),
         );
+      },
+    );
+
+    test('SDK37 indexed binding rejects wrong and duplicate exact tokens', () {
+      for (final dump in [
+        indexedIntent('bbb', 0),
+        indexedIntent('aaab', 0),
+        '${indexedIntent('aaa', 0)}${indexedIntent('aaa', 1)}',
+        '${indexedIntent('aaa', 0)}$intent',
+        indexedIntent('aaa', 0).replaceFirst('#0:', '#other:'),
+      ]) {
+        expect(() => parse(notification(), dump, 37), throwsFormatException);
+      }
+    });
+
+    test(
+      'indexed records cannot borrow request fields from the next block',
+      () {
+        final incomplete =
+            '    #0: PendingIntentRecord{aaa $packageName startActivity}\n';
+        expect(
+          () => parse(
+            notification(),
+            '$incomplete${indexedIntent('bbb', 1)}',
+            37,
+          ),
+          throwsFormatException,
+        );
+      },
+    );
 
     test(
       'binds active card to its exact current request and channel owner',

@@ -1237,6 +1237,17 @@ unsupported. Wrong values, other owners, comment decoys, unused constants and
 quoted tokens are rejected. All 21 inventory cases and the repository check
 passed in `.codex-test-logs/S2-baseline-fixes-20261018/F3/`.
 
+The SE-41 production notification parser recognizes package-grouped Android
+PendingIntent headers (`#N: PendingIntentRecord{...}`) as well as legacy
+bare/asterisk headers. It still requires exactly one record for the active
+card's exact token, then checks package, UID, request code, VIEW action, live
+state and channel ownership. Duplicate tokens fail closed, and the next
+record cannot supply missing request fields. The indexed shape follows
+[AOSP `dumpPendingIntents`](https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/main/services/core/java/com/android/server/am/PendingIntentController.java).
+Host fixtures cover this format and the negative bindings; the original API-37
+`kx0025` failure retained structural diagnostics/hashes rather than raw dumps,
+so a fresh owner-run native card check remains necessary for runtime proof.
+
 Production-bootstrap migration Wave 2 resumed on 2026-09-28. Waves 3–5 remain
 paused except the shared registrations required by Wave 2 gates. The current
 acceptance matrix, preservation decisions and candidate evidence limits are
