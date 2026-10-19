@@ -1979,6 +1979,106 @@ Calls:
   );
 
   test(
+    'adapter excludes named KX rows and continues on failure only when asked',
+    () async {
+      final calls = <List<String>>[];
+      final dependencies = AndroidProductionAudioCallSimsAdapterDependencies(
+        resolveFixtureHostIp: (_) async => '192.168.0.60',
+        startFixture:
+            ({
+              required String goExecutable,
+              required String hostIp,
+              required Map<String, String> environment,
+            }) async => AndroidProductionAudioCallFixtureLease(
+              multiaddr: '/ip4/192.168.0.60/tcp/44001/p2p/12D3KooWFixture399',
+              fixtureIdentitySha256: _fixtureSha,
+              turnAuthoritySha256: _turnAuthoritySha,
+              coturnInstanceIdentitySha256: _coturnInstanceSha,
+              pionOracleResult: _pionOracleResult(),
+              stop: () async {},
+            ),
+        runCentralSims:
+            ({
+              required String dartExecutable,
+              required List<String> arguments,
+              required Map<String, String> environment,
+            }) async {
+              calls.add(List<String>.of(arguments));
+              return 0;
+            },
+      );
+      const environment = <String, String>{
+        'RELIABILITY_MULTI_DEVICE_IDS': 'pixel,emulator-5554',
+      };
+      List<String> excluded(List<String> arguments) => [
+        for (var i = 0; i + 1 < arguments.length; i++)
+          if (arguments[i] == '--exclude') arguments[i + 1],
+      ];
+
+      final result = await runAndroidProductionAudioCallSimsAdapter(
+        mode: 'major',
+        environment: environment,
+        dependencies: dependencies,
+        includeRegressions: true,
+        continueOnFailure: true,
+        excludedCohortIds: const ['kx0025'],
+      );
+
+      expect(result, 0);
+      expect(calls, hasLength(2));
+      final [prepare, run] = calls;
+      expect(prepare, contains('--prepare-builds'));
+      expect(prepare, isNot(contains('--continue-on-failure')));
+      expect(run, contains('--continue-on-failure'));
+      for (final arguments in calls) {
+        expect(excluded(arguments), contains('kx0025'));
+        expect(excluded(arguments), isNot(contains('kx0026')));
+        expect(
+          excluded(arguments),
+          isNot(contains(androidProductionAudioCallScenarioId)),
+        );
+      }
+
+      calls.clear();
+      await runAndroidProductionAudioCallSimsAdapter(
+        mode: 'major',
+        environment: environment,
+        dependencies: dependencies,
+        includeRegressions: true,
+      );
+      expect(calls.last, isNot(contains('--continue-on-failure')));
+      expect(excluded(calls.last), isNot(contains('kx0025')));
+
+      for (final outside in <String>[
+        'kx0010',
+        androidProductionAudioCallScenarioId,
+        'production.routing_smoke',
+      ]) {
+        await expectLater(
+          runAndroidProductionAudioCallSimsAdapter(
+            mode: 'major',
+            environment: environment,
+            dependencies: dependencies,
+            includeRegressions: true,
+            excludedCohortIds: [outside],
+          ),
+          throwsFormatException,
+          reason: outside,
+        );
+      }
+      await expectLater(
+        runAndroidProductionAudioCallSimsAdapter(
+          mode: 'major',
+          environment: environment,
+          dependencies: dependencies,
+          excludedCohortIds: const ['kx0025'],
+        ),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
     'adapter delegates per-run coturn and Pion ownership to one fixture',
     () {
       final source = File(

@@ -44,6 +44,8 @@ Future<void> main(List<String> arguments) async {
       environment: Platform.environment,
       dependencies: AndroidProductionAudioCallSimsAdapterDependencies.system(),
       includeRegressions: options.includeRegressions,
+      continueOnFailure: options.continueOnFailure,
+      excludedCohortIds: options.excludedCohortIds,
     );
   } on FormatException catch (error) {
     stderr.writeln(error.message);
@@ -180,15 +182,32 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   required Map<String, String> environment,
   required AndroidProductionAudioCallSimsAdapterDependencies dependencies,
   bool includeRegressions = false,
+  bool continueOnFailure = false,
+  List<String> excludedCohortIds = const <String>[],
 }) async {
   if (mode != 'major' && mode != 'full') {
     throw const FormatException('Production audio-call mode is invalid.');
   }
+  if (excludedCohortIds.isNotEmpty) {
+    if (!includeRegressions) {
+      throw const FormatException(
+        '--exclude needs --include-regressions.',
+      );
+    }
+    final cohort = productionAudioCallCohort(environment, mode);
+    for (final id in excludedCohortIds) {
+      if (!id.startsWith('kx') || !cohort.contains(id)) {
+        throw FormatException(
+          '--exclude $id is not a KX row of the production-call cohort.',
+        );
+      }
+    }
+  }
   final selection = includeRegressions
-      ? productionAudioCallCohortExclusions(
-          environment,
-          mode,
-        ).expand((id) => ['--exclude', id]).toList()
+      ? <String>[
+          ...productionAudioCallCohortExclusions(environment, mode),
+          ...excludedCohortIds,
+        ].expand((id) => ['--exclude', id]).toList()
       : ['--only', androidProductionAudioCallScenarioId];
   final devices = _explicitAndroidPair(environment);
   final hostIp = await dependencies.resolveFixtureHostIp(environment);
@@ -278,6 +297,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
               'tool/sims/sims.dart',
               mode,
               ...selection,
+              if (continueOnFailure) '--continue-on-failure',
             ],
             environment: centralEnvironment,
           )
@@ -303,15 +323,19 @@ List<String> productionAudioCallCohortExclusions(
   Map<String, String> environment,
   String mode,
 ) {
-  final manifest = SimsManifest.loadSync(
-    File(environment['SIMS_MANIFEST'] ?? 'tool/sims/critical_features.json'),
-  );
-  manifest.validateOrThrow();
-  final active = {
-    for (final row in manifest.capabilities)
-      if (row.active && row.modes.any((value) => value.name == mode))
-        row.id: row,
-  };
+  final cohort = productionAudioCallCohort(environment, mode);
+  return _activeRows(environment, mode).keys
+      .where((id) => !cohort.contains(id))
+      .toList()
+    ..sort();
+}
+
+/// The base proof, its call-profile KX rows, and their dependency closure.
+Set<String> productionAudioCallCohort(
+  Map<String, String> environment,
+  String mode,
+) {
+  final active = _activeRows(environment, mode);
   final wanted = {
     androidProductionAudioCallScenarioId,
     for (final row in active.values)
@@ -324,7 +348,22 @@ List<String> productionAudioCallCohortExclusions(
     if (wanted.containsAll(dependencies)) break;
     wanted.addAll(dependencies);
   }
-  return active.keys.where((id) => !wanted.contains(id)).toList()..sort();
+  return wanted;
+}
+
+Map<String, CapabilitySpec> _activeRows(
+  Map<String, String> environment,
+  String mode,
+) {
+  final manifest = SimsManifest.loadSync(
+    File(environment['SIMS_MANIFEST'] ?? 'tool/sims/critical_features.json'),
+  );
+  manifest.validateOrThrow();
+  return {
+    for (final row in manifest.capabilities)
+      if (row.active && row.modes.any((value) => value.name == mode))
+        row.id: row,
+  };
 }
 
 bool _isSha256(String value) => RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
@@ -375,16 +414,24 @@ final class _ProductionAudioCallAdapterOptions {
   const _ProductionAudioCallAdapterOptions({
     required this.mode,
     required this.includeRegressions,
+    required this.continueOnFailure,
+    required this.excludedCohortIds,
   });
 
   factory _ProductionAudioCallAdapterOptions.parse(List<String> arguments) {
     String? mode;
     String? scenario;
     var includeRegressions = false;
+    var continueOnFailure = false;
+    final excludedCohortIds = <String>[];
     for (var index = 0; index < arguments.length; index += 1) {
       final argument = arguments[index];
       if (argument == '--include-regressions' && !includeRegressions) {
         includeRegressions = true;
+      } else if (argument == '--continue-on-failure' && !continueOnFailure) {
+        continueOnFailure = true;
+      } else if (argument == '--exclude' && index + 1 < arguments.length) {
+        excludedCohortIds.add(arguments[++index].trim());
       } else if (argument == '--mode' && index + 1 < arguments.length) {
         mode = arguments[++index].trim();
       } else if (argument.startsWith('--mode=')) {
@@ -408,9 +455,13 @@ final class _ProductionAudioCallAdapterOptions {
     return _ProductionAudioCallAdapterOptions(
       mode: mode!,
       includeRegressions: includeRegressions,
+      continueOnFailure: continueOnFailure,
+      excludedCohortIds: excludedCohortIds,
     );
   }
 
   final String mode;
   final bool includeRegressions;
+  final bool continueOnFailure;
+  final List<String> excludedCohortIds;
 }
