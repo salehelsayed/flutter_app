@@ -170,11 +170,27 @@ class _PulsingShimmerState extends State<_PulsingShimmer>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
-    )..repeat(reverse: true);
+    );
     _opacity = Tween<double>(
       begin: 0.3,
       end: 0.7,
     ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Honour the OS reduce-motion preference (as AmbientBackground does): a
+    // perpetual loop keeps redrawing the screen for users who turned it off.
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final reduceMotion =
+        (mediaQuery?.disableAnimations ?? false) ||
+        (mediaQuery?.accessibleNavigation ?? false);
+    if (reduceMotion) {
+      _controller.stop();
+    } else if (!_controller.isAnimating) {
+      _controller.repeat(reverse: true);
+    }
   }
 
   @override

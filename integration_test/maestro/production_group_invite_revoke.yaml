@@ -2,6 +2,11 @@ appId: ${APP_ID}
 name: production_group_invite_revoke
 ---
 - tapOn: Group information
+# The pending member row can sit below the fold on a 360x800 dp screen.
+- scrollUntilVisible:
+    element: Revoke
+    direction: DOWN
+    timeout: 20000
 - tapOn: Revoke
 - assertVisible: Cancel
 - tapOn: Revoke

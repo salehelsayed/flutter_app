@@ -2225,6 +2225,7 @@
         "integration_test/maestro/production_direct_open.yaml",
         "integration_test/maestro/production_group_open.yaml",
         "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
         "integration_test/maestro/production_direct_send_batch5.yaml",
         "integration_test/maestro/production_conversation_back.yaml",
         "integration_test/maestro/production_direct_delete.yaml",

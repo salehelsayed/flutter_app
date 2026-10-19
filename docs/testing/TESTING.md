@@ -253,6 +253,36 @@ closed, and it fails without the fix. After a successful scan, two request sends
 are expected: the scanner's own, then the key-exchange retry coordinator's about
 one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
 
+A USB Android 8.1 phone (Honor JSN-L22, API 27, SwiftKey) passed all five
+Group invites and Media production journeys on 2026-10-17 (`invites`,
+`invite-matrix`, `invite-accept-spinner`, `new-member-media`,
+`delete-preserves-friends`) after these repairs: the preflight accepts API 27's
+process-dump ending (`mLastIdleTime=…`); POST_NOTIFICATIONS is granted only on
+API 33+; `production_reopen_seeded` waits 45 s (debug cold start reached
+`runApp` at 16.7 s); the delete runner sends through a per-device verbatim
+keyboard session; `production_group_send` uses bounded backs (`hideKeyboard`
+acts as Back there); the group name field (`group_name_field`) and group info
+button (`group_info_button`, explicit label) carry automation ids because API
+27 exposes neither a text-field hint nor a tooltip-only label as plain text.
+Setup on such a phone: automatic time on (a 1970 clock fails every relay TLS
+dial) and `io.appium.settings` installed for the verbatim keyboard.
+Production journeys also turn heads-up notifications off on every pinned
+device (`heads_up_notifications_enabled=0`) for the run and restore the exact
+prior value (deleting it when it was unset). On 2026-10-18 a personal
+phone's WhatsApp heads-up covered Orbit's create-group button and took the
+Maestro tap in `ge004`. That phone's SystemUI follows the setting live
+(`dumpsys activity service com.android.systemui`: `mUseHeadsUp`).
+Evidence: `.codex-test-logs/phone-emu/run-14`.
+
+`production_catalog_remove_charlie_retry` opens Group Info itself when it is
+not already showing. A first remove attempt can die before its first step (a
+Maestro hang on the Honor, killed at the flow deadline), leaving the chat
+open; the retry used to assert Group Info there and fail all five tries.
+On that phone, `ge005` and `readd-cycles` (20 cycles each) reach only ~16
+cycles inside their 7200 s runner deadline: the phone (Alice) is the slow
+receiver, at 5-12 min per cycle against ~2 s on the emulators. Evidence:
+`.codex-test-logs/phone-emu/run-15`, `run-16`, `run-17`.
+
 The group multi-party integration harness must register `testWidgets` before
 awaiting platform runtime configuration; put asynchronous configuration in
 `setUpAll` and keep registration-time names independent of late runtime fields.
@@ -5156,7 +5186,11 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/quic-debug-20261010/diagnosis.json`.
   A normal debug APK also needs the existing Gradle property
   `enableAndroidNativeCalls=true` alongside Dart call defines; the first local
-  Pixel build omitted it and correctly rejected native capability setup. Its
+  Pixel build omitted it and correctly rejected native capability setup. The
+  composition now logs that case as `CALL_SIGNALING_START_RESULT`
+  `stage=listenerInstallation`, `errorType=AndroidCallLifecycleException`. A
+  debug build also prints `AndroidCallLifecycleException(nativeFailure)` from
+  `setCapabilityEnabled`; before, the caught error was dropped entirely. Its
   replacement was built/installed with that property, preserving both artifacts
   and the existing identity. Do not classify that setup failure as APNs loss.
   The physical September 14 repeat set used the existing isolated Pixel 6 caller

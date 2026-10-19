@@ -5,6 +5,9 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/production_routing_criteria.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_journey_peer.dart';
+import '../support/production_sims_result.dart';
+import '../support/production_verbatim_keyboard.dart';
+import '../../tool/sims/production_routing_resume.dart';
 
 const _scenario = 'production.routing_smoke';
 Map<String, Object?> _object(Object? v) => Map<String, Object?>.from(v as Map);
@@ -30,9 +33,19 @@ Future<void> main(List<String> args) async {
     output = await (await Directory(
       path,
     ).absolute.create(recursive: true)).createTemp('attempt-');
+    final resume = ProductionRoutingResume.fromEnvironment(
+      Platform.environment,
+    );
     final journey = ProductionAndroidJourney.fromEnvironment(_scenario, output);
     final cases = <Map<String, Object?>>[];
-    final proof = <String, Object?>{'cases': cases, 'runId': journey.runId};
+    final imeSwitches = <Map<String, Object?>>[];
+    final proof = <String, Object?>{
+      'cases': cases,
+      'runId': journey.runId,
+      'imeSwitches': imeSwitches,
+    };
+    // Restores device keyboards switched for verbatim sends (set below).
+    Future<void> Function() restoreKeyboards = () async {};
     try {
       await journey.prepare();
       final a = await journey.alice.command('identity'),
@@ -66,6 +79,19 @@ Future<void> main(List<String> args) async {
       final openLane = <String, String?>{'alice': null, 'bob': null};
       ProductionJourneyPeer peer(String role) =>
           role == 'alice' ? journey.alice : journey.bob;
+      final keyboards = {
+        for (final role in ['alice', 'bob'])
+          role: ProductionVerbatimKeyboardSession(
+            (args) => peer(role).adb(args),
+            imeSwitches,
+          ),
+      };
+      restoreKeyboards = () async {
+        for (final keyboard in keyboards.values) {
+          await keyboard.restore();
+        }
+      };
+
       String opposite(String role) => role == 'alice' ? 'bob' : 'alice';
       Future<Map<String, Object?>> snapshot(
         String role, {
@@ -172,10 +198,16 @@ Future<void> main(List<String> args) async {
         final count = events(before, name).length;
         final text = '$id: $suffix ${journey.runId}';
         final sendWatch = Stopwatch()..start();
-        await flow(role, 'production_direct_send', '$id-send-${n ?? serial}', {
-          'MESSAGE': text,
-          'MESSAGE_PATTERN': RegExp.escape(text),
-        });
+        final label = '$id-send-${n ?? serial}';
+        await keyboards[role]!.run(
+          label,
+          (verbatim) => flow(
+            role,
+            verbatim ? 'production_verbatim_send' : 'production_direct_send',
+            label,
+            {'MESSAGE': text, 'MESSAGE_PATTERN': RegExp.escape(text)},
+          ),
+        );
         final observed = await waitForProductionObservation(
           'actual send timing and row',
           const Duration(minutes: 3),
@@ -229,462 +261,529 @@ Future<void> main(List<String> args) async {
         ).writeAsString(jsonEncode(proof));
       }
 
-      final s1 = await send('S1', 'cold hello');
-      await record('S1', [s1]);
-      final convergence = Stopwatch()..start();
-      final converged = await waitForProductionObservation(
-        'S1 exact delivered convergence',
-        const Duration(minutes: 2),
-        () async {
-          final row = exactRow(
-            await snapshot('alice'),
-            _object(s1['sender'])['id']! as String,
-            incoming: false,
+      if (resume.runs('S1')) {
+        final s1 = await send('S1', 'cold hello');
+        await record('S1', [s1]);
+        final convergence = Stopwatch()..start();
+        final converged = await waitForProductionObservation(
+          'S1 exact delivered convergence',
+          const Duration(minutes: 2),
+          () async {
+            final row = exactRow(
+              await snapshot('alice'),
+              _object(s1['sender'])['id']! as String,
+              incoming: false,
+            );
+            return row['status'] == 'delivered' ? row : null;
+          },
+        );
+        await record('S1-CONV', [], {
+          'messageId': converged['id'],
+          'status': converged['status'],
+          'convergenceMs': convergence.elapsedMilliseconds,
+        });
+      }
+      if (resume.runs('S2')) {
+        final s2 = <Map<String, Object?>>[];
+        final s2Watch = Stopwatch()..start();
+        for (var n = 1; n <= 5; n++) {
+          s2.add(await send('S2', 'warm msg $n', n: n));
+        }
+        await record('S2', s2, {'sendPhaseMs': s2Watch.elapsedMilliseconds});
+      }
+      if (resume.runs('S3')) {
+        final s3Stop = await node('bob', 'stop');
+        final s3 = await send('S3', 'offline inbox', awaitReceive: false);
+        final s3Start = await restartBob();
+        await receive(s3);
+        await record('S3', [s3], {'stop': s3Stop, 'restart': s3Start});
+      }
+      if (resume.runs('S4')) {
+        await Future<void>.delayed(const Duration(seconds: 3));
+        await record('S4', [await send('S4', 'reconnect')]);
+      }
+      if (resume.runs('S5')) {
+        final s5 = <Map<String, Object?>>[];
+        for (var n = 1; n <= 5; n++) {
+          s5.add(
+            await send(
+              'S5',
+              'bidirectional $n',
+              role: n.isEven ? 'bob' : 'alice',
+              n: n,
+            ),
           );
-          return row['status'] == 'delivered' ? row : null;
-        },
-      );
-      await record('S1-CONV', [], {
-        'messageId': converged['id'],
-        'status': converged['status'],
-        'convergenceMs': convergence.elapsedMilliseconds,
-      });
-      final s2 = <Map<String, Object?>>[];
-      final s2Watch = Stopwatch()..start();
-      for (var n = 1; n <= 5; n++) {
-        s2.add(await send('S2', 'warm msg $n', n: n));
+        }
+        await record('S5', s5);
       }
-      await record('S2', s2, {'sendPhaseMs': s2Watch.elapsedMilliseconds});
-      final s3Stop = await node('bob', 'stop');
-      final s3 = await send('S3', 'offline inbox', awaitReceive: false);
-      final s3Start = await restartBob();
-      await receive(s3);
-      await record('S3', [s3], {'stop': s3Stop, 'restart': s3Start});
-      await Future<void>.delayed(const Duration(seconds: 3));
-      await record('S4', [await send('S4', 'reconnect')]);
-      final s5 = <Map<String, Object?>>[];
-      for (var n = 1; n <= 5; n++) {
-        s5.add(
-          await send(
-            'S5',
-            'bidirectional $n',
-            role: n.isEven ? 'bob' : 'alice',
-            n: n,
-          ),
+      if (resume.runs('S6')) {
+        final previous = journey.bob;
+        journey.bob = await journey.stageFreshInvocation(previous);
+        await journey.killOwnedProcess(previous);
+        await flow('bob', 'production_resume', 'S6-new-process');
+        await journey.bob.awaitReady();
+        await journey.bob.command('adopt_prepared_group', {'groupId': group});
+        openLane['bob'] = null;
+        // Fresh process starts in Inner Circle; select the existing All Chats UI.
+        await flow('bob', 'production_all_chats', 'S6-all-chats');
+        final s6 = await send('S6', 'stale recovery');
+        await record(
+          'S6',
+          [s6],
+          {
+            'processDeathVerified': true,
+            'beforeNonce': previous.invocation.nonce,
+            'afterNonce': journey.bob.invocation.nonce,
+          },
         );
       }
-      await record('S5', s5);
-      final previous = journey.bob;
-      journey.bob = await journey.stageFreshInvocation(previous);
-      await journey.killOwnedProcess(previous);
-      await flow('bob', 'production_resume', 'S6-new-process');
-      await journey.bob.awaitReady();
-      await journey.bob.command('adopt_prepared_group', {'groupId': group});
-      openLane['bob'] = null;
-      // Fresh process starts in Inner Circle; select the existing All Chats UI.
-      await flow('bob', 'production_all_chats', 'S6-all-chats');
-      final s6 = await send('S6', 'stale recovery');
-      await record(
-        'S6',
-        [s6],
-        {
-          'processDeathVerified': true,
-          'beforeNonce': previous.invocation.nonce,
-          'afterNonce': journey.bob.invocation.nonce,
-        },
-      );
-      final missing = await journey.alice.command(
-        'routing_prepare_unreachable_contact',
-      );
-      final missingId = missing['peerId']! as String;
-      extraPeers.add(missingId);
-      // Reopen Alice normally so the ordinary contact list observes the fixture.
-      journey.alice = await journey.reopen(journey.alice);
-      openLane['alice'] = null;
-      await journey.alice.command('adopt_prepared_group', {'groupId': group});
-      await record(
-        'S7',
-        [
-          await send(
-            'S7',
-            'unreachable',
-            target: missingId,
-            awaitReceive: false,
-          ),
-        ],
-        {'unreachablePeerId': missingId},
-      );
-      final s8 = <Map<String, Object?>>[];
-      for (var n = 1; n <= 4; n++) {
-        s8.add(await send('S8', 'msg$n ${n == 1 ? 'cold' : 'warm'}', n: n));
-      }
-      final s8Stop = await node('bob', 'stop');
-      final offline = await send(
-        'S8',
-        'msg5 offline',
-        n: 5,
-        awaitReceive: false,
-      );
-      s8.add(offline);
-      final s8Start = await restartBob();
-      await receive(offline);
-      s8.add(await send('S8', 'msg6 reconnect', n: 6));
-      s8.add(await send('S8', 'bob msg7', role: 'bob', n: 7));
-      for (var n = 8; n <= 10; n++) {
-        s8.add(await send('S8', 'msg$n warm', n: n));
-      }
-      await record('S8', s8, {'stop': s8Stop, 'restart': s8Start});
-      final s9Stop = await node('bob', 'stop'), s9 = <Map<String, Object?>>[];
-      final s9Watch = Stopwatch()..start();
-      await inLane('alice', 'direct');
-      final s9Before = await snapshot('alice');
-      final s9PriorTimings = events(s9Before, 'CHAT_MSG_SEND_TIMING').length;
-      final s9Texts = [
-        for (var n = 1; n <= 5; n++) 'S9: batch inbox $n ${journey.runId}',
-      ];
-      await flow('alice', 'production_direct_send_batch5', 'S9-send-batch', {
-        for (var n = 1; n <= 5; n++) ...{
-          'MESSAGE_$n': s9Texts[n - 1],
-          'MESSAGE_PATTERN_$n': RegExp.escape(s9Texts[n - 1]),
-        },
-      });
-      final s9Observed = await waitForProductionObservation(
-        'five exact S9 rows and production send timings',
-        const Duration(minutes: 3),
-        () async {
-          final value = await snapshot('alice');
-          final rows = _maps(value['messages']);
-          final timings = events(
-            value,
-            'CHAT_MSG_SEND_TIMING',
-          ).skip(s9PriorTimings).toList();
-          if (timings.length > 5 ||
-              s9Texts.any(
-                (text) =>
-                    rows
-                        .where(
-                          (row) =>
-                              row['text'] == text && row['incoming'] == false,
-                        )
-                        .length >
-                    1,
-              )) {
-            throw StateError('ambiguous S9 batch send');
-          }
-          final exactRows = [
-            for (final text in s9Texts)
-              rows
-                  .where(
-                    (row) => row['text'] == text && row['incoming'] == false,
-                  )
-                  .singleOrNull,
-          ];
-          return timings.length == 5 && exactRows.every((row) => row != null)
-              ? {'rows': exactRows, 'timings': timings}
-              : null;
-        },
-      );
-      final s9SendMs = s9Watch.elapsedMilliseconds;
-      if (s9Watch.elapsed > const Duration(minutes: 3)) {
-        throw StateError(
-          'S9 five-message batch exceeded the original stage bound',
+      if (resume.runs('S7')) {
+        final missing = await journey.alice.command(
+          'routing_prepare_unreachable_contact',
+        );
+        final missingId = missing['peerId']! as String;
+        extraPeers.add(missingId);
+        // Reopen Alice normally so the ordinary contact list observes the fixture.
+        journey.alice = await journey.reopen(journey.alice);
+        openLane['alice'] = null;
+        await journey.alice.command('adopt_prepared_group', {'groupId': group});
+        await record(
+          'S7',
+          [
+            await send(
+              'S7',
+              'unreachable',
+              target: missingId,
+              awaitReceive: false,
+            ),
+          ],
+          {'unreachablePeerId': missingId},
         );
       }
-      final s9Rows = (s9Observed['rows'] as List).cast<Map<String, Object?>>();
-      final s9Timings = (s9Observed['timings'] as List)
-          .cast<Map<String, Object?>>();
-      for (var n = 1; n <= 5; n++) {
-        s9.add({
-          'senderRole': 'alice',
-          'sender': s9Rows[n - 1],
-          'timing': _object(s9Timings[n - 1]['details']),
-          'n': n,
+      if (resume.runs('S8')) {
+        final s8 = <Map<String, Object?>>[];
+        for (var n = 1; n <= 4; n++) {
+          s8.add(await send('S8', 'msg$n ${n == 1 ? 'cold' : 'warm'}', n: n));
+        }
+        final s8Stop = await node('bob', 'stop');
+        final offline = await send(
+          'S8',
+          'msg5 offline',
+          n: 5,
+          awaitReceive: false,
+        );
+        s8.add(offline);
+        final s8Start = await restartBob();
+        await receive(offline);
+        s8.add(await send('S8', 'msg6 reconnect', n: 6));
+        s8.add(await send('S8', 'bob msg7', role: 'bob', n: 7));
+        for (var n = 8; n <= 10; n++) {
+          s8.add(await send('S8', 'msg$n warm', n: n));
+        }
+        await record('S8', s8, {'stop': s8Stop, 'restart': s8Start});
+      }
+      if (resume.runs('S9')) {
+        final s9Stop = await node('bob', 'stop'), s9 = <Map<String, Object?>>[];
+        final s9Watch = Stopwatch()..start();
+        await inLane('alice', 'direct');
+        final s9Before = await snapshot('alice');
+        final s9PriorTimings = events(s9Before, 'CHAT_MSG_SEND_TIMING').length;
+        final s9Texts = [
+          for (var n = 1; n <= 5; n++) 'S9: batch inbox $n ${journey.runId}',
+        ];
+        // The batch flow uses the device keyboard and its hideKeyboard.
+        await keyboards['alice']!.restore();
+        await flow('alice', 'production_direct_send_batch5', 'S9-send-batch', {
+          for (var n = 1; n <= 5; n++) ...{
+            'MESSAGE_$n': s9Texts[n - 1],
+            'MESSAGE_PATTERN_$n': RegExp.escape(s9Texts[n - 1]),
+          },
+        });
+        final s9Observed = await waitForProductionObservation(
+          'five exact S9 rows and production send timings',
+          const Duration(minutes: 3),
+          () async {
+            final value = await snapshot('alice');
+            final rows = _maps(value['messages']);
+            final timings = events(
+              value,
+              'CHAT_MSG_SEND_TIMING',
+            ).skip(s9PriorTimings).toList();
+            if (timings.length > 5 ||
+                s9Texts.any(
+                  (text) =>
+                      rows
+                          .where(
+                            (row) =>
+                                row['text'] == text && row['incoming'] == false,
+                          )
+                          .length >
+                      1,
+                )) {
+              throw StateError('ambiguous S9 batch send');
+            }
+            final exactRows = [
+              for (final text in s9Texts)
+                rows
+                    .where(
+                      (row) => row['text'] == text && row['incoming'] == false,
+                    )
+                    .singleOrNull,
+            ];
+            return timings.length == 5 && exactRows.every((row) => row != null)
+                ? {'rows': exactRows, 'timings': timings}
+                : null;
+          },
+        );
+        final s9SendMs = s9Watch.elapsedMilliseconds;
+        if (s9Watch.elapsed > const Duration(minutes: 3)) {
+          throw StateError(
+            'S9 five-message batch exceeded the original stage bound',
+          );
+        }
+        final s9Rows = (s9Observed['rows'] as List)
+            .cast<Map<String, Object?>>();
+        final s9Timings = (s9Observed['timings'] as List)
+            .cast<Map<String, Object?>>();
+        for (var n = 1; n <= 5; n++) {
+          s9.add({
+            'senderRole': 'alice',
+            'sender': s9Rows[n - 1],
+            'timing': _object(s9Timings[n - 1]['details']),
+            'n': n,
+            'sendPhaseMs': s9SendMs,
+          });
+        }
+        final s9Start = await restartBob();
+        for (final x in s9) {
+          await receive(x);
+        }
+        await record('S9', s9, {
+          'stop': s9Stop,
+          'restart': s9Start,
           'sendPhaseMs': s9SendMs,
         });
       }
-      final s9Start = await restartBob();
-      for (final x in s9) {
-        await receive(x);
-      }
-      await record('S9', s9, {
-        'stop': s9Stop,
-        'restart': s9Start,
-        'sendPhaseMs': s9SendMs,
-      });
-      final s10 = await send('S10', 'message to delete');
-      final deleteCount = events(
-        await snapshot('alice'),
-        'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING',
-      ).length;
-      await flow('alice', 'production_direct_delete', 'S10-delete', {
-        'MESSAGE_PATTERN': RegExp.escape(
-          _object(s10['sender'])['text']! as String,
-        ),
-      });
-      final message = _object(s10['sender'])['id']! as String;
-      final deletion = await waitForProductionObservation(
-        'production deletion timing',
-        const Duration(minutes: 3),
-        () async {
-          final added = events(
-            await snapshot('alice'),
-            'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING',
-          ).skip(deleteCount).toList();
-          if (added.length > 1) throw StateError('ambiguous deletion result');
-          return added.length == 1 ? _object(added.single['details']) : null;
-        },
-      );
-      final tombstone = await waitForProductionObservation(
-        'committed receiver tombstone',
-        const Duration(minutes: 3),
-        () async {
-          final rows = _maps(
-            (await snapshot('bob', messageIds: [message]))['tombstones'],
-          );
-          return rows.singleOrNull?['deletedAt'] != null ? rows.single : null;
-        },
-      );
-      await record(
-        'S10',
-        [s10],
-        {'deletion': deletion, 'receiverTombstone': tombstone},
-      );
-      // Protocol-only load keeps the original ten rapid use-case invocations;
-      // serial UI startup would change this load case's semantics.
-      final rapid = await journey.alice.routingProtocolCase({
-        'caseId': 'S13',
-        'peerId': peers['bob'],
-      });
-      final rapidRows = await snapshot('alice');
-      final rapidEvents = _maps(
-        rapid['events'],
-      ).where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING').toList();
-      final ids = (rapid['messageIds'] as List).cast<String>();
-      if (ids.length != 10 || rapidEvents.length != 10) {
-        throw StateError('rapid send receipts incomplete');
-      }
-      final s13 = [
-        for (var i = 0; i < 10; i++)
-          <String, Object?>{
-            'senderRole': 'alice',
-            'sender': exactRow(rapidRows, ids[i], incoming: false),
-            'timing': _object(rapidEvents[i]['details']),
+      if (resume.runs('S10')) {
+        final s10 = await send('S10', 'message to delete');
+        final deleteCount = events(
+          await snapshot('alice'),
+          'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING',
+        ).length;
+        await flow('alice', 'production_direct_delete', 'S10-delete', {
+          'MESSAGE_PATTERN': RegExp.escape(
+            _object(s10['sender'])['text']! as String,
+          ),
+        });
+        final message = _object(s10['sender'])['id']! as String;
+        final deletion = await waitForProductionObservation(
+          'production deletion timing',
+          const Duration(minutes: 3),
+          () async {
+            final added = events(
+              await snapshot('alice'),
+              'CHAT_MSG_DELETE_FOR_EVERYONE_TIMING',
+            ).skip(deleteCount).toList();
+            if (added.length > 1) throw StateError('ambiguous deletion result');
+            return added.length == 1 ? _object(added.single['details']) : null;
           },
-      ];
-      final rapidReceiveWatch = Stopwatch()..start();
-      await waitForProductionObservation(
-        'at least five rapid receipts',
-        const Duration(minutes: 3),
-        () async {
-          final value = await snapshot('bob');
-          var received = 0;
-          for (final x in s13) {
-            final row = _maps(value['messages'])
-                .where(
-                  (m) =>
-                      m['incoming'] == true &&
-                      m['id'] == _object(x['sender'])['id'],
-                )
-                .singleOrNull;
-            if (row != null) {
-              x['receiver'] = row;
-              x['receiptMs'] = rapidReceiveWatch.elapsedMilliseconds;
-              received++;
+        );
+        final tombstone = await waitForProductionObservation(
+          'committed receiver tombstone',
+          const Duration(minutes: 3),
+          () async {
+            final rows = _maps(
+              (await snapshot('bob', messageIds: [message]))['tombstones'],
+            );
+            return rows.singleOrNull?['deletedAt'] != null ? rows.single : null;
+          },
+        );
+        await record(
+          'S10',
+          [s10],
+          {'deletion': deletion, 'receiverTombstone': tombstone},
+        );
+      }
+      if (resume.runs('S13')) {
+        // Protocol-only load keeps the original ten rapid use-case invocations;
+        // serial UI startup would change this load case's semantics.
+        final rapid = await journey.alice.routingProtocolCase({
+          'caseId': 'S13',
+          'peerId': peers['bob'],
+        });
+        final rapidRows = await snapshot('alice');
+        final rapidEvents = _maps(
+          rapid['events'],
+        ).where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING').toList();
+        final ids = (rapid['messageIds'] as List).cast<String>();
+        if (ids.length != 10 || rapidEvents.length != 10) {
+          throw StateError('rapid send receipts incomplete');
+        }
+        final s13 = [
+          for (var i = 0; i < 10; i++)
+            <String, Object?>{
+              'senderRole': 'alice',
+              'sender': exactRow(rapidRows, ids[i], incoming: false),
+              'timing': _object(rapidEvents[i]['details']),
+            },
+        ];
+        final rapidReceiveWatch = Stopwatch()..start();
+        await waitForProductionObservation(
+          'at least five rapid receipts',
+          const Duration(minutes: 3),
+          () async {
+            final value = await snapshot('bob');
+            var received = 0;
+            for (final x in s13) {
+              final row = _maps(value['messages'])
+                  .where(
+                    (m) =>
+                        m['incoming'] == true &&
+                        m['id'] == _object(x['sender'])['id'],
+                  )
+                  .singleOrNull;
+              if (row != null) {
+                x['receiver'] = row;
+                x['receiptMs'] = rapidReceiveWatch.elapsedMilliseconds;
+                received++;
+              }
             }
-          }
-          return received >= 5 ? true : null;
-        },
-      );
-      await record('S13', s13);
-      final voice = await journey.alice.routingProtocolCase({
-        'caseId': 'S11',
-        'peerId': peers['bob'],
-      });
-      final voiceEvents = _maps(
-        voice['events'],
-      ).where((e) => e['event'] == 'VOICE_SEND_TIMING').toList();
-      if (voiceEvents.length != 1) throw StateError('voice timing missing');
-      await record('S11', [
-        {
+            return received >= 5 ? true : null;
+          },
+        );
+        await record('S13', s13);
+      }
+      if (resume.runs('S11')) {
+        final voice = await journey.alice.routingProtocolCase({
+          'caseId': 'S11',
+          'peerId': peers['bob'],
+        });
+        final voiceEvents = _maps(
+          voice['events'],
+        ).where((e) => e['event'] == 'VOICE_SEND_TIMING').toList();
+        if (voiceEvents.length != 1) throw StateError('voice timing missing');
+        await record('S11', [
+          {
+            'senderRole': 'alice',
+            'sender': exactRow(
+              await snapshot('alice'),
+              (voice['messageIds'] as List).single as String,
+              incoming: false,
+            ),
+            'timing': _object(voiceEvents.single['details']),
+          },
+        ]);
+      }
+      if (resume.runs('S12')) {
+        final media = await journey.alice.routingProtocolCase({
+          'caseId': 'S12',
+          'peerId': peers['bob'],
+        });
+        await record('S12', [], {
+          'scope': 'informational',
+          'uploads': media['uploads'],
+        });
+      }
+      if (resume.runs('S14')) {
+        final local = _object(
+          (await snapshot('alice'))['localPeers'],
+        )[peers['bob']];
+        final s14 = await send(
+          'S14',
+          local == true ? 'local wifi' : 'relay fallback',
+          awaitReceive: false,
+        );
+        // Informational receive keeps the original bounded attempt without a new
+        // LAN success threshold. Only an actual incoming row gets a receipt.
+        try {
+          await receive(s14, timeout: const Duration(seconds: 30));
+        } on Exception catch (error) {
+          s14['receiveError'] = '$error';
+        }
+        await record(
+          'S14',
+          [s14],
+          {'scope': 'informational', 'isLocal': local},
+        );
+      }
+      if (resume.runs('S15')) {
+        await node('bob', 'stop');
+        final core = await node('bob', 'start_core');
+        final gap = await journey.alice.routingProtocolCase({
+          'caseId': 'S15',
+          'peerId': peers['bob'],
+        });
+        final gapEvents = _maps(
+          gap['events'],
+        ).where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING').toList();
+        if (gapEvents.length != 1) throw StateError('gap timing missing');
+        final s15 = <String, Object?>{
           'senderRole': 'alice',
           'sender': exactRow(
             await snapshot('alice'),
-            (voice['messageIds'] as List).single as String,
+            (gap['messageIds'] as List).single as String,
             incoming: false,
           ),
-          'timing': _object(voiceEvents.single['details']),
-        },
-      ]);
-      final media = await journey.alice.routingProtocolCase({
-        'caseId': 'S12',
-        'peerId': peers['bob'],
-      });
-      await record('S12', [], {
-        'scope': 'informational',
-        'uploads': media['uploads'],
-      });
-      final local = _object(
-        (await snapshot('alice'))['localPeers'],
-      )[peers['bob']];
-      final s14 = await send(
-        'S14',
-        local == true ? 'local wifi' : 'relay fallback',
-        awaitReceive: false,
-      );
-      // Informational receive keeps the original bounded attempt without a new
-      // LAN success threshold. Only an actual incoming row gets a receipt.
-      try {
-        await receive(s14, timeout: const Duration(seconds: 30));
-      } on Exception catch (error) {
-        s14['receiveError'] = '$error';
+          'timing': _object(gapEvents.single['details']),
+        };
+        await node('bob', 'warm_background');
+        await receive(s15);
+        await record('S15', [s15], {'coreStart': core});
       }
-      await record('S14', [s14], {'scope': 'informational', 'isLocal': local});
-      await node('bob', 'stop');
-      final core = await node('bob', 'start_core');
-      final gap = await journey.alice.routingProtocolCase({
-        'caseId': 'S15',
-        'peerId': peers['bob'],
-      });
-      final gapEvents = _maps(
-        gap['events'],
-      ).where((e) => e['event'] == 'CHAT_MSG_SEND_TIMING').toList();
-      if (gapEvents.length != 1) throw StateError('gap timing missing');
-      final s15 = <String, Object?>{
-        'senderRole': 'alice',
-        'sender': exactRow(
-          await snapshot('alice'),
-          (gap['messageIds'] as List).single as String,
-          incoming: false,
-        ),
-        'timing': _object(gapEvents.single['details']),
-      };
-      await node('bob', 'warm_background');
-      await receive(s15);
-      await record('S15', [s15], {'coreStart': core});
-      final restarts = <Map<String, Object?>>[];
-      final stops = {
-        for (final role in peers.keys) role: await node(role, 'stop'),
-      };
-      for (final role in peers.keys) {
-        final start = await node(role, 'start');
-        await peer(role).awaitReady();
-        restarts.add({'role': role, 'stop': stops[role], 'start': start});
+      if (resume.runs('X1')) {
+        final restarts = <Map<String, Object?>>[];
+        final stops = {
+          for (final role in peers.keys) role: await node(role, 'stop'),
+        };
+        for (final role in peers.keys) {
+          final start = await node(role, 'start');
+          await peer(role).awaitReady();
+          restarts.add({'role': role, 'stop': stops[role], 'start': start});
+        }
+        await record(
+          'X1',
+          [await send('X1', 'post restart')],
+          {'restarts': restarts},
+        );
       }
-      await record(
-        'X1',
-        [await send('X1', 'post restart')],
-        {'restarts': restarts},
-      );
-      final lifecycle = <Map<String, Object?>>[];
-      for (final role in peers.keys) {
-        await flow(role, 'production_background', 'X2-$role-home');
-        final paused = await snapshot(role);
-        lifecycle.add({'role': role, 'paused': paused['lifecycle']});
+      if (resume.runs('X2')) {
+        final lifecycle = <Map<String, Object?>>[];
+        for (final role in peers.keys) {
+          await flow(role, 'production_background', 'X2-$role-home');
+          final paused = await snapshot(role);
+          lifecycle.add({'role': role, 'paused': paused['lifecycle']});
+        }
+        await Future<void>.delayed(const Duration(seconds: 3));
+        for (final row in lifecycle) {
+          final role = row['role']! as String;
+          await flow(role, 'production_resume', 'X2-$role-resume');
+          row['resumed'] = (await snapshot(role))['lifecycle'];
+        }
+        await record(
+          'X2',
+          [await send('X2', 'post resume')],
+          {'lifecycle': lifecycle},
+        );
       }
-      await Future<void>.delayed(const Duration(seconds: 3));
-      for (final row in lifecycle) {
-        final role = row['role']! as String;
-        await flow(role, 'production_resume', 'X2-$role-resume');
-        row['resumed'] = (await snapshot(role))['lifecycle'];
+      if (resume.runs('X3')) {
+        final health = [
+          for (final role in peers.keys) await node(role, 'health_check'),
+        ];
+        await record(
+          'X3',
+          [await send('X3', 'post healthcheck')],
+          {'healthChecks': health},
+        );
       }
-      await record(
-        'X2',
-        [await send('X2', 'post resume')],
-        {'lifecycle': lifecycle},
-      );
-      final health = [
-        for (final role in peers.keys) await node(role, 'health_check'),
-      ];
-      await record(
-        'X3',
-        [await send('X3', 'post healthcheck')],
-        {'healthChecks': health},
-      );
       await orbit('alice');
       await orbit('bob');
       for (final role in peers.keys) {
         await peer(role).command('rejoin_topics');
       }
-      await record('G1', [await send('G1', 'cold group hello', lane: 'group')]);
-      final g2 = <Map<String, Object?>>[];
-      final g2Watch = Stopwatch()..start();
-      for (var n = 1; n <= 5; n++) {
-        g2.add(await send('G2', 'warm $n', lane: 'group', n: n));
+      if (resume.runs('G1')) {
+        await record('G1', [
+          await send('G1', 'cold group hello', lane: 'group'),
+        ]);
       }
-      await record('G2', g2, {'sendPhaseMs': g2Watch.elapsedMilliseconds});
-      final g3 = <Map<String, Object?>>[];
-      for (var n = 1; n <= 3; n++) {
-        g3.add(
-          await send(
-            'G3',
-            'bidirectional $n',
-            lane: 'group',
-            role: n == 2 ? 'bob' : 'alice',
-            n: n,
-          ),
+      if (resume.runs('G2')) {
+        final g2 = <Map<String, Object?>>[];
+        final g2Watch = Stopwatch()..start();
+        for (var n = 1; n <= 5; n++) {
+          g2.add(await send('G2', 'warm $n', lane: 'group', n: n));
+        }
+        await record('G2', g2, {'sendPhaseMs': g2Watch.elapsedMilliseconds});
+      }
+      if (resume.runs('G3')) {
+        final g3 = <Map<String, Object?>>[];
+        for (var n = 1; n <= 3; n++) {
+          g3.add(
+            await send(
+              'G3',
+              'bidirectional $n',
+              lane: 'group',
+              role: n == 2 ? 'bob' : 'alice',
+              n: n,
+            ),
+          );
+        }
+        await record('G3', g3);
+      }
+      if (resume.runs('G4')) {
+        final g4Stop = await node('bob', 'stop');
+        final g4 = await send(
+          'G4',
+          'offline group inbox',
+          lane: 'group',
+          awaitReceive: false,
         );
+        final g4Start = await restartBob(groupRecovery: true);
+        await receive(g4);
+        await record('G4', [g4], {'stop': g4Stop, 'restart': g4Start});
       }
-      await record('G3', g3);
-      final g4Stop = await node('bob', 'stop');
-      final g4 = await send(
-        'G4',
-        'offline group inbox',
-        lane: 'group',
-        awaitReceive: false,
-      );
-      final g4Start = await restartBob(groupRecovery: true);
-      await receive(g4);
-      await record('G4', [g4], {'stop': g4Stop, 'restart': g4Start});
-      final g5 = <Map<String, Object?>>[];
-      for (var n = 1; n <= 4; n++) {
-        g5.add(
-          await send(
-            'G5',
-            'msg$n ${n == 1 ? 'cold' : 'warm'}',
-            lane: 'group',
-            n: n,
-          ),
+      if (resume.runs('G5')) {
+        final g5 = <Map<String, Object?>>[];
+        for (var n = 1; n <= 4; n++) {
+          g5.add(
+            await send(
+              'G5',
+              'msg$n ${n == 1 ? 'cold' : 'warm'}',
+              lane: 'group',
+              n: n,
+            ),
+          );
+        }
+        final g5Stop = await node('bob', 'stop');
+        final g5Offline = await send(
+          'G5',
+          'msg5 offline',
+          lane: 'group',
+          n: 5,
+          awaitReceive: false,
         );
+        g5.add(g5Offline);
+        final g5Start = await restartBob(groupRecovery: true);
+        await receive(g5Offline);
+        g5.add(await send('G5', 'msg6 reconnect', lane: 'group', n: 6));
+        g5.add(await send('G5', 'bob msg7', lane: 'group', role: 'bob', n: 7));
+        for (var n = 8; n <= 9; n++) {
+          g5.add(await send('G5', 'msg$n warm', lane: 'group', n: n));
+        }
+        await record('G5', g5, {'stop': g5Stop, 'restart': g5Start});
+        await record('G6', [], {
+          'scope': 'informational',
+          'peerDiscoveryMs': discoveryMs,
+          'interval':
+              'host join-completion to five-second topic settle; informational',
+        });
       }
-      final g5Stop = await node('bob', 'stop');
-      final g5Offline = await send(
-        'G5',
-        'msg5 offline',
-        lane: 'group',
-        n: 5,
-        awaitReceive: false,
-      );
-      g5.add(g5Offline);
-      final g5Start = await restartBob(groupRecovery: true);
-      await receive(g5Offline);
-      g5.add(await send('G5', 'msg6 reconnect', lane: 'group', n: 6));
-      g5.add(await send('G5', 'bob msg7', lane: 'group', role: 'bob', n: 7));
-      for (var n = 8; n <= 9; n++) {
-        g5.add(await send('G5', 'msg$n warm', lane: 'group', n: n));
+      if (resume.runs('G7')) {
+        final pre = await send('G7', 'pre rotation', lane: 'group');
+        final rotation = await journey.alice.routingProtocolCase({
+          'caseId': 'G7',
+          'groupId': group,
+        });
+        final post = await send('G7', 'post rotation', lane: 'group');
+        await record('G7', [pre, post], {'rotation': rotation});
       }
-      await record('G5', g5, {'stop': g5Stop, 'restart': g5Start});
-      await record('G6', [], {
-        'scope': 'informational',
-        'peerDiscoveryMs': discoveryMs,
-        'interval':
-            'host join-completion to five-second topic settle; informational',
-      });
-      final pre = await send('G7', 'pre rotation', lane: 'group');
-      final rotation = await journey.alice.routingProtocolCase({
-        'caseId': 'G7',
-        'groupId': group,
-      });
-      final post = await send('G7', 'post rotation', lane: 'group');
-      await record('G7', [pre, post], {'rotation': rotation});
-      await record('G8', [
-        await send('G8', 'multi-member publish', lane: 'group'),
-      ]);
+      if (resume.runs('G8')) {
+        await record('G8', [
+          await send('G8', 'multi-member publish', lane: 'group'),
+        ]);
+      }
+      if (resume.partial) {
+        final recorded = [for (final c in cases) c['id']! as String];
+        await File('${output.path}/oracle.json').writeAsString(
+          jsonEncode({'resumedAt': resume.startAt, 'recorded': recorded}),
+        );
+        throw StateError(resume.diagnosticFailure(recorded));
+      }
       final failures = validateProductionRouting(proof);
       await File(
         '${output.path}/oracle.json',
       ).writeAsString(jsonEncode({'failures': failures}));
       if (failures.isNotEmpty) throw StateError(failures.join('; '));
     } finally {
+      await restoreKeyboards();
       await journey.restore();
     }
     evidence = writeSimsArtifactEvidenceSync(
@@ -701,7 +800,7 @@ Future<void> main(List<String> args) async {
     }
   }
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': evidence == null ? 'FAIL' : 'PASS', 'assertionsAttempted': attempted, 'artifactPresent': evidence != null, 'printOnly': false, 'exitCode': evidence == null ? 1 : 0, 'detail': 'production routing 27-case receipt validation', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': evidence == null ? 'FAIL' : 'PASS', 'assertionsAttempted': attempted, 'artifactPresent': evidence != null, 'printOnly': false, 'exitCode': evidence == null ? 1 : 0, 'detail': 'production routing 27-case receipt validation', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = evidence == null ? 1 : 0;
 }

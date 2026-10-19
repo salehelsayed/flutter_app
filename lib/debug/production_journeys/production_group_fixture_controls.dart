@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
@@ -34,6 +36,41 @@ String productionFixtureGroupName(
 /// Fixture setup and read-only observations bound to production instances.
 /// Sending messages and ordinary navigation belong to the UI flow. The only
 /// fault controls here are leaving a live topic and the exact S3 drain failure.
+/// Waits until no group recovery pass is active or queued. Group mutations
+/// (adding members) are rejected while recovery runs, and a freshly started
+/// app runs recovery passes, so fixtures must wait instead of racing it.
+Future<void> awaitProductionFixtureGroupRecoveryIdle({
+  GroupRecoveryGate? gate,
+  Duration timeout = const Duration(seconds: 60),
+}) async {
+  final recovery = gate ?? groupRecoveryGate;
+  if (!recovery.isActive) return;
+  final idle = Completer<void>();
+  void check() {
+    if (!recovery.isActive && !idle.isCompleted) idle.complete();
+  }
+
+  recovery.activeDepthListenable.addListener(check);
+  try {
+    check();
+    await idle.future.timeout(timeout);
+  } finally {
+    recovery.activeDepthListenable.removeListener(check);
+  }
+}
+
+/// A fixture group is only valid when every selected contact became a member;
+/// otherwise later steps fail far from the cause.
+void requireProductionFixtureMembersAdded(CreateGroupWithMembersResult result) {
+  if (result.addMemberFailures.isNotEmpty) {
+    throw StateError(
+      'fixture group member add failed: '
+      '${result.addMemberFailures.length} of '
+      '${result.addMemberFailures.length + result.membersAdded}',
+    );
+  }
+}
+
 void bindProductionGroupFixtureControls({
   required ProductionJourneyController controller,
   required Bridge bridge,
@@ -123,6 +160,7 @@ void bindProductionGroupFixtureControls({
     if (identity == null || contact == null) {
       throw StateError('fixture identity missing');
     }
+    await awaitProductionFixtureGroupRecoveryIdle();
     final result = await createGroupWithMembers(
       bridge: bridge,
       groupRepo: groupRepository,
@@ -133,6 +171,7 @@ void bindProductionGroupFixtureControls({
       name: productionFixtureGroupName(controller, type),
       inviteDeliveryAttemptRepo: inviteDeliveryRepository,
     );
+    requireProductionFixtureMembersAdded(result);
     final group = result.group;
     ownedGroups.add(group.id);
     final key = await groupRepository.getLatestKey(group.id);

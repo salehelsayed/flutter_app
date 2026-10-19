@@ -78,6 +78,22 @@ final class ProductionJourneyPeer {
     return result;
   }
 
+  /// POST_NOTIFICATIONS exists from API 33; older Android posts notifications
+  /// without it, and its `pm` rejects the unknown permission.
+  Future<void> grantPostNotifications() async {
+    final result = await adb(['shell', 'getprop', 'ro.build.version.sdk']);
+    final sdk = int.tryParse('${result.stdout}'.trim());
+    if (sdk == null) throw StateError('Android SDK level unreadable');
+    if (sdk < 33) return;
+    await adb([
+      'shell',
+      'pm',
+      'grant',
+      packageName,
+      'android.permission.POST_NOTIFICATIONS',
+    ]);
+  }
+
   Future<void> writeAppFile(String name, Map<String, Object?> value) async {
     final local = File(
       '${output.path}/${invocation.role}-${invocation.nonce}-${name.replaceAll('/', '-')}.staging',

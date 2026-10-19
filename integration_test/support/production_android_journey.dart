@@ -174,6 +174,21 @@ final class ProductionJourneyFlowRunner {
           _driverNeverStarted.any(log.readAsStringSync().contains)) {
         throw const _DriverNeverStarted();
       }
+      // Maestro's console omits the cause; its debug log names a device
+      // server that died or failed while reading device info, before any UI
+      // step.
+      final debug = Directory('${destination.path}/debug');
+      if (debug.existsSync() &&
+          debug
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((file) => file.path.endsWith('/maestro.log'))
+              .any((file) {
+                final text = file.readAsStringSync();
+                return _deviceInfoFailed.any(text.contains);
+              })) {
+        throw const _DriverNeverStarted();
+      }
       throw StateError('$label Maestro flow failed');
     }
     final receipt = File('${destination.path}/result.json');
@@ -196,6 +211,13 @@ const _driverNeverStarted = [
   'driver not ready in time',
   'DeviceServerDiedException',
   'Unable to launch',
+];
+
+// Maestro debug-log causes of a flow that failed while fetching device
+// information, which it does before the first step.
+const _deviceInfoFailed = [
+  "Device server died during 'deviceInfo'",
+  "'deviceInfo' failed:",
 ];
 
 bool _isSimulator(String device) => RegExp(
@@ -364,6 +386,12 @@ final class ProductionAndroidJourney implements ProductionJourney {
   ProductionAndroidInstallGuard? _guard;
   final artifacts = <String, ProductionAndroidArtifact>{};
   final _guards = <String, ProductionAndroidInstallGuard>{};
+
+  /// Each device's heads-up setting before the run; `null` means never set.
+  /// Another app's heads-up on a personal phone can cover the top of Orbit
+  /// and take a Maestro tap meant for the create-group button.
+  final _headsUpBefore = <String, String>{};
+  static const _headsUpSetting = 'heads_up_notifications_enabled';
   bool get usesProviderReceiver => const {
     'production.notification_open',
     'production.notification_tap_latency',
@@ -426,6 +454,31 @@ final class ProductionAndroidJourney implements ProductionJourney {
       _guards[prepared.profileId] = guard;
       if (prepared.profileId == profileId) _guard = guard;
     }
+    for (final device in {for (final p in actors) p.device}) {
+      final before = await runner.run('adb', [
+        '-s',
+        device,
+        'shell',
+        'settings',
+        'get',
+        'global',
+        _headsUpSetting,
+      ]);
+      if (before.exitCode != 0) {
+        throw StateError('heads-up setting unreadable on $device');
+      }
+      _headsUpBefore[device] = '${before.stdout}'.trim();
+      await runner.run('adb', [
+        '-s',
+        device,
+        'shell',
+        'settings',
+        'put',
+        'global',
+        _headsUpSetting,
+        '0',
+      ]);
+    }
     for (final p in actors) {
       await _guards[p.invocation.profileId]!.prepareFreshInstall(
         device: p.device,
@@ -438,13 +491,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
         'production-journey/runtime-config.json',
         p.invocation.toJson(),
       );
-      await p.adb([
-        'shell',
-        'pm',
-        'grant',
-        p.packageName,
-        'android.permission.POST_NOTIFICATIONS',
-      ]);
+      await p.grantPostNotifications();
     }
     for (final p in actors) {
       await p.adb([
@@ -520,13 +567,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
       'production-journey/runtime-config.json',
       next.invocation.toJson(),
     );
-    await next.adb([
-      'shell',
-      'pm',
-      'grant',
-      productionJourneyAndroidPackage,
-      'android.permission.POST_NOTIFICATIONS',
-    ]);
+    await next.grantPostNotifications();
     await flow(next, 'production_resume', 'alice-fresh-performance');
     await next.awaitReady();
     return next;
@@ -603,6 +644,21 @@ final class ProductionAndroidJourney implements ProductionJourney {
           await entry.value.restoreAll();
         } catch (error) {
           failures.add('${entry.key}: $error');
+        }
+      }
+      for (final MapEntry(key: device, value: before)
+          in _headsUpBefore.entries) {
+        final restored = await runner.run('adb', [
+          '-s',
+          device,
+          'shell',
+          'settings',
+          ...before.isEmpty || before == 'null'
+              ? ['delete', 'global', _headsUpSetting]
+              : ['put', 'global', _headsUpSetting, before],
+        ]);
+        if (restored.exitCode != 0) {
+          failures.add('heads-up setting on $device');
         }
       }
       if (failures.isNotEmpty) throw StateError(failures.join('; '));

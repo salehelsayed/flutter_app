@@ -7,6 +7,7 @@ import '../../tool/sims/production_notification_tap_latency_criteria.dart';
 import '../support/production_android_journey.dart';
 import '../support/production_journey_peer.dart';
 import '../support/production_provider_delivery.dart';
+import '../support/production_sims_result.dart';
 
 const _openScenario = 'production.notification_open';
 
@@ -274,7 +275,7 @@ Future<void> main(List<String> arguments) async {
   }
   final passed = evidence != null;
   stdout.writeln(
-    'SIMS_RESULT_JSON=${jsonEncode({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production warm/cold/same-peer notification routing passed' : 'production notification-open journey failed', if (evidence != null) 'artifactEvidence': evidence.toJson()})}',
+    'SIMS_RESULT_JSON=${jsonEncode(withProductionFailureBlocker({'status': passed ? 'PASS' : 'FAIL', 'assertionsAttempted': attempts, 'artifactPresent': passed, 'printOnly': false, 'exitCode': passed ? 0 : 1, 'detail': passed ? 'production warm/cold/same-peer notification routing passed' : 'production notification-open journey failed', if (evidence != null) 'artifactEvidence': evidence.toJson()}))}',
   );
   exitCode = passed ? 0 : 1;
 }
