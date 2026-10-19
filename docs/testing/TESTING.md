@@ -7465,6 +7465,27 @@ visible and cannot become an ordinary first-attempt PASS.
   size and SHA checks, and retain the generic log redaction policy.
   [Host RED/GREEN evidence](../../.codex-test-logs/refusal-device-triage-20261019/)
   does not substitute for a fresh device receipt after the harness repair.
+  The microphone-denial row must start its notification action inside the
+  already-started Maestro flow. A captured attempt started Maestro after the
+  action; the real twelve-second pre-admission timeout canceled the request
+  while the permission dialog was still open, before denial returned. That is
+  not evidence of a missing feedback target. Prepare and uniquely verify the
+  expanded fixture card first, then let the same flow select its exact
+  title/body card, tap Call back, deny the real permission, and assert the
+  original message. Slow user responses beyond that product deadline remain
+  a separate cancellation/feedback follow-up; the harness does not extend it.
+  Snapshot commands bound each connection/unlock observation to five seconds.
+  A failed connection read reports `connectionReadSucceeded=false` and omits
+  `connectionPresent`; it must not invent absent media. An unavailable unlock
+  result fails the command instead of becoming a false locked-device proof.
+  Virtual-time regressions cover both stalled reads, unknown unlock and the
+  successful absent-connection/locked control; the flow contract checks that
+  the callback precedes the permission wait. Retain the initial fixture-guard
+  failure and corrected causal RED/GREEN
+  [receipts](../../.codex-test-logs/callback-diag-fixes-20261019/).
+  These bounds do not identify the captured kx0006 stall: an alive, focused
+  process with a pending command and older result cannot distinguish a blocked
+  observation from a command-loop stall. Fresh device closure remains separate.
   Quiet-call proof requires owned native channel/priority state and complete SystemUI
   heads-up-manager samples; observed publication order uses the always-on
   `notification_enqueue` and `notification_canceled` events, not the

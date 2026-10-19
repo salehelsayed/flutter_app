@@ -149,7 +149,7 @@ final class _ProductionCallBackRegression {
     return value;
   }
 
-  Future<void> _nativeAction(String title) async {
+  Future<void> _nativeAction(String title, {bool prepareOnly = false}) async {
     final allowed = await driver._allowedSemanticPackages(
       peer.device,
       'Answer',
@@ -188,12 +188,14 @@ final class _ProductionCallBackRegression {
           '${expand.$2}',
         ]);
       } else if (target?.actionCenter case final center?) {
-        await driver._adbShell(peer.device, [
-          'input',
-          'tap',
-          '${center.$1}',
-          '${center.$2}',
-        ]);
+        if (!prepareOnly) {
+          await driver._adbShell(peer.device, [
+            'input',
+            'tap',
+            '${center.$1}',
+            '${center.$2}',
+          ]);
+        }
         return;
       }
       await Future<void>.delayed(const Duration(milliseconds: 250));
@@ -524,13 +526,17 @@ final class _ProductionCallBackRegression {
     // Re-post the owned card after the permission setup and restart.
     final reposted = await peer.command('call_back.post_b');
     proof['repostedAfterRevoke'] = reposted;
-    await _nativeAction(reposted['title'] as String);
+    // Expand and verify the owned card, then give Maestro sole UI ownership.
+    // The flow taps Call back only after its driver has started: cold driver
+    // startup must not consume the real 12-second pre-admission deadline.
+    final title = reposted['title'] as String;
+    await _nativeAction(title, prepareOnly: true);
     final receipt = await ProductionJourneyFlowRunner(output, driver._runner)
         .run(
           peer.device,
           'production_call_microphone_denial',
           'microphone-denied',
-          {},
+          {'CALLBACK_TITLE': RegExp.escape(title)},
           packageName: driver.packageName,
         );
     proof['denialFlowReceipt'] = receipt;

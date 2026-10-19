@@ -1,13 +1,17 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/app/bootstrap/android_production_audio_call_e2e_observer.dart';
 import 'package:flutter_app/core/notifications/notification_request_observation.dart';
 import 'package:flutter_app/debug/production_journeys/production_call_controls.dart';
 import 'package:flutter_app/debug/production_journeys/foreground_group_push_control.dart';
 import 'package:flutter_app/debug/production_journeys/production_journey_controller.dart';
 import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
+import 'package:flutter_app/features/call/domain/call_engine.dart';
+import 'package:flutter_app/features/call/presentation/foreground_call_back_guard.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../shared/fakes/in_memory_contact_repository.dart';
@@ -48,6 +52,110 @@ void main() {
   tearDown(() async {
     controller.dispose();
     await directory.delete(recursive: true);
+  });
+
+  ProductionCallControls snapshotControls({
+    required Future<CallConnectionSnapshot?> Function() connection,
+    required Future<bool?> Function() unlocked,
+  }) {
+    const callInvocation = SimsRuntimeInvocation(
+      schema: simsRuntimeConfigSchema,
+      profileId: 'android.e2e.production_call_local',
+      scenarioId: 'kx0006',
+      role: 'alice',
+      runId: 'snapshot-run',
+      nonce: 'snapshot-nonce',
+      values: {},
+    );
+    controller.dispose();
+    controller = ProductionJourneyController(
+      directory: directory,
+      profileId: callInvocation.profileId,
+      invocation: callInvocation,
+    );
+    controller.foregroundPush.bind((_) async {});
+    controller.markRuntimeReady();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(foregroundCallTaskChannel, (call) async {
+          if (call.method != 'isDeviceUnlocked') {
+            throw StateError('Unexpected native observation method.');
+          }
+          return unlocked();
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(foregroundCallTaskChannel, null);
+    });
+    return ProductionCallControls.tryCreate(controller)!
+      ..source = AndroidProductionAudioCallObservationSource(
+        readCurrentSession: () => null,
+        sessionChanges: const Stream.empty(),
+        readCurrentForeground: () => null,
+        foregroundChanges: const Stream.empty(),
+        readActiveConnectionSnapshot: connection,
+        readOutgoingCallWakeAuthorityReady: (_) async => false,
+      );
+  }
+
+  testWidgets('snapshot observation bounds a stalled connection without '
+      'inventing absent media', (tester) async {
+    final controls = snapshotControls(
+      connection: () => Completer<CallConnectionSnapshot?>().future,
+      unlocked: () async => false,
+    );
+    Map<String, Object?>? observed;
+    unawaited(controls.snapshot().then((value) => observed = value));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(observed, isNotNull);
+    expect(observed!['connectionReadSucceeded'], isFalse);
+    expect(observed!.containsKey('connectionPresent'), isFalse);
+    expect(observed!.containsKey('localAudioEnabled'), isFalse);
+    expect(observed!['deviceUnlocked'], isFalse);
+  });
+
+  testWidgets('snapshot observation rejects a stalled native unlock read '
+      'instead of reporting locked', (tester) async {
+    final controls = snapshotControls(
+      connection: () async => null,
+      unlocked: () => Completer<bool?>().future,
+    );
+    Object? failure;
+    Map<String, Object?>? observed;
+    unawaited(
+      controls.snapshot().then(
+        (value) => observed = value,
+        onError: (Object error) {
+          failure = error;
+        },
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 5));
+    expect(failure, isA<TimeoutException>());
+    expect(observed, isNull);
+  });
+
+  testWidgets('snapshot observation rejects an unknown native unlock result', (
+    tester,
+  ) async {
+    final controls = snapshotControls(
+      connection: () async => null,
+      unlocked: () async => null,
+    );
+    await expectLater(controls.snapshot(), throwsStateError);
+  });
+
+  testWidgets('snapshot observation retains a successful absent connection '
+      'and actual locked result', (tester) async {
+    final controls = snapshotControls(
+      connection: () async => null,
+      unlocked: () async => false,
+    );
+    final observed = await controls.snapshot();
+    expect(observed['connectionReadSucceeded'], isTrue);
+    expect(observed['connectionPresent'], isFalse);
+    expect(observed['deviceUnlocked'], isFalse);
   });
 
   test(

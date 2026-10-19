@@ -372,18 +372,24 @@ final class ProductionCallControls {
     CallConnectionSnapshot? connection;
     var connectionReadSucceeded = current != null;
     try {
-      connection = await current?.readActiveConnectionSnapshot();
+      connection = await current?.readActiveConnectionSnapshot().timeout(
+        const Duration(seconds: 5),
+      );
     } catch (_) {
       connectionReadSucceeded = false;
+    }
+    final deviceUnlocked = await foregroundCallTaskChannel
+        .invokeMethod<bool>('isDeviceUnlocked')
+        .timeout(const Duration(seconds: 5));
+    if (deviceUnlocked == null) {
+      throw StateError('Native device lock state is unavailable.');
     }
     return {
       'events': List<Map<String, Object?>>.of(_events),
       'readinessHeld': _ready?.isCompleted == false,
       'sourceBound': current != null,
       'connectionReadSucceeded': connectionReadSucceeded,
-      'deviceUnlocked': await foregroundCallTaskChannel.invokeMethod<bool>(
-        'isDeviceUnlocked',
-      ),
+      'deviceUnlocked': deviceUnlocked,
       if (session != null) ...{
         'state': session.state.name,
         'direction': session.direction?.name,

@@ -4,6 +4,36 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
+  test('microphone denial starts the actual callback in the ready UI flow '
+      'before waiting for the permission prompt', () {
+    final flow =
+        loadYamlDocuments(
+              File(
+                'integration_test/maestro/production_call_microphone_denial.yaml',
+              ).readAsStringSync(),
+            ).last.contents
+            as YamlList;
+    final action = (flow.first as YamlMap)['tapOn'] as YamlMap?;
+    expect(action, isNotNull);
+    expect(action!['text'], 'Call back');
+    final card = action['childOf'] as YamlMap;
+    expect(card['id'], 'com.android.systemui:id/expandableNotificationRow');
+    expect(card['containsDescendants'], [
+      {'text': r'${CALLBACK_TITLE}'},
+      {'text': 'Missed call'},
+    ]);
+    final prompt = (flow[1] as YamlMap)['extendedWaitUntil'] as YamlMap;
+    expect(prompt['visible'], {
+      'id':
+          '(com.android|com.google.android).permissioncontroller:id/permission_deny_button',
+    });
+    expect((flow[2] as YamlMap)['tapOn'], prompt['visible']);
+    expect(
+      (flow[3] as YamlMap)['assertVisible'],
+      'Microphone permission is needed to make calls.',
+    );
+  });
+
   test('input flows retap after hiding the keyboard before typing', () {
     final missingRetaps = <String>[];
     for (final file

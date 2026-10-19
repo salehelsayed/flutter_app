@@ -1,6 +1,15 @@
 appId: ${APP_ID}
 name: production_call_microphone_denial
 ---
+- tapOn:
+    text: "Call back"
+    enabled: true
+    retryTapIfNoChange: false
+    childOf:
+      id: "com.android.systemui:id/expandableNotificationRow"
+      containsDescendants:
+        - text: "${CALLBACK_TITLE}"
+        - text: "Missed call"
 - extendedWaitUntil:
     visible:
       id: "(com.android|com.google.android).permissioncontroller:id/permission_deny_button"
