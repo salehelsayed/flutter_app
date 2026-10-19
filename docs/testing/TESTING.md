@@ -7433,8 +7433,21 @@ visible and cannot become an ordinary first-attempt PASS.
   first five selector failures are retained in
   `.codex-test-logs/patch5-contact-dialog-20261019/`; a device rerun remains
   separate proof. Callback admission uses the actual app
-  handler plus native notification/keyguard/permission observations. Quiet-call
-  proof requires owned native channel/priority state and complete SystemUI
+  handler plus native notification/keyguard/permission observations.
+  Callback message receipts retain only the observed matching XML node's
+  package, enabled/visibility flags, bounds and matching text/description.
+  The generic diagnostic log redactor removes even Android's ordinary
+  `password="false"` node lines, losing an observed message and leaving invalid
+  XML. The saved kx0007 receipt demonstrated that distinction: the raw UI
+  matcher observed the unavailable message, but the redacted receipt failed
+  its unchanged XML oracle. The captured-shape host regression reproduces the
+  parse failure; the XML projection preserves the exact observed label and
+  excludes unrelated contact text and password metadata. Foreign, hidden,
+  disabled and duplicate nodes remain refused. Keep the receipt's ownership,
+  size and SHA checks, and retain the generic log redaction policy.
+  [Host RED/GREEN evidence](../../.codex-test-logs/refusal-device-triage-20261019/)
+  does not substitute for a fresh device receipt after the harness repair.
+  Quiet-call proof requires owned native channel/priority state and complete SystemUI
   heads-up-manager samples; observed publication order uses the always-on
   `notification_enqueue` and `notification_canceled` events, not the
   debug-conditional `notification_cancel`. Stored display names and current

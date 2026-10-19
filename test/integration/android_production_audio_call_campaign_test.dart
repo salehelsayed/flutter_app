@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_app/core/debug/android_production_audio_call_e2e.dart'
     as app_observer;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:xml/xml.dart';
 
 import '../../integration_test/scripts/android_production_audio_call_campaign.dart';
 import '../../integration_test/support/android_app_state_guard.dart';
@@ -68,6 +69,75 @@ final AndroidProductionAudioCallPionOracleEvidence _pionOracle =
     );
 
 void main() {
+  test('callback UI receipt survives Android password=false metadata', () {
+    const message = 'Voice calling is unavailable.';
+    const app = 'com.mknoon.sims.productionaudio';
+    // UIAutomator emits password=false even for ordinary text nodes. The
+    // general text redactor treats the entire node as a private log line.
+    const raw =
+        '''<?xml version="1.0" encoding="UTF-8"?>
+<hierarchy rotation="0">
+  <node text="Private contact name" password="false" package="$app" enabled="true" bounds="[0,0][100,100]">
+    <node text="$message" content-desc="" password="false" package="$app" enabled="true" visible-to-user="true" bounds="[0,100][100,150]" />
+  </node>
+</hierarchy>''';
+    final saved = productionCallBackMessageEvidenceXml(
+      raw,
+      label: message,
+      packageName: app,
+    );
+    final nodes = XmlDocument.parse(saved).findAllElements('node').toList();
+    expect(nodes, hasLength(1));
+    expect(nodes.single.getAttribute('text'), message);
+    expect(nodes.single.getAttribute('package'), app);
+    expect(nodes.single.getAttribute('enabled'), 'true');
+    expect(nodes.single.getAttribute('visible-to-user'), 'true');
+    expect(nodes.single.getAttribute('bounds'), '[0,100][100,150]');
+    expect(saved, isNot(contains('Private contact name')));
+    expect(saved, isNot(contains('password')));
+  });
+
+  test('callback UI receipt keeps an observed content description only', () {
+    const label = 'Voice calling is unavailable.';
+    final saved = productionCallBackMessageEvidenceXml(
+      '<hierarchy><node text="Private alternate text" content-desc="$label" '
+      'package="com.mknoon.sims.productionaudio" enabled="true" '
+      'password="false" bounds="[0,0][100,50]" /></hierarchy>',
+      label: label,
+      packageName: 'com.mknoon.sims.productionaudio',
+    );
+    final node = XmlDocument.parse(saved).findAllElements('node').single;
+    expect(node.getAttribute('content-desc'), label);
+    expect(node.getAttribute('text'), isNull);
+    expect(saved, isNot(contains('Private alternate text')));
+  });
+
+  test(
+    'callback UI receipt rejects foreign, hidden, disabled and duplicate nodes',
+    () {
+      const app = 'com.mknoon.sims.productionaudio';
+      const label = 'Voice calling is unavailable.';
+      const node =
+          '<node text="$label" package="$app" enabled="true" '
+          'visible-to-user="true" password="false" bounds="[0,0][100,50]" />';
+      for (final candidate in [
+        node.replaceFirst(app, 'com.android.systemui'),
+        node.replaceFirst('visible-to-user="true"', 'visible-to-user="false"'),
+        node.replaceFirst('enabled="true"', 'enabled="false"'),
+        '$node$node',
+      ]) {
+        expect(
+          () => productionCallBackMessageEvidenceXml(
+            '<hierarchy>$candidate</hierarchy>',
+            label: label,
+            packageName: app,
+          ),
+          throwsFormatException,
+        );
+      }
+    },
+  );
+
   test(
     'a regression-stage failure still restores fixtures and preserves its cause',
     () async {

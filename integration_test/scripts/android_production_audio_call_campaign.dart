@@ -6,6 +6,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:xml/xml.dart';
 
 import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/capture_budget.dart';

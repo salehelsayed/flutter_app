@@ -1,5 +1,59 @@
 part of 'android_production_audio_call_campaign.dart';
 
+/// Keep only the observed message node and its safe semantic attributes.
+/// The log redactor drops Android nodes containing even `password="false"`,
+/// which destroys both their message and the hierarchy's XML structure.
+String productionCallBackMessageEvidenceXml(
+  String xml, {
+  required String label,
+  required String packageName,
+}) {
+  if (xml.length > _maximumUiDumpBytes ||
+      _exactSemanticNodes(
+            xml,
+            label: label,
+            requireClickable: false,
+            allowedPackages: {packageName},
+            allowExactText: true,
+          ).length !=
+          1) {
+    throw const FormatException('Exact callback message node missing.');
+  }
+  final matches = XmlDocument.parse(xml)
+      .findAllElements('node')
+      .where(
+        (node) =>
+            node.getAttribute('package') == packageName &&
+            node.getAttribute('enabled') == 'true' &&
+            node.getAttribute('visible-to-user') != 'false' &&
+            (node.getAttribute('text') == label ||
+                node.getAttribute('content-desc') == label),
+      )
+      .toList();
+  if (matches.length != 1) {
+    throw const FormatException('Exact callback message node is ambiguous.');
+  }
+  final observed = matches.single;
+  final attributes = <XmlAttribute>[
+    for (final name in ['package', 'enabled', 'visible-to-user', 'bounds'])
+      if (observed.getAttribute(name) case final String value)
+        XmlAttribute(XmlName(name), value),
+    for (final name in ['text', 'content-desc'])
+      if (observed.getAttribute(name) case final String value
+          when value == label)
+        XmlAttribute(XmlName(name), value),
+  ];
+  final saved = XmlDocument([
+    XmlElement(XmlName('hierarchy'), [], [
+      XmlElement(XmlName('node'), attributes),
+    ]),
+  ]).toXmlString();
+  if (_containsForbiddenDiagnosticResidue(saved)) {
+    throw const FormatException('Callback message retained private material.');
+  }
+  return saved;
+}
+
 /// Reuses the production audio campaign's guarded install, authenticated pair,
 /// native UI driver, media proof and restoration. Only the emulator receives
 /// callback fixture data or permission/keyguard changes.
@@ -186,8 +240,10 @@ final class _ProductionCallBackRegression {
             allowExactText: true,
           );
           if (nodes.length != 1) return null;
-          final redacted = sanitizeAndroidProductionAudioCallDiagnosticText(
+          final redacted = productionCallBackMessageEvidenceXml(
             xml,
+            label: label,
+            packageName: driver.packageName,
           );
           if (utf8.encode(redacted).length > _maximumSavedTextBytes) {
             throw StateError('Callback UI evidence capacity exceeded.');
