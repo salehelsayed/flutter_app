@@ -274,6 +274,15 @@ Maestro tap in `ge004`. That phone's SystemUI follows the setting live
 (`dumpsys activity service com.android.systemui`: `mUseHeadsUp`).
 Evidence: `.codex-test-logs/phone-emu/run-14`.
 
+`production_catalog_remove_charlie_retry` opens Group Info itself when it is
+not already showing. A first remove attempt can die before its first step (a
+Maestro hang on the Honor, killed at the flow deadline), leaving the chat
+open; the retry used to assert Group Info there and fail all five tries.
+On that phone, `ge005` and `readd-cycles` (20 cycles each) reach only ~16
+cycles inside their 7200 s runner deadline: the phone (Alice) is the slow
+receiver, at 5-12 min per cycle against ~2 s on the emulators. Evidence:
+`.codex-test-logs/phone-emu/run-15`, `run-16`, `run-17`.
+
 The group multi-party integration harness must register `testWidgets` before
 awaiting platform runtime configuration; put asynchronous configuration in
 `setUpAll` and keep registration-time names independent of late runtime fields.

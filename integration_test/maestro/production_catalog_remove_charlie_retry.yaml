@@ -1,6 +1,12 @@
 appId: ${APP_ID}
 name: production_catalog_remove_charlie_retry
 ---
+# A refused attempt leaves Group Info open; one that died earlier does not.
+- runFlow:
+    when:
+      notVisible: Group Info
+    commands:
+      - tapOn: Group information
 - assertVisible: Group Info
 - scrollUntilVisible:
     element:

@@ -153,4 +153,26 @@ void main() {
     );
     expect(tap, greaterThan(scroll));
   });
+
+  test('remove retry opens Group Info when the refused attempt never got '
+      'there', () {
+    // On an Android 8.1 Honor a first remove attempt hung before its first
+    // step and was killed at the flow deadline; every retry then asserted
+    // Group Info on the chat screen (readd-cycles, cycle 6, 2026-10-19).
+    final steps =
+        (loadYamlDocuments(
+                  File(
+                    'integration_test/maestro/'
+                    'production_catalog_remove_charlie_retry.yaml',
+                  ).readAsStringSync(),
+                ).last.contents
+                as YamlList)
+            .toList();
+    final open = steps.first as YamlMap;
+    expect(open['runFlow']['when'], {'notVisible': 'Group Info'});
+    expect(open['runFlow']['commands'], [
+      {'tapOn': 'Group information'},
+    ]);
+    expect(steps[1], {'assertVisible': 'Group Info'});
+  });
 }
