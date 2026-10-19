@@ -84,6 +84,30 @@ for required in (
     if required not in helper:
         fail(f"foreground-service residue helper omits {required!r}")
 
+# The active platform uses505; cleanup must also observe that ID. This
+# contract deliberately fails against the historical504-only counter.
+notifications = function_body(instrumentation, "private fun activeCallNotifications()")
+for required in (
+    "MknoonCallNotificationFactory.NOTIFICATION_ID",
+    "MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID",
+    "Notification.CATEGORY_CALL",
+):
+    if required not in notifications:
+        fail(f"call-notification observer omits {required!r}")
+if "activeCallNotifications().size" not in instrumentation:
+    fail("notification cleanup does not count both call notification IDs")
+for required in (
+    "audioActive && serviceRunning &&",
+    "currentNotifications.singleOrNull()?.id == MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID",
+    "audioActive=$audioActive",
+    "foregroundServiceRunning=$serviceRunning",
+    "callNotificationCount=${currentNotifications.size}",
+    "ongoingNotificationCount=",
+    "throw AssertionError(\"outgoing active service and notification: $observed\", failure)",
+):
+    if required not in body:
+        fail(f"outgoing active proof or coarse failure diagnostics omit {required!r}")
+
 if "const val SLOT_OUTGOING" not in instrumentation:
     fail("outgoing device proof has no independent deterministic fixture slot")
 

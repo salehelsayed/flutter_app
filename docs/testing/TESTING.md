@@ -6101,6 +6101,20 @@ visible and cannot become an ordinary first-attempt PASS.
   and repeated-cleanup phases must confirm this retained completed terminal; the
   exactly-one terminal event and duplicate remote/Telecom/audio no-op checks
   remain required.
+  The VC204 call-notification observer must include both the incoming504 and
+  ongoing505 IDs with the call category. Production active/inactive foreground
+  handover starts505 and cancels504; a504-only observer therefore reports zero
+  for a correctly running outgoing call. The outgoing active phase requires
+  exactly one call notification with ongoing ID505, while terminal cleanup
+  counts both IDs to reject retained ongoing resources. Its timeout retains
+  coarse audio-active, service-running, total-notification and ongoing-count
+  observations without native UUIDs or notification contents. The existing
+  outgoing host source contract guards these selectors and failure diagnostics.
+  The [original API37 C4 receipt](../../.codex-test-logs/vc204-outgoing-notification-20261019/phase-outgoing-authenticated-core-telecom.log)
+  contains only the combined assertion: it does not establish which actual
+  audio/service values were observed, a Core-Telecom product failure or an
+  emulator limitation. The source-contract correction requires a rebuilt proof
+  test APK and a fresh single-phase device run before claiming device closure.
   Debug `1.0.1(127)` with identical APK hashes on both targets passed a genuinely
   process-absent locked incoming Decline, a subsequent Answer with bidirectional
   RTP progress, native End, and another incoming Decline. Incoming and answered

@@ -439,10 +439,20 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
             "the registered outgoing Core-Telecom call can activate production audio",
             runtime.controller.activateAudio(payload.nativeCallId),
         )
-        await("outgoing active service and notification") {
-            runtime.controller.audioState().active &&
-                isCallForegroundServiceRunning() &&
-                activeCallNotificationCount() == 1
+        var observed = "no observation"
+        try {
+            await("outgoing active service and notification") {
+                val audioActive = runtime.controller.audioState().active
+                val serviceRunning = isCallForegroundServiceRunning()
+                val currentNotifications = activeCallNotifications()
+                observed = "audioActive=$audioActive foregroundServiceRunning=$serviceRunning " +
+                    "callNotificationCount=${currentNotifications.size} " +
+                    "ongoingNotificationCount=${currentNotifications.count { it.id == MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID }}"
+                audioActive && serviceRunning &&
+                    currentNotifications.singleOrNull()?.id == MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID
+            }
+        } catch (failure: AssertionError) {
+            throw AssertionError("outgoing active service and notification: $observed", failure)
         }
 
         assertTrue(
@@ -860,9 +870,12 @@ class Vc204AndroidCallLifecycleInstrumentationTest {
         }
     }
 
-    private fun activeCallNotificationCount(): Int =
-        notifications().activeNotifications.count {
-            it.id == MknoonCallNotificationFactory.NOTIFICATION_ID &&
+    private fun activeCallNotificationCount(): Int = activeCallNotifications().size
+
+    private fun activeCallNotifications() =
+        notifications().activeNotifications.filter {
+            (it.id == MknoonCallNotificationFactory.NOTIFICATION_ID ||
+                it.id == MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID) &&
                 it.notification.category == Notification.CATEGORY_CALL
         }
 
