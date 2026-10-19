@@ -759,17 +759,25 @@ Future<void> main(List<String> args) async {
     );
     exit(failure.exitCode);
   } on Object catch (error, stackTrace) {
-    final failure = _CaptureFailure.capture(
-      capture.stage,
-      'unexpected_${error.runtimeType}: capture stopped without a proof '
-      'artifact',
-    );
-    await capture.writeFailure(failure, stackTrace, unexpected: true);
+    // Inventory precedes device mutation. A missing adb can also surface from
+    // the preflight cleanup; it is a host prerequisite, not a failed capture.
+    final missingAdb =
+        error is ProcessException &&
+        error.executable == 'adb' &&
+        capture.stage == 'device_inventory';
+    final failure = missingAdb
+        ? _CaptureFailure.environment(capture.stage, 'adb_unavailable')
+        : _CaptureFailure.capture(
+            capture.stage,
+            'unexpected_${error.runtimeType}: capture stopped without a proof '
+            'artifact',
+          );
+    await capture.writeFailure(failure, stackTrace, unexpected: !missingAdb);
     stderr.writeln(
-      'CAPTURE_FAILED [${scenario.testCase}/${scenario.id}/${capture.stage}]: '
+      '${failure.status.toUpperCase()} [${scenario.testCase}/${scenario.id}/${capture.stage}]: '
       '${failure.message}',
     );
-    exit(1);
+    exit(failure.exitCode);
   }
 }
 

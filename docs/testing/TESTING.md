@@ -732,6 +732,19 @@ the old 110-second adapter while its fifth input was running; the five added
 composer retaps are required and remain. Host fake-runner tests verify the
 deadline selection and no-replay rule, not an installed S9 pass.
 
+Group-reaction capture treats an `adb` launch `ProcessException` during
+`device_inventory` as `environment_blocked`/78, including preflight cleanup
+that can otherwise replace an earlier inventory blocker. Other executables
+or later stages retain `capture_failed`/1. The host adapter contract uses
+strict fake inventories/tools and synthetic IDs; it must not query or clean
+up an attached device. Its missing-adb and missing-Flutter controls verify
+the narrow classification through the real Dart entrypoint, with no real
+Flutter/adb and no child package builds. Tool-only fixture PATHs must still
+provide host `chmod` and `python3` for private evidence permissions and directory
+sync. See the
+[add-on contract receipt](../../.codex-test-logs/addon-missing-adb-isolation-20261018/003-contract-receipt.json);
+the first two failed fixture attempts remain alongside it as `001` and `002`.
+
 Android activity checks must match the complete application ID. A word boundary
 after `com.mknoon.app` also matches the sibling `com.mknoon.app.ui25proof`.
 The `reaction-head-deployed-001/` campaign timed out at its stopped-app boundary;

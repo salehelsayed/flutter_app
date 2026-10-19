@@ -31,6 +31,24 @@ DART_BIN="$(command -v dart)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# This host contract tests unavailable targets, independent of attached devices.
+FAKE_BIN="$TMP_DIR/bin"
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/adb" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "$*" = devices ] || exit 99
+printf 'List of devices attached\n\n'
+EOF
+cat >"$FAKE_BIN/flutter" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "$*" = 'devices --machine' ] || exit 99
+printf '[]\n'
+EOF
+chmod +x "$FAKE_BIN/adb" "$FAKE_BIN/flutter"
+export PATH="$FAKE_BIN:$PATH"
+
 APK="$TMP_DIR/production-fcm.apk"
 CREDENTIAL="$TMP_DIR/service-account.json"
 RELAY_KEY="$TMP_DIR/staging.pem"
@@ -53,7 +71,7 @@ run_adapter() {
     SIMS_PROVIDER_FCM_CREDENTIAL_PATH="$CREDENTIAL" \
     FIREBASE_SERVICE_ACCOUNT="$CREDENTIAL" \
     SIMS_ANDROID_PHYSICAL_DEVICE_ID='PHYSICAL123' \
-    SIMS_ANDROID_EMULATOR_DEVICE_ID='emulator-5554' \
+    SIMS_ANDROID_EMULATOR_DEVICE_ID='emulator-0000' \
     "$@"
 }
 
@@ -139,7 +157,7 @@ CAPTURE_DIR="$TMP_DIR/capture"
 set +e
 "$DART_BIN" integration_test/scripts/run_group_reaction_notification_device.dart \
   --scenario android_group_reaction_recipient \
-  --sender emulator-5554 \
+  --sender emulator-0000 \
   --recipient PHYSICAL123 \
   --artifact-dir "$CAPTURE_DIR" \
   --staging-manifest "$STAGING" \
@@ -148,8 +166,10 @@ set +e
   >"$TMP_DIR/capture.stdout" 2>"$TMP_DIR/capture.stderr"
 capture_status=$?
 set -e
-[ "$capture_status" -eq 78 ] ||
+if [ "$capture_status" -ne 78 ]; then
+  cat "$TMP_DIR/capture.stderr" >&2
   fail "no-child capture preflight exited $capture_status instead of 78"
+fi
 capture_verdict="$CAPTURE_DIR/android_group_reaction_recipient_orchestrator_verdict.json"
 [ -f "$capture_verdict" ] || fail 'no-child capture omitted its typed verdict'
 grep -q 'explicit_device_unavailable' \
@@ -157,5 +177,69 @@ grep -q 'explicit_device_unavailable' \
   fail 'capture did not honor availability-bounded device discovery'
 grep -q '"status":"environment_blocked"' "$capture_verdict" ||
   fail 'capture mislabeled its unavailable target blocker'
+
+# Resolve the SDK executable before the controls get tool-only PATHs. Running
+# the Dart entrypoint directly avoids package build-hook tool discovery.
+cat >"$TMP_DIR/resolved-dart.dart" <<'DART'
+import 'dart:io';
+void main() => stdout.writeln(Platform.resolvedExecutable);
+DART
+DART_VM="$("$DART_BIN" "$TMP_DIR/resolved-dart.dart")"
+[ -x "$DART_VM" ] || fail 'SDK executable did not resolve'
+
+NO_ADB_BIN="$TMP_DIR/no-adb-bin"
+NO_FLUTTER_BIN="$TMP_DIR/no-flutter-bin"
+mkdir -p "$NO_ADB_BIN" "$NO_FLUTTER_BIN"
+cat >"$NO_ADB_BIN/flutter" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+[ "$*" = 'devices --machine' ] || exit 99
+printf '%s\n' '[{"id":"emulator-0000","targetPlatform":"android-x64"},{"id":"PHYSICAL123","targetPlatform":"android-arm64"}]'
+EOF
+chmod +x "$NO_ADB_BIN/flutter"
+cp "$FAKE_BIN/adb" "$NO_FLUTTER_BIN/adb"
+# Failure artifacts still require the host's file-permission utility.
+ln -s "$(command -v chmod)" "$NO_ADB_BIN/chmod"
+ln -s "$(command -v chmod)" "$NO_FLUTTER_BIN/chmod"
+ln -s "$(command -v python3)" "$NO_ADB_BIN/python3"
+ln -s "$(command -v python3)" "$NO_FLUTTER_BIN/python3"
+
+for control in missing-adb missing-flutter; do
+  if [ "$control" = missing-adb ]; then
+    tool_path="$NO_ADB_BIN"
+    expected_exit=78
+    expected_status=environment_blocked
+    expected_detail=adb_unavailable
+  else
+    tool_path="$NO_FLUTTER_BIN"
+    expected_exit=1
+    expected_status=capture_failed
+    expected_detail=unexpected_ProcessException
+  fi
+  control_dir="$TMP_DIR/$control"
+  set +e
+  PATH="$tool_path" "$DART_VM" \
+    "$ROOT_DIR/integration_test/scripts/capture_group_reaction_notification_device.dart" \
+    --scenario android_group_reaction_recipient \
+    --sender emulator-0000 \
+    --recipient PHYSICAL123 \
+    --artifact-dir "$control_dir" \
+    --staging-manifest "$STAGING" \
+    --prebuilt-android-apk "$APK" \
+    --no-child-builds \
+    >"$TMP_DIR/$control.stdout" 2>"$TMP_DIR/$control.stderr"
+  control_exit=$?
+  set -e
+  if [ "$control_exit" -ne "$expected_exit" ]; then
+    cat "$TMP_DIR/$control.stderr" >&2
+    fail "$control exited $control_exit instead of $expected_exit"
+  fi
+  verdict="$control_dir/android_group_reaction_recipient_orchestrator_verdict.json"
+  [ -f "$verdict" ] || fail "$control omitted its typed verdict"
+  grep -q '"stage":"device_inventory"' "$verdict" || fail "$control left inventory"
+  grep -q "\"status\":\"$expected_status\"" "$verdict" || fail "$control changed classification"
+  grep -q "$expected_detail" "$verdict" || fail "$control changed failure detail"
+  printf 'PASS: controlled %s preflight (exit %s)\n' "$control" "$control_exit"
+done
 
 printf 'PASS: group reaction notification Sims adapter uses one prebuilt campaign path\n'
