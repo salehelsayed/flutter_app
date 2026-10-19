@@ -451,10 +451,41 @@ final class _ProductionCallSurfaceRegression {
         },
       );
 
+  Future<void> _relaunchSubject() async {
+    final current = subject;
+    final next = current.invocation.copyWith(
+      nonce: driver._token('surface-relaunch'),
+    );
+    for (final name in [
+      'runtime-ack.json',
+      'command.json',
+      'command-result.json',
+    ]) {
+      await driver._deleteAppFile(current.device, 'production-journey/$name');
+    }
+    final peer = ProductionJourneyPeer(
+      current.device,
+      next,
+      output,
+      driver._runner,
+      packageName: driver.packageName,
+    );
+    peers[actor] = peer;
+    await peer.writeAppFile(
+      'production-journey/runtime-config.json',
+      next.toJson(),
+    );
+    await driver._launch(peer.device);
+    await peer.awaitReady();
+  }
+
   Future<void> _privacy() async {
     proof['scope'] =
         'Saved audio-relay preference and truthful signaling-address copy only; forced-relay build, no network-route claim';
     await driver.waitForSemantic(subject.device, 'Start voice call');
+    // The contact now exists, so a data-preserving relaunch starts on Feed with
+    // the Orbit tab; the chat was opened over the earlier first-circle root.
+    await _relaunchSubject();
     final flows = ProductionJourneyFlowRunner(output, driver._runner);
     final initial = await _readPreference();
     final privacy = <String, Object?>{'before': initial};

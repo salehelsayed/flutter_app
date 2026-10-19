@@ -322,8 +322,10 @@ final class _ProductionCallBackRegression {
       }
       proof['resultSnapshot'] = await _completed('started');
       await _snapshot('b-started');
-      await driver.tapSemantic(peer.device, 'End');
-      await driver.waitForSemanticAbsent(peer.device, 'Call controls');
+      // The redialed B call is still inviting (nobody answers), so the outgoing
+      // screen's Cancel owns the hang-up; the connected-call End is absent.
+      await driver.tapSemantic(peer.device, 'Cancel call');
+      await driver.waitForSemanticAbsent(peer.device, 'Cancel call');
     } catch (error, stack) {
       primary = error;
       primaryStack = stack;
@@ -438,7 +440,7 @@ final class _ProductionCallBackRegression {
   Future<void> _microphoneDenied(
     AndroidProductionAudioCallIdentity target,
   ) async {
-    final seed = await _seed(target);
+    await _seed(target);
     await peer.adb([
       'shell',
       'pm',
@@ -459,7 +461,10 @@ final class _ProductionCallBackRegression {
     await _freshInvocation();
     await driver._launch(peer.device);
     await peer.awaitReady();
-    await _nativeAction((seed['posted'] as Map)['title'] as String);
+    // Re-post the owned card after the permission setup and restart.
+    final reposted = await peer.command('call_back.post_b');
+    proof['repostedAfterRevoke'] = reposted;
+    await _nativeAction(reposted['title'] as String);
     final receipt = await ProductionJourneyFlowRunner(output, driver._runner)
         .run(
           peer.device,
