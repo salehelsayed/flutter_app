@@ -15,7 +15,43 @@ final class _IdleDevices implements AndroidHostProcessRunner {
     expect(arguments[1], anyOf('21071FDF600CSC', 'emulator-5556'));
     expect(arguments, isNot(contains('start')));
     if (arguments.contains('getprop')) return ProcessResult(0, 0, '36\n', '');
-    return ProcessResult(0, 0, arguments.contains('get-state') ? 'device\n' : '', '');
+    return ProcessResult(
+      0,
+      0,
+      arguments.contains('get-state') ? 'device\n' : '',
+      '',
+    );
+  }
+}
+
+/// Records heads-up settings traffic; the physical phone starts with heads-up
+/// on, the emulator with the setting never written.
+final class _HeadsUpDevices implements AndroidHostProcessRunner {
+  _HeadsUpDevices(this.events);
+  final List<String> events;
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) async {
+    final device = arguments[1];
+    final command = arguments.skip(2).join(' ');
+    if (command.contains('heads_up_notifications_enabled')) {
+      events.add('$device:$command');
+      if (command.startsWith('shell settings get')) {
+        return ProcessResult(
+          0,
+          0,
+          device == '21071FDF600CSC' ? '1\n' : 'null\n',
+          '',
+        );
+      }
+    }
+    if (arguments.contains('getprop')) return ProcessResult(0, 0, '36\n', '');
+    return ProcessResult(
+      0,
+      0,
+      arguments.contains('get-state') ? 'device\n' : '',
+      '',
+    );
   }
 }
 
@@ -190,5 +226,49 @@ void main() {
             as Map;
     expect(cleanup['status'], 'FAIL');
     expect(cleanup['exactRestorationVerified'], isFalse);
+  });
+
+  test('heads-up notifications are off during the run and restored exactly '
+      'afterwards', () async {
+    // A personal phone's WhatsApp heads-up covered Orbit's create-group button
+    // and took Maestro's tap (Honor JSN-L22, ge004, 2026-10-18).
+    final events = <String>[];
+    final journey = ProductionAndroidJourney.fromEnvironment(
+      'production.notification_open',
+      temporary,
+      environment: environment(),
+      runner: _HeadsUpDevices(events),
+      captureGuard:
+          ({
+            required devices,
+            required packageName,
+            required backupLabel,
+            required preparedArtifact,
+            required expectedArtifactSha256,
+          }) async => _Guard(packageName, events, failInstall: true),
+    );
+    await expectLater(journey.prepare(), throwsStateError);
+    const key = 'heads_up_notifications_enabled';
+    final firstInstall = events.indexWhere((e) => e.startsWith('install:'));
+    for (final device in [physical, emulator]) {
+      expect(
+        events.indexOf('$device:shell settings put global $key 0'),
+        allOf(isNonNegative, lessThan(firstInstall)),
+        reason: device,
+      );
+    }
+    events.clear();
+    await journey.restore();
+    expect(
+      events,
+      containsAll([
+        '$physical:shell settings put global $key 1',
+        '$emulator:shell settings delete global $key',
+      ]),
+    );
+    final cleanup =
+        jsonDecode(File('${temporary.path}/cleanup.json').readAsStringSync())
+            as Map;
+    expect(cleanup['status'], 'PASS');
   });
 }

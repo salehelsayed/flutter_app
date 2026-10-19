@@ -266,6 +266,13 @@ button (`group_info_button`, explicit label) carry automation ids because API
 27 exposes neither a text-field hint nor a tooltip-only label as plain text.
 Setup on such a phone: automatic time on (a 1970 clock fails every relay TLS
 dial) and `io.appium.settings` installed for the verbatim keyboard.
+Production journeys also turn heads-up notifications off on every pinned
+device (`heads_up_notifications_enabled=0`) for the run and restore the exact
+prior value (deleting it when it was unset). On 2026-10-18 a personal
+phone's WhatsApp heads-up covered Orbit's create-group button and took the
+Maestro tap in `ge004`. That phone's SystemUI follows the setting live
+(`dumpsys activity service com.android.systemui`: `mUseHeadsUp`).
+Evidence: `.codex-test-logs/phone-emu/run-14`.
 
 The group multi-party integration harness must register `testWidgets` before
 awaiting platform runtime configuration; put asynchronous configuration in

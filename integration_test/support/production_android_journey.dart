@@ -386,6 +386,12 @@ final class ProductionAndroidJourney implements ProductionJourney {
   ProductionAndroidInstallGuard? _guard;
   final artifacts = <String, ProductionAndroidArtifact>{};
   final _guards = <String, ProductionAndroidInstallGuard>{};
+
+  /// Each device's heads-up setting before the run; `null` means never set.
+  /// Another app's heads-up on a personal phone can cover the top of Orbit
+  /// and take a Maestro tap meant for the create-group button.
+  final _headsUpBefore = <String, String>{};
+  static const _headsUpSetting = 'heads_up_notifications_enabled';
   bool get usesProviderReceiver => const {
     'production.notification_open',
     'production.notification_tap_latency',
@@ -447,6 +453,31 @@ final class ProductionAndroidJourney implements ProductionJourney {
       );
       _guards[prepared.profileId] = guard;
       if (prepared.profileId == profileId) _guard = guard;
+    }
+    for (final device in {for (final p in actors) p.device}) {
+      final before = await runner.run('adb', [
+        '-s',
+        device,
+        'shell',
+        'settings',
+        'get',
+        'global',
+        _headsUpSetting,
+      ]);
+      if (before.exitCode != 0) {
+        throw StateError('heads-up setting unreadable on $device');
+      }
+      _headsUpBefore[device] = '${before.stdout}'.trim();
+      await runner.run('adb', [
+        '-s',
+        device,
+        'shell',
+        'settings',
+        'put',
+        'global',
+        _headsUpSetting,
+        '0',
+      ]);
     }
     for (final p in actors) {
       await _guards[p.invocation.profileId]!.prepareFreshInstall(
@@ -613,6 +644,21 @@ final class ProductionAndroidJourney implements ProductionJourney {
           await entry.value.restoreAll();
         } catch (error) {
           failures.add('${entry.key}: $error');
+        }
+      }
+      for (final MapEntry(key: device, value: before)
+          in _headsUpBefore.entries) {
+        final restored = await runner.run('adb', [
+          '-s',
+          device,
+          'shell',
+          'settings',
+          ...before.isEmpty || before == 'null'
+              ? ['delete', 'global', _headsUpSetting]
+              : ['put', 'global', _headsUpSetting, before],
+        ]);
+        if (restored.exitCode != 0) {
+          failures.add('heads-up setting on $device');
         }
       }
       if (failures.isNotEmpty) throw StateError(failures.join('; '));
