@@ -81,6 +81,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/call/presentation/calls_page_test.dart"
   "test/features/call/presentation/call_audio_output_picker_test.dart"
   "test/features/call/presentation/foreground_call_back_button_test.dart"
+  "test/app/call_back_feedback_test.dart"
   "test/integration/android_foreground_webrtc_audio_campaign_test.dart"
   # Plan 399: production-main Android call observer, campaign, local fixture,
   # directional RTP booleans, and privacy-bounded evidence contract.

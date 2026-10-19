@@ -228,8 +228,10 @@ const _privacySha256 =
 // owner or resume dispatch moves.
 // P1 adds optional debug callback readiness/observations to this same app owner.
 // No lifecycle, repository, or resume ownership moves.
+// C2 kx0007: root-owned callback feedback uses localized navigator context
+// and the modal call messenger. Existing owners and resume dispatch stay put.
 const _applicationRootNormalizedSha256 =
-    'f9a8aa05d6548ef99d7f2f3d9ea4087d6fecf6c78d5ff0b70adce531172f3e9b';
+    'cee655b42b439053f29d66e5494d388e1ec2ff2b983168bb98f6854b88208950';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -640,11 +642,13 @@ void main() {
       'lib/app/application_root.dart',
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/contact_presence_snapshot_repository_test.dart',
+      'test/app/call_back_feedback_test.dart',
     });
     expect(_directiveFiles(root, _newPrivacyUri), <String>{
       'lib/app/application_root.dart',
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/posts_privacy_settings_repository_test.dart',
+      'test/app/call_back_feedback_test.dart',
     });
 
     expect(

@@ -778,6 +778,7 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  final _foregroundCallOverlayKey = GlobalKey<ForegroundCallOverlayState>();
   // Attached in initState, before MaterialApp registers its navigator
   // observer, so a live call surface is asked about Back first.
   final ForegroundCallBackGuard _foregroundCallBackGuard =
@@ -1716,14 +1717,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             result == OutgoingCallStartResult.canceled) {
           return;
         }
-        final l10n = AppLocalizations.of(context);
+        // This State is above MaterialApp. The navigator context has the
+        // app's actual Localizations and the mounted foreground call surface.
+        final feedbackContext = MyApp.navigatorKey.currentContext;
+        if (feedbackContext == null) return;
+        final l10n = AppLocalizations.of(feedbackContext);
         if (l10n == null) return;
         final message = result == OutgoingCallStartResult.microphoneDenied
             ? l10n.call_end_permission
             : l10n.call_end_unavailable;
-        MyApp.scaffoldMessengerKey.currentState?.showSnackBar(
-          SnackBar(content: Text(message)),
-        );
+        _foregroundCallOverlayKey.currentState?.showFeedback(message);
       },
       observe: widget.onCallBackObservation,
     );
@@ -3523,6 +3526,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             child: appChild,
           );
           final callSurface = ForegroundCallOverlay(
+            key: _foregroundCallOverlayKey,
             capability: widget.foregroundCallCapability,
             onAttached: widget.onForegroundCallPresentationReady,
             backGuard: _foregroundCallBackGuard,

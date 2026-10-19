@@ -60,10 +60,10 @@ final class ForegroundCallOverlay extends StatefulWidget {
   final MicPermissionGateway? micPermission;
 
   @override
-  State<ForegroundCallOverlay> createState() => _ForegroundCallOverlayState();
+  State<ForegroundCallOverlay> createState() => ForegroundCallOverlayState();
 }
 
-class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
+class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   static const Duration _terminalNoticeDuration = Duration(seconds: 6);
   static const String _unknownContactName = 'Unknown contact';
 
@@ -86,6 +86,18 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   final _lockedProjection = LockedCallProjection();
   bool _lockedLight = false;
   AppLocalizations? _lockedL10n;
+
+  final _feedbackMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+  /// The call owns the modal surface; route snackbars are underneath it.
+  /// Minimized/hidden calls use the retained route's ordinary messenger.
+  void showFeedback(String message) {
+    if (!mounted) return;
+    final messenger =
+        _feedbackMessengerKey.currentState ??
+        ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(SnackBar(content: Text(message)));
+  }
 
   @override
   void didChangeDependencies() {
@@ -456,46 +468,51 @@ class _ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
               child: Padding(
                 padding: EdgeInsets.only(bottom: keyboardInset),
                 child: Overlay.wrap(
-                  child: Material(
-                    type: MaterialType.transparency,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        ExcludeFocus(
-                          excluding: _pickerCallId != null,
-                          child: surface,
-                        ),
-                        if (surfaceKind == _ForegroundCallSurface.active &&
-                            _pickerCallId == null)
-                          Positioned(
-                            top: MediaQuery.paddingOf(context).top,
-                            right: 8,
-                            child: IconButton(
-                              key: const ValueKey('call-minimize'),
-                              tooltip: AppLocalizations.of(
-                                context,
-                              )!.call_minimize,
-                              onPressed: () => setState(() {
-                                _pickerCallId = null;
-                                _minimizedCallId = callId;
-                              }),
-                              icon: const Icon(Icons.keyboard_arrow_down),
-                            ),
+                  child: ScaffoldMessenger(
+                    key: _feedbackMessengerKey,
+                    child: Scaffold(
+                      backgroundColor: Colors.transparent,
+                      resizeToAvoidBottomInset: false,
+                      body: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          ExcludeFocus(
+                            excluding: _pickerCallId != null,
+                            child: surface,
                           ),
-                        if (_pickerCallId == callId &&
-                            widget.capability
-                                is ForegroundCallAudioPickerCapability)
-                          CallAudioOutputPicker(
-                            key: ValueKey(
-                              'call-output-picker-${callId!.value}',
+                          if (surfaceKind == _ForegroundCallSurface.active &&
+                              _pickerCallId == null)
+                            Positioned(
+                              top: MediaQuery.paddingOf(context).top,
+                              right: 8,
+                              child: IconButton(
+                                key: const ValueKey('call-minimize'),
+                                tooltip: AppLocalizations.of(
+                                  context,
+                                )!.call_minimize,
+                                onPressed: () => setState(() {
+                                  _pickerCallId = null;
+                                  _minimizedCallId = callId;
+                                }),
+                                icon: const Icon(Icons.keyboard_arrow_down),
+                              ),
                             ),
-                            callId: callId,
-                            capability:
-                                widget.capability
-                                    as ForegroundCallAudioPickerCapability,
-                            onClose: () => setState(() => _pickerCallId = null),
-                          ),
-                      ],
+                          if (_pickerCallId == callId &&
+                              widget.capability
+                                  is ForegroundCallAudioPickerCapability)
+                            CallAudioOutputPicker(
+                              key: ValueKey(
+                                'call-output-picker-${callId!.value}',
+                              ),
+                              callId: callId,
+                              capability:
+                                  widget.capability
+                                      as ForegroundCallAudioPickerCapability,
+                              onClose: () =>
+                                  setState(() => _pickerCallId = null),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                 ),

@@ -7036,7 +7036,21 @@ visible and cannot become an ordinary first-attempt PASS.
   Local Call back actions are untrusted routing hints: resolve the received
   terminal row, reject superseded/duplicate actions, wait for canonical runtime
   and foreground/unlock, then use current contact/authenticated outgoing
-  preflight. They never answer the historical call. The Calls page queries the
+  preflight. They never answer the historical call.
+  Root callback feedback must resolve localization below `MaterialApp`; the
+  root State itself has no app-localization ancestor. An expanded call owns a
+  scoped messenger/Scaffold above the retained route, whose tickers and semantics
+  are suspended. Minimized/hidden calls use the ordinary route messenger. The
+  actual `MyApp` widget regression receives an unavailable callback during a
+  connected call: the baseline produces no text, a context-only repair leaves
+  the text hidden, and the complete repair makes it hit-test-visible while
+  preserving the same call/audio projection, issuing no call action, and retaining
+  the navigator. It is registered in `1to1` and `call-signaling`; causal RED/GREEN
+  and first setup/cleanup failures are retained under
+  `.codex-test-logs/patch10-callback-feedback-20261019/`. This is a host composition
+  proof with inert process owners, not native notification delivery or device
+  accessibility certification; the `lib/` change needs a rebuilt device candidate.
+  The Calls page queries the
   existing terminal table with stable timestamp/ID keyset paging and a current
   local-contact join. Millisecond/microsecond ISO timestamp comparisons are
   normalized without rewriting persisted rows, and the read transaction uses
