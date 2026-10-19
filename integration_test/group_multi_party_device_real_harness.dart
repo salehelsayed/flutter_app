@@ -72,6 +72,7 @@ import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 import 'group_multi_device_real_harness.dart';
+import '_support/group_key_transport.dart';
 import '_support/group_multi_party_harness_runtime_loader.dart';
 import '_support/group_multi_party_verdict_handshake.dart';
 import 'scripts/group_multi_party_runtime_config.dart';
@@ -6982,10 +6983,8 @@ Future<void> _runNw003Alice(
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
       sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        await stack.p2pService.sendMessage(peerId, message);
-        return true;
-      },
+      sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+      storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
     );
     if (!rejoinKey.rotated) {
       throw StateError('NW-003 Alice key rotation failed');
@@ -8983,13 +8982,11 @@ Future<GroupKeyInfo> _nw012RotateKeySkippingOfflineCharlie({
       senderPrivateKey: stack.identity.privateKey,
       senderUsername: stack.identity.username,
       sourceDeviceId: stack.p2pService.currentState.peerId,
-      sendP2PMessage: (peerId, message) async {
-        if (peerId == charliePeerId || peerId == charlieTransportPeerId) {
-          return true;
-        }
-        await stack.p2pService.sendMessage(peerId, message);
-        return true;
-      },
+      sendP2PMessage: groupKeySendIntercepting(
+        stack.p2pService,
+        intercepts: (peerId, _) =>
+            peerId == charliePeerId || peerId == charlieTransportPeerId,
+      ),
     );
     return outcome.key;
   }
@@ -18202,10 +18199,8 @@ Future<void> _runMl018Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rotatedKey.rotated) {
     throw StateError('ML-018 Alice key rotation failed');
@@ -18639,10 +18634,8 @@ Future<void> _runMl019Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rotatedKey.rotated) {
     throw StateError('ML-019 Alice key rotation failed');
@@ -33830,10 +33823,8 @@ Future<void> _runMl009Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rejoinKey.rotated) {
     throw StateError('ML-009 Alice key rotation failed');
@@ -37395,10 +37386,8 @@ Future<void> _runMl015Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rejoinKey.rotated) {
     throw StateError('ML-015 Alice key rotation failed');
@@ -42464,8 +42453,7 @@ Future<void> _runKe003Alice(
   await waitForSharedSignal(_signalName('charlie_group_joined'));
 
   Future<bool> sendLiveKeyUpdate(String peerId, String message) async {
-    await stack.p2pService.sendMessage(peerId, message);
-    return true;
+    return stack.p2pService.sendMessage(peerId, message);
   }
 
   final epochTwo = await _rotateAndSendKeyUpdate(
@@ -42493,14 +42481,14 @@ Future<void> _runKe003Alice(
   final epochFour = await _rotateAndSendKeyUpdate(
     stack: stack,
     groupId: groupId,
-    sendP2PMessage: (peerId, message) async {
-      if (peerId == bobTransportPeerId) {
+    sendP2PMessage: groupKeySendIntercepting(
+      stack.p2pService,
+      intercepts: (peerId, message) {
+        if (peerId != bobTransportPeerId) return false;
         heldBobEpochFourUpdate = message;
         return true;
-      }
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+      },
+    ),
   );
   if (epochFour.keyGeneration != 4 || heldBobEpochFourUpdate == null) {
     throw StateError('KE-003 failed to hold Bob epoch-4 key update');
@@ -42690,8 +42678,7 @@ Future<void> _runKe005Alice(
   await waitForSharedSignal(_signalName('charlie_group_joined'));
 
   Future<bool> sendLiveKeyUpdate(String peerId, String message) async {
-    await stack.p2pService.sendMessage(peerId, message);
-    return true;
+    return stack.p2pService.sendMessage(peerId, message);
   }
 
   for (var expectedEpoch = 2; expectedEpoch <= 5; expectedEpoch++) {
@@ -42956,10 +42943,8 @@ Future<void> _runKe015Alice(
         senderPrivateKey: stack.identity.privateKey,
         senderUsername: stack.identity.username,
         sourceDeviceId: stack.p2pService.currentState.peerId,
-        sendP2PMessage: (peerId, message) async =>
-            stack.p2pService.sendMessage(peerId, message),
-        storeP2PMessageInInbox: (peerId, message) async =>
-            stack.p2pService.storeInInbox(peerId, message),
+        sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+        storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
       );
   if (redistributedDeviceCount < 1) {
     throw StateError('KE-015 failed to redistribute current key to Charlie');
@@ -47422,10 +47407,8 @@ Future<void> _runSt007Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rejoinKey.rotated) {
     throw StateError('ST-007 Alice key rotation failed after remove restart');
@@ -47858,10 +47841,8 @@ Future<void> _runRa013Alice(
     senderPrivateKey: stack.identity.privateKey,
     senderUsername: stack.identity.username,
     sourceDeviceId: stack.p2pService.currentState.peerId,
-    sendP2PMessage: (peerId, message) async {
-      await stack.p2pService.sendMessage(peerId, message);
-      return true;
-    },
+    sendP2PMessage: groupKeyTransport(stack.p2pService).send,
+    storeP2PMessageInInbox: groupKeyTransport(stack.p2pService).inbox,
   );
   if (!rejoinKey.rotated) {
     throw StateError('RA-013 Alice key rotation failed');

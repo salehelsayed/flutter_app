@@ -444,6 +444,24 @@ Future<Map<String, dynamic>?> _waitForSignalBrokerDrain({
   throw StateError('Unexpected Android signal broker drain result: $result');
 }
 
+/// A role that exits mid-scenario can never write the next checkpoint, so
+/// the wait fails at that exit instead of running out its own timeout.
+Future<T> checkpointOrRoleExit<T>(
+  Future<T> checkpoint, {
+  required String scenario,
+  required Map<String, ({Future<int> exitCode, String logPath})>
+  activeRoleExits,
+}) => Future.any<T>([
+  checkpoint,
+  for (final MapEntry(key: role, value: active) in activeRoleExits.entries)
+    active.exitCode.then<T>(
+      (code) => throw StateError(
+        '$scenario/$role exited with code $code before the awaited '
+        'checkpoint; log=${active.logPath}',
+      ),
+    ),
+]);
+
 Future<Map<String, dynamic>> _waitForVerdictOrExit({
   required Process process,
   required SignalDir signals,
@@ -1505,6 +1523,16 @@ Future<void> _runSt007Scenario({
     activeProcessLabelByRole.remove(role);
   }
 
+  Future<T> untilActiveRoleExits<T>(Future<T> wait) => checkpointOrRoleExit(
+    wait,
+    scenario: scenario,
+    activeRoleExits: {
+      for (final MapEntry(key: role, value: label)
+          in activeProcessLabelByRole.entries)
+        role: (exitCode: processes[label]!.exitCode, logPath: logPaths[label]!),
+    },
+  );
+
   try {
     for (final role in roles) {
       final process = await launchRole(role);
@@ -1518,9 +1546,11 @@ Future<void> _runSt007Scenario({
       _log('ORCH', '$scenario/$role identity ready');
     }
 
-    await signals.waitForJson(
-      'charlie_st007_add_state_persisted.json',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForJson(
+        'charlie_st007_add_state_persisted.json',
+        timeout: const Duration(minutes: 15),
+      ),
     );
     _log('ORCH', '$scenario killing Charlie after add checkpoint');
     await killActiveRole('charlie', 'after-add');
@@ -1532,14 +1562,18 @@ Future<void> _runSt007Scenario({
       logLabel: 'charlie_after_add_relaunch',
       reuseExistingIdentity: true,
     );
-    await signals.waitForSignal(
-      'charlie_st007_add_recovered',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForSignal(
+        'charlie_st007_add_recovered',
+        timeout: const Duration(minutes: 15),
+      ),
     );
 
-    await signals.waitForJson(
-      'bob_st007_remove_state_persisted.json',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForJson(
+        'bob_st007_remove_state_persisted.json',
+        timeout: const Duration(minutes: 15),
+      ),
     );
     _log('ORCH', '$scenario killing Bob after remove checkpoint');
     await killActiveRole('bob', 'after-remove');
@@ -1551,14 +1585,18 @@ Future<void> _runSt007Scenario({
       logLabel: 'bob_after_remove_relaunch',
       reuseExistingIdentity: true,
     );
-    await signals.waitForSignal(
-      'bob_st007_remove_recovered',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForSignal(
+        'bob_st007_remove_recovered',
+        timeout: const Duration(minutes: 15),
+      ),
     );
 
-    await signals.waitForJson(
-      'charlie_st007_readd_state_persisted.json',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForJson(
+        'charlie_st007_readd_state_persisted.json',
+        timeout: const Duration(minutes: 15),
+      ),
     );
     _log('ORCH', '$scenario killing Charlie after re-add checkpoint');
     await killActiveRole('charlie', 'after-readd');
@@ -1570,9 +1608,11 @@ Future<void> _runSt007Scenario({
       logLabel: 'charlie_after_readd_relaunch',
       reuseExistingIdentity: true,
     );
-    await signals.waitForSignal(
-      'charlie_st007_readd_recovered',
-      timeout: const Duration(minutes: 15),
+    await untilActiveRoleExits(
+      signals.waitForSignal(
+        'charlie_st007_readd_recovered',
+        timeout: const Duration(minutes: 15),
+      ),
     );
 
     final verdicts = await Future.wait<Map<String, dynamic>>(
@@ -3508,14 +3548,20 @@ Future<void> main(List<String> args) async {
   );
   final reportPath = Platform.environment['GMP_SWEEP_REPORT'];
   if (reportPath != null && reportPath.isNotEmpty) {
-    await File(reportPath).writeAsString(jsonEncode({
-      'sweepRunId': sweepRunId,
-      'scenarios': [for (final row in result.scenarios) {
-        'scenario': row.scenario, 'passed': row.passed,
-        if (row.orchestratorVerdictPath != null)
-          'failureArtifact': row.orchestratorVerdictPath,
-      }],
-    }));
+    await File(reportPath).writeAsString(
+      jsonEncode({
+        'sweepRunId': sweepRunId,
+        'scenarios': [
+          for (final row in result.scenarios)
+            {
+              'scenario': row.scenario,
+              'passed': row.passed,
+              if (row.orchestratorVerdictPath != null)
+                'failureArtifact': row.orchestratorVerdictPath,
+            },
+        ],
+      }),
+    );
   }
   if (result.hasFailures) {
     exit(result.exitCode);
