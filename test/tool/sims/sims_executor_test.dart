@@ -119,6 +119,67 @@ void main() {
 
   const success =
       'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPresent":true,"printOnly":false}';
+  group('preflight log receipts', () {
+    for (final sample in [
+      (
+        name: 'environment blocked',
+        verdict: SimsVerdict.blocked(
+          'fixture.preflight',
+          blocker: SimsBlockerKind.environment,
+          detail: 'Explicit leased runtime target required.',
+        ),
+        loggedExit: 78,
+      ),
+      (
+        name: 'missing driver blocked',
+        verdict: SimsVerdict.blocked(
+          'fixture.preflight',
+          blocker: SimsBlockerKind.missingDriver,
+        ),
+        loggedExit: 78,
+      ),
+      (
+        name: 'unavailable target policy N/A',
+        verdict: SimsVerdict.notApplicable(
+          'fixture.preflight',
+          blocker: SimsBlockerKind.targetUnavailable,
+          targetCapabilityAvailable: false,
+          reason: targetUnavailableNaReason,
+        ),
+        loggedExit: 0,
+      ),
+    ]) {
+      test(sample.name, () async {
+        final marker = File('${temporaryDirectory.path}/child-started');
+        final row = _processRow(
+          declaredBuildException: false,
+          allowTargetUnavailable: true,
+          id: 'fixture.preflight',
+          command: ['bash', '-c', r': > "$1"', 'fixture', marker.path],
+        );
+        final executor = SimsProcessExecutor(
+          logDirectory: temporaryDirectory,
+          preflightVerdicts: {row.id: sample.verdict},
+        );
+
+        final execution = await executor.execute(row);
+
+        expect(marker.existsSync(), isFalse);
+        expect(execution.verdict, same(sample.verdict));
+        expect(execution.verdict.assertionsAttempted, 0);
+        expect(execution.verdict.artifactPresent, isFalse);
+        expect(
+          execution.verdict.satisfies(row),
+          sample.verdict.status == SimsVerdictStatus.notApplicable,
+        );
+        final logLines = File(execution.logPath).readAsLinesSync();
+        expect(logLines, contains('exitCode=${sample.loggedExit}'));
+        expect(logLines, contains('status=${sample.verdict.status.wireName}'));
+        expect(logLines, contains('blocker=${sample.verdict.blocker!.name}'));
+        expect(logLines, contains('childStarted=false'));
+      });
+    }
+  });
   group('bounded diagnostic artifacts', () {
     test(
       'directory audits do not double charge and catch screenshot growth',

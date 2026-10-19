@@ -7911,6 +7911,18 @@ race. Capacity, truncation and invalid cursors cannot establish absent events.
 Default iOS group syslog streams have 8 MiB raw limits; the separately bounded
 Plan 398 trace capture retains its existing path and semantics.
 
+SIMS preflight logs record the typed status, blocker and `childStarted=false`.
+A blocked preflight with no process exit logs 78; policy N/A retains zero.
+Neither represents executed assertions. The C1 audit found 13 retained logs
+for eight iOS build/scenario rows whose null preflight exits had been logged as
+zero; their typed verdicts were already `BLOCKED`, and required blocked rows
+already failed the suite. Use structured verdicts and proof receipts for counts,
+not a log's exit code alone. The executor's three causal host cases preserve
+blocked/N/A verdicts and prove no child starts; the full executor file passed
+54 tests. Evidence is retained in
+`.codex-test-logs/patch4-preflight-log-20261019/` and the source audit in
+`.codex-test-logs/pr15-C2-C5-readonly-20261019/`.
+
 Default capture retention owns only marked runs under
 `.codex-test-logs/owned-runs/`. It preserves active runs, the last two passing
 runs by completion time, the first untriaged unsuccessful run, the current

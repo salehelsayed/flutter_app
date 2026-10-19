@@ -88,7 +88,10 @@ final class SimsProcessExecutor {
         row,
         stdoutText: '',
         stderrText: detail,
-        exitCode: preflight.exitCode ?? 0,
+        exitCode:
+            preflight.exitCode ??
+            (preflight.status == SimsVerdictStatus.blocked ? 78 : 0),
+        preflightVerdict: preflight,
       );
       return SimsCommandExecution(
         verdict: preflight,
@@ -593,12 +596,19 @@ final class SimsProcessExecutor {
     required String stdoutText,
     required String stderrText,
     required int exitCode,
+    SimsVerdict? preflightVerdict,
   }) {
     logDirectory.createSync(recursive: true);
     final safeId = row.id.replaceAll(RegExp('[^A-Za-z0-9_.-]'), '_');
     final file = File('${logDirectory.path}/$safeId.log');
+    final preflightMetadata = preflightVerdict == null
+        ? ''
+        : 'status=${preflightVerdict.status.wireName}\n'
+              '${preflightVerdict.blocker == null ? '' : 'blocker=${preflightVerdict.blocker!.name}\n'}'
+              'childStarted=false\n';
     file.writeAsStringSync(
       'capability=${row.id}\n'
+      '$preflightMetadata'
       'exitCode=$exitCode\n'
       '--- stdout ---\n$stdoutText\n'
       '--- stderr ---\n$stderrText\n',
