@@ -5,6 +5,6 @@ name: production_contact_conversation_dialog
     id: chat_composer
 - tapOn: ${OPTIONS}
 - tapOn: ${DELETE_ACTION}
-- assertVisible: ${BODY}
+- assertVisible: ${DIALOG_LABEL}
 - assertVisible: '^Delete$'
 - assertVisible: ${CANCEL}

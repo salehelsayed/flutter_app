@@ -2,13 +2,70 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yaml/yaml.dart';
 
 import '../../../integration_test/scripts/run_production_contact_delete.dart'
-    show parseContactFixtureLocales;
+    show contactDeleteFlowValues, parseContactFixtureLocales;
 import '../../../tool/sims/production_contact_delete_criteria.dart';
 
 // Synthetic oracle inputs, never live device/UI evidence.
 void main() {
+  for (final scenario in ['kx0010', 'kx0011', 'kx0012', 'kx0013', 'kx0014']) {
+    test('exact merged contact dialog label for $scenario', () {
+      final language = contactDeleteLanguage(scenario);
+      final translations = Map<String, Object?>.from(
+        jsonDecode(File('lib/l10n/app_$language.arb').readAsStringSync())
+            as Map,
+      );
+      final title =
+          translations[scenario == 'kx0011'
+                  ? 'orbit_delete_chat'
+                  : 'conversation_delete_chat']
+              as String;
+      final body = (translations['delete_contact_body'] as String).replaceAll(
+        '{username}',
+        'FixtureAlpha',
+      );
+      final label = '$title\n$body';
+      final values = contactDeleteFlowValues(
+        translations,
+        scenario,
+        'fixture-a',
+      );
+      final name = scenario == 'kx0011'
+          ? 'production_contact_orbit_dialog'
+          : 'production_contact_conversation_dialog';
+      final steps =
+          loadYamlDocuments(
+                File('integration_test/maestro/$name.yaml').readAsStringSync(),
+              ).last.contents
+              as YamlList;
+      final variable = steps
+          .whereType<YamlMap>()
+          .map((step) => step['assertVisible'])
+          .whereType<String>()
+          .singleWhere(
+            (value) => value.startsWith(r'${') && value != r'${CANCEL}',
+          );
+      final pattern = values[variable.substring(2, variable.length - 1)]!;
+      final matcher = RegExp(pattern.replaceFirst(RegExp(r'^\(\?-i\)'), ''));
+      expect(matcher.hasMatch(label), isTrue);
+      expect(pattern, startsWith('(?-i)^'));
+      expect(pattern, endsWith(r'$'));
+      for (final wrong in [
+        body,
+        title,
+        '$title $body',
+        label.replaceFirst('FixtureAlpha', 'FixtureBeta'),
+        'prefix $label',
+        '$label suffix',
+        label.substring(0, label.length - 1),
+        if (language != 'ar') label.toUpperCase(),
+      ]) {
+        expect(matcher.hasMatch(wrong), isFalse, reason: wrong);
+      }
+    });
+  }
   late Directory attempt;
   late Map<String, Object?> proof;
   const body =

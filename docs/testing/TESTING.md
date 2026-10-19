@@ -7340,7 +7340,16 @@ visible and cannot become an ordinary first-attempt PASS.
   `kx0031` is a host process-guard check. The four iOS physical proposals stay
   registered BLOCKED for physical-state preservation. Host validation and a
   registered command do not certify any new device scenario. Contact rollback
-  uses an owned SQLite abort trigger; callback admission uses the actual app
+  uses an owned SQLite abort trigger. Android exposes the contact-delete
+  dialog title and body as one accessibility label separated by a newline;
+  both contact dialog flows therefore assert the exact merged ARB title/body,
+  anchored and case-sensitive. Keep the complete body, username, Cancel and
+  Delete checks. The five KX selector cases cover English, German and Arabic
+  and reject partial, changed-contact and extra text; the focused selector,
+  flow-shape and receipt suites passed 33 host tests. Source evidence and the
+  first five selector failures are retained in
+  `.codex-test-logs/patch5-contact-dialog-20261019/`; a device rerun remains
+  separate proof. Callback admission uses the actual app
   handler plus native notification/keyguard/permission observations. Quiet-call
   proof requires owned native channel/priority state and complete SystemUI
   heads-up-manager samples; observed publication order uses the always-on

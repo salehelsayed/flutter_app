@@ -20,6 +20,36 @@ String parseContactFixtureLocales(String output, String package, int user) {
   return match.group(1)!;
 }
 
+Map<String, String> contactDeleteFlowValues(
+  Map<String, Object?> translations,
+  String scenario,
+  String peerId,
+) {
+  final body = (translations['delete_contact_body'] as String).replaceAll(
+    '{username}',
+    'FixtureAlpha',
+  );
+  final title =
+      translations[scenario == 'kx0011'
+              ? 'orbit_delete_chat'
+              : 'conversation_delete_chat']
+          as String;
+  String exact(String value) => '^${RegExp.escape(value)}\$';
+  return {
+    'PEER_ID': peerId,
+    // Android exposes the title and body as one accessibility label.
+    'DIALOG_LABEL': '(?-i)${exact('$title\n$body')}',
+    'CANCEL': exact(translations['btn_cancel'] as String),
+    'OPTIONS': exact(translations['action_conversation_options'] as String),
+    'DELETE_ACTION': exact(
+      translations[scenario == 'kx0011'
+              ? 'orbit_delete_action'
+              : 'conversation_delete_chat_action']
+          as String,
+    ),
+  };
+}
+
 Future<void> main(List<String> arguments) async {
   if (arguments.length == 1 && arguments.single == '--list-scenarios') {
     stdout.write('${productionContactDeleteJourneys.join('\n')}\n');
@@ -102,19 +132,7 @@ Future<void> main(List<String> arguments) async {
       proof['expectedBody'] = body;
       final initial = await journey.alice.command('se47.snapshot');
       final peerA = initial['peerA'] as String;
-      String exact(String value) => '^${RegExp.escape(value)}\$';
-      final values = {
-        'PEER_ID': peerA,
-        'BODY': exact(body),
-        'CANCEL': exact(translations['btn_cancel'] as String),
-        'OPTIONS': exact(translations['action_conversation_options'] as String),
-        'DELETE_ACTION': exact(
-          translations[id == 'kx0011'
-                  ? 'orbit_delete_action'
-                  : 'conversation_delete_chat_action']
-              as String,
-        ),
-      };
+      final values = contactDeleteFlowValues(translations, id, peerA);
       var serial = 0;
       Future<String> flow(String name, String label) =>
           journey.flow(journey.alice, name, '${serial++}-$label', values);

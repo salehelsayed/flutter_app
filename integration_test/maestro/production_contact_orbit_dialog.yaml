@@ -9,6 +9,6 @@ name: production_contact_orbit_dialog
     direction: LEFT
     duration: 500
 - tapOn: ${DELETE_ACTION}
-- assertVisible: ${BODY}
+- assertVisible: ${DIALOG_LABEL}
 - assertVisible: '^Delete$'
 - assertVisible: ${CANCEL}
