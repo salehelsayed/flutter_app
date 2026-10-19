@@ -4,6 +4,9 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly GO_ROOT="$REPO_ROOT/go-mknoon"
+# The binding input digest hashes the effective gomobile binary, so resolve the
+# pinned tools first, exactly as scripts/ensure_go_ios_bindings.sh does.
+export PATH="$GO_ROOT/bin/tools:$PATH"
 readonly IOS_WORKSPACE="$REPO_ROOT/ios/Runner.xcworkspace"
 readonly IOS_PROJECT="$REPO_ROOT/ios/Runner.xcodeproj/project.pbxproj"
 readonly FINAL_EFFECT_SOURCE="$REPO_ROOT/ios/NotificationService/IosLocalNotificationFinalEffect.swift"
