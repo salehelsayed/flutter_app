@@ -93,10 +93,18 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
   /// Minimized/hidden calls use the retained route's ordinary messenger.
   void showFeedback(String message) {
     if (!mounted) return;
-    final messenger =
-        _feedbackMessengerKey.currentState ??
-        ScaffoldMessenger.maybeOf(context);
-    messenger?.showSnackBar(SnackBar(content: Text(message)));
+    // A refusal or minimize can remove the call surface on the next build.
+    // Its messenger key still exists until that frame commits; resolve the
+    // target afterward so the message survives on the retained route.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final messenger =
+          _feedbackMessengerKey.currentState ??
+          ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(SnackBar(content: Text(message)));
+    });
+    // A steady no-call refusal need not otherwise schedule a new frame.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   @override

@@ -89,161 +89,223 @@ final _missedId = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _now = DateTime.utc(2026, 10, 19, 12);
 
 void main() {
-  testWidgets('production root exposes unavailable callback feedback above '
-      'the active call without ending or replacing it', (tester) async {
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    final semantics = tester.ensureSemantics();
-    try {
-      final calls = _BusyCall();
-      addTearDown(calls.dispose);
-      final notifications = _Notifications();
-      final contacts = _Contacts();
-      final identity = _Identity();
-      final completed = <OutgoingCallStartResult?>[];
-      final updates = UpdateCheckController(service: FakeUpdateCheckService());
-      addTearDown(updates.dispose);
-      const callChannel = MethodChannel('mknoon/call_task');
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(callChannel, (_) async => true);
-      addTearDown(
-        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-            .setMockMethodCallHandler(callChannel, null),
-      );
-      await tester.pumpWidget(
-        MyApp(
-          repository: identity,
-          contactRepository: contacts,
-          contactRequestRepository: _ContactRequestRepositoryImpl(),
-          contactRequestListener: _ContactRequestListener(),
-          contactRequestPresentationGate: ContactRequestPresentationGate(),
-          messageRepository: _MessageRepositoryImpl(),
-          postRepository: _PostRepositoryImpl(),
-          postsPrivacySettingsRepository: _PostsPrivacySettingsRepositoryImpl(),
-          feedClearedRepository: _FeedClearedRepository(),
-          contactPresenceSnapshotRepository:
-              _ContactPresenceSnapshotRepositoryImpl(),
-          nearbyLocationService: _NearbyLocationService(),
-          mediaAttachmentRepository: _MediaAttachmentRepositoryImpl(),
-          groupMediaDeleteForMeCoordinator: _GroupMediaDeleteForMeCoordinator(),
-          groupMediaDeletionCleanup: () async {},
-          chatMessageListener: _ChatMessageListener(),
-          postListener: _PostListener(),
-          postCommentListener: _PostCommentListener(),
-          postReactionListener: _PostReactionListener(),
-          postPresenceListener: _PostPresenceListener(),
-          postPassListener: _PostPassListener(),
-          postPinListener: _PostPinListener(),
-          reactionListener: _ReactionListener(),
-          messageDeletionListener: _MessageDeletionListener(),
-          profileUpdateListener: _ProfileUpdateListener(),
-          messageRouter: _IncomingMessageRouter(),
-          pendingMessageRetrier: _PendingMessageRetrier(),
-          pendingPostMediaUploadRetrier: _PendingPostMediaUploadRetrier(),
-          pendingPostDeliveryRetrier: _PendingPostDeliveryRetrier(),
-          pendingPostFollowOnRetrier: _PendingPostFollowOnRetrier(),
-          keyExchangeRetrier: _KeyExchangeRetrier(),
-          bridge: _Bridge(),
-          p2pService: _P2P(),
-          mediaFileManager: _MediaFileManager(),
-          secureKeyStore: _SecureKeyStore(),
-          imageProcessor: _ImageProcessor(),
-          audioRecorderService: _AudioRecorderService(),
-          reactionRepository: _ReactionRepositoryImpl(),
-          isDesktop: false,
-          notificationService: notifications,
-          appShellController: AppShellController(),
-          pendingPostTargetStore: PendingPostTargetStore(),
-          conversationTracker: ActiveConversationTracker(),
-          groupRepository: _GroupRepositoryImpl(),
-          groupMessageRepository: _GroupMessageRepositoryImpl(),
-          groupInviteDeliveryAttemptRepository:
-              _GroupInviteDeliveryAttemptRepositoryImpl(),
-          groupPendingKeyRepairRepository:
-              _GroupPendingKeyRepairRepositoryImpl(),
-          groupPendingReactionRepository: _GroupPendingReactionRepository(),
-          groupPendingKeyRepairRunner: _GroupPendingKeyRepairRunner(),
-          groupPendingKeyRepairBackoffTimer:
-              _GroupPendingKeyRepairBackoffTimer(),
-          groupPendingKeyDistributionRunner:
-              _GroupPendingKeyDistributionRunner(),
-          groupHistoryGapRepairRepository:
-              _GroupHistoryGapRepairRepositoryImpl(),
-          groupReactionReplayOutboxRepository:
-              _GroupReactionReplayOutboxRepositoryImpl(),
-          groupMessageListener: _GroupMessageListener(),
-          groupInviteListener: _GroupInviteListener(),
-          groupKeyUpdateListener: _GroupKeyUpdateListener(),
-          groupKeyRepairResponderListener: _GroupKeyRepairResponderListener(),
-          requestGroupKeyRepair: (_) async {},
-          groupMembershipUpdateListener: _GroupMembershipUpdateListener(),
-          groupConversationTracker: ActiveConversationTracker(),
-          introductionRepository: _IntroductionRepositoryImpl(),
-          introReviewSeenRepository: _IntroReviewSeenRepositoryImpl(),
-          introductionListener: _IntroductionListener(),
-          shareIntentService: _Shares(),
-          updateCheckController: updates,
-          outgoingCallCapability: calls,
-          foregroundCallCapability: calls,
-          callTimelineSource: _History(),
-          deferredRuntimeStartup: () async => true,
-          callBackReadinessBarrier: () async => true,
-          onCallBackObservation: (event, id, result) {
-            if (event == CallBackActionObservation.completed) {
-              completed.add(result);
+  for (final surface in [
+    (
+      name: 'no call surface',
+      active: false,
+      minimized: false,
+      controlled: false,
+    ),
+    (
+      name: 'withdrawn preparing surface',
+      active: false,
+      minimized: false,
+      controlled: true,
+    ),
+    (name: 'expanded call', active: true, minimized: false, controlled: false),
+    (name: 'minimized call', active: true, minimized: true, controlled: true),
+  ]) {
+    for (final result in [
+      OutgoingCallStartResult.unavailable,
+      OutgoingCallStartResult.microphoneDenied,
+    ]) {
+      testWidgets('production root exposes ${result.name} feedback with '
+          '${surface.name} without ending a retained call', (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        final semantics = tester.ensureSemantics();
+        try {
+          final calls = _BusyCall(
+            active: surface.active,
+            controlled: surface.controlled,
+            result: result,
+          );
+          addTearDown(calls.dispose);
+          final notifications = _Notifications();
+          final contacts = _Contacts();
+          final identity = _Identity();
+          final completed = <OutgoingCallStartResult?>[];
+          final updates = UpdateCheckController(
+            service: FakeUpdateCheckService(),
+          );
+          addTearDown(updates.dispose);
+          const callChannel = MethodChannel('mknoon/call_task');
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(callChannel, (_) async => true);
+          addTearDown(
+            () => TestDefaultBinaryMessengerBinding
+                .instance
+                .defaultBinaryMessenger
+                .setMockMethodCallHandler(callChannel, null),
+          );
+          await tester.pumpWidget(
+            MyApp(
+              repository: identity,
+              contactRepository: contacts,
+              contactRequestRepository: _ContactRequestRepositoryImpl(),
+              contactRequestListener: _ContactRequestListener(),
+              contactRequestPresentationGate: ContactRequestPresentationGate(),
+              messageRepository: _MessageRepositoryImpl(),
+              postRepository: _PostRepositoryImpl(),
+              postsPrivacySettingsRepository:
+                  _PostsPrivacySettingsRepositoryImpl(),
+              feedClearedRepository: _FeedClearedRepository(),
+              contactPresenceSnapshotRepository:
+                  _ContactPresenceSnapshotRepositoryImpl(),
+              nearbyLocationService: _NearbyLocationService(),
+              mediaAttachmentRepository: _MediaAttachmentRepositoryImpl(),
+              groupMediaDeleteForMeCoordinator:
+                  _GroupMediaDeleteForMeCoordinator(),
+              groupMediaDeletionCleanup: () async {},
+              chatMessageListener: _ChatMessageListener(),
+              postListener: _PostListener(),
+              postCommentListener: _PostCommentListener(),
+              postReactionListener: _PostReactionListener(),
+              postPresenceListener: _PostPresenceListener(),
+              postPassListener: _PostPassListener(),
+              postPinListener: _PostPinListener(),
+              reactionListener: _ReactionListener(),
+              messageDeletionListener: _MessageDeletionListener(),
+              profileUpdateListener: _ProfileUpdateListener(),
+              messageRouter: _IncomingMessageRouter(),
+              pendingMessageRetrier: _PendingMessageRetrier(),
+              pendingPostMediaUploadRetrier: _PendingPostMediaUploadRetrier(),
+              pendingPostDeliveryRetrier: _PendingPostDeliveryRetrier(),
+              pendingPostFollowOnRetrier: _PendingPostFollowOnRetrier(),
+              keyExchangeRetrier: _KeyExchangeRetrier(),
+              bridge: _Bridge(),
+              p2pService: _P2P(),
+              mediaFileManager: _MediaFileManager(),
+              secureKeyStore: _SecureKeyStore(),
+              imageProcessor: _ImageProcessor(),
+              audioRecorderService: _AudioRecorderService(),
+              reactionRepository: _ReactionRepositoryImpl(),
+              isDesktop: false,
+              notificationService: notifications,
+              appShellController: AppShellController(),
+              pendingPostTargetStore: PendingPostTargetStore(),
+              conversationTracker: ActiveConversationTracker(),
+              groupRepository: _GroupRepositoryImpl(),
+              groupMessageRepository: _GroupMessageRepositoryImpl(),
+              groupInviteDeliveryAttemptRepository:
+                  _GroupInviteDeliveryAttemptRepositoryImpl(),
+              groupPendingKeyRepairRepository:
+                  _GroupPendingKeyRepairRepositoryImpl(),
+              groupPendingReactionRepository: _GroupPendingReactionRepository(),
+              groupPendingKeyRepairRunner: _GroupPendingKeyRepairRunner(),
+              groupPendingKeyRepairBackoffTimer:
+                  _GroupPendingKeyRepairBackoffTimer(),
+              groupPendingKeyDistributionRunner:
+                  _GroupPendingKeyDistributionRunner(),
+              groupHistoryGapRepairRepository:
+                  _GroupHistoryGapRepairRepositoryImpl(),
+              groupReactionReplayOutboxRepository:
+                  _GroupReactionReplayOutboxRepositoryImpl(),
+              groupMessageListener: _GroupMessageListener(),
+              groupInviteListener: _GroupInviteListener(),
+              groupKeyUpdateListener: _GroupKeyUpdateListener(),
+              groupKeyRepairResponderListener:
+                  _GroupKeyRepairResponderListener(),
+              requestGroupKeyRepair: (_) async {},
+              groupMembershipUpdateListener: _GroupMembershipUpdateListener(),
+              groupConversationTracker: ActiveConversationTracker(),
+              introductionRepository: _IntroductionRepositoryImpl(),
+              introReviewSeenRepository: _IntroReviewSeenRepositoryImpl(),
+              introductionListener: _IntroductionListener(),
+              shareIntentService: _Shares(),
+              updateCheckController: updates,
+              outgoingCallCapability: calls,
+              foregroundCallCapability: calls,
+              callTimelineSource: _History(),
+              deferredRuntimeStartup: () async => true,
+              callBackReadinessBarrier: () async => true,
+              onCallBackObservation: (event, id, result) {
+                if (event == CallBackActionObservation.completed) {
+                  completed.add(result);
+                }
+              },
+            ),
+          );
+          // Keep unrelated startup behind the fake initial-share capture. The real
+          // MaterialApp, root callback handler and call overlay are all mounted.
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          final navigator = MyApp.navigatorKey.currentState!;
+          unawaited(
+            navigator.push(
+              MaterialPageRoute<void>(
+                builder: (_) =>
+                    const Scaffold(body: Text('retained Orbit root')),
+              ),
+            ),
+          );
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(navigator.canPop(), isTrue);
+          expect(
+            find.byType(ActiveCallScreen),
+            surface.active ? findsOneWidget : findsNothing,
+          );
+          final before = calls.current;
+          expect(notifications.onNotificationTap, isNotNull);
+          notifications.onNotificationTap!(
+            '$callBackPayloadPrefix${_missedId.value}',
+          );
+          if (calls.controlled) {
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            if (surface.minimized) {
+              await tester.tap(find.byKey(const ValueKey('call-minimize')));
             }
-          },
-        ),
-      );
-      // Keep unrelated startup behind the fake initial-share capture. The real
-      // MaterialApp, root callback handler and call overlay are all mounted.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      final navigator = MyApp.navigatorKey.currentState!;
-      unawaited(
-        navigator.push(
-          MaterialPageRoute<void>(
-            builder: (_) => const Scaffold(body: Text('retained conversation')),
-          ),
-        ),
-      );
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(navigator.canPop(), isTrue);
-      expect(find.byType(ActiveCallScreen), findsOneWidget);
-      final before = calls.current;
-      expect(notifications.onNotificationTap, isNotNull);
-      notifications.onNotificationTap!(
-        '$callBackPayloadPrefix${_missedId.value}',
-      );
-      for (var frame = 0; frame < 6; frame++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-      expect(completed, [OutgoingCallStartResult.unavailable]);
-      expect(calls.current, same(before));
-      expect(calls.current.session.callId, _activeId);
-      expect(calls.current.session.state, CallState.connected);
-      expect(calls.current.audio, same(before.audio));
-      expect(calls.current.audio.active, isTrue);
-      expect(calls.actions, isEmpty);
-      expect(MyApp.navigatorKey.currentState, same(navigator));
-      expect(navigator.canPop(), isTrue);
-      expect(find.text('retained conversation').hitTestable(), findsNothing);
-      expect(find.byType(ActiveCallScreen), findsOneWidget);
-      expect(find.byKey(ValueKey<CallId?>(_activeId)), findsOneWidget);
-      expect(find.text('Voice calling is unavailable.'), findsOneWidget);
-      expect(
-        find.text('Voice calling is unavailable.').hitTestable(),
-        findsOneWidget,
-      );
-      expect(
-        find.bySemanticsLabel(RegExp(r'Voice calling is unavailable\.')),
-        findsOneWidget,
-      );
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
-    } finally {
-      semantics.dispose();
+            // Complete refusal before the scheduled frame removes the old modal
+            // messenger. This is the preparing-withdrawal/minimize handoff.
+            calls.completeRefusal();
+          }
+          for (var frame = 0; frame < 6; frame++) {
+            await tester.pump(const Duration(milliseconds: 100));
+          }
+          final message = result == OutgoingCallStartResult.microphoneDenied
+              ? 'Microphone permission is needed to make calls.'
+              : 'Voice calling is unavailable.';
+          expect(find.text(message).hitTestable(), findsOneWidget);
+          expect(
+            find.bySemanticsLabel(RegExp(RegExp.escape(message))),
+            findsOneWidget,
+          );
+          expect(completed, [result]);
+          expect(calls.current, same(before));
+          if (surface.active) {
+            expect(calls.current!.session.callId, _activeId);
+            expect(calls.current!.session.state, CallState.connected);
+            expect(calls.current!.audio, same(before!.audio));
+            expect(calls.current!.audio.active, isTrue);
+          } else {
+            expect(calls.current, isNull);
+          }
+          expect(calls.actions, isEmpty);
+          expect(calls.startRequests, 1);
+          expect(MyApp.navigatorKey.currentState, same(navigator));
+          expect(navigator.canPop(), isTrue);
+          expect(
+            find.text('retained Orbit root').hitTestable(),
+            surface.active && !surface.minimized
+                ? findsNothing
+                : findsOneWidget,
+          );
+          expect(
+            find.byType(ActiveCallScreen),
+            surface.active && !surface.minimized
+                ? findsOneWidget
+                : findsNothing,
+          );
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          semantics.dispose();
+        }
+      });
     }
-  });
+  }
 }
 
 // Unused process owners are inert. Only the explicit fake methods below may
@@ -323,8 +385,18 @@ class _BusyCall extends _Unused
   );
   Future<void> dispose() => _changes.close();
   final actions = <Symbol>[];
+  _BusyCall({
+    required bool active,
+    required this.controlled,
+    required this.result,
+  }) : current = active ? _activeProjection : null;
+  final OutgoingCallStartResult result;
+  final bool controlled;
+  final _refusal = Completer<OutgoingCallStartResult>();
+  int startRequests = 0;
   @override
-  final ForegroundCallProjection current = ForegroundCallProjection(
+  ForegroundCallProjection? current;
+  static final _activeProjection = ForegroundCallProjection(
     session: CallSessionSnapshot.active(
       callId: _activeId,
       contactPeerId: 'active-contact',
@@ -349,7 +421,40 @@ class _BusyCall extends _Unused
   @override
   Stream<ForegroundCallProjection?> get changes => _changes.stream;
   @override
-  bool get isOutgoingCallAvailable => false;
+  bool get isOutgoingCallAvailable => true;
+  @override
+  Future<bool> isOutgoingCallAvailableFor(String peerId) async => true;
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    startRequests += 1;
+    if (!controlled) return result;
+    if (current == null) {
+      current = ForegroundCallProjection(
+        session: _activeProjection.session.copyWith(state: CallState.inviting),
+        audio: CallAudioControlState(
+          muted: false,
+          selectedRoute: CallAudioOutputRoute.systemDefault,
+          supportedRoutes: const [CallAudioOutputRoute.systemDefault],
+          active: false,
+          failure: CallAudioFailure.none,
+        ),
+      );
+      _changes.add(current);
+    }
+    return _refusal.future;
+  }
+
+  void completeRefusal() {
+    if (current?.session.state == CallState.inviting) {
+      current = null;
+      _changes.add(null);
+    }
+    _refusal.complete(result);
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) {
     actions.add(invocation.memberName);

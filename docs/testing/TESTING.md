@@ -7061,7 +7061,23 @@ visible and cannot become an ordinary first-attempt PASS.
   preserving the same call/audio projection, issuing no call action, and retaining
   the navigator. It is registered in `1to1` and `call-signaling`; causal RED/GREEN
   and first setup/cleanup failures are retained under
-  `.codex-test-logs/patch10-callback-feedback-20261019/`. This is a host composition
+  `.codex-test-logs/patch10-callback-feedback-20261019/`.
+  Feedback selection must also wait until the frame commits a pending call
+  withdrawal or minimization. Before that build, the old modal messenger key
+  remains mounted and can accept a SnackBar that is immediately disposed with
+  its surface. A missing call surface alone is insufficient to diagnose the
+  loss: the ordinary app messenger and Orbit Scaffold already exist. The
+  expanded-call-only patch10 regression missed this transition. The root widget
+  test now exercises unavailable and microphone-denied results with a steady
+  hidden surface, a withdrawn outgoing surface, an expanded connected call and
+  an active call being minimized. Baseline: four steady cases passed and four
+  handoff cases failed visibility; selecting the messenger after the frame
+  makes all eight pass while retaining the navigator and active call/audio
+  identity. The helper requests a frame even for an otherwise idle refusal.
+  [The causal host receipts](../../.codex-test-logs/refused-call-feedback-20261019/)
+  preserve RED/GREEN evidence. The captured kx0007/kx0008 device attempts do not
+  independently trace this widget lifetime; rebuild and rerun those rows before
+  claiming candidate/device closure. This is a host composition
   proof with inert process owners, not native notification delivery or device
   accessibility certification; the `lib/` change needs a rebuilt device candidate.
   The Calls page queries the
