@@ -37,7 +37,16 @@ TARGETS = {
        for letter in "ABCD"},
 }
 ALLOWED_INPUTS = {*TARGETS.values(), "SIMS_IOS_SIMULATOR_ID", "KAYAN_TEST_RELAY_FILE",
-                  "PLAN399_FIXTURE_HOST_IP", "PLAN347_FIXTURE_HOST_IP"}
+                  "PLAN399_FIXTURE_HOST_IP", "PLAN347_FIXTURE_HOST_IP",
+                  "KAYAN_PIXEL_PHYSICAL_SERIAL"}
+# Opt-in only (--pixel-physical-rows): the owner made the Pixel 6 disposable on
+# 2026-10-19, and this host cannot start a fourth emulator. These four rows keep
+# their original android-physical role on that one serial; every other physical
+# row stays blocked.
+PIXEL_PHYSICAL_ROWS = frozenset({
+    "production.group_catalog.gm002", "production.group_catalog.gm003",
+    "production.group_catalog.private_offline_add", "production.group_catalog.private_online_add",
+})
 LOG_LIMIT = 8 * 1024 * 1024
 
 
@@ -93,7 +102,7 @@ def pins(values):
     return result
 
 
-def disposable_manifest(manifest):
+def disposable_manifest(manifest, keep_physical_rows=frozenset()):
     """Rebind only audited protocol journeys; native resolver still owns targets.
 
     Alice uses the explicit fourth role, preserving Bob/Charlie/Dana's existing
@@ -120,12 +129,12 @@ def disposable_manifest(manifest):
                                  for a in row["assertions"]]
         for lock in row.get("resources", []):
             kind, _, role = lock["name"].partition(":")
-            if role == "android-physical":
+            if role == "android-physical" and row["id"] not in keep_physical_rows:
                 lock["name"] = kind + ":android-emulator-fourth"
     return result
 
 
-def policy(manifest, mode):
+def policy(manifest, mode, physical_rows=frozenset()):
     rows = {c["id"]: c for c in manifest["capabilities"]
             if c.get("active", True) and "major" in c.get("modes", [])}
     if mode != "major":
@@ -156,7 +165,7 @@ def policy(manifest, mode):
             blocked[key] = "physical_data_preservation"
         elif credential_profile or any(c.startswith("credentials.") for c in capabilities):
             blocked[key] = "credentials"
-        elif (any(c in capabilities for c in ("android.physical", "ios.physical"))
+        elif key not in physical_rows and (any(c in capabilities for c in ("android.physical", "ios.physical"))
               or any(r["name"].split(":")[-1] in ("android-physical", "ios-physical")
                      for r in row.get("resources", []))):
             blocked[key] = "physical_data_preservation"
@@ -281,10 +290,12 @@ def main(arguments=None):
     parser.add_argument("--output", default="build/kayan-safe")
     parser.add_argument("--exclude-file", help="ignored file of row ids to skip (resume)")
     parser.add_argument("--continue-on-failure", action="store_true")
+    parser.add_argument("--pixel-physical-rows", action="store_true")
     options = parser.parse_args(arguments)
+    physical_rows = PIXEL_PHYSICAL_ROWS if options.pixel_physical_rows else frozenset()
     manifest = disposable_manifest(json.loads(
-        (REPO / "tool/sims/critical_features.json").read_text()))
-    rows, blocked = policy(manifest, options.mode)
+        (REPO / "tool/sims/critical_features.json").read_text()), physical_rows)
+    rows, blocked = policy(manifest, options.mode, physical_rows)
     summary = {
         "scope": "filtered diagnostic; physical and credential routes are blocked",
         "rows": [{"id": key, "status": "BLOCKED" if key in blocked else "SELECTED",
@@ -300,6 +311,13 @@ def main(arguments=None):
         return 78
     values = inputs()
     selected = pins(values)
+    if options.pixel_physical_rows:
+        serial = values.get("KAYAN_PIXEL_PHYSICAL_SERIAL", "").strip()
+        if options.mode != "major" or not re.fullmatch(r"[0-9A-Za-z]{8,32}", serial):
+            raise ValueError("the Pixel opt-in needs major mode and one explicit physical serial")
+        if serial.upper() in (v.upper() for v in selected.values()):
+            raise ValueError("target roles must be distinct")
+        selected["android-physical"] = serial
     relay = ignored(values.get("KAYAN_TEST_RELAY_FILE", ""))
     if not relay.is_file() or relay.stat().st_size > 64 * 1024:
         raise ValueError("a bounded ignored test relay file is required")
@@ -319,7 +337,7 @@ def main(arguments=None):
         "isolated_test_environment": True, "fixture_reference": "explicit-disposable-test-relay",
         "devices": {("ios_simulator" if role == "ios-simulator-a" else role.replace("-", "_")): value
                     for role, value in selected.items()},
-        "android_physical": {"enabled": False}, "ios_physical": {"enabled": False},
+        "android_physical": {"enabled": options.pixel_physical_rows}, "ios_physical": {"enabled": False},
     })
     summary["host_gate"] = host_gate()
     if not summary["host_gate"]["passed"]:
@@ -332,7 +350,8 @@ def main(arguments=None):
     base_names = ("HOME", "PATH", "USER", "TMPDIR", "LANG", "LC_ALL", "DEVELOPER_DIR",
                   "ANDROID_HOME", "ANDROID_SDK_ROOT", "JAVA_HOME", "FLUTTER_ROOT")
     environment = {k: os.environ[k] for k in base_names if k in os.environ}
-    environment.update({TARGETS[role]: value for role, value in selected.items()})
+    names = {**TARGETS, "android-physical": "SIMS_ANDROID_PHYSICAL_DEVICE_ID"}
+    environment.update({names[role]: value for role, value in selected.items()})
     if "ios-simulator-a" in selected:
         environment["SIMS_IOS_SIMULATOR_ID"] = selected["ios-simulator-a"]
         environment["MKNOON_NATIVE_IOS_SIMULATOR_ID"] = selected["ios-simulator-a"]
@@ -354,8 +373,11 @@ def main(arguments=None):
     environment.update({
         "MKNOON_RELAY_ADDRESSES": ",".join(addresses),
         "SIMS_MANIFEST": str(directory / "manifest.json"),
-        "SIMS_DISPOSABLE_ANDROID_JOURNEYS": "1",
-        "MKNOON_PRESERVE_PHYSICAL_APP_DATA": "1",
+        # The opted run selects only the Pixel rows (checked below), so only
+        # their journeys read the physical Alice pin instead of an emulator.
+        "SIMS_DISPOSABLE_ANDROID_JOURNEYS": "0" if options.pixel_physical_rows else "1",
+        # Only the opted-in disposable Pixel is a physical target in that run.
+        "MKNOON_PRESERVE_PHYSICAL_APP_DATA": "0" if options.pixel_physical_rows else "1",
         "SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON": json.dumps(selected),
         "SIMS_IOS_DISPOSABLE_SIMULATOR_IDS": ",".join(
             value for role, value in selected.items() if role.startswith("ios-")),
@@ -407,6 +429,12 @@ def main(arguments=None):
                 if key not in blocked:
                     command.extend(["--exclude", key])
             summary["resume_excluded"] = skipped
+    if options.pixel_physical_rows:
+        excluded = {command[i + 1] for i, a in enumerate(command) if a == "--exclude"}
+        others = sorted(key for key, row in rows.items() if key not in excluded
+                        and key not in PIXEL_PHYSICAL_ROWS and row["command"][0] != "@prepare-build")
+        if others:
+            raise ValueError("the Pixel opt-in runs only its allowlisted rows")
     with prepared_devices(selected, environment, directory):
         code, dropped = run_child(command, environment, directory)
     summary.update(child_exit=code, discarded_log_bytes=dropped,

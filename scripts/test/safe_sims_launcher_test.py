@@ -42,6 +42,9 @@ data = {
  'argv': sys.argv[1:],
  'pins': json.loads(os.environ['SIMS_PROTECTED_DEVICE_ASSIGNMENTS_JSON']),
  'environment_names': sorted(os.environ),
+ 'preserve_physical': os.environ.get('MKNOON_PRESERVE_PHYSICAL_APP_DATA'),
+ 'physical_target': os.environ.get('SIMS_ANDROID_PHYSICAL_DEVICE_ID'),
+ 'disposable_journeys': os.environ.get('SIMS_DISPOSABLE_ANDROID_JOURNEYS'),
  'workers': {k:os.environ.get(k) for k in ['SIMS_MAX_PARALLEL','SIMS_HOST_CONCURRENCY','MKNOON_HOST_FLUTTER_WORKERS']},
  'ssh_exit': subprocess.call(['ssh','-V'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL),
 }
@@ -230,6 +233,61 @@ print('private-child-marker')
         self.assertNotIn("production.routing_smoke", excluded)
         self.assertIn("build.android.production_fcm", excluded)
         self.assertNotIn("production.group_catalog.private_partition_readd_heal", excluded)
+
+    def _physical_locks(self, row_id):
+        manifest = json.loads((self.repo / "build/kayan-safe/manifest.json").read_text())
+        row = next(r for r in manifest["capabilities"] if r["id"] == row_id)
+        return [r["name"] for r in row.get("resources", []) if r["name"].endswith("android-physical")]
+
+    def test_pixel_serial_is_ignored_without_the_explicit_opt_in(self):
+        os.environ["KAYAN_PIXEL_PHYSICAL_SERIAL"] = "PIXEL00TEST"
+        self.invoke("major")
+        native = self.native()
+        self.assertIsNone(native["physical_target"])
+        self.assertEqual(native["preserve_physical"], "1")
+        self.assertEqual(native["disposable_journeys"], "1")
+        self.assertNotIn("android-physical", native["pins"])
+        self.assertEqual(self._physical_locks("production.group_catalog.gm002"), [])
+
+    def _pixel_only_exclude_file(self):
+        rows = {r["id"]: r for r in self.manifest["capabilities"]
+                if r.get("active", True) and "major" in r.get("modes", [])}
+        path = self.repo / "build/pixel-only-exclude.txt"
+        path.write_text("\n".join(k for k, r in rows.items() if k not in launcher.PIXEL_PHYSICAL_ROWS
+                                  and r["command"][0] != "@prepare-build") + "\n")
+        return "build/pixel-only-exclude.txt"
+
+    def test_pixel_opt_in_refuses_any_other_selected_row(self):
+        os.environ["KAYAN_PIXEL_PHYSICAL_SERIAL"] = "PIXEL00TEST"
+        with self.assertRaises(ValueError):
+            self.invoke("major", "--pixel-physical-rows")
+        self.assertFalse((self.repo / "build/kayan-safe/native-report.json").exists())
+
+    def test_pixel_opt_in_binds_only_the_four_rows_to_the_one_serial(self):
+        os.environ["KAYAN_PIXEL_PHYSICAL_SERIAL"] = "PIXEL00TEST"
+        self.invoke("major", "--pixel-physical-rows", "--exclude-file", self._pixel_only_exclude_file())
+        native = self.native()
+        self.assertEqual(native["pins"]["android-physical"], "PIXEL00TEST")
+        self.assertEqual(native["physical_target"], "PIXEL00TEST")
+        self.assertEqual(native["preserve_physical"], "0")
+        self.assertEqual(native["disposable_journeys"], "0")
+        args = native["argv"]
+        excluded = {args[i + 1] for i, a in enumerate(args) if a == "--exclude"}
+        for row in launcher.PIXEL_PHYSICAL_ROWS:
+            self.assertNotIn(row, excluded)
+            self.assertEqual(self._physical_locks(row), ["device:android-physical"])
+        self.assertIn("performance.device.critical", excluded)
+        self.assertIn("android.voice_message_e2e", excluded)
+        config = json.loads((self.repo / "build/kayan-safe/device-config.json").read_text())
+        self.assertEqual(config["android_physical"], {"enabled": True})
+        self.assertEqual(config["devices"]["android_physical"], "PIXEL00TEST")
+
+    def test_pixel_opt_in_needs_one_distinct_explicit_serial(self):
+        with self.assertRaises(ValueError):
+            self.invoke("major", "--pixel-physical-rows")
+        os.environ["KAYAN_PIXEL_PHYSICAL_SERIAL"] = os.environ["SIMS_ANDROID_EMULATOR_DEVICE_ID"]
+        with self.assertRaises(ValueError):
+            self.invoke("major", "--pixel-physical-rows")
 
     def test_native_output_symlink_cannot_overwrite_source(self):
         directory = self.repo / "build/kayan-safe"
