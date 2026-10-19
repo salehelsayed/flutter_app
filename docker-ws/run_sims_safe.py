@@ -279,6 +279,8 @@ def main(arguments=None):
     parser.add_argument("mode", choices=MODES)
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--output", default="build/kayan-safe")
+    parser.add_argument("--exclude-file", help="ignored file of row ids to skip (resume)")
+    parser.add_argument("--continue-on-failure", action="store_true")
     options = parser.parse_args(arguments)
     manifest = disposable_manifest(json.loads(
         (REPO / "tool/sims/critical_features.json").read_text()))
@@ -385,11 +387,26 @@ def main(arguments=None):
                    "--mode", "major", "--scenario", MODES[options.mode]]
         if options.mode == "device-audio":
             command.append("--include-regressions")
+            if options.continue_on_failure:
+                command.append("--continue-on-failure")
+            if options.exclude_file:
+                for key in ignored(REPO / options.exclude_file).read_text().split():
+                    command.extend(["--exclude", key])
+                summary["resume_excluded"] = ignored(REPO / options.exclude_file).read_text().split()
     elif options.mode != "major":
         command.extend(["--only", MODES[options.mode]])
     if options.mode == "major":
         for key in blocked:
             command.extend(["--exclude", key])
+        if options.exclude_file:
+            skipped = ignored(REPO / options.exclude_file).read_text().split()
+            unknown = [key for key in skipped if key not in rows]
+            if unknown:
+                raise ValueError("unknown rows in the exclude file")
+            for key in skipped:
+                if key not in blocked:
+                    command.extend(["--exclude", key])
+            summary["resume_excluded"] = skipped
     with prepared_devices(selected, environment, directory):
         code, dropped = run_child(command, environment, directory)
     summary.update(child_exit=code, discarded_log_bytes=dropped,
