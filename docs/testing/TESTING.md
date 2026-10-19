@@ -1248,6 +1248,17 @@ Host fixtures cover this format and the negative bindings; the original API-37
 `kx0025` failure retained structural diagnostics/hashes rather than raw dumps,
 so a fresh owner-run native card check remains necessary for runtime proof.
 
+The SE-41 native criteria normalize `installedBuild` at both the baseline and
+persisted-snapshot boundaries: a nonnegative integer or its canonical decimal
+string is accepted. Floats, signs, whitespace, leading zeros, alternate numeric
+notations, overflow and different snapshot builds fail closed; signed policy,
+envelope, dedupe and native-card checks remain exact. The production string
+shape (`"125"`) reproduced six baseline/snapshot failures before the repair;
+the corrected focused host suite passed all 31 cases, including canonical zero
+and malformed-value counterexamples. These are oracle fixtures, not native
+publication evidence; RED/GREEN receipts remain under
+`.codex-test-logs/patch9-installed-build-20261019/`.
+
 Production-bootstrap migration Wave 2 resumed on 2026-09-28. Waves 3–5 remain
 paused except the shared registrations required by Wave 2 gates. The current
 acceptance matrix, preservation decisions and candidate evidence limits are

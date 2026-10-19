@@ -201,6 +201,17 @@ List<String> validateProductionUpdateCheck(Map<String, Object?> proof) {
   return failures;
 }
 
+// PackageInfo supplies buildNumber as a string; saved host fixtures may use
+// an integer. Accept only the same nonnegative canonical decimal value.
+int? _installedBuild(Object? value) {
+  if (value is int) return value >= 0 ? value : null;
+  if (value is! String) return null;
+  final parsed = int.tryParse(value);
+  return parsed != null && parsed >= 0 && parsed.toString() == value
+      ? parsed
+      : null;
+}
+
 List<String> _validateNative(Map<String, Object?> proof) {
   final failures = <String>[];
   void require(bool condition, String reason) {
@@ -208,12 +219,9 @@ List<String> _validateNative(Map<String, Object?> proof) {
   }
 
   final baseline = _object(proof['baselineSnapshot']);
-  final build = baseline['installedBuild'];
+  final build = _installedBuild(baseline['installedBuild']);
   final sdk = proof['androidSdk'];
-  require(
-    build is int && build >= 0,
-    'native case needs the actual installed build',
-  );
+  require(build != null, 'native case needs the actual installed build');
   require(
     sdk is int && sdk >= 24,
     'native case needs the actual supported Android SDK',
@@ -300,14 +308,15 @@ List<String> _validateNative(Map<String, Object?> proof) {
       require(
         checked.isAccepted &&
             payload?.sequence == (hard ? 2 : 1) &&
-            build is int &&
+            build != null &&
             policy?.latestBuild == build + 20 &&
             policy?.minBuild == build + (hard ? 1 : 0),
         '$label must exercise the exact soft or hard signed policy',
       );
       require(
         snapshot['platform'] == 'android' &&
-            snapshot['installedBuild'] == build &&
+            build != null &&
+            _installedBuild(snapshot['installedBuild']) == build &&
             snapshot['rank'] == 1 &&
             snapshot['sequence'] == (hard ? 2 : 1) &&
             snapshot['acceptedEnvelopeSha256'] ==
@@ -315,7 +324,7 @@ List<String> _validateNative(Map<String, Object?> proof) {
         '$label must persist the exact verified envelope',
       );
       require(
-        build is int &&
+        build != null &&
             (hard
                 ? snapshot['notifiedHardMinBuild'] == build + 1 &&
                       snapshot['hardReminderCount'] == 1

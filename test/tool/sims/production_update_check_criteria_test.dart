@@ -183,22 +183,28 @@ void main() {
     },
   );
 
-  Map<String, Object?> nativeProof(String id) {
+  Map<String, Object?> nativeProof(String id, {int installedBuild = 110}) {
     Map<String, Object?> posted(bool hardPhase) {
-      final bytes = hardPhase ? hard : soft;
+      final bytes = installedBuild == 110
+          ? (hardPhase ? hard : soft)
+          : driver.signedUpdateFixture(
+              installedBuild: installedBuild,
+              sequence: hardPhase ? 2 : 1,
+              hard: hardPhase,
+            );
       return {
         'label': hardPhase ? 'hard_replaces_soft' : 'eligible_soft',
         'envelope': base64Encode(bytes),
         'checkAfterMs': 1000,
         'result': {'outcome': 'notified', 'checked': true},
-        'snapshot': {
+        'snapshot': <String, Object?>{
           'platform': 'android',
-          'installedBuild': 110,
+          'installedBuild': installedBuild,
           'rank': 1,
           'sequence': hardPhase ? 2 : 1,
           'acceptedEnvelopeSha256': sha256.convert(bytes).toString(),
-          'notifiedSoftLatestBuild': 130,
-          if (hardPhase) 'notifiedHardMinBuild': 111,
+          'notifiedSoftLatestBuild': installedBuild + 20,
+          if (hardPhase) 'notifiedHardMinBuild': installedBuild + 1,
           'hardReminderCount': hardPhase ? 1 : 0,
           'lastCheckAtMs': 1500,
           'clockMs': 2000,
@@ -228,7 +234,10 @@ void main() {
       'childBuilds': 0,
       'attemptDirectory': directory.path,
       'androidSdk': 35,
-      'baselineSnapshot': {'installedBuild': 110, 'inCall': false},
+      'baselineSnapshot': <String, Object?>{
+        'installedBuild': installedBuild,
+        'inCall': false,
+      },
       'baselineCards': <Object?>[],
       'stateModeRestored': true,
       'backgroundReceipt': receipt('native-home', 'production_background'),
@@ -250,6 +259,89 @@ void main() {
       ],
     };
   }
+
+  // The production PackageInfo snapshot publishes buildNumber as a String.
+  for (final id in ['kx0025', 'kx0027']) {
+    for (final baselineString in [false, true]) {
+      for (final snapshotString in [false, true]) {
+        test(
+          '$id accepts canonical build wire shapes '
+          '(baseline string=$baselineString, snapshot string=$snapshotString)',
+          () {
+            final value = nativeProof(id, installedBuild: 125);
+            if (baselineString) {
+              (value['baselineSnapshot'] as Map)['installedBuild'] = '125';
+            }
+            if (snapshotString) {
+              for (final check in value['nativeChecks'] as List) {
+                if (check['snapshot'] is Map) {
+                  (check['snapshot'] as Map)['installedBuild'] = '125';
+                }
+              }
+            }
+            expect(validateProductionUpdateCheck(value), isEmpty);
+          },
+        );
+      }
+    }
+  }
+
+  test('canonical zero remains a valid installed build', () {
+    final value = nativeProof('kx0027', installedBuild: 0);
+    (value['baselineSnapshot'] as Map)['installedBuild'] = '0';
+    for (final check in value['nativeChecks'] as List) {
+      (check['snapshot'] as Map)['installedBuild'] = '0';
+    }
+    expect(validateProductionUpdateCheck(value), isEmpty);
+  });
+
+  test('native build normalization rejects malformed or ambiguous values', () {
+    for (final bad in <Object?>[
+      null,
+      -1,
+      125.0,
+      true,
+      '',
+      '-1',
+      '-0',
+      '+125',
+      ' 125',
+      '125 ',
+      '125\n',
+      '0125',
+      '0x7d',
+      '1.25e2',
+      '125.0',
+      'one',
+      '99999999999999999999999999999999999999',
+    ]) {
+      for (final baseline in [true, false]) {
+        final value = nativeProof('kx0027', installedBuild: 125);
+        (value['baselineSnapshot'] as Map)['installedBuild'] = '125';
+        for (final check in value['nativeChecks'] as List) {
+          (check['snapshot'] as Map)['installedBuild'] = '125';
+        }
+        final target = baseline
+            ? value['baselineSnapshot'] as Map
+            : (value['nativeChecks'] as List).last['snapshot'] as Map;
+        target['installedBuild'] = bad;
+        expect(
+          validateProductionUpdateCheck(value),
+          isNotEmpty,
+          reason: 'baseline=$baseline value=${jsonEncode(bad)}',
+        );
+      }
+    }
+  });
+
+  test('normalized native builds still require the exact installed build', () {
+    final value = nativeProof('kx0027', installedBuild: 125);
+    (value['baselineSnapshot'] as Map)['installedBuild'] = '125';
+    ((value['nativeChecks'] as List).last['snapshot']
+            as Map)['installedBuild'] =
+        '126';
+    expect(validateProductionUpdateCheck(value), isNotEmpty);
+  });
 
   test(
     'native budget/unreadable controls and eligible DEFAULT card are distinct',
