@@ -89,7 +89,13 @@ Map<String, Object?> productionCallbackAudioCaptureSnapshot(
 
 /// Reading a credential-free keyguard is sufficient for the existing native
 /// unlocked predicate. A secure or unknown state never authorizes changing it.
-bool productionCallbackKeyguardIsUnsecured(String dump) {
+/// API 37 dumps carry no `secure=` line and spell readiness `systemReady`;
+/// there only a disabled lock screen (which no credential can coexist with)
+/// proves the keyguard is unsecured.
+bool productionCallbackKeyguardIsUnsecured(
+  String dump, {
+  bool? lockscreenDisabled,
+}) {
   if (dump.length > 4 * 1024 * 1024 ||
       RegExp(
         r'DUMP TIMEOUT|Error dumping service|FAILED BINDER TRANSACTION',
@@ -111,13 +117,18 @@ bool productionCallbackKeyguardIsUnsecured(String dump) {
     r'^\s*secure=(true|false)\s*$',
     multiLine: true,
   ).allMatches(section).toList();
-  return secure.length == 1 &&
-      secure.single.group(1) == 'false' &&
+  final unsecured = secure.isEmpty
+      ? lockscreenDisabled == true
+      : secure.length == 1 && secure.single.group(1) == 'false';
+  return unsecured &&
       RegExp(
         r'^\s*deviceHasKeyguard=true\s*$',
         multiLine: true,
       ).hasMatch(section) &&
-      RegExp(r'^\s*systemIsReady=true\s*$', multiLine: true).hasMatch(section);
+      RegExp(
+        r'^\s*system(?:Is)?Ready=true\s*$',
+        multiLine: true,
+      ).hasMatch(section);
 }
 
 File? _ownedFile(Object? path, Object? attempt) {

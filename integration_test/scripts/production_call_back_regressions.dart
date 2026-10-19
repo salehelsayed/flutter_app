@@ -355,25 +355,29 @@ final class _ProductionCallBackRegression {
         'The unlock fixture requires its available Android emulator.',
       );
     }
-    final policy = await peer.adb(['shell', 'dumpsys', 'window', 'policy']);
-    if (!productionCallbackKeyguardIsUnsecured('${policy.stdout}')) {
-      throw const FormatException(
-        'The emulator keyguard is secure or unreadable; no credentials are changed.',
-      );
-    }
     final user = await peer.adb(['shell', 'am', 'get-current-user']);
-    _user = int.parse('${user.stdout}'.trim());
+    final currentUser = int.parse('${user.stdout}'.trim());
     final disabled = await peer.adb([
       'shell',
       'locksettings',
       'get-disabled',
       '--user',
-      '$_user',
+      '$currentUser',
     ]);
     final value = '${disabled.stdout}'.trim();
     if (value != 'true' && value != 'false') {
       throw StateError('Unreadable keyguard setting.');
     }
+    final policy = await peer.adb(['shell', 'dumpsys', 'window', 'policy']);
+    if (!productionCallbackKeyguardIsUnsecured(
+      '${policy.stdout}',
+      lockscreenDisabled: value == 'true',
+    )) {
+      throw const FormatException(
+        'The emulator keyguard is secure or unreadable; no credentials are changed.',
+      );
+    }
+    _user = currentUser;
     _lockDisabled = value == 'true';
     await peer.adb([
       'shell',

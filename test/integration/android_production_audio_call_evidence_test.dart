@@ -1065,6 +1065,37 @@ Ranking Config:
         }
       },
     );
+    test('an API 37 keyguard dump without a secure line needs a disabled lock '
+        'screen', () {
+      const api37 =
+          'KeyguardServiceDelegate\n  showing=false\n  inputRestricted=false\n'
+          '  occluded=false\n  trusted=false\n  simSecure=false\n'
+          '  dreaming=false\n  systemReady=true\n  deviceHasKeyguard=true\n'
+          '  enabled=true\n  userId=0\n  bootCompleted=true\n';
+      expect(
+        productionCallbackKeyguardIsUnsecured(api37, lockscreenDisabled: true),
+        isTrue,
+      );
+      expect(
+        productionCallbackKeyguardIsUnsecured(api37, lockscreenDisabled: false),
+        isFalse,
+      );
+      expect(productionCallbackKeyguardIsUnsecured(api37), isFalse);
+      expect(
+        productionCallbackKeyguardIsUnsecured(
+          api37.replaceFirst('systemReady=true', 'systemReady=false'),
+          lockscreenDisabled: true,
+        ),
+        isFalse,
+      );
+      expect(
+        productionCallbackKeyguardIsUnsecured(
+          api37.replaceFirst('simSecure=false', 'secure=true'),
+          lockscreenDisabled: true,
+        ),
+        isFalse,
+      );
+    });
   });
   test(
     'emulator audio evidence cannot satisfy the original physical validator',

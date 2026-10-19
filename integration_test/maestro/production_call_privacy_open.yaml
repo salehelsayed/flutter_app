@@ -1,10 +1,15 @@
 appId: ${APP_ID}
 name: production_call_privacy_open
 ---
-- assertVisible:
-    id: shell.navigation.orbit
-- tapOn:
-    id: shell.navigation.orbit
+# The relaunch opens on Feed (with the Orbit tab) or directly on Orbit.
+- runFlow:
+    when:
+      visible:
+        id: shell.navigation.orbit
+    commands:
+      - tapOn:
+          id: shell.navigation.orbit
+- assertVisible: 'Open settings'
 - tapOn: 'Open settings'
 - tapOn: 'Always relay calls'
 - assertVisible: 'Direct audio can reveal your IP address to the other participant. Enable this setting to send audio through a relay. Changes apply to new calls. Direct signaling can still reveal an address independently of this setting.'
