@@ -143,6 +143,8 @@ final class _KeepaliveCampaign {
   final Directory proofDirectory;
   final Random _random = Random.secure();
   final Map<String, String> _latestLogcat = <String, String>{};
+  final Map<String, KeepaliveTargetConnectionObserver> _connectionObservers =
+      {};
 
   Future<AndroidKeepaliveDropCampaignResult> run() async {
     await _preflight();
@@ -298,6 +300,12 @@ final class _KeepaliveCampaign {
     });
     await _requireForeground(physical);
 
+    // Register before either log clear or receiver stop. Drop polls can see a
+    // disconnect long before the warm wait starts or its tail still contains it.
+    _connectionObservers[physical] = KeepaliveTargetConnectionObserver(
+      receiver.peerId,
+    );
+    await _flowEvents(physical);
     await _clearLogcat(physical);
     await _waitForTargetPing(
       physical,
@@ -715,26 +723,18 @@ final class _KeepaliveCampaign {
     required Map<String, Object?> preDropTransport,
   }) async {
     final timer = Stopwatch()..start();
-    bool? targetConnected;
+    final connection = _connectionObservers[device]!;
+    if (connection.targetPeerId != targetPeerId) {
+      throw const _CampaignFailure('Connection observer target mismatch.');
+    }
     String? observedTerminal;
-    final observedCallbacks = <String>{};
+    Map<String, Object?>? privateLogCapture;
     try {
       return await _waitForValue<String>(
         'terminal keepalive recovery warm',
         timeout,
         () async {
           final events = await _flowEvents(device);
-          final log = _latestLogcat[device] ?? '';
-          // Only the last 4000 lines are read per poll; a callback that has
-          // scrolled out stays the latest one until a newer callback appears.
-          targetConnected =
-              keepaliveTargetConnected(log, targetPeerId) ?? targetConnected;
-          for (final line in log.split('\n')) {
-            final connected = keepaliveTargetConnected(line, targetPeerId);
-            if (connected != null) {
-              observedCallbacks.add(connected ? 'connected' : 'disconnected');
-            }
-          }
           const directWarmTerminals = <String>{
             'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED',
             'P2P_SERVICE_WARM_PEER_DEBOUNCED',
@@ -761,9 +761,16 @@ final class _KeepaliveCampaign {
               break;
             }
           }
-          return targetConnected == false ? observedTerminal : null;
+          return connection.terminalIfDisconnected(observedTerminal);
         },
       );
+    } on Object {
+      timer.stop();
+      privateLogCapture = writeKeepalivePrivateLogWindow(
+        File('${proofDirectory.path}/keepalive-warm-readiness.private.log'),
+        _latestLogcat[device] ?? '',
+      );
+      rethrow;
     } finally {
       timer.stop();
       await proofDirectory.create(recursive: true);
@@ -772,12 +779,13 @@ final class _KeepaliveCampaign {
       );
       await observation.writeAsString(
         jsonEncode(<String, Object?>{
-          'targetConnectionCallbackObserved': targetConnected != null,
-          'targetConnected': targetConnected,
+          'targetConnectionCallbackObserved': connection.connected != null,
+          'targetConnected': connection.connected,
           'warmTerminal': observedTerminal,
           'elapsedMs': timer.elapsedMilliseconds,
           'deadlineMs': timeout.inMilliseconds,
-          'observedTargetCallbacks': observedCallbacks.toList(),
+          'observedTargetCallbacks': connection.observedCallbacks,
+          'privateLogCapture': ?privateLogCapture,
           'preDropTransport': preDropTransport,
           'postDropTransport': keepaliveTransportDiagnostics(
             _latestLogcat[device] ?? '',
@@ -842,6 +850,7 @@ final class _KeepaliveCampaign {
       throw const _CampaignFailure('Android flow-event log could not be read.');
     }
     _latestLogcat[device] = '${result.stdout}';
+    _connectionObservers[device]?.observe(_latestLogcat[device]!);
     final events = <_FlowEvent>[];
     for (final line in '${result.stdout}'.split('\n')) {
       final marker = line.indexOf('[FLOW] ');

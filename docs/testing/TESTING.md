@@ -709,19 +709,28 @@ Retained paths and verification are in
 
 The Android keepalive campaign's warm-dial terminal can precede the production
 disconnect callback. A cached dial success alone does not prove the dropped-send
-precondition (`connected=false`). The campaign now observes the latest exact
-target `[CONN]` callback within the same 16-second warm window. Its diagnostics
-retain readiness booleans, terminal name, elapsed time and pre/post-drop
-snapshots of at most eight redacted callback states and eight correlated
-transport events each. Full-ID callbacks match exactly; native ten-character
-event matches are explicitly marked `prefix`. No peer IDs or raw log/error
-text enter these snapshots. It does not force a disconnect or change the send
-assertions. A fresh physical Android/emulator
-run remains required to establish its runtime timing. The
-affected host check passed all 195 cases without skips in
-`keepalive-readiness-change-001/`; the original
-`checkpoint-006-major` failure remains retained. TC-187-20 preserves healthy
-connection reuse even when a stale keepalive drop mark exists.
+precondition (`connected=false`). One exact-target `[CONN]` observer starts
+before receiver stop and the owned log clears, and spans every drop/warm poll.
+An observed disconnect survives rolling out of the 4000-line tail; a later
+connected callback takes precedence, while missing/wrong-peer callbacks leave
+unknown state unchanged. The warm deadline remains 16 seconds, and readiness
+still requires an observed disconnect plus a terminal. Its diagnostics retain
+readiness booleans, terminal name, elapsed time and pre/post-drop snapshots of
+at most eight redacted callback states and eight correlated transport events
+each. Full-ID callbacks match exactly; native ten-character event matches are
+explicitly marked `prefix`. No peer IDs or raw log/error text enter these
+snapshots. On warm failure only, `keepalive-warm-readiness.private.log` retains
+the latest raw tail locally, capped at 512 KiB with mode 0600 before writing;
+JSON records only capture success, byte counts and truncation. This private
+file must never be copied into mailbox reports. Capture failure preserves the
+original campaign failure. The dropped-send, custody, no-direct and recovery
+assertions remain unchanged. A fresh physical Android/emulator run remains
+required to establish runtime timing. The focused host check passed all 201
+cases without skips in `patch6-keepalive-observer-20261019/001-green.log`,
+including early-disconnect/truncated-tail, later-reconnect, wrong-peer/unknown
+and private-capture cases; the original `checkpoint-006-major` failure remains
+retained. TC-187-20 preserves healthy connection reuse even when a stale
+keepalive drop mark exists.
 
 The Android `production_direct_send_batch5` adapter has a scoped 180-second
 Maestro bound and 210-second owned-process bound. Other Android flows retain

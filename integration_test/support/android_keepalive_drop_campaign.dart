@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/core/debug/keepalive_drop_e2e_contract.dart';
 
+import '../../tool/sims/capture_budget.dart';
 import '../../tool/sims/device_criteria.dart';
 import 'sims_runtime_protocol.dart';
 
@@ -23,6 +25,61 @@ bool? keepaliveTargetConnected(String log, String targetPeerId) {
     }
   }
   return connected;
+}
+
+/// One observer spans pre-stop, drop and warm polls of the rolling log tail.
+final class KeepaliveTargetConnectionObserver {
+  KeepaliveTargetConnectionObserver(this.targetPeerId);
+
+  final String targetPeerId;
+  bool? _connected;
+  final _callbacks = <String>{};
+
+  bool? get connected => _connected;
+  List<String> get observedCallbacks => _callbacks.toList();
+
+  void observe(String log) {
+    for (final line in log.split('\n')) {
+      final value = keepaliveTargetConnected(line, targetPeerId);
+      if (value == null) continue;
+      _connected = value;
+      _callbacks.add(value ? 'connected' : 'disconnected');
+    }
+  }
+
+  String? terminalIfDisconnected(String? terminal) =>
+      _connected == false ? terminal : null;
+}
+
+const keepalivePrivateLogLimitBytes = 512 * 1024;
+
+/// Failure-only, local evidence. The returned metadata contains no raw text.
+/// Capture errors must never replace the campaign's original failure.
+Map<String, Object?> writeKeepalivePrivateLogWindow(File file, String log) {
+  final bytes = utf8.encode(log);
+  final start = bytes.length > keepalivePrivateLogLimitBytes
+      ? bytes.length - keepalivePrivateLogLimitBytes
+      : 0;
+  try {
+    final writer = BoundedDiagnosticFile(
+      file,
+      budget: EvidenceCaptureBudget(limitBytes: keepalivePrivateLogLimitBytes),
+      limitBytes: keepalivePrivateLogLimitBytes,
+    );
+    try {
+      writer.add(bytes.sublist(start));
+    } finally {
+      writer.close();
+    }
+    return {
+      'captured': true,
+      'bytes': bytes.length - start,
+      'limitBytes': keepalivePrivateLogLimitBytes,
+      'truncated': start > 0,
+    };
+  } on Object {
+    return {'captured': false};
+  }
 }
 
 /// Bounded observations for one target. Never copy peer IDs or raw log text.
