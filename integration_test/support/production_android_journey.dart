@@ -135,6 +135,7 @@ final class ProductionJourneyFlowRunner {
     final attempt = await output.createTemp('flow-$label-');
     final destination = Directory('${attempt.path}/maestro');
     final simulator = _isSimulator(device);
+    final androidBatch = !simulator && name == 'production_direct_send_batch5';
     final args = [
       'scripts/maestro_flow_runner.py',
       '--device',
@@ -146,6 +147,7 @@ final class ProductionJourneyFlowRunner {
       '--output',
       destination.path,
       if (simulator) ...['--timeout', '300'],
+      if (androidBatch) ...['--timeout', '180'],
       '--env',
       'APP_ID=$packageName',
       for (final entry in values.entries) ...[
@@ -153,16 +155,17 @@ final class ProductionJourneyFlowRunner {
         '${entry.key}=${entry.value}',
       ],
     ];
-    // Simulator flows get Maestro's 300 s bound plus margin, so a driver that
-    // never started is reported (and retried) instead of cut off by the
-    // default host command limit.
+    // Leave margin for the adapter to stop its owned process and write a
+    // receipt. The routing batch retains its separate three-minute S9 gate.
     final runner = this.runner;
-    final result = simulator && runner is AndroidHostProcessRunnerWithTimeout
-        ? await runner.runWithTimeout(
-            'python3',
-            args,
-            timeout: const Duration(seconds: 330),
-          )
+    final hostTimeout = simulator
+        ? const Duration(seconds: 330)
+        : androidBatch
+        ? const Duration(seconds: 210)
+        : null;
+    final result =
+        hostTimeout != null && runner is AndroidHostProcessRunnerWithTimeout
+        ? await runner.runWithTimeout('python3', args, timeout: hostTimeout)
         : await runner.run('python3', args);
     await File('${attempt.path}/adapter.json').writeAsString(
       jsonEncode({

@@ -648,6 +648,49 @@ void main() {
     },
   );
 
+  for (final (phase, stage, cause, retained) in [
+    ('receiver_accept_arm', 'accept', 'state_error', true),
+    ('receiver_accept_arm', 'arm', 'state_exists', true),
+    ('receiver_accept_arm', 'authority', 'format_error', true),
+    ('receiver_accept_arm', 'roleDatabase', 'unexpected_error', true),
+    ('receiver_accept_arm', '/private/secret', 'state_error', false),
+    ('receiver_accept_arm', 'accept', '/private/secret', false),
+    ('sender_send', 'accept', 'state_error', false),
+  ]) {
+    test(
+      'receiver accept retention is closed and phase scoped: $phase/$stage/$cause',
+      () async {
+        final dir = await Directory.systemTemp.createTemp('receiver-failure-');
+        addTearDown(() => dir.delete(recursive: true));
+        await retainGroupMediaEndpointFailure(
+          directory: dir,
+          config: const {},
+          safeErrorCode: 'unexpected_error',
+          result: {
+            'phase': phase,
+            'receiverStage': stage,
+            'receiverCause': cause,
+            'errorType': 'StateError',
+            'rawSecret': '/private/secret',
+          },
+        );
+        final raw = await dir
+            .listSync()
+            .whereType<File>()
+            .single
+            .readAsString();
+        final receipt = jsonDecode(raw) as Map;
+        expect(receipt.containsKey('receiverStage'), retained);
+        expect(receipt.containsKey('receiverCause'), retained);
+        if (retained) {
+          expect(receipt['receiverStage'], stage);
+          expect(receipt['receiverCause'], cause);
+        }
+        expect(raw, isNot(contains('/private/secret')));
+      },
+    );
+  }
+
   for (final stage in ['roleDatabase', '/private/secret']) {
     test(
       'receiver recovery retention accepts only closed diagnostics: $stage',

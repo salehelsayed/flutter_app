@@ -710,14 +710,27 @@ Retained paths and verification are in
 The Android keepalive campaign's warm-dial terminal can precede the production
 disconnect callback. A cached dial success alone does not prove the dropped-send
 precondition (`connected=false`). The campaign now observes the latest exact
-target `[CONN]` callback within the same 16-second warm window and retains only
-readiness booleans, the terminal name and elapsed time. It does not force a
-disconnect or change the send assertions. A fresh physical Android/emulator
+target `[CONN]` callback within the same 16-second warm window. Its diagnostics
+retain readiness booleans, terminal name, elapsed time and pre/post-drop
+snapshots of at most eight redacted callback states and eight correlated
+transport events each. Full-ID callbacks match exactly; native ten-character
+event matches are explicitly marked `prefix`. No peer IDs or raw log/error
+text enter these snapshots. It does not force a disconnect or change the send
+assertions. A fresh physical Android/emulator
 run remains required to establish its runtime timing. The
 affected host check passed all 195 cases without skips in
 `keepalive-readiness-change-001/`; the original
 `checkpoint-006-major` failure remains retained. TC-187-20 preserves healthy
 connection reuse even when a stale keepalive drop mark exists.
+
+The Android `production_direct_send_batch5` adapter has a scoped 180-second
+Maestro bound and 210-second owned-process bound. Other Android flows retain
+110 seconds; simulator flows retain their 300/330-second bounds. This does
+not enlarge S9's original three-minute total stage requirement or permit
+replaying an attempt that already ran UI. The retained C1 failure exhausted
+the old 110-second adapter while its fifth input was running; the five added
+composer retaps are required and remain. Host fake-runner tests verify the
+deadline selection and no-replay rule, not an installed S9 pass.
 
 Android activity checks must match the complete application ID. A word boundary
 after `com.mknoon.app` also matches the sibling `com.mknoon.app.ui25proof`.
@@ -4843,6 +4856,15 @@ visible and cannot become an ordinary first-attempt PASS.
   retains the old oracle failure and successful MP4 publication with explicit
   fake crypto/upload. It does not explain the earlier installed preparation
   refusal or establish native transfer success.
+  Receiver accept/arm failures retain only the closed `receiverStage`
+  (`accept`, `arm`, `authority`, `roleDatabase`) and `receiverCause` fields.
+  The underlying failure code/type remain unchanged; unknown exception text
+  stays redacted. Host retention accepts only an allowed stage/cause pair on
+  `receiver_accept_arm`. The focused dispatcher/retention and transport tests
+  passed in
+  [runner diagnostics](../../.codex-test-logs/runner-diagnostics-20261018/001-focused-receipt.json).
+  These diagnostics do not identify the earlier installed `StateError` until
+  a fresh owning device run supplies its closed stage/cause.
   Protected group uploads require the relay's media-custody admission gate as
   well as acknowledged inbox custody. Relay media admission now defaults to
   enabled for an unset or blank `DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED`.

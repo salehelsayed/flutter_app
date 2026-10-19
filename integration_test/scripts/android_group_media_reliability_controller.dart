@@ -2391,6 +2391,23 @@ Future<void> retainGroupMediaEndpointFailure({
     if (result['errorType'] is String &&
         RegExp(r'^[A-Za-z]{1,64}$').hasMatch(result['errorType'] as String))
       'errorType': result['errorType'],
+    if (result['phase'] == 'receiver_accept_arm' &&
+        const {
+          'accept',
+          'arm',
+          'authority',
+          'roleDatabase',
+        }.contains(result['receiverStage']) &&
+        const {
+          'invite_not_accepted',
+          'state_exists',
+          'state_error',
+          'format_error',
+          'unexpected_error',
+        }.contains(result['receiverCause'])) ...{
+      'receiverStage': result['receiverStage'],
+      'receiverCause': result['receiverCause'],
+    },
     if (result['phase'] == 'receiver_recover' &&
         const {
           'priorBoundary',

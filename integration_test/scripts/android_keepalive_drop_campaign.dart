@@ -304,6 +304,10 @@ final class _KeepaliveCampaign {
       receiver.peerId,
       const Duration(seconds: 24),
     );
+    final preDropTransport = keepaliveTransportDiagnostics(
+      _latestLogcat[physical] ?? '',
+      receiver.peerId,
+    );
     await _clearLogcat(physical);
     await _forceStop(emulator);
     await _requireForeground(physical);
@@ -324,6 +328,7 @@ final class _KeepaliveCampaign {
       targetPeerId: receiver.peerId,
       afterIndex: dropIndex,
       timeout: const Duration(seconds: 16),
+      preDropTransport: preDropTransport,
     );
     await Future<void>.delayed(const Duration(milliseconds: 350));
     await _requireForeground(physical);
@@ -707,6 +712,7 @@ final class _KeepaliveCampaign {
     required String targetPeerId,
     required int afterIndex,
     required Duration timeout,
+    required Map<String, Object?> preDropTransport,
   }) async {
     final timer = Stopwatch()..start();
     bool? targetConnected;
@@ -724,8 +730,9 @@ final class _KeepaliveCampaign {
           targetConnected =
               keepaliveTargetConnected(log, targetPeerId) ?? targetConnected;
           for (final line in log.split('\n')) {
-            if (line.contains('[CONN] peer:') && line.contains(targetPeerId)) {
-              observedCallbacks.add(line.trim());
+            final connected = keepaliveTargetConnected(line, targetPeerId);
+            if (connected != null) {
+              observedCallbacks.add(connected ? 'connected' : 'disconnected');
             }
           }
           const directWarmTerminals = <String>{
@@ -771,6 +778,11 @@ final class _KeepaliveCampaign {
           'elapsedMs': timer.elapsedMilliseconds,
           'deadlineMs': timeout.inMilliseconds,
           'observedTargetCallbacks': observedCallbacks.toList(),
+          'preDropTransport': preDropTransport,
+          'postDropTransport': keepaliveTransportDiagnostics(
+            _latestLogcat[device] ?? '',
+            targetPeerId,
+          ),
         }),
       );
     }

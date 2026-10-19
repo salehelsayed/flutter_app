@@ -696,6 +696,141 @@ void main() {
     );
   });
 
+  for (final failure in [
+    'accept',
+    'accept_format',
+    'null_invite',
+    'arm',
+    'authority',
+    'roleDatabase',
+    null,
+  ]) {
+    test(
+      'receiver arm preserves closed failure stage and underlying code: $failure',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'receiver-arm-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final controller = GroupMediaReliabilityE2EController(
+          enabled: true,
+          stateDirectory: directory,
+          currentProcessId: 301,
+        );
+        final config = _command(
+          phase: groupMediaReliabilityReceiverArmPhase,
+          role: 'receiver',
+        );
+        if (failure == 'arm') {
+          await controller.arm(
+            const GroupMediaReliabilityBarrierRequest(
+              runId: 'p269-endpoint',
+              groupId: 'group-id',
+              jpegMessageId: 'message-jpeg',
+              jpegAttachmentId: 'blob-jpeg',
+              mediaMessageIds: {
+                'jpeg': 'message-jpeg',
+                'mp4': 'message-mp4',
+                'voice': 'message-voice',
+              },
+              mediaAttachmentIds: {
+                'jpeg': 'blob-jpeg',
+                'mp4': 'blob-mp4',
+                'voice': 'blob-voice',
+              },
+            ),
+          );
+        }
+        final order = <String>[];
+        final action = runGroupMediaReliabilityE2EAction(
+          config: config,
+          controller: controller,
+          loadAttachment: (_) async => throw StateError('wrong phase'),
+          probeIdentity: (_) async => throw StateError('wrong phase'),
+          setupSender: (_, _) async => throw StateError('wrong phase'),
+          acceptReceiver: (_) async {
+            order.add('accept');
+            if (failure == 'accept') {
+              throw StateError('/private/secret-peer-key');
+            }
+            if (failure == 'accept_format') {
+              throw const FormatException('/private/secret-peer-key');
+            }
+            return failure == 'null_invite'
+                ? null
+                : {'transportPeerId': 'receiver-transport'};
+          },
+          sendMedia: (_, _, _, _, _) async => throw StateError('wrong phase'),
+          probeAuthority:
+              (_, {required requireSettled, expectedAuthority}) async {
+                order.add('authority');
+                if (failure == 'authority') {
+                  throw StateError('/private/secret-peer-key');
+                }
+                return <String, Object?>{'ready': true};
+              },
+          probeRole: (_, _, _) async {
+            order.add('roleDatabase');
+            if (failure == 'roleDatabase') {
+              throw StateError('/private/secret-peer-key');
+            }
+            return <String, Object?>{'role': 'receiver'};
+          },
+          retryUploads: () async => throw StateError('wrong phase'),
+          retryDownloads: () async => throw StateError('wrong phase'),
+          installedProfileId: groupMediaReliabilityE2EBuildProfile,
+        );
+        if (failure == null) {
+          final result = await action;
+          expect(result['status'], 'armed');
+          expect(result['authorityBefore'], {'ready': true});
+          expect(result['roleDatabaseIdentity'], {'role': 'receiver'});
+          expect(order, ['accept', 'authority', 'roleDatabase']);
+        } else {
+          await expectLater(
+            action,
+            throwsA(
+              predicate<Object>((error) {
+                final receipt = groupMediaReliabilityE2EFailureReceipt(
+                  config: config,
+                  error: error,
+                );
+                expect(
+                  receipt['receiverStage'],
+                  failure == 'null_invite' || failure == 'accept_format'
+                      ? 'accept'
+                      : failure,
+                );
+                expect(
+                  receipt['receiverCause'],
+                  failure == 'null_invite'
+                      ? 'invite_not_accepted'
+                      : failure == 'arm'
+                      ? 'state_exists'
+                      : failure == 'accept_format'
+                      ? 'format_error'
+                      : 'state_error',
+                );
+                expect(
+                  receipt['errorType'],
+                  failure == 'accept_format' ? 'FormatException' : 'StateError',
+                );
+                expect(
+                  receipt['errorCode'],
+                  failure == 'null_invite'
+                      ? 'receiver_invite_accept'
+                      : 'unexpected_error',
+                );
+                expect(jsonEncode(receipt), isNot(contains('secret-peer-key')));
+                return true;
+              }),
+            ),
+          );
+        }
+      },
+    );
+  }
+
   test('P269 endpoint failures expose only stable redacted codes', () {
     final command = _command(
       phase: groupMediaReliabilitySenderSetupPhase,

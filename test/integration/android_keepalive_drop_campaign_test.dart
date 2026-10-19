@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/core/debug/keepalive_drop_e2e_contract.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -6,6 +8,74 @@ import '../../integration_test/support/sims_runtime_protocol.dart';
 import '../../tool/sims/device_criteria.dart';
 
 void main() {
+  test(
+    'transport diagnostics are bounded and never export target or raw details',
+    () {
+      const target = 'private-target-peer-material';
+      final lines = <String>[
+        for (var i = 0; i < 100; i++) ...[
+          '[CONN] peer:${i.isEven ? 'connected' : 'disconnected'} → $target',
+          '[FLOW] ${jsonEncode({
+            'event': 'P2P_SERVICE_DIAL_PEER_SUCCESS',
+            'ts': '2026-10-18T14:32:00Z',
+            'details': {'peerId': target, 'secret': 'never-export'},
+          })}',
+        ],
+      ];
+      final value = keepaliveTransportDiagnostics(lines.join('\n'), target);
+      expect(value['callbacks'], hasLength(8));
+      expect(value['connected'], isFalse);
+      expect(value['transportEvents'], hasLength(8));
+      for (final event in (value['transportEvents'] as List).cast<Map>()) {
+        expect(event, {
+          'event': 'P2P_SERVICE_DIAL_PEER_SUCCESS',
+          'peerMatch': 'exact',
+          'observedAt': '2026-10-18T14:32:00.000Z',
+        });
+      }
+      expect(jsonEncode(value), isNot(contains(target)));
+      expect(jsonEncode(value), isNot(contains('never-export')));
+    },
+  );
+  test(
+    'diagnostics correlate only target callbacks and closed transport events',
+    () {
+      const target = 'target-peer-private';
+      final prefix = target.substring(0, 10);
+      String event(String name, String peer) =>
+          '[FLOW] ${jsonEncode({
+            'event': name,
+            'details': {'peerId': peer},
+          })}';
+      final log = [
+        '[CONN] peer:connected → $target (connected)',
+        '[CONN] peer:disconnected → $target-other',
+        event('P2P_SERVICE_WARM_PEER_DIAL', prefix),
+        event('P2P_SERVICE_DIAL_PEER_SUCCESS', 'unrelated'),
+        event('private-event', target),
+        '[FLOW] truncated',
+      ].join('\n');
+      final value = keepaliveTransportDiagnostics(log, target);
+      expect(value['callbacks'], ['connected']);
+      expect(value['connected'], isTrue);
+      expect(value['transportEvents'], [
+        {'event': 'P2P_SERVICE_WARM_PEER_DIAL', 'peerMatch': 'prefix'},
+      ]);
+      expect(jsonEncode(value), isNot(contains(prefix)));
+      expect(keepaliveTransportDiagnostics(log, ''), {
+        'callbacks': [],
+        'connected': null,
+        'transportEvents': [],
+      });
+      expect(
+        keepaliveTargetConnected(
+          event('P2P_SERVICE_DIAL_PEER_SUCCESS', target),
+          target,
+        ),
+        isNull,
+      );
+    },
+  );
   test('connection readiness follows the latest exact target callback', () {
     const disconnected = '[CONN] peer:disconnected → target-peer';
     const connected = '[CONN] peer:connected → target-peer (connected)';

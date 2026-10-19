@@ -14,12 +14,14 @@ class _Adapter implements AndroidHostProcessRunner {
   final serverDeaths = <String>[];
   final destinations = <String>[];
   final adbCalls = <List<String>>[];
+  final adapterArgs = <List<String>>[];
   @override
   Future<ProcessResult> run(String executable, List<String> args) async {
     if (executable == 'adb') {
       adbCalls.add(args);
       return ProcessResult(1, 0, '', '');
     }
+    adapterArgs.add(List.of(args));
     final output = args[args.indexOf('--output') + 1];
     destinations.add(output);
     final directory = Directory(output);
@@ -54,6 +56,21 @@ class _Adapter implements AndroidHostProcessRunner {
   }
 }
 
+class _TimedAdapter extends _Adapter
+    implements AndroidHostProcessRunnerWithTimeout {
+  final timeouts = <Duration>[];
+
+  @override
+  Future<ProcessResult> runWithTimeout(
+    String executable,
+    List<String> args, {
+    required Duration timeout,
+  }) {
+    timeouts.add(timeout);
+    return run(executable, args);
+  }
+}
+
 void main() {
   late Directory root;
   late _Adapter adapter;
@@ -66,6 +83,63 @@ void main() {
   tearDown(() => root.deleteSync(recursive: true));
   Future<String> run() =>
       runner.run('pinned', 'production_reopen_seeded', 'alice-reopen', {});
+  for (final (device, flow, inner, outer) in [
+    ('pinned', 'production_direct_send_batch5', '180', 210),
+    ('pinned', 'production_reopen_seeded', null, null),
+    (
+      '00000000-0000-0000-0000-000000000001',
+      'production_reopen_seeded',
+      '300',
+      330,
+    ),
+    (
+      '00000000-0000-0000-0000-000000000001',
+      'production_direct_send_batch5',
+      '300',
+      330,
+    ),
+  ]) {
+    test('flow deadline stays scoped to $device/$flow', () async {
+      final timed = _TimedAdapter();
+      await ProductionJourneyFlowRunner(
+        root,
+        timed,
+      ).run(device, flow, 'deadline', {});
+      final args = timed.adapterArgs.single;
+      if (inner == null) {
+        expect(args, isNot(contains('--timeout')));
+      } else {
+        expect(args[args.indexOf('--timeout') + 1], inner);
+      }
+      expect(
+        timed.timeouts,
+        outer == null ? isEmpty : [Duration(seconds: outer)],
+      );
+    });
+  }
+  test('started batch failure keeps its receipt and is not replayed', () async {
+    final timed = _TimedAdapter()
+      ..serverDeaths.add(
+        'maestro.cli.runner.MaestroCommandRunner.invoke: inputText RUNNING\n'
+        "Device server died during 'deviceInfo'\n",
+      );
+    await expectLater(
+      ProductionJourneyFlowRunner(
+        root,
+        timed,
+      ).run('pinned', 'production_direct_send_batch5', 'batch', {}),
+      throwsStateError,
+    );
+    expect(timed.destinations, hasLength(1));
+    expect(timed.adbCalls, isEmpty);
+    expect(timed.timeouts, [const Duration(seconds: 210)]);
+    expect(
+      File(
+        '${Directory(timed.destinations.single).parent.path}/adapter.json',
+      ).existsSync(),
+      isTrue,
+    );
+  });
   test('repeated reopen labels keep independent exact receipts', () async {
     final first = await run();
     final bytes = File(first).readAsBytesSync();

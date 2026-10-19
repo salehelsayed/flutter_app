@@ -418,39 +418,48 @@ Future<Map<String, Object?>> runGroupMediaReliabilityE2EAction({
       if (request.role != 'receiver' || groupId == null) {
         throw const FormatException('receiver arm tuple rejected');
       }
-      final accepted = await acceptReceiver(groupId);
-      if (accepted == null) {
-        throw StateError('receiver did not accept the exact group invite');
-      }
-      await controller.arm(
-        GroupMediaReliabilityBarrierRequest(
-          runId: request.runId,
-          groupId: groupId,
-          jpegMessageId: request.messageIds['jpeg']!,
-          jpegAttachmentId: request.attachmentIds['jpeg']!,
-          mediaMessageIds: request.messageIds,
-          mediaAttachmentIds: request.attachmentIds,
-        ),
-      );
-      return <String, Object?>{
-        ...base,
-        'status': 'armed',
-        'groupId': groupId,
-        if (authorityMode ==
-                GroupMediaReliabilityAuthorityMode
-                    .distinctAccountAndTransport &&
-            probeAuthority != null)
-          'authorityBefore': await probeAuthority(
-            groupId,
-            requireSettled: false,
+      var stage = _ReceiverArmStage.accept;
+      try {
+        final accepted = await acceptReceiver(groupId);
+        if (accepted == null) {
+          throw StateError('receiver did not accept the exact group invite');
+        }
+        stage = _ReceiverArmStage.arm;
+        await controller.arm(
+          GroupMediaReliabilityBarrierRequest(
+            runId: request.runId,
+            groupId: groupId,
+            jpegMessageId: request.messageIds['jpeg']!,
+            jpegAttachmentId: request.attachmentIds['jpeg']!,
+            mediaMessageIds: request.messageIds,
+            mediaAttachmentIds: request.attachmentIds,
           ),
-        ...accepted,
-        'roleDatabaseIdentity': await probeRole(
+        );
+        stage = _ReceiverArmStage.authority;
+        final authorityBefore =
+            authorityMode ==
+                    GroupMediaReliabilityAuthorityMode
+                        .distinctAccountAndTransport &&
+                probeAuthority != null
+            ? await probeAuthority(groupId, requireSettled: false)
+            : null;
+        stage = _ReceiverArmStage.roleDatabase;
+        final roleDatabase = await probeRole(
           request.role,
           const <String, String>{},
           const <String, String>{},
-        ),
-      };
+        );
+        return <String, Object?>{
+          ...base,
+          'status': 'armed',
+          'groupId': groupId,
+          'authorityBefore': ?authorityBefore,
+          ...accepted,
+          'roleDatabaseIdentity': roleDatabase,
+        };
+      } on Object catch (error) {
+        throw _ReceiverArmFailure(stage, error);
+      }
     case groupMediaReliabilitySenderSendPhase:
       final groupId = request.groupId;
       final receiverAccount = request.receiverAccountPeerId;
@@ -635,6 +644,24 @@ final class GroupMediaReliabilitySenderFailure implements Exception {
       : 'unexpected_error';
 }
 
+enum _ReceiverArmStage { accept, arm, authority, roleDatabase }
+
+final class _ReceiverArmFailure implements Exception {
+  const _ReceiverArmFailure(this.stage, this.cause);
+  final _ReceiverArmStage stage;
+  final Object cause;
+
+  String get closedCause => switch (cause) {
+    StateError(message: 'receiver did not accept the exact group invite') =>
+      'invite_not_accepted',
+    StateError(message: 'group-media reliability state already exists') =>
+      'state_exists',
+    StateError() => 'state_error',
+    FormatException() => 'format_error',
+    _ => 'unexpected_error',
+  };
+}
+
 enum GroupMediaReliabilityRecoveryStage {
   priorBoundary,
   firstUpload,
@@ -678,10 +705,18 @@ Map<String, Object?> groupMediaReliabilityE2EFailureReceipt({
     'runId': request.runId,
     'nonce': request.nonce,
     'errorType':
-        (error is GroupMediaReliabilityRecoveryFailure ? error.cause : error)
+        (error is _ReceiverArmFailure
+                ? error.cause
+                : error is GroupMediaReliabilityRecoveryFailure
+                ? error.cause
+                : error)
             .runtimeType
             .toString(),
     'errorCode': _groupMediaReliabilityE2EFailureCode(error),
+    if (error is _ReceiverArmFailure) ...{
+      'receiverStage': error.stage.name,
+      'receiverCause': error.closedCause,
+    },
     if (error is GroupMediaReliabilityRecoveryFailure) ...{
       'recoveryStage': error.stage.name,
       ...error.work,
@@ -709,6 +744,9 @@ Map<String, Object?> groupMediaReliabilityE2EFailureReceipt({
 }
 
 String _groupMediaReliabilityE2EFailureCode(Object error) {
+  if (error is _ReceiverArmFailure) {
+    return _groupMediaReliabilityE2EFailureCode(error.cause);
+  }
   if (error is GroupMediaReliabilityRecoveryFailure) {
     return _groupMediaReliabilityE2EFailureCode(error.cause);
   }

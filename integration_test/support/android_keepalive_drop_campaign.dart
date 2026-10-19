@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_app/core/debug/keepalive_drop_e2e_contract.dart';
 
 import '../../tool/sims/device_criteria.dart';
@@ -5,21 +7,83 @@ import 'sims_runtime_protocol.dart';
 
 const String keepaliveArtifactValidatorId = 'validateKeepaliveDropArtifact';
 
+final _connectionCallback = RegExp(
+  r'\[CONN\] peer:(connected|disconnected) → (\S+)(?: \([^\r\n]*\))?\s*$',
+);
+
 /// The most recent production connection callback for this exact peer.
 /// A keepalive drop or a cached dial result alone does not remove a connection.
 bool? keepaliveTargetConnected(String log, String targetPeerId) {
   if (targetPeerId.isEmpty) return null;
-  final callback = RegExp(
-    r'\[CONN\] peer:(connected|disconnected) → (\S+)(?: \([^\r\n]*\))?\s*$',
-  );
   bool? connected;
   for (final line in log.split('\n')) {
-    final match = callback.firstMatch(line);
+    final match = _connectionCallback.firstMatch(line);
     if (match != null && match.group(2) == targetPeerId) {
       connected = match.group(1) == 'connected';
     }
   }
   return connected;
+}
+
+/// Bounded observations for one target. Never copy peer IDs or raw log text.
+Map<String, Object?> keepaliveTransportDiagnostics(
+  String log,
+  String targetPeerId,
+) {
+  final callbacks = <String>[];
+  final transport = <Map<String, Object?>>[];
+  final prefix = targetPeerId.length > 10
+      ? targetPeerId.substring(0, 10)
+      : targetPeerId;
+  if (targetPeerId.isNotEmpty) {
+    for (final line in log.split('\n')) {
+      final callback = _connectionCallback.firstMatch(line);
+      if (callback != null && callback.group(2) == targetPeerId) {
+        callbacks.add(callback.group(1)!);
+        if (callbacks.length > 8) callbacks.removeAt(0);
+      }
+      final marker = line.indexOf('[FLOW] ');
+      if (marker < 0) continue;
+      try {
+        final value = jsonDecode(line.substring(marker + 7));
+        if (value is! Map || value['details'] is! Map) continue;
+        final event = value['event'];
+        if (!const {
+          'P2P_SERVICE_PEER_PING_BEGIN',
+          'P2P_SERVICE_PEER_PING_SUCCESS',
+          'P2P_SERVICE_PEER_PING_FAILED',
+          'P2P_SERVICE_PEER_PING_EXCEPTION',
+          'KEEPALIVE_PEER_DROP',
+          'P2P_SERVICE_WARM_PEER_BEGIN',
+          'P2P_SERVICE_WARM_PEER_DEBOUNCED',
+          'P2P_SERVICE_WARM_PEER_LAN_SEED',
+          'P2P_SERVICE_WARM_PEER_DIAL',
+          'P2P_SERVICE_WARM_PEER_DIAL_SKIPPED',
+          'P2P_SERVICE_DIAL_PEER_BEGIN',
+          'P2P_SERVICE_DIAL_PEER_SUCCESS',
+        }.contains(event)) {
+          continue;
+        }
+        final peer = (value['details'] as Map)['peerId'];
+        if (peer != targetPeerId && peer != prefix) continue;
+        final timestamp = DateTime.tryParse('${value['ts']}');
+        transport.add({
+          'event': event,
+          'peerMatch': peer == targetPeerId ? 'exact' : 'prefix',
+          if (timestamp != null)
+            'observedAt': timestamp.toUtc().toIso8601String(),
+        });
+        if (transport.length > 8) transport.removeAt(0);
+      } on FormatException {
+        // A truncated/unrelated log line is not transport evidence.
+      }
+    }
+  }
+  return {
+    'callbacks': callbacks,
+    'connected': callbacks.isEmpty ? null : callbacks.last == 'connected',
+    'transportEvents': transport,
+  };
 }
 
 String? validateKeepaliveCampaignInvocation(SimsRuntimeInvocation invocation) {
