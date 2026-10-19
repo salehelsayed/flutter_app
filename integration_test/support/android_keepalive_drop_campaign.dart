@@ -9,6 +9,16 @@ import 'sims_runtime_protocol.dart';
 
 const String keepaliveArtifactValidatorId = 'validateKeepaliveDropArtifact';
 
+/// A completed config alone does not prove that the receiver closed its host.
+bool keepaliveReceiverStopAcknowledged(Map<String, Object?> result) {
+  final action = result['nodeAction'];
+  return result['status'] == 'complete' &&
+      result['success'] == true &&
+      action is Map &&
+      action['action'] == 'stop_node' &&
+      action['stopped'] == true;
+}
+
 final _connectionCallback = RegExp(
   r'\[CONN\] peer:(connected|disconnected) → (\S+)(?: \([^\r\n]*\))?\s*$',
 );

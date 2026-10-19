@@ -724,8 +724,16 @@ the latest raw tail locally, capped at 512 KiB with mode 0600 before writing;
 JSON records only capture success, byte counts and truncation. This private
 file must never be copied into mailbox reports. Capture failure preserves the
 original campaign failure. The dropped-send, custody, no-direct and recovery
-assertions remain unchanged. A fresh physical Android/emulator run remains
-required to establish runtime timing. The focused host check passed all 201
+assertions remain unchanged. The not-connected skip fixture first invokes the
+receiver's existing `node_action_before_intro_phase=stop_node` action and
+requires its successful acknowledgment before force-stopping that process.
+Sender callbacks are observed while waiting for this acknowledgment as well
+as during drop/warm polling. Graceful receiver shutdown must produce a real
+sender disconnect; missing disconnect/terminal evidence is a setup/precondition
+failure within the same 16-second warm window. Abrupt-death stale-connection
+recovery remains a separate boundary, covered by the existing native
+send-recovery tests; this fixture does not certify that boundary. A fresh
+physical Android/emulator run remains required to establish runtime timing. The focused host check passed all 201
 cases without skips in `patch6-keepalive-observer-20261019/001-green.log`,
 including early-disconnect/truncated-tail, later-reconnect, wrong-peer/unknown
 and private-capture cases; the original `checkpoint-006-major` failure remains

@@ -317,6 +317,17 @@ final class _KeepaliveCampaign {
       receiver.peerId,
     );
     await _clearLogcat(physical);
+    final receiverStop = await _runConfig(emulator, <String, Object?>{
+      'stepId': 'keepalive-stop-${invocation.runId}',
+      'node_action_before_intro_phase': 'stop_node',
+      'skip_snapshot': true,
+    }, observeConnectionsOn: physical);
+    if (!keepaliveReceiverStopAcknowledged(receiverStop)) {
+      throw const _CampaignFailure(
+        'Keepalive setup/precondition failed: receiver node stop was not '
+        'acknowledged.',
+      );
+    }
     await _forceStop(emulator);
     await _requireForeground(physical);
 
@@ -607,6 +618,7 @@ final class _KeepaliveCampaign {
     String device,
     Map<String, Object?> config, {
     Duration timeout = const Duration(seconds: 180),
+    String? observeConnectionsOn,
   }) async {
     final stepId = config['stepId'];
     if (stepId is! String || stepId.isEmpty) {
@@ -618,6 +630,7 @@ final class _KeepaliveCampaign {
       stepId: stepId,
       expectedStatus: 'complete',
       timeout: timeout,
+      observeConnectionsOn: observeConnectionsOn,
     );
   }
 
@@ -635,10 +648,14 @@ final class _KeepaliveCampaign {
     String? nonce,
     String? expectedSchema,
     required Duration timeout,
+    String? observeConnectionsOn,
   }) async {
     return _waitForValue<
       Map<String, Object?>
     >('$stepId/$expectedStatus on $device', timeout, () async {
+      if (observeConnectionsOn != null) {
+        await _flowEvents(observeConnectionsOn);
+      }
       final raw = await _readAppFile(device, _resultFile);
       if (raw == null) return null;
       try {
@@ -731,7 +748,8 @@ final class _KeepaliveCampaign {
     Map<String, Object?>? privateLogCapture;
     try {
       return await _waitForValue<String>(
-        'terminal keepalive recovery warm',
+        'keepalive setup/precondition: disconnected target and terminal '
+        'recovery warm',
         timeout,
         () async {
           final events = await _flowEvents(device);

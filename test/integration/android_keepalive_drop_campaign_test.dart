@@ -9,6 +9,47 @@ import '../../integration_test/support/sims_runtime_protocol.dart';
 import '../../tool/sims/device_criteria.dart';
 
 void main() {
+  test('receiver stop needs the successful stop_node acknowledgment', () {
+    expect(
+      keepaliveReceiverStopAcknowledged({
+        'status': 'complete',
+        'success': true,
+        'nodeAction': {'action': 'stop_node', 'stopped': true},
+      }),
+      isTrue,
+    );
+  });
+  test(
+    'incomplete or wrong receiver stop evidence cannot prepare the send',
+    () {
+      for (final result in <Map<String, Object?>>[
+        {},
+        {'status': 'complete', 'success': true},
+        {
+          'status': 'complete',
+          'success': true,
+          'nodeAction': {'action': 'stop_node', 'stopped': false},
+        },
+        {
+          'status': 'complete',
+          'success': true,
+          'nodeAction': {'action': 'none', 'stopped': true},
+        },
+        {
+          'status': 'failed',
+          'success': false,
+          'nodeAction': {'action': 'stop_node', 'stopped': true},
+        },
+        {
+          'status': 'complete',
+          'success': true,
+          'nodeAction': {'action': 'stop_node', 'stopped': 'true'},
+        },
+      ]) {
+        expect(keepaliveReceiverStopAcknowledged(result), isFalse);
+      }
+    },
+  );
   const terminal = 'P2P_SERVICE_DIAL_PEER_SUCCESS';
   test('early drop callback survives a truncated warm log tail', () {
     final observer = KeepaliveTargetConnectionObserver('target-peer');
