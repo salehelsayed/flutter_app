@@ -6435,6 +6435,7 @@
   ],
   "documentation_only": [
     "*.md",
+    "docs/testing/journey-coverage-matrix.yaml",
     "UI-25-UIUXPolish/ui-ux-polish.zip",
     "artifacts/*",
     "crash-report/*",
