@@ -8,8 +8,6 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart
     show PostMediaCryptoEntry;
 
 class PostCreateEnvelope {
-  static const Duration _maxFutureClockSkew = Duration(minutes: 5);
-
   final String eventId;
   final String createdAt;
   final String senderPeerId;
@@ -83,8 +81,8 @@ class PostCreateEnvelope {
     );
   }
 
-  /// Entries only for rows that actually carry key material — a pre-flip
-  /// plaintext-uploaded post yields null and keeps today's v1 fallback (G3).
+  /// Entries only for rows that carry attachment keys. Legacy keyless media
+  /// stays keyless inside the required encrypted thought envelope.
   static Map<String, PostMediaCryptoEntry>? _deriveMediaKeysFromAttachments(
     List<PostMediaAttachmentModel> media,
   ) {
@@ -153,18 +151,9 @@ class PostCreateEnvelope {
       final audienceJson = snapshot['audience'] as Map<String, dynamic>?;
       final audienceKind = audienceJson?['kind'] as String? ?? 'all_friends';
       final radiusM = (audienceJson?['radius_m'] as num?)?.toInt();
-      final selectedIds =
-          (payload['selected_peer_ids'] as List<dynamic>? ?? const [])
-              .map((value) => value.toString())
-              .toList(growable: false);
-      final recipientPeerIds =
-          (payload['recipient_peer_ids'] as List<dynamic>? ?? const [])
-              .map((value) => value.toString())
-              .toList(growable: false);
       final audience = switch (audienceKind) {
         'pick_people' => PostAudience(
           kind: PostAudienceKind.pickPeople,
-          selectedPeerIds: selectedIds,
           scopeLabel: audienceJson?['scope_label'] as String?,
         ),
         'people_nearby' when radiusM != null => PostAudience(
@@ -210,11 +199,9 @@ class PostCreateEnvelope {
         nearbyDistanceM: (nearbyContext?['distance_m'] as num?)?.toInt(),
         nearbySenderLatE3: nearbyContext?['sender_lat_e3'] as int?,
         nearbySenderLngE3: nearbyContext?['sender_lng_e3'] as int?,
-        nearbySenderCapturedAt:
-            nearbyContext?['sender_captured_at'] as String?,
-        nearbySenderAccuracyM:
-            (nearbyContext?['sender_accuracy_m'] as num?)?.toDouble(),
-        recipientPeerIds: recipientPeerIds,
+        nearbySenderCapturedAt: nearbyContext?['sender_captured_at'] as String?,
+        nearbySenderAccuracyM: (nearbyContext?['sender_accuracy_m'] as num?)
+            ?.toDouble(),
       );
     } catch (_) {
       return null;
@@ -357,10 +344,6 @@ class PostCreateEnvelope {
         'keep_available': keepAvailable,
         'expires_at': expiresAt,
       },
-      if (selectedPeerIds != null && selectedPeerIds.isNotEmpty)
-        'selected_peer_ids': selectedPeerIds,
-      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
-        'recipient_peer_ids': recipientPeerIds,
       if (hasNearbyContext)
         'nearby_context': <String, Object?>{
           'distance_m': nearbyDistanceM ?? this.nearbyDistanceM,
@@ -406,10 +389,6 @@ class PostCreateEnvelope {
         'keep_available': keepAvailable,
         'expires_at': expiresAt,
       },
-      if (selectedPeerIds != null && selectedPeerIds.isNotEmpty)
-        'selected_peer_ids': selectedPeerIds,
-      if (recipientPeerIds != null && recipientPeerIds.isNotEmpty)
-        'recipient_peer_ids': recipientPeerIds,
       // KC-P3: media_keys rides ONLY this ML-KEM-encrypted inner payload —
       // it must never be added to the v1 plaintext toJson above.
       if (mediaKeys != null && mediaKeys!.isNotEmpty)
@@ -484,11 +463,6 @@ class PostCreateEnvelope {
       nearbySenderAccuracyM != null;
 
   static bool _isValidCreatedAt(String createdAt) {
-    final timestamp = DateTime.tryParse(createdAt)?.toUtc();
-    if (timestamp == null) {
-      return false;
-    }
-    final latestAllowed = DateTime.now().toUtc().add(_maxFutureClockSkew);
-    return !timestamp.isAfter(latestAllowed);
+    return DateTime.tryParse(createdAt) != null;
   }
 }

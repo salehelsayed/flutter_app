@@ -34,8 +34,13 @@ void main() {
   PostRepositoryImpl buildRepository() {
     return PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
-      dbLoadPost: (postId) => dbLoadPost(db, postId),
-      dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+      dbLoadPost: (postId) => dbLoadPost(
+        db,
+        postId,
+        nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+      ),
+      dbLoadPostsFeed: () =>
+          dbLoadPostsFeed(db, nowProvider: () => DateTime.utc(2026, 3, 15, 12)),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),
       dbLoadRecipientDeliveries: (postId) =>
@@ -45,8 +50,10 @@ void main() {
           dbReplacePostMediaUploadRecoveryItems(db, postId, rows),
       dbLoadPostMediaUploadRecoveryItems: (postId) =>
           dbLoadPostMediaUploadRecoveryItems(db, postId),
-      dbLoadPendingMediaUploadPosts: () =>
-          dbLoadPendingPostMediaUploadPosts(db),
+      dbLoadPendingMediaUploadPosts: () => dbLoadPendingPostMediaUploadPosts(
+        db,
+        nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+      ),
     );
   }
 

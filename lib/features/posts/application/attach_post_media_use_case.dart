@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
@@ -28,6 +29,7 @@ enum AttachPostMediaResult {
   noRecipients,
   invalidSelection,
   uploadFailed,
+  expired,
 }
 
 typedef UploadPostMediaFn =
@@ -53,6 +55,7 @@ attachPostMedia({
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
+  DateTime Function()? nowProvider,
 }) async {
   final post = await postRepo.getPost(postId);
   if (post == null) {
@@ -60,6 +63,14 @@ attachPostMedia({
       AttachPostMediaResult.postNotFound,
       const <PostMediaAttachmentModel>[],
     );
+  }
+  bool isExpired() => ThoughtLifetime.isExpired(
+    DateTime.parse(post.createdAt),
+    nowProvider?.call() ?? DateTime.now(),
+  );
+  if (isExpired()) {
+    await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+    return (AttachPostMediaResult.expired, const <PostMediaAttachmentModel>[]);
   }
   if (drafts.isEmpty) {
     return (AttachPostMediaResult.success, const <PostMediaAttachmentModel>[]);
@@ -134,6 +145,19 @@ attachPostMedia({
       secureKeyStore: secureKeyStore,
       imageProcessor: imageProcessor,
     );
+    if (isExpired()) {
+      if (prepared.localFilePath != drafts[index].localFilePath) {
+        await _removeLateMediaFile(prepared.localFilePath, mediaFileManager);
+      }
+      for (final attachment in attachments) {
+        await _removeLateMediaFile(attachment.localPath, mediaFileManager);
+      }
+      await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+      return (
+        AttachPostMediaResult.expired,
+        const <PostMediaAttachmentModel>[],
+      );
+    }
     final uploaded = await resolvedUpload(
       postId: postId,
       localFilePath: prepared.localFilePath,
@@ -166,6 +190,13 @@ attachPostMedia({
     attachments.add(positioned);
   }
 
+  if (isExpired() || await postRepo.getPost(postId) == null) {
+    for (final attachment in attachments) {
+      await _removeLateMediaFile(attachment.localPath, mediaFileManager);
+    }
+    await postRepo.replacePostMediaUploadRecoveryItems(postId, const []);
+    return (AttachPostMediaResult.expired, const <PostMediaAttachmentModel>[]);
+  }
   await postRepo.replacePostMediaAttachments(postId, attachments);
 
   return (AttachPostMediaResult.success, attachments);
@@ -179,7 +210,18 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
+  DateTime Function()? nowProvider,
 }) async {
+  if (ThoughtLifetime.isExpired(
+    DateTime.parse(created.post.createdAt),
+    nowProvider?.call() ?? DateTime.now(),
+  )) {
+    await postRepo.replacePostMediaUploadRecoveryItems(
+      created.post.id,
+      const [],
+    );
+    return (SendPostResult.sendFailed, created);
+  }
   final drafts = created.mediaDrafts.isNotEmpty
       ? created.mediaDrafts
       : (await postRepo.loadPostMediaUploadRecoveryItems(
@@ -192,6 +234,7 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     final failedPost = await _persistFailedMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
+      nowProvider: nowProvider,
     );
     return (
       SendPostResult.sendFailed,
@@ -208,16 +251,36 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     mediaFileManager: mediaFileManager,
     uploadPostMediaFn: uploadPostMediaFn,
     bridge: bridge,
+    nowProvider: nowProvider,
   );
+  if (result == AttachPostMediaResult.expired) {
+    return (SendPostResult.sendFailed, created);
+  }
   if (result != AttachPostMediaResult.success) {
     final failedPost = await _persistFailedMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
+      nowProvider: nowProvider,
     );
     return (
       SendPostResult.sendFailed,
       created.copyWith(post: failedPost, mediaDrafts: drafts),
     );
+  }
+
+  if (ThoughtLifetime.isExpired(
+        DateTime.parse(created.post.createdAt),
+        nowProvider?.call() ?? DateTime.now(),
+      ) ||
+      await postRepo.getPost(created.post.id) == null) {
+    for (final attachment in attachments) {
+      await _removeLateMediaFile(attachment.localPath, mediaFileManager);
+    }
+    await postRepo.replacePostMediaUploadRecoveryItems(
+      created.post.id,
+      const [],
+    );
+    return (SendPostResult.sendFailed, created);
   }
 
   final updatedPost = created.post.copyWith(
@@ -365,8 +428,23 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
 Future<PostModel> _persistFailedMediaPreparationPost({
   required PostRepository postRepo,
   required PostModel post,
+  DateTime Function()? nowProvider,
 }) async {
+  Future<bool> isLive() async =>
+      !ThoughtLifetime.isExpired(
+        DateTime.parse(post.createdAt),
+        nowProvider?.call() ?? DateTime.now(),
+      ) &&
+      await postRepo.getPost(post.id) != null;
+  if (!await isLive()) {
+    await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+    return post;
+  }
   await postRepo.replacePostMediaAttachments(post.id, const []);
+  if (!await isLive()) {
+    await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+    return post;
+  }
   final failedPost = post.copyWith(deliveryStatus: 'failed', media: const []);
   await postRepo.savePost(failedPost);
   return failedPost;
@@ -458,4 +536,27 @@ PostMediaDraft _draftFromRecoveryItem(PostMediaUploadRecoveryItem item) {
     durationMs: item.durationMs,
     waveform: item.waveform,
   );
+}
+
+Future<void> _removeLateMediaFile(
+  String? localPath,
+  MediaFileManager? mediaFileManager,
+) async {
+  if (localPath == null) return;
+  try {
+    final resolvedPath = await (mediaFileManager ?? MediaFileManager())
+        .resolveStoredPath(localPath);
+    final file = File(resolvedPath);
+    if (await file.exists()) await file.delete();
+    final parent = file.parent;
+    if (await parent.exists() && await parent.list().isEmpty) {
+      await parent.delete();
+    }
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_EXPIRED_MEDIA_CLEANUP_ERROR',
+      details: {'error': error.toString()},
+    );
+  }
 }

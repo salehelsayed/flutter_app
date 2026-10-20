@@ -45,41 +45,44 @@ void main() {
     postRepo.dispose();
   });
 
-  test('start while already online retries queued pin follow-ons', () async {
-    await postRepo.saveFollowOnOutboxEvent(
-      const PostFollowOnOutboxEvent(
-        eventId: 'evt-pin-remove-1',
-        eventType: 'post_pin_remove',
-        postId: 'post-1',
-        senderPeerId: 'peer-self',
-        rawEnvelope: '{"type":"post_pin_remove"}',
-        createdAt: '2026-03-15T11:25:00.000Z',
-      ),
-    );
-    await postRepo.saveFollowOnOutboxRecipientDelivery(
-      const PostFollowOnOutboxRecipientDelivery(
-        eventId: 'evt-pin-remove-1',
-        recipientPeerId: 'peer-bob',
-        deliveryStatus: 'failed',
-        deliveryPath: 'failed',
-        lastError: 'inbox_store_failed',
-        lastAttemptAt: '2026-03-15T11:25:10.000Z',
-        createdAt: '2026-03-15T11:25:00.000Z',
-        updatedAt: '2026-03-15T11:25:10.000Z',
-      ),
-    );
+  test(
+    'start while already online leaves legacy pin follow-ons unchanged',
+    () async {
+      await postRepo.saveFollowOnOutboxEvent(
+        const PostFollowOnOutboxEvent(
+          eventId: 'evt-pin-remove-1',
+          eventType: 'post_pin_remove',
+          postId: 'post-1',
+          senderPeerId: 'peer-self',
+          rawEnvelope: '{"type":"post_pin_remove"}',
+          createdAt: '2026-03-15T11:25:00.000Z',
+        ),
+      );
+      await postRepo.saveFollowOnOutboxRecipientDelivery(
+        const PostFollowOnOutboxRecipientDelivery(
+          eventId: 'evt-pin-remove-1',
+          recipientPeerId: 'peer-bob',
+          deliveryStatus: 'failed',
+          deliveryPath: 'failed',
+          lastError: 'inbox_store_failed',
+          lastAttemptAt: '2026-03-15T11:25:10.000Z',
+          createdAt: '2026-03-15T11:25:00.000Z',
+          updatedAt: '2026-03-15T11:25:10.000Z',
+        ),
+      );
 
-    retrier.start();
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+      retrier.start();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
-      'evt-pin-remove-1',
-    );
-    expect(deliveries, hasLength(1));
-    expect(deliveries.single.deliveryStatus, 'delivered');
-    expect(await postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
-    expect(p2pService.sendMessageWithReplyCallCount, 1);
-  });
+      final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
+        'evt-pin-remove-1',
+      );
+      expect(deliveries, hasLength(1));
+      expect(deliveries.single.deliveryStatus, 'failed');
+      expect(await postRepo.loadRetryableFollowOnOutboxJobs(), hasLength(1));
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+    },
+  );
 
   test('account migration gate blocks queued follow-on retry work', () async {
     await postRepo.saveFollowOnOutboxEvent(
@@ -125,7 +128,7 @@ void main() {
     final deliveries = await postRepo.loadFollowOnOutboxRecipientDeliveries(
       'evt-pin-blocked',
     );
-    expect(gateCalls, 1);
+    expect(gateCalls, 0);
     expect(deliveries, hasLength(1));
     expect(deliveries.single.deliveryStatus, 'failed');
     expect(await postRepo.loadRetryableFollowOnOutboxJobs(), hasLength(1));

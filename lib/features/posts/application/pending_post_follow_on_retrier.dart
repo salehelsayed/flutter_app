@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -127,6 +128,10 @@ Future<int> retryPendingPostFollowOns({
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
 }) async {
+  if (rejectLegacyPostFeature('post_follow_on')) {
+    return 0;
+  }
+
   if (!await _allowsPostFollowOnNetworkSideEffects(
     p2pService: p2pService,
     accountMigrationNetworkGate: accountMigrationNetworkGate,

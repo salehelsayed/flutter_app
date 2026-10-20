@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
@@ -160,6 +161,7 @@ Future<int> retryPendingPostMediaUploads({
   MediaFileManager? mediaFileManager,
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
+  DateTime Function()? nowProvider,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
 }) async {
@@ -176,6 +178,13 @@ Future<int> retryPendingPostMediaUploads({
   var retriedCount = 0;
 
   for (final post in pendingPosts) {
+    if (ThoughtLifetime.isExpired(
+      DateTime.parse(post.createdAt),
+      nowProvider?.call() ?? DateTime.now(),
+    )) {
+      await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+      continue;
+    }
     final recoveryItems = await postRepo.loadPostMediaUploadRecoveryItems(
       post.id,
     );
@@ -219,6 +228,7 @@ Future<int> retryPendingPostMediaUploads({
       mediaFileManager: mediaFileManager,
       uploadPostMediaFn: uploadPostMediaFn,
       bridge: bridge,
+      nowProvider: nowProvider,
     );
     if (prepareResult != SendPostResult.success || prepared == null) {
       continue;
@@ -234,10 +244,19 @@ Future<int> retryPendingPostMediaUploads({
       continue;
     }
 
+    if (ThoughtLifetime.isExpired(
+      DateTime.parse(post.createdAt),
+      nowProvider?.call() ?? DateTime.now(),
+    )) {
+      await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
+      continue;
+    }
+
     await PostDeliveryRunner(
       p2pService: p2pService,
       postRepo: postRepo,
       bridge: bridge,
+      nowProvider: nowProvider,
     ).execute(prepared);
   }
 

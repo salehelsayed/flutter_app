@@ -16,6 +16,7 @@ class PostNotificationOpenCoordinator {
   final void Function() revealPostsSurface;
   final Duration waitBudget;
   final Duration expiryBudget;
+  final DateTime Function() now;
 
   StreamSubscription<String>? _postChangesSubscription;
   Timer? _fallbackTimer;
@@ -29,7 +30,8 @@ class PostNotificationOpenCoordinator {
     required this.revealPostsSurface,
     this.waitBudget = const Duration(seconds: 5),
     this.expiryBudget = const Duration(seconds: 30),
-  }) {
+    DateTime Function()? nowProvider,
+  }) : now = nowProvider ?? DateTime.now {
     _postChangesSubscription = postRepository.postChanges.listen((_) {
       unawaited(_openPostsSurfaceWhenObserved());
     });
@@ -109,6 +111,11 @@ class PostNotificationOpenCoordinator {
 
     final post = await postRepository.getPost(target.postId);
     if (post == null) {
+      return;
+    }
+    final expiresAt = DateTime.tryParse(post.expiresAt);
+    if (expiresAt == null || !expiresAt.isAfter(now().toUtc())) {
+      pendingTargetStore.clear();
       return;
     }
 

@@ -47,8 +47,7 @@ void main() {
     await posts.savePostMediaAttachment(_keyedRow());
   }
 
-  test('pin update over keyed encrypted rows never drops key material',
-      () async {
+  test('rejected pin update leaves encrypted media keys unchanged', () async {
     await seedKeyedPost();
 
     final (result, _) = await handleIncomingPostPinUpdate(
@@ -57,7 +56,7 @@ void main() {
       contactRepo: contacts,
     );
 
-    expect(result, HandleIncomingPostPinUpdateResult.pinApplied);
+    expect(result, HandleIncomingPostPinUpdateResult.notPostPinUpdate);
 
     final stored = (await posts.loadPostMediaAttachments('post-1')).single;
     expect(stored.encryptionKeyBase64, 'row-key-b64');
@@ -73,92 +72,96 @@ void main() {
     expect(stored.downloadStatus, 'done');
   });
 
-  test('edit-pinned snapshot merge over keyed rows preserves crypto fields',
-      () async {
-    await seedKeyedPost();
+  test(
+    'rejected edit snapshot leaves thought text and media keys unchanged',
+    () async {
+      await seedKeyedPost();
 
-    final (result, _) = await handleIncomingPostPinUpdate(
-      message: _pinMessage(_pinUpdateJson(text: 'Edited while pinned')),
-      postRepo: posts,
-      contactRepo: contacts,
-    );
+      final (result, _) = await handleIncomingPostPinUpdate(
+        message: _pinMessage(_pinUpdateJson(text: 'Edited while pinned')),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
 
-    expect(result, HandleIncomingPostPinUpdateResult.pinApplied);
+      expect(result, HandleIncomingPostPinUpdateResult.notPostPinUpdate);
 
-    final post = await posts.getPost('post-1');
-    expect(post!.text, 'Edited while pinned');
+      final post = await posts.getPost('post-1');
+      expect(post!.text, _parentPost().text);
 
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.encryptionKeyBase64, 'row-key-b64');
-    expect(stored.encryptionNonce, 'row-nonce-b64');
-    expect(
-      stored.encryptionScheme,
-      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-    );
-    expect(stored.contentHash, 'e' * 64);
-    expect(stored.isEncrypted, isTrue);
-  });
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.encryptionKeyBase64, 'row-key-b64');
+      expect(stored.encryptionNonce, 'row-nonce-b64');
+      expect(
+        stored.encryptionScheme,
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      expect(stored.contentHash, 'e' * 64);
+      expect(stored.isEncrypted, isTrue);
+    },
+  );
 
-  test('post_create-with-keys then staged-pin replay: joined keys survive',
-      () async {
-    // Pin arrives before the parent post → staged.
-    final (stagedResult, _) = await handleIncomingPostPinUpdate(
-      message: _pinMessage(_pinUpdateJson()),
-      postRepo: posts,
-      contactRepo: contacts,
-    );
-    expect(
-      stagedResult,
-      HandleIncomingPostPinUpdateResult.stagedPendingParent,
-    );
+  test(
+    'a dropped orphan pin cannot replace a later thought or its media keys',
+    () async {
+      // A pin received before its thought must be dropped without staging.
+      final (stagedResult, _) = await handleIncomingPostPinUpdate(
+        message: _pinMessage(_pinUpdateJson()),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+      expect(stagedResult, HandleIncomingPostPinUpdateResult.notPostPinUpdate);
 
-    // The keyed v2 post_create lands; reconcile replays the staged pin in
-    // the same tick (reconcile_pending_post_child_events_use_case).
-    final (createResult, _) = await handleIncomingPost(
-      message: _encryptedMediaPostMessage(),
-      postRepo: posts,
-      contactRepo: contacts,
-      bridge: PassthroughCryptoBridge(),
-      ownMlKemSecretKey: 'own-sk',
-    );
-    expect(createResult, HandleIncomingPostResult.postCreated);
+      // The subsequent thought retains its own keys; no pin is replayed.
+      final (createResult, _) = await handleIncomingPost(
+        message: _encryptedMediaPostMessage(),
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'own-sk',
+        nowProvider: () => DateTime.parse(_createdAt),
+      );
+      expect(createResult, HandleIncomingPostResult.postCreated);
 
-    final pinState = await posts.getPostPinState('post-1');
-    expect(pinState, isNotNull);
-    expect(pinState!.state, 'active');
+      final pinState = await posts.getPostPinState('post-1');
+      expect(pinState, isNull);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
 
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.encryptionKeyBase64, 'wire-key-b64');
-    expect(stored.encryptionNonce, 'wire-nonce-b64');
-    expect(
-      stored.encryptionScheme,
-      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-    );
-    expect(stored.contentHash, 'f' * 64);
-    expect(stored.isEncrypted, isTrue);
-  });
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.encryptionKeyBase64, 'wire-key-b64');
+      expect(stored.encryptionNonce, 'wire-nonce-b64');
+      expect(
+        stored.encryptionScheme,
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      expect(stored.contentHash, 'f' * 64);
+      expect(stored.isEncrypted, isTrue);
+    },
+  );
 
-  test('pin snapshot media carries no key material (v1 envelope stays crypto-free)',
-      () {
-    final wire = _pinUpdateJson();
+  test(
+    'pin snapshot media carries no key material (v1 envelope stays crypto-free)',
+    () {
+      final wire = _pinUpdateJson();
 
-    expect(wire, isNot(contains('row-key-b64')));
-    expect(wire, isNot(contains('row-nonce-b64')));
-    expect(wire, isNot(contains('media_keys')));
+      expect(wire, isNot(contains('row-key-b64')));
+      expect(wire, isNot(contains('row-nonce-b64')));
+      expect(wire, isNot(contains('media_keys')));
 
-    final decoded = jsonDecode(wire) as Map<String, dynamic>;
-    final snapshot = (decoded['payload'] as Map<String, dynamic>)['snapshot']
-        as Map<String, dynamic>;
-    final media =
-        (snapshot['media'] as List<dynamic>).cast<Map<String, dynamic>>();
-    for (final entry in media) {
-      expect(entry.keys, isNot(contains('encryption_key_base64')));
-      expect(entry.keys, isNot(contains('encryption_nonce')));
-      expect(entry.keys, isNot(contains('encryption_scheme')));
-      expect(entry.keys, isNot(contains('content_hash')));
-      expect(entry.keys, isNot(contains('is_encrypted')));
-    }
-  });
+      final decoded = jsonDecode(wire) as Map<String, dynamic>;
+      final snapshot =
+          (decoded['payload'] as Map<String, dynamic>)['snapshot']
+              as Map<String, dynamic>;
+      final media = (snapshot['media'] as List<dynamic>)
+          .cast<Map<String, dynamic>>();
+      for (final entry in media) {
+        expect(entry.keys, isNot(contains('encryption_key_base64')));
+        expect(entry.keys, isNot(contains('encryption_nonce')));
+        expect(entry.keys, isNot(contains('encryption_scheme')));
+        expect(entry.keys, isNot(contains('content_hash')));
+        expect(entry.keys, isNot(contains('is_encrypted')));
+      }
+    },
+  );
 }
 
 PostModel _parentPost() {

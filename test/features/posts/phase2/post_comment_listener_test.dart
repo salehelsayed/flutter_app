@@ -70,7 +70,7 @@ PostModel _post(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
   );
 }
 
@@ -100,7 +100,7 @@ void main() {
     await controller.close();
   });
 
-  test('persists comments that arrive for an existing post', () async {
+  test('drops comments for an existing thought without storing them', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     await posts.savePost(_post('post-1'));
 
@@ -113,11 +113,14 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(await posts.loadComments('post-1'), hasLength(1));
-    expect((await posts.loadComments('post-1')).single.body, 'I can lend one.');
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
   });
 
-  test('stages comments when the parent post has not arrived yet', () async {
+  test('drops comments for a missing thought without staging them', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
     controller.add(
@@ -130,10 +133,13 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
     expect(await posts.loadComments('post-1'), isEmpty);
-    expect(await posts.loadPendingChildEvents('post-1'), hasLength(1));
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
   });
 
-  test('shows notifications for comments on the local user post', () async {
+  test('does not notify for comments on the local user thought', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     await posts.savePost(_ownPost('post-1'));
 
@@ -146,14 +152,14 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(notifications.shownGeneric, hasLength(1));
-    expect(
-      notifications.shownGeneric.single.payload,
-      'post_comment:post-1:comment-1',
-    );
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
   });
 
-  test('dedupes repeated deliveries and emits the comment once', () async {
+  test('drops repeated comments without emitting or notifying', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     await posts.savePost(_ownPost('post-1'));
     final emittedCommentIds = <String>[];
@@ -172,9 +178,12 @@ void main() {
     controller.add(message);
     await Future<void>.delayed(const Duration(milliseconds: 75));
 
-    expect(await posts.loadComments('post-1'), hasLength(1));
-    expect(emittedCommentIds, <String>['comment-1']);
-    expect(notifications.shownGeneric, hasLength(1));
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
+    expect(emittedCommentIds, isEmpty);
   });
 }
 
@@ -189,7 +198,7 @@ PostModel _ownPost(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
     isIncoming: false,
   );
 }

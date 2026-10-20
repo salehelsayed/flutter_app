@@ -50,8 +50,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -116,7 +115,11 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<void> warmBackground() async {}
@@ -148,8 +151,10 @@ void main() {
     p2pService.dispose();
   });
 
-  test('routes post_pass envelopes to postPassStream', () async {
-    final received = router.postPassStream.first;
+  test('drops legacy post_pass envelopes to postPassStream', () async {
+    final received = <ChatMessage>[];
+    final subscription = router.postPassStream.listen(received.add);
+    addTearDown(subscription.cancel);
     p2pService.controller.add(
       ChatMessage(
         from: 'peer-james',
@@ -185,37 +190,39 @@ void main() {
       ),
     );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_pass"'));
+    await Future<void>.delayed(Duration.zero);
+    expect(received, isEmpty);
   });
 
-  test('routes encrypted v2 post_pass envelopes to postPassStream', () async {
-    final received = router.postPassStream.first;
-    p2pService.controller.add(
-      ChatMessage(
-        from: 'peer-james',
-        to: 'self',
-        content: jsonEncode(<String, Object?>{
-          'type': 'post_pass',
-          'version': '2',
-          'event_id': 'evt-pass-enc-1',
-          'created_at': '2026-03-15T11:15:00.000Z',
-          'sender_peer_id': 'peer-james',
-          'encrypted': <String, Object?>{
-            'kem': 'fake-kem',
-            'ciphertext': '{"post_id":"post-1"}',
-            'nonce': 'fake-nonce',
-          },
-        }),
-        timestamp: '2026-03-15T11:15:00.000Z',
-        isIncoming: true,
-      ),
-    );
+  test(
+    'drops legacy encrypted v2 post_pass envelopes to postPassStream',
+    () async {
+      final received = <ChatMessage>[];
+      final subscription = router.postPassStream.listen(received.add);
+      addTearDown(subscription.cancel);
+      p2pService.controller.add(
+        ChatMessage(
+          from: 'peer-james',
+          to: 'self',
+          content: jsonEncode(<String, Object?>{
+            'type': 'post_pass',
+            'version': '2',
+            'event_id': 'evt-pass-enc-1',
+            'created_at': '2026-03-15T11:15:00.000Z',
+            'sender_peer_id': 'peer-james',
+            'encrypted': <String, Object?>{
+              'kem': 'fake-kem',
+              'ciphertext': '{"post_id":"post-1"}',
+              'nonce': 'fake-nonce',
+            },
+          }),
+          timestamp: '2026-03-15T11:15:00.000Z',
+          isIncoming: true,
+        ),
+      );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    final json = jsonDecode(message.content) as Map<String, dynamic>;
-    expect(json['type'], 'post_pass');
-    expect(json['version'], '2');
-    expect(json.containsKey('encrypted'), isTrue);
-  });
+      await Future<void>.delayed(Duration.zero);
+      expect(received, isEmpty);
+    },
+  );
 }

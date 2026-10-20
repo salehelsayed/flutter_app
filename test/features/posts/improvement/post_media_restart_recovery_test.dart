@@ -14,6 +14,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/encrypted_media_test_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -21,7 +22,11 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
-ContactModel _contact(String peerId, String username, {String? mlKemKey}) {
+ContactModel _contact(
+  String peerId,
+  String username, {
+  String? mlKemKey = 'test-mlkem',
+}) {
   return ContactModel(
     peerId: peerId,
     publicKey: 'pk-$peerId',
@@ -68,6 +73,124 @@ void main() {
     await tempDir.delete(recursive: true);
     posts.dispose();
   });
+
+  for (final scenario in [
+    (swept: false, fails: false),
+    (swept: true, fails: false),
+    (swept: true, fails: true),
+  ]) {
+    final sweptDuringUpload = scenario.swept;
+    final uploadFails = scenario.fails;
+    test(
+      'upload finishing after expiry sends nothing (swept=$sweptDuringUpload, failed=$uploadFails)',
+      () async {
+        var now = DateTime.now().toUtc();
+        final createdAt = now.subtract(const Duration(hours: 23));
+        final source = File('${tempDir.path}/voice.m4a');
+        await source.writeAsString('voice bytes');
+        final network = FakeP2PNetwork();
+        final service = FakeP2PService(peerId: 'peer-self', network: network);
+        addTearDown(service.dispose);
+        contacts.addTestContact(_contact('peer-bob', 'Bob'));
+        await posts.savePost(
+          PostModel(
+            id: 'late-upload',
+            eventId: 'late-event',
+            senderPeerId: 'peer-self',
+            authorPeerId: 'peer-self',
+            authorUsername: 'Alice',
+            text: '',
+            audience: PostAudience.allFriends(),
+            createdAt: createdAt.toIso8601String(),
+            visibleAt: createdAt.toIso8601String(),
+            expiresAt: createdAt
+                .add(const Duration(hours: 24))
+                .toIso8601String(),
+            mediaKind: 'voice',
+            isIncoming: false,
+            deliveryStatus: 'failed',
+          ),
+        );
+        await posts.saveRecipientDelivery(
+          PostRecipientDelivery(
+            postId: 'late-upload',
+            recipientPeerId: 'peer-bob',
+            deliveryStatus: 'failed',
+            lastAttemptAt: DateTime.now().toUtc().toIso8601String(),
+            deliveryPath: 'failed',
+            createdAt: createdAt.toIso8601String(),
+            updatedAt: createdAt.toIso8601String(),
+          ),
+        );
+        await posts.replacePostMediaUploadRecoveryItems('late-upload', [
+          PostMediaUploadRecoveryItem(
+            postId: 'late-upload',
+            position: 0,
+            localFilePath: source.path,
+            mime: 'audio/mp4',
+            kind: 'voice',
+            createdAt: createdAt.toIso8601String(),
+          ),
+        ]);
+        final lateFile = File(
+          '${tempDir.path}/post_media/late-upload/late.m4a',
+        );
+        var uploads = 0;
+        final retried = await retryPendingPostMediaUploads(
+          postRepo: posts,
+          contactRepo: contacts,
+          p2pService: service,
+          secureKeyStore: secureKeyStore,
+          imageProcessor: imageProcessor,
+          bridge: FakeBridge(),
+          mediaFileManager: TempPostMediaFileManager(tempDir.path),
+          nowProvider: () => now,
+          uploadPostMediaFn:
+              ({
+                required postId,
+                required localFilePath,
+                required mime,
+                required allowedPeers,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+              }) async {
+                uploads++;
+                now = createdAt.add(const Duration(hours: 24));
+                if (sweptDuringUpload) await posts.deletePostCascade(postId);
+                if (uploadFails) return null;
+                await lateFile.parent.create(recursive: true);
+                await lateFile.writeAsString('late upload');
+                return PostMediaAttachmentModel(
+                  localPath: 'post_media/late-upload/late.m4a',
+                  mediaId: 'late-media',
+                  postId: postId,
+                  blobId: 'late-blob',
+                  kind: 'voice',
+                  mime: mime,
+                  sizeBytes: 11,
+                  createdAt: now.toIso8601String(),
+                );
+              },
+        );
+        expect(retried, 1);
+        expect(uploads, 1);
+        expect(await lateFile.exists(), isFalse);
+        expect(await lateFile.parent.exists(), isFalse);
+        expect(network.inboxCount('peer-bob'), 0);
+        expect(
+          await posts.loadPostMediaUploadRecoveryItems('late-upload'),
+          isEmpty,
+        );
+        expect(await posts.loadPostMediaAttachments('late-upload'), isEmpty);
+        if (sweptDuringUpload) {
+          expect(await posts.getPost('late-upload'), isNull);
+        }
+      },
+    );
+  }
 
   test(
     'retryPendingPostMediaUploads hydrates attachments and resumes recipient fanout with nearby context preserved',
@@ -130,8 +253,10 @@ void main() {
         postRepo: posts,
         contactRepo: contacts,
         p2pService: p2pService,
+        nowProvider: () => DateTime.parse('2026-03-16T12:00:00Z'),
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
+        bridge: FakeBridge(),
         uploadPostMediaFn:
             ({
               required postId,
@@ -177,7 +302,12 @@ void main() {
       final inboxMessage =
           network.retrieveInbox('peer-bob').single['message'] as String;
       final payload = jsonDecode(inboxMessage) as Map<String, dynamic>;
-      final envelopePayload = payload['payload'] as Map<String, dynamic>;
+      final envelopePayload =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
       final snapshot = envelopePayload['snapshot'] as Map<String, dynamic>;
       final nearbyContext =
           envelopePayload['nearby_context'] as Map<String, dynamic>;
@@ -256,6 +386,7 @@ void main() {
         postRepo: posts,
         contactRepo: contacts,
         p2pService: p2pService,
+        nowProvider: () => DateTime.parse('2026-03-16T12:00:00Z'),
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
         mediaFileManager: mediaFileManager,
@@ -270,8 +401,9 @@ void main() {
 
       // Fresh blobId+key minted inside the real uploadPostMedia; recovery
       // items are keyless plaintext-source rows by design.
-      final attachment =
-          (await posts.loadPostMediaAttachments('post-replay')).single;
+      final attachment = (await posts.loadPostMediaAttachments(
+        'post-replay',
+      )).single;
       expect(attachment.blobId, isNot('blob-superseded'));
       expect(attachment.isEncrypted, isTrue);
       expect(attachment.encryptionKeyBase64, isNotNull);
@@ -311,8 +443,7 @@ void main() {
               )
               as Map<String, dynamic>;
       final mediaKeys = innerPayload['media_keys'] as Map<String, dynamic>;
-      final entry =
-          mediaKeys[attachment.mediaId] as Map<String, dynamic>;
+      final entry = mediaKeys[attachment.mediaId] as Map<String, dynamic>;
       expect(entry['blob_id'], attachment.blobId);
       expect(entry['key_base64'], attachment.encryptionKeyBase64);
 

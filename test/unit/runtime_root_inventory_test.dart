@@ -1936,7 +1936,7 @@ flutter:
           // Plan 369 advances the installation-local outcome schema while preserving this
           // runtime-root check's requirement that the production DB floor is
           // explicitly pinned.
-          'const int currentIdentityDatabaseVersion = 121;',
+          'const int currentIdentityDatabaseVersion = 122;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

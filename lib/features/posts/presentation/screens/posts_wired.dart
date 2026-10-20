@@ -987,6 +987,7 @@ class _PostsWiredState extends State<PostsWired> {
       PassPostAlongResult.postNotFound => l10n.post_no_longer_available,
       PassPostAlongResult.noEligibleRecipients =>
         l10n.post_pass_along_no_eligible,
+      PassPostAlongResult.notAllowed ||
       PassPostAlongResult.pickPeopleNotAllowed ||
       PassPostAlongResult.oneHopLimitReached => l10n.post_repost_not_allowed,
     };

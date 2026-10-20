@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
 import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
 import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
 import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
@@ -38,6 +39,7 @@ void main() {
     await runPostsCoreMigration(db);
     await runPostsEngagementMigration(db);
     await runPostsPassAlongMigration(db);
+    await runPostsFollowOnOutboxMigration(db);
     await runPostsPinsMigration(db);
     await runPostsMediaUploadRecoveryMigration(db);
     await runPostsRepostEngagementStateMigration(db);
@@ -46,8 +48,13 @@ void main() {
     await runPostMediaAttachmentCryptoColumnsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
-      dbLoadPost: (postId) => dbLoadPost(db, postId),
-      dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+      dbLoadPost: (postId) => dbLoadPost(
+        db,
+        postId,
+        nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+      ),
+      dbLoadPostsFeed: () =>
+          dbLoadPostsFeed(db, nowProvider: () => DateTime.utc(2026, 3, 15, 12)),
       dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),
       dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
       dbUpsertRecipientDelivery: (row) =>

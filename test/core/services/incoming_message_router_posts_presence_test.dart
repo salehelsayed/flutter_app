@@ -50,8 +50,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -116,7 +115,11 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<void> warmBackground() async {}
@@ -148,32 +151,37 @@ void main() {
     p2pService.dispose();
   });
 
-  test('routes post_presence_update envelopes to postPresenceStream', () async {
-    final received = router.postPresenceStream.first;
-    p2pService.controller.add(
-      ChatMessage(
-        from: 'peer-bob',
-        to: 'self',
-        content: jsonEncode(<String, Object?>{
-          'type': 'post_presence_update',
-          'version': '1',
-          'event_id': 'evt-presence-1',
-          'created_at': '2026-03-15T11:10:00.000Z',
-          'sender_peer_id': 'peer-bob',
-          'payload': <String, Object?>{
-            'status': 'active',
-            'lat_e3': 52520,
-            'lng_e3': 13405,
-            'captured_at': '2026-03-15T11:10:00.000Z',
-            'accuracy_m': 120,
-          },
-        }),
-        timestamp: '2026-03-15T11:10:00.000Z',
-        isIncoming: true,
-      ),
-    );
+  test(
+    'drops legacy post_presence_update envelopes to postPresenceStream',
+    () async {
+      final received = <ChatMessage>[];
+      final subscription = router.postPresenceStream.listen(received.add);
+      addTearDown(subscription.cancel);
+      p2pService.controller.add(
+        ChatMessage(
+          from: 'peer-bob',
+          to: 'self',
+          content: jsonEncode(<String, Object?>{
+            'type': 'post_presence_update',
+            'version': '1',
+            'event_id': 'evt-presence-1',
+            'created_at': '2026-03-15T11:10:00.000Z',
+            'sender_peer_id': 'peer-bob',
+            'payload': <String, Object?>{
+              'status': 'active',
+              'lat_e3': 52520,
+              'lng_e3': 13405,
+              'captured_at': '2026-03-15T11:10:00.000Z',
+              'accuracy_m': 120,
+            },
+          }),
+          timestamp: '2026-03-15T11:10:00.000Z',
+          isIncoming: true,
+        ),
+      );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_presence_update"'));
-  });
+      await Future<void>.delayed(Duration.zero);
+      expect(received, isEmpty);
+    },
+  );
 }

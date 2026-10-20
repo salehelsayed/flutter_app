@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -33,6 +34,10 @@ handleIncomingPostReaction({
   required ContactRepository contactRepo,
   bool allowStaging = true,
 }) async {
+  if (rejectLegacyPostFeature('post_reaction')) {
+    return (HandleIncomingPostReactionResult.notPostReaction, null);
+  }
+
   final envelope = PostReactionEnvelope.fromJson(message.content);
   if (envelope == null || envelope.isCommentReaction) {
     return (HandleIncomingPostReactionResult.notPostReaction, null);
@@ -111,6 +116,13 @@ handleIncomingPostCommentReaction({
   required ContactRepository contactRepo,
   bool allowStaging = true,
 }) async {
+  if (rejectLegacyPostFeature('post_comment_reaction')) {
+    return (
+      HandleIncomingPostCommentReactionResult.notPostCommentReaction,
+      null,
+    );
+  }
+
   final envelope = PostReactionEnvelope.fromJson(message.content);
   if (envelope == null ||
       !envelope.isCommentReaction ||

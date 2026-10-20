@@ -2734,7 +2734,36 @@ must be reviewed and refreshed when the proof file changes.
 The six previously missing UI performance dispatches select desktop macOS,
 where their registrations execute; mobile self-skips are not performance proof.
 The iOS media stable-ID leg has its own pinned simulator selection. General UI
-and posts routes remain in legacy.
+routes remain in legacy. The five `integration_test/posts_phaseN_fake_test.dart`
+files also retain their legacy routes and now have one exact
+`full.posts.fake.android` owner for changed-source selection. These are nine fake
+protocol/repository scenarios, not live relay or peer proof. They require native
+Flutter execution because Flutter treats the `integration_test/` directory as a
+device test entry point, even when each fixture imports `flutter_test`. The
+adapter uses a physical Android target and a disposable application ID, builds
+first, and verifies the APK package before launching tests. This prevents
+Flutter's cached package metadata from targeting the production app during
+cleanup. Refresh the five source hashes in `legacy_target_contracts.json` when
+these fixtures change; a new area pattern alone does not satisfy exact external
+test ownership.
+
+Plan 407 changes Posts into the initial Thoughts engine: creation and retry use
+a fixed 24-hour lifetime, incoming copies clamp future creation times and ignore
+sender expiry/retention, and public reads hide expired copies before cleanup.
+`thought_delivery_rules_test.dart`, `thought_lifetime_queries_test.dart`,
+`thought_expiry_scheduler_test.dart`, and `122_thoughts_reset_test.dart` cover
+those boundaries, late media completion, encrypted recipient delivery, removed
+audience lists, foreground notification cancellation, and the upgrade reset.
+Legacy feature tests retain their scenarios with denial/no-mutation assertions
+for comments, reactions, passes, presence and pins. Raw dormant storage fixtures
+are not evidence that those features remain enabled. Migration inventory tests
+must advance their final head/tail expectation to 122 while preserving historic
+starting versions. Orphan media cleanup precedes all post retriers and retries
+a failed cold cleanup on a later startup attempt. Bootstrap fingerprint updates
+require the plan's scoped owner approval; the Posts repository and app-root
+fingerprints remain unchanged. Focused verification and the preserved initial
+failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
+closure must use the current run evidence.
 
 The protected `gate benchmark-sim` partitions those same 17 scenarios into
 `A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R` on the pinned `android-physical` role and `GP,H`

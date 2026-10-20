@@ -84,4 +84,5 @@
 // triggers on contacts/contact_requests; existing contacts backfilled active),
 // the per-request reply reservation/outbox, per-peer pacing and the persisted
 // effective clock. Historical deletions are not reconstructed.
-const int currentIdentityDatabaseVersion = 121;
+// 407: DB v122 removes all legacy Posts data before Thoughts starts.
+const int currentIdentityDatabaseVersion = 122;

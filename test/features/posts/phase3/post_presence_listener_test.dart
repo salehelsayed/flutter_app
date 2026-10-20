@@ -90,11 +90,8 @@ void main() {
       ),
     );
 
-    final snapshot = await listener.incomingPresenceStream.first.timeout(
-      const Duration(seconds: 1),
-    );
-    expect(snapshot.peerId, 'peer-bob');
-    expect((await snapshots.load('peer-bob'))?.latE3, 52520);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(await snapshots.load('peer-bob'), isNull);
   });
 
   test('ignores presence updates from unknown senders', () async {
@@ -138,8 +135,8 @@ void main() {
 
     final snapshot = await snapshots.load('peer-bob');
     expect(snapshot, isNotNull);
-    expect(snapshot!.status, ContactPresenceSnapshotStatus.inactive);
-    expect(snapshot.latE3, isNull);
-    expect(snapshot.lngE3, isNull);
+    expect(snapshot!.status, ContactPresenceSnapshotStatus.active);
+    expect(snapshot.latE3, 52520);
+    expect(snapshot.lngE3, 13405);
   });
 }

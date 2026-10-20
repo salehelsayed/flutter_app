@@ -106,7 +106,11 @@ void main() {
 
         late Map<String, Object?>? loadedRow;
         final hitEvents = await captureFlowEvents(() async {
-          loadedRow = await dbLoadPost(db, 'post-1');
+          loadedRow = await dbLoadPost(
+            db,
+            'post-1',
+            nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+          );
         });
 
         expect(loadedRow, isNotNull);
@@ -123,7 +127,11 @@ void main() {
 
         late Map<String, Object?>? missingRow;
         final missEvents = await captureFlowEvents(() async {
-          missingRow = await dbLoadPost(db, 'missing-post');
+          missingRow = await dbLoadPost(
+            db,
+            'missing-post',
+            nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+          );
         });
 
         expect(missingRow, isNull);
@@ -160,7 +168,7 @@ void main() {
         'post-2',
         'missing-post',
         'post-1',
-      ]);
+      ], nowProvider: () => DateTime.utc(2026, 3, 15, 12));
 
       expect(rows.map((row) => row['post_id']).toSet(), <String>{
         'post-1',
@@ -200,7 +208,10 @@ void main() {
 
         late List<Map<String, Object?>> rows;
         final loadEvents = await captureFlowEvents(() async {
-          rows = await dbLoadPostsByIds(db, <String>['post-2', 'post-1']);
+          rows = await dbLoadPostsByIds(db, <String>[
+            'post-2',
+            'post-1',
+          ], nowProvider: () => DateTime.utc(2026, 3, 15, 12));
         });
 
         expect(rows.map((row) => row['post_id']).toSet(), <String>{
@@ -261,7 +272,10 @@ void main() {
 
         late List<Map<String, Object?>> feedRows;
         final flowEvents = await captureFlowEvents(() async {
-          feedRows = await dbLoadPostsFeed(db);
+          feedRows = await dbLoadPostsFeed(
+            db,
+            nowProvider: () => DateTime.utc(2026, 3, 15, 12),
+          );
         });
 
         expect(feedRows.map((row) => row['post_id']).toList(), <String>[

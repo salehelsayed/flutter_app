@@ -5,6 +5,7 @@ import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 
+import '../test/core/bridge/fake_bridge.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
@@ -18,6 +19,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -31,6 +33,7 @@ void main() {
         network: network,
       );
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      aliceService.connectedPeers.add('peer-bob');
 
       final aliceContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-bob', 'Bob'));
@@ -41,12 +44,15 @@ void main() {
       final bobPosts = InMemoryPostRepository();
       final bobRouter = IncomingMessageRouter(p2pService: bobService)..start();
       final bobListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: bobRouter.postCreateStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
       )..start();
 
       final liveResult = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
@@ -58,10 +64,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(liveResult.$1, SendPostResult.success);
+      expect(
+        DateTime.parse(
+          liveResult.$2!.expiresAt,
+        ).difference(DateTime.parse(liveResult.$2!.createdAt)),
+        const Duration(hours: 24),
+      );
+      expect(await bobPosts.getRecipientDeliveries(liveResult.$2!.id), isEmpty);
       expect((await bobPosts.loadFeed()), hasLength(1));
 
       bobService.setOnline(false);
+      aliceService.connectedPeers.remove('peer-bob');
       await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,

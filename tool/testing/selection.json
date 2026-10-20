@@ -4904,6 +4904,7 @@
       "id": "storage",
       "patterns": [
         "lib/core/database/*",
+        "lib/core/utils/thought_lifetime.dart",
         "lib/core/secure_storage/*",
         "lib/features/account_migration/*",
         "test/core/database/*",
@@ -5001,13 +5002,19 @@
         "lib/features/home/*",
         "lib/features/orbit/*",
         "lib/features/posts/*",
+        "lib/core/utils/thought_lifetime.dart",
         "lib/features/introduction/*",
         "lib/features/settings/*",
         "test/features/home/*",
         "test/features/orbit/*",
         "test/features/posts/*",
         "test/features/introduction/*",
-        "test/features/settings/*"
+        "test/features/settings/*",
+        "integration_test/posts_phase1_fake_test.dart",
+        "integration_test/posts_phase2_fake_test.dart",
+        "integration_test/posts_phase3_fake_test.dart",
+        "integration_test/posts_phase4_fake_test.dart",
+        "integration_test/posts_phase5_fake_test.dart"
       ],
       "checks": [
         "startup",
@@ -9229,6 +9236,154 @@
         "docker-ws/alltests_go_test.sh",
         "scripts/run_original_go_send_wrapper.py"
       ]
+    },
+    {
+      "id": "full.posts.fake.android",
+      "kind": "full_adapter",
+      "command": [
+        "flutter",
+        "build",
+        "apk",
+        "--debug",
+        "--no-pub",
+        "--target",
+        "integration_test/posts_phase1_fake_test.dart"
+      ],
+      "paths": [
+        "integration_test/posts_phase1_fake_test.dart",
+        "integration_test/posts_phase2_fake_test.dart",
+        "integration_test/posts_phase3_fake_test.dart",
+        "integration_test/posts_phase4_fake_test.dart",
+        "integration_test/posts_phase5_fake_test.dart"
+      ],
+      "steps": [
+        {
+          "command": [
+            "flutter",
+            "build",
+            "apk",
+            "--debug",
+            "--no-pub",
+            "--target",
+            "integration_test/posts_phase1_fake_test.dart"
+          ],
+          "format": "build",
+          "expected_files": [
+            "build/app/outputs/flutter-apk/app-debug.apk"
+          ]
+        },
+        {
+          "command": [
+            "python3",
+            "-c",
+            "import os, pathlib, re, shutil, subprocess\napk = pathlib.Path('build/app/outputs/flutter-apk/app-debug.apk')\nroots = [pathlib.Path(value) for name in ('ANDROID_SDK_ROOT', 'ANDROID_HOME') if (value := os.environ.get(name))]\nproperties = pathlib.Path('android/local.properties')\nif properties.is_file():\n    roots.extend(pathlib.Path(line.split('=', 1)[1].strip()) for line in properties.read_text().splitlines() if line.startswith('sdk.dir='))\nroots.append(pathlib.Path.home() / 'Library/Android/sdk')\ncandidates = [path for root in roots for path in sorted(root.glob('build-tools/*/aapt')) if path.is_file()]\naapt = shutil.which('aapt') or (str(candidates[-1]) if candidates else None)\nif aapt is None:\n    raise SystemExit('Android aapt is required to verify the disposable Posts APK')\nbadging = subprocess.run([aapt, 'dump', 'badging', str(apk)], check=True, capture_output=True, text=True).stdout\nif not re.search(r\"^package: name='com\\.mknoon\\.sims\\.thoughts407'\", badging, re.MULTILINE):\n    raise SystemExit('Posts APK must use the disposable application ID before device launch')\nprint('POSTS_DISPOSABLE_APK_VERIFIED')\n"
+          ],
+          "format": "marker",
+          "marker": "POSTS_DISPOSABLE_APK_VERIFIED"
+        },
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "-d",
+            "{device:android_physical}",
+            "--reporter",
+            "json",
+            "integration_test/posts_phase1_fake_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/posts_phase1_fake_test.dart"
+          ]
+        },
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "-d",
+            "{device:android_physical}",
+            "--reporter",
+            "json",
+            "integration_test/posts_phase2_fake_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/posts_phase2_fake_test.dart"
+          ]
+        },
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "-d",
+            "{device:android_physical}",
+            "--reporter",
+            "json",
+            "integration_test/posts_phase3_fake_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/posts_phase3_fake_test.dart"
+          ]
+        },
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "-d",
+            "{device:android_physical}",
+            "--reporter",
+            "json",
+            "integration_test/posts_phase4_fake_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/posts_phase4_fake_test.dart"
+          ]
+        },
+        {
+          "command": [
+            "flutter",
+            "test",
+            "--no-pub",
+            "-d",
+            "{device:android_physical}",
+            "--reporter",
+            "json",
+            "integration_test/posts_phase5_fake_test.dart"
+          ],
+          "format": "flutter",
+          "paths": [
+            "integration_test/posts_phase5_fake_test.dart"
+          ]
+        }
+      ],
+      "boundary": "Exact five Posts fake suites on the existing physical Android target; encrypted live/inbox/media delivery and disabled legacy interactions. Fresh disposable APK metadata is verified before Flutter can launch or stop an app.",
+      "limitations": "Runs the existing fake protocol/repository scenarios through the native Flutter test runner; does not attest live peer, relay, provider, or signed-release behavior.",
+      "timeout_seconds": 7200,
+      "requirements": [
+        "flutter",
+        "adb",
+        "python3"
+      ],
+      "resources": [
+        "shared-native-build"
+      ],
+      "device_roles": [
+        "android_physical"
+      ],
+      "ui_driver": "existing_campaign",
+      "ui_driver_reason": "The existing exact fake suites assert encryption, retry and persistence internals that UI automation cannot establish. This retains their original native Android execution coverage.",
+      "environment": {
+        "ANDROID_APP_PACKAGE": "com.mknoon.sims.thoughts407",
+        "SIMS_APP_ID": "com.mknoon.sims.thoughts407",
+        "ORG_GRADLE_PROJECT_androidApplicationId": "com.mknoon.sims.thoughts407",
+        "ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof": "true"
+      }
     }
   ],
   "full_inventory": {
@@ -11274,6 +11429,36 @@
         "owner_capability": "groups.strict_notification_closure",
         "reason": "Exact equivalent capability executes once; the original legacy route remains available to direct callers.",
         "capability": "groups.strict_notification_closure"
+      },
+      {
+        "path": "integration_test/posts_phase1_fake_test.dart",
+        "selector": "all-fake-scenarios",
+        "variant": "android-physical",
+        "owner": "full.posts.fake.android"
+      },
+      {
+        "path": "integration_test/posts_phase2_fake_test.dart",
+        "selector": "all-fake-scenarios",
+        "variant": "android-physical",
+        "owner": "full.posts.fake.android"
+      },
+      {
+        "path": "integration_test/posts_phase3_fake_test.dart",
+        "selector": "all-fake-scenarios",
+        "variant": "android-physical",
+        "owner": "full.posts.fake.android"
+      },
+      {
+        "path": "integration_test/posts_phase4_fake_test.dart",
+        "selector": "all-fake-scenarios",
+        "variant": "android-physical",
+        "owner": "full.posts.fake.android"
+      },
+      {
+        "path": "integration_test/posts_phase5_fake_test.dart",
+        "selector": "all-fake-scenarios",
+        "variant": "android-physical",
+        "owner": "full.posts.fake.android"
       }
     ],
     "gate_aliases": [

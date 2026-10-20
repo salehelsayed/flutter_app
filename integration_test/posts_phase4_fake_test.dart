@@ -30,7 +30,7 @@ ContactModel _contact(String peerId, String username) {
 
 void main() {
   testWidgets(
-    'three-device pass-along keeps one visible receiver card and updates the original author share count',
+    'three peers reject pass-along without creating a receiver thought or author share count',
     (tester) async {
       final network = FakeP2PNetwork();
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
@@ -39,6 +39,7 @@ void main() {
         network: network,
       );
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      bobService.connectedPeers.add('peer-alice');
       final bobBridge = PassthroughCryptoBridge();
       final aliceBridge = PassthroughCryptoBridge();
       final caraBridge = PassthroughCryptoBridge();
@@ -62,11 +63,15 @@ void main() {
         ..start();
 
       final bobPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: bobRouter.postCreateStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
       )..start();
       final alicePostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: aliceRouter.postCreateStream,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
@@ -103,6 +108,7 @@ void main() {
       });
 
       final (sendResult, createdPost) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: bobService,
         postRepo: bobPosts,
         contactRepo: bobContacts,
@@ -118,7 +124,7 @@ void main() {
       final beforePass = await alicePosts.getPost(postId);
       expect(beforePass, isNotNull);
 
-      await passPostAlong(
+      final (passResult, deniedPass) = await passPostAlong(
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
@@ -133,15 +139,18 @@ void main() {
       final caraFeed = await caraPosts.loadFeed();
       final bobPost = await bobPosts.getPost(postId);
 
-      expect(caraFeed, hasLength(1));
-      expect(caraFeed.single.authorUsername, 'Bob');
-      expect(caraFeed.single.passedByUsername, 'Alice');
-      expect(bobPost?.shareCount, 1);
+      expect(passResult, PassPostAlongResult.notAllowed);
+      expect(deniedPass, isNull);
+      expect(caraFeed, isEmpty);
+      expect(bobPost?.shareCount, 0);
+      expect(await alicePosts.loadPostPasses(postId), isEmpty);
+      expect(await bobPosts.loadPostPasses(postId), isEmpty);
+      expect((await alicePosts.getPost(postId))!.text, beforePass!.text);
     },
   );
 
   testWidgets(
-    'three-device pass-along preserves a renderable media snapshot for the receiver',
+    'three peers reject media pass-along without preparing media or creating receiver state',
     (tester) async {
       final network = FakeP2PNetwork();
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
@@ -150,6 +159,7 @@ void main() {
         network: network,
       );
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      bobService.connectedPeers.add('peer-alice');
       final bobBridge = PassthroughCryptoBridge();
       final aliceBridge = PassthroughCryptoBridge();
       final caraBridge = PassthroughCryptoBridge();
@@ -232,6 +242,7 @@ void main() {
         caraService.dispose();
       });
 
+      var mediaPrepared = false;
       final (result, pass) = await passPostAlong(
         p2pService: aliceService,
         postRepo: alicePosts,
@@ -241,32 +252,37 @@ void main() {
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
         recipientPeerIds: const <String>['peer-cara'],
-        prepareRepostMediaFn: ({
-          required bridge,
-          required originalMedia,
-          required passerPeerId,
-          required recipientPeerIds,
-          required originalAuthorPeerId,
-        }) async {
-          return RepostMediaPrepResult(
-            attachments: originalMedia,
-            keys: const <String, PostMediaCryptoEntry>{},
-          );
-        },
+        prepareRepostMediaFn:
+            ({
+              required bridge,
+              required originalMedia,
+              required passerPeerId,
+              required recipientPeerIds,
+              required originalAuthorPeerId,
+            }) async {
+              mediaPrepared = true;
+              return RepostMediaPrepResult(
+                attachments: originalMedia,
+                keys: const <String, PostMediaCryptoEntry>{},
+              );
+            },
       );
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(mediaPrepared, isFalse);
 
       await tester.pump(const Duration(milliseconds: 50));
 
       final caraPost = await caraPosts.getPost(post.id);
       final caraAttachments = await caraPosts.loadPostMediaAttachments(post.id);
 
-      expect(caraPost, isNotNull);
-      expect(caraPost!.passedByUsername, 'Alice');
-      expect(caraPost.mediaKind, 'image');
-      expect(caraAttachments, hasLength(1));
-      expect(caraAttachments.single.blobId, 'blob-1');
+      expect(caraPost, isNull);
+      expect(caraAttachments, isEmpty);
+      expect(await alicePosts.loadPostPasses(post.id), isEmpty);
+      expect(
+        (await alicePosts.loadPostMediaAttachments(post.id)).single.toMap(),
+        attachment.toMap(),
+      );
     },
   );
 }

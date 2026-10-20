@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -86,6 +87,10 @@ createLocalPostComment({
   required String body,
   DateTime Function()? nowProvider,
 }) async {
+  if (rejectLegacyPostFeature('post_comment')) {
+    return (SendPostCommentResult.sendFailed, null);
+  }
+
   final sanitizedBody = sanitizeMessageText(body);
   if (sanitizedBody.trim().isEmpty) {
     return (SendPostCommentResult.invalidComment, null);

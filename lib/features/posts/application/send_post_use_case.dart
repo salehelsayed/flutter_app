@@ -7,6 +7,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
@@ -24,7 +25,6 @@ export 'package:flutter_app/features/posts/application/post_delivery_runner.dart
     show CreatedLocalPost, CreatedLocalPostRecipient, SendPostResult;
 
 const _uuid = Uuid();
-const Duration _postExpiry = Duration(days: 3);
 
 Future<(SendPostResult, PostModel?)> sendPost({
   required P2PService p2pService,
@@ -226,7 +226,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     audience: audience,
     createdAt: createdAt,
     visibleAt: createdAt,
-    expiresAt: now.add(_postExpiry).toIso8601String(),
+    expiresAt: ThoughtLifetime.expiresAt(now).toIso8601String(),
     keepAvailable: false,
     mediaKind: _deriveDraftMediaKind(mediaDrafts),
     nearbySenderLatE3: nearbySettings?.lastLocalLatE3,

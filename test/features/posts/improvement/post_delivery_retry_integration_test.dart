@@ -10,6 +10,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -23,6 +24,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -91,6 +93,8 @@ void main() {
         postRepo: posts,
         contactRepo: contacts,
         p2pService: p2pService,
+        bridge: FakeBridge(),
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
       );
 
       expect(retried, 1);
@@ -99,11 +103,14 @@ void main() {
       final inboxMessage = network.retrieveInbox('peer-cara').single;
       final payload =
           jsonDecode(inboxMessage['message'] as String) as Map<String, dynamic>;
-      final envelopePayload = payload['payload'] as Map<String, dynamic>;
-      expect(
-        envelopePayload['recipient_peer_ids'],
-        unorderedEquals(<String>['peer-bob', 'peer-cara']),
-      );
+      final envelopePayload =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      expect(envelopePayload.containsKey('recipient_peer_ids'), isFalse);
+      expect(envelopePayload.containsKey('selected_peer_ids'), isFalse);
     },
   );
 
@@ -152,13 +159,20 @@ void main() {
         postRepo: posts,
         contactRepo: contacts,
         p2pService: p2pService,
+        bridge: FakeBridge(),
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
       );
 
       expect(retried, 1);
       final inboxMessage = network.retrieveInbox('peer-bob').single;
       final payload =
           jsonDecode(inboxMessage['message'] as String) as Map<String, dynamic>;
-      final envelopePayload = payload['payload'] as Map<String, dynamic>;
+      final envelopePayload =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
       final nearbyContext =
           envelopePayload['nearby_context'] as Map<String, dynamic>;
       expect(nearbyContext['distance_m'], 87);
@@ -222,6 +236,8 @@ void main() {
         postRepo: posts,
         contactRepo: contacts,
         p2pService: service,
+        bridge: FakeBridge(),
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
       );
 
       await service
@@ -268,6 +284,9 @@ class _ControlledP2PService extends FakeP2PService {
     required super.network,
     this.policies = const <String, _PeerPolicy>{},
   });
+
+  @override
+  bool isConnectedToPeer(String peerId) => true;
 
   Future<void> waitForSendCount(int count) async {
     while (sendStartOrder.length < count) {
@@ -334,7 +353,5 @@ class _PeerPolicy {
   final Completer<void>? sendGate;
   final bool requireDiscoverAndDialBeforeSend = false;
 
-  const _PeerPolicy({
-    this.sendGate,
-  });
+  const _PeerPolicy({this.sendGate});
 }

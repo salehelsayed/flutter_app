@@ -119,7 +119,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 121);
+      expect(currentIdentityDatabaseVersion, 122);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
@@ -133,8 +133,8 @@ void main() {
           same(runDirectNotificationDurabilityMigration),
         );
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '121_contact_repair');
-        expect(registry[registry.length - 10].version, 112);
+        expect(registry.last.name, '122_thoughts_reset');
+        expect(registry[registry.length - 11].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[

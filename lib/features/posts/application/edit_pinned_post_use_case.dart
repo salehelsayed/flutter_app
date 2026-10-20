@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -30,6 +31,10 @@ Future<(EditPinnedPostResult, PostPinStateModel?)> editPinnedPost({
   required String text,
   DateTime Function()? nowProvider,
 }) async {
+  if (rejectLegacyPostFeature('post_pin_update')) {
+    return (EditPinnedPostResult.sendFailed, null);
+  }
+
   if (!p2pService.currentState.isStarted) {
     return (EditPinnedPostResult.nodeNotRunning, null);
   }

@@ -66,7 +66,7 @@ PostModel _post(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
   );
 }
 
@@ -84,38 +84,10 @@ void main() {
     posts.dispose();
   });
 
-  test(
-    'stages orphan post_comment events when the parent post is missing',
-    () async {
-      final (result, comment) = await handleIncomingPostComment(
-        message: _commentMessage(
-          eventId: 'evt-comment-1',
-          commentId: 'comment-1',
-          postId: 'post-1',
-          transportSender: 'peer-bob',
-          body: 'I can lend one.',
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostCommentResult.stagedPendingParent);
-      expect(comment, isNull);
-      expect(await posts.loadComments('post-1'), isEmpty);
-
-      final pending = await posts.loadPendingChildEvents('post-1');
-      expect(pending, hasLength(1));
-      expect(pending.single.eventType, 'post_comment');
-      expect(pending.single.eventId, 'evt-comment-1');
-    },
-  );
-
-  test('persists post_comment events under an existing post', () async {
-    await posts.savePost(_post('post-1'));
-    final commentedAt = DateTime.now().toUtc().subtract(
-      const Duration(minutes: 1),
-    );
-
+  test('rejects orphan comments without staging a pending event', () async {
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
     final (result, comment) = await handleIncomingPostComment(
       message: _commentMessage(
         eventId: 'evt-comment-1',
@@ -123,33 +95,88 @@ void main() {
         postId: 'post-1',
         transportSender: 'peer-bob',
         body: 'I can lend one.',
-        createdAt: commentedAt.toIso8601String(),
       ),
       postRepo: posts,
       contactRepo: contacts,
     );
 
-    expect(result, HandleIncomingPostCommentResult.commentCreated);
-    expect(comment, isNotNull);
-    expect(comment!.body, 'I can lend one.');
-
-    final comments = await posts.loadComments('post-1');
-    expect(comments, hasLength(1));
-    expect(comments.single.id, 'comment-1');
-
-    final updatedPost = await posts.getPost('post-1');
+    expect(result, HandleIncomingPostCommentResult.notPostComment);
+    expect(comment, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
     expect(
-      updatedPost?.expiresAt,
-      commentedAt.add(const Duration(days: 3)).toIso8601String(),
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
     );
-    expect(updatedPost?.lastEngagementAt, commentedAt.toIso8601String());
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
   });
 
   test(
-    'sanitizes incoming comment text while preserving safe markers',
+    'rejects comments under an existing thought without extending expiry',
+    () async {
+      await posts.savePost(_post('post-1'));
+      final commentedAt = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 1),
+      );
+
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
+      final (result, comment) = await handleIncomingPostComment(
+        message: _commentMessage(
+          eventId: 'evt-comment-1',
+          commentId: 'comment-1',
+          postId: 'post-1',
+          transportSender: 'peer-bob',
+          body: 'I can lend one.',
+          createdAt: commentedAt.toIso8601String(),
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(result, HandleIncomingPostCommentResult.notPostComment);
+      expect(comment, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        previousParticipants,
+      );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
+    },
+  );
+
+  test(
+    'rejects comments containing bidi controls without storing text',
     () async {
       await posts.savePost(_post('post-1'));
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, comment) = await handleIncomingPostComment(
         message: _commentMessage(
           eventId: 'evt-comment-1',
@@ -162,17 +189,30 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentResult.commentCreated);
-      expect(comment, isNotNull);
-      expect(comment!.body, 'مرحبا Hello\u200E 123');
-
-      final comments = await posts.loadComments('post-1');
-      expect(comments, hasLength(1));
-      expect(comments.single.body, 'مرحبا Hello\u200E 123');
+      expect(result, HandleIncomingPostCommentResult.notPostComment);
+      expect(comment, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        previousParticipants,
+      );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
-  test('dedupes repeated post_comment deliveries by comment_id', () async {
+  test('rejects both deliveries of a repeated comment', () async {
     await posts.savePost(_post('post-1'));
     final message = _commentMessage(
       eventId: 'evt-comment-1',
@@ -182,6 +222,9 @@ void main() {
       body: 'I can lend one.',
     );
 
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
     final first = await handleIncomingPostComment(
       message: message,
       postRepo: posts,
@@ -193,14 +236,34 @@ void main() {
       contactRepo: contacts,
     );
 
-    expect(first.$1, HandleIncomingPostCommentResult.commentCreated);
-    expect(second.$1, HandleIncomingPostCommentResult.duplicate);
-    expect(await posts.loadComments('post-1'), hasLength(1));
+    expect(first.$1, HandleIncomingPostCommentResult.notPostComment);
+    expect(second.$1, HandleIncomingPostCommentResult.notPostComment);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
   });
 
   test(
-    'reconciles staged comments after the parent post is ingested',
+    'rejected comments are not reconciled after their parent arrives',
     () async {
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       await handleIncomingPostComment(
         message: _commentMessage(
           eventId: 'evt-comment-1',
@@ -220,18 +283,30 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(applied, 1);
+      expect(applied, 0);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
       expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
-      expect(await posts.loadComments('post-1'), hasLength(1));
       expect(
-        (await posts.loadComments('post-1')).single.body,
-        'I can lend one.',
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
   test(
-    'persists the incoming sender as a repost-engagement participant for repost-threaded posts',
+    'rejects repost-thread comments without adding the sender as a participant',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -257,6 +332,9 @@ void main() {
       );
       contacts.addTestContact(_contact('peer-ibra', 'Ibra'));
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, comment) = await handleIncomingPostComment(
         message: _commentMessage(
           eventId: 'evt-comment-2',
@@ -269,17 +347,31 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentResult.commentCreated);
-      expect(comment, isNotNull);
+      expect(result, HandleIncomingPostCommentResult.notPostComment);
+      expect(comment, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-ibra', 'peer-james'},
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
   test(
-    'accepts a trusted repost-thread comment from a non-contact sender',
+    'rejects comments from trusted non-contact repost participants',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -314,6 +406,9 @@ void main() {
         createdAt: '2026-03-15T11:16:30.000Z',
       );
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, comment) = await handleIncomingPostComment(
         message: _commentMessage(
           eventId: 'evt-comment-3',
@@ -326,49 +421,71 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentResult.commentCreated);
-      expect(comment, isNotNull);
-      expect(comment?.authorUsername, 'peer-ibra');
-      expect(
-        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
-      );
-      expect(
-        (await posts.loadComments('post-1')).single.body,
-        'I can help too.',
-      );
-    },
-  );
-
-  test(
-    'rejects an unknown non-contact comment sender when no trusted repost-thread state exists',
-    () async {
-      await posts.savePost(_post('post-1'));
-
-      final (result, comment) = await handleIncomingPostComment(
-        message: _commentMessage(
-          eventId: 'evt-comment-unknown',
-          commentId: 'comment-unknown',
-          postId: 'post-1',
-          transportSender: 'peer-ibra',
-          body: 'I do not belong here.',
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostCommentResult.unknownSender);
+      expect(result, HandleIncomingPostCommentResult.notPostComment);
       expect(comment, isNull);
       expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        isEmpty,
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
+  test('rejects comments from unknown non-contact senders', () async {
+    await posts.savePost(_post('post-1'));
+
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, comment) = await handleIncomingPostComment(
+      message: _commentMessage(
+        eventId: 'evt-comment-unknown',
+        commentId: 'comment-unknown',
+        postId: 'post-1',
+        transportSender: 'peer-ibra',
+        body: 'I do not belong here.',
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+
+    expect(result, HandleIncomingPostCommentResult.notPostComment);
+    expect(comment, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
+  });
+
   test(
-    'rejects a blocked direct comment sender even when the repost thread trusts that peer',
+    'rejects comments from blocked but trusted repost participants',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -399,6 +516,9 @@ void main() {
       );
       contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, comment) = await handleIncomingPostComment(
         message: _commentMessage(
           eventId: 'evt-comment-blocked',
@@ -411,13 +531,26 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentResult.blockedSender);
+      expect(result, HandleIncomingPostCommentResult.notPostComment);
       expect(comment, isNull);
       expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-solz'},
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 }

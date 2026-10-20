@@ -57,6 +57,7 @@ void main() {
       );
 
       final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -143,6 +144,7 @@ void main() {
     );
 
     final (result, attachments) = await attachPostMedia(
+      nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
       postId: 'post-1',
       postRepo: posts,
       secureKeyStore: secureKeyStore,
@@ -206,6 +208,7 @@ void main() {
     );
 
     final (result, attachments) = await attachPostMedia(
+      nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
       postId: 'post-ordered',
       postRepo: posts,
       secureKeyStore: secureKeyStore,

@@ -1,11 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/posts/application/edit_pinned_post_use_case.dart';
 import 'package:flutter_app/features/posts/application/pin_post_use_case.dart';
-import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart';
-import 'package:flutter_app/features/posts/domain/models/post_pin_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -13,6 +9,8 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../improvement/support/controlled_post_pin_delivery_harness.dart';
 import 'support/post_pin_fixtures.dart';
+
+import '../support/legacy_post_state.dart';
 
 void main() {
   late FakeP2PNetwork network;
@@ -59,263 +57,140 @@ void main() {
     }
   }
 
-  test('pins an authored post locally and sends post_pin_update', () async {
-    await seedSentPost();
-    final received = receiverService.messageStream.first;
-
-    final (result, pinState) = await pinPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-    );
-
-    expect(result, PinPostResult.success);
-    expect(pinState, isNotNull);
-
-    final message = await received.timeout(const Duration(seconds: 1));
-    final envelope = PostPinUpdateEnvelope.fromJson(message.content);
-    final updatedPost = await posts.getPost('post-1');
-    final storedPinState = await posts.getPostPinState('post-1');
-
-    expect(envelope, isNotNull);
-    expect(jsonDecode(message.content)['type'], 'post_pin_update');
-    expect(envelope!.snapshot.text, 'Original offer text.');
-    expect(updatedPost, isNotNull);
-    expect(updatedPost!.keepAvailable, isTrue);
-    expect(storedPinState, isNotNull);
-    expect(storedPinState!.state, 'active');
-  });
-
   test(
-    'edits an active pin and reuses post_pin_update replace semantics',
+    'rejects legacy pin: pins an authored post locally and sends post_pin_update',
     () async {
-      await seedSentPost(keepAvailable: true);
-      await pinPost(
+      await seedSentPost();
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
         p2pService: authorService,
         postRepo: posts,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
       );
-      final received = receiverService.messageStream.first;
-
-      final (result, pinState) = await editPinnedPost(
-        p2pService: authorService,
-        postRepo: posts,
-        postId: 'post-1',
-        senderPeerId: 'peer-bob',
-        text: 'Fresh blankets and hot tea available.',
-      );
-
-      expect(result, EditPinnedPostResult.success);
-      expect(pinState, isNotNull);
-
-      final message = await received.timeout(const Duration(seconds: 1));
-      final envelope = PostPinUpdateEnvelope.fromJson(message.content);
-      final updatedPost = await posts.getPost('post-1');
-
-      expect(envelope, isNotNull);
-      expect(envelope!.snapshot.text, 'Fresh blankets and hot tea available.');
-      expect(updatedPost, isNotNull);
-      expect(updatedPost!.text, 'Fresh blankets and hot tea available.');
-      expect(updatedPost.keepAvailable, isTrue);
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
   test(
-    'editPinnedPost strips dangerous bidi controls from updated text',
+    'rejects legacy pin: edits an active pin and reuses post_pin_update replace semantics',
     () async {
       await seedSentPost(keepAvailable: true);
-      await pinPost(
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
         p2pService: authorService,
         postRepo: posts,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
       );
-      final received = receiverService.messageStream.first;
-
-      final (result, pinState) = await editPinnedPost(
-        p2pService: authorService,
-        postRepo: posts,
-        postId: 'post-1',
-        senderPeerId: 'peer-bob',
-        text: '  Fresh \u202Eblankets\u200F available  ',
-      );
-
-      expect(result, EditPinnedPostResult.success);
-      expect(pinState, isNotNull);
-
-      final message = await received.timeout(const Duration(seconds: 1));
-      final envelope = PostPinUpdateEnvelope.fromJson(message.content);
-      final updatedPost = await posts.getPost('post-1');
-
-      expect(envelope, isNotNull);
-      expect(envelope!.snapshot.text, '  Fresh blankets\u200F available  ');
-      expect(updatedPost, isNotNull);
-      expect(updatedPost!.text, '  Fresh blankets\u200F available  ');
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
-  test('removes an active pin locally and sends post_pin_remove', () async {
-    await seedSentPost(keepAvailable: true);
-    await pinPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-    );
-    final received = receiverService.messageStream.first;
-
-    final (result, pinState) = await removePin(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-    );
-
-    expect(result, RemovePinResult.success);
-    expect(pinState, isNotNull);
-
-    final message = await received.timeout(const Duration(seconds: 1));
-    final envelope = PostPinRemoveEnvelope.fromJson(message.content);
-    final storedPinState = await posts.getPostPinState('post-1');
-    final post = await posts.getPost('post-1');
-
-    expect(envelope, isNotNull);
-    expect(envelope!.reason, 'removed');
-    expect(storedPinState, isNotNull);
-    expect(storedPinState!.state, 'removed');
-    expect(post, isNotNull);
-    expect(post!.id, 'post-1');
-    expect(post.keepAvailable, isFalse);
-  });
-
   test(
-    'removePin keeps the local remove and leaves a retryable outbox job when direct send and inbox storage both fail',
+    'rejects legacy pin: editPinnedPost strips dangerous bidi controls from updated text',
     () async {
       await seedSentPost(keepAvailable: true);
-      await pinPost(
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+      );
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
+
+  test(
+    'rejects legacy pin: removes an active pin locally and sends post_pin_remove',
+    () async {
+      await seedSentPost(keepAvailable: true);
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+      );
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
+
+  test(
+    'rejects legacy pin: removePin keeps the local remove and leaves a retryable outbox job when direct send and inbox storage both fail',
+    () async {
+      await seedSentPost(keepAvailable: true);
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
         p2pService: authorService,
         postRepo: posts,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
         nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-      network.deliveryFails = true;
-      network.inboxDisabled = true;
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
 
-      final (result, pinState) = await removePin(
+  test(
+    'rejects legacy pin: supports repeated pin and remove cycles for the same post',
+    () async {
+      await seedSentPost();
+
+
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
         p2pService: authorService,
         postRepo: posts,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
-        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(result, RemovePinResult.queuedForRetry);
-      expect(pinState, isNotNull);
-      expect(pinState!.state, 'removed');
-
-      final storedPinState = await posts.getPostPinState('post-1');
-      final post = await posts.getPost('post-1');
-      final retryableJobs = await posts.loadRetryableFollowOnOutboxJobs();
-
-      expect(storedPinState, isNotNull);
-      expect(storedPinState!.state, 'removed');
-      expect(storedPinState.effectiveAt, '2026-03-15T11:25:00.000Z');
-      expect(post, isNotNull);
-      expect(post!.keepAvailable, isFalse);
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_pin_remove');
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      final repeated = await pinPost(
+        p2pService: authorService,
+        postRepo: posts,
+        postId: 'post-1',
+        senderPeerId: 'peer-bob',
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
+      );
+      expect(repeated.$1, PinPostResult.sendFailed);
+      expect(await snapshotLegacyPostState(posts), before);
     },
   );
 
-  test('supports repeated pin and remove cycles for the same post', () async {
-    await seedSentPost();
-
-    final firstPinReceived = receiverService.messageStream.first;
-    final (firstPinResult, firstPinState) = await pinPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-      nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
-    );
-    final firstPinMessage = await firstPinReceived.timeout(
-      const Duration(seconds: 1),
-    );
-
-    expect(firstPinResult, PinPostResult.success);
-    expect(firstPinState, isNotNull);
-    expect(jsonDecode(firstPinMessage.content)['type'], 'post_pin_update');
-    expect((await posts.getPost('post-1'))!.keepAvailable, isTrue);
-    expect((await posts.getPostPinState('post-1'))!.state, 'active');
-
-    final firstRemoveReceived = receiverService.messageStream.first;
-    final (firstRemoveResult, firstRemoveState) = await removePin(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-      nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
-    );
-    final firstRemoveMessage = await firstRemoveReceived.timeout(
-      const Duration(seconds: 1),
-    );
-
-    expect(firstRemoveResult, RemovePinResult.success);
-    expect(firstRemoveState, isNotNull);
-    expect(jsonDecode(firstRemoveMessage.content)['type'], 'post_pin_remove');
-    expect((await posts.getPost('post-1'))!.keepAvailable, isFalse);
-    expect((await posts.getPostPinState('post-1'))!.state, 'removed');
-
-    final secondPinReceived = receiverService.messageStream.first;
-    final (secondPinResult, secondPinState) = await pinPost(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-      nowProvider: () => DateTime.parse('2026-03-15T11:40:00.000Z'),
-    );
-    final secondPinMessage = await secondPinReceived.timeout(
-      const Duration(seconds: 1),
-    );
-
-    expect(secondPinResult, PinPostResult.success);
-    expect(secondPinState, isNotNull);
-    expect(jsonDecode(secondPinMessage.content)['type'], 'post_pin_update');
-    expect((await posts.getPost('post-1'))!.keepAvailable, isTrue);
-    expect((await posts.getPostPinState('post-1'))!.state, 'active');
-    expect(
-      (await posts.getPostPinState('post-1'))!.effectiveAt,
-      '2026-03-15T11:40:00.000Z',
-    );
-
-    final secondRemoveReceived = receiverService.messageStream.first;
-    final (secondRemoveResult, secondRemoveState) = await removePin(
-      p2pService: authorService,
-      postRepo: posts,
-      postId: 'post-1',
-      senderPeerId: 'peer-bob',
-      nowProvider: () => DateTime.parse('2026-03-15T11:50:00.000Z'),
-    );
-    final secondRemoveMessage = await secondRemoveReceived.timeout(
-      const Duration(seconds: 1),
-    );
-
-    expect(secondRemoveResult, RemovePinResult.success);
-    expect(secondRemoveState, isNotNull);
-    expect(jsonDecode(secondRemoveMessage.content)['type'], 'post_pin_remove');
-    expect((await posts.getPost('post-1'))!.keepAvailable, isFalse);
-    expect((await posts.getPostPinState('post-1'))!.state, 'removed');
-    expect(
-      (await posts.getPostPinState('post-1'))!.effectiveAt,
-      '2026-03-15T11:50:00.000Z',
-    );
-  });
-
   test(
-    'pinPost uses the 25 recipient default cap for follow-on delivery',
+    'rejects legacy pin: pinPost uses the 25 recipient default cap for follow-on delivery',
     () async {
       final recipientPeerIds = List<String>.generate(
         30,
@@ -336,38 +211,18 @@ void main() {
       );
       addTearDown(service.dispose);
 
-      final pinFuture = pinPost(
+      final before = await snapshotLegacyPostState(posts);
+      final rejection = await pinPost(
         p2pService: service,
         postRepo: posts,
         postId: 'post-1',
         senderPeerId: 'peer-bob',
       );
-
-      await service.waitForSendCount(25);
-      await drainPostPinDeliveryMicrotasks();
-
-      expect(service.maxInFlightSends, 25);
-      expect(
-        service.sendStartOrder.take(25).toList(growable: false),
-        recipientPeerIds.take(25).toList(growable: false),
-      );
-
-      sendGates[recipientPeerIds.first]!.complete();
-      await service.waitForSendCount(26);
-      await drainPostPinDeliveryMicrotasks();
-
-      expect(service.maxInFlightSends, 25);
-      expect(service.sendStartOrder, hasLength(26));
-
-      for (final gate in sendGates.values) {
-        if (!gate.isCompleted) {
-          gate.complete();
-        }
-      }
-
-      final (result, pinState) = await pinFuture;
-      expect(result, PinPostResult.success);
-      expect(pinState, isNotNull);
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      expect(await snapshotLegacyPostState(posts), before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 }

@@ -4,6 +4,7 @@ import 'dart:collection';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
@@ -79,11 +80,13 @@ class PostDeliveryRunner {
   final PostRepository postRepo;
   final Bridge? bridge;
   final int maxConcurrentRecipients;
+  final DateTime Function()? nowProvider;
 
   PostDeliveryRunner({
     required this.p2pService,
     required this.postRepo,
     this.bridge,
+    this.nowProvider,
     this.maxConcurrentRecipients = defaultPostDeliveryConcurrency,
   }) {
     if (maxConcurrentRecipients < 1) {
@@ -96,20 +99,28 @@ class PostDeliveryRunner {
   }
 
   Future<(SendPostResult, PostModel)> execute(CreatedLocalPost created) async {
+    bool isEligible() => !ThoughtLifetime.isExpired(
+      DateTime.parse(created.post.createdAt),
+      nowProvider?.call() ?? DateTime.now(),
+    );
+    if (!isEligible()) return (SendPostResult.sendFailed, created.post);
     _PostDeliveryProgress? progress;
     final deliveryStopwatch = Stopwatch()..start();
 
     try {
       progress = _PostDeliveryProgress(
+        canPersist: () async =>
+            isEligible() && await postRepo.getPost(created.post.id) != null,
         latestPost: created.post,
         deliveriesByRecipient: await _loadExistingDeliveries(
           created.post.id,
           postRepo,
         ),
       );
-      final recipientPeerIds = created.recipientPeerIds;
       await _runRecipientFanout(
         p2pService: p2pService,
+        inboxFirstWhenDisconnected: true,
+        isEligible: isEligible,
         maxConcurrentRecipients: maxConcurrentRecipients,
         resolvedRecipients: created.resolvedRecipients,
         buildWireEnvelope: (recipient) {
@@ -117,7 +128,6 @@ class PostDeliveryRunner {
             post: created.post,
             bridge: bridge,
             recipient: recipient.contact,
-            recipientPeerIds: recipientPeerIds,
             nearbyDistanceM: recipient.nearbyDistanceM,
           );
         },
@@ -131,6 +141,12 @@ class PostDeliveryRunner {
         },
       );
     } catch (error) {
+      if (!isEligible() || await postRepo.getPost(created.post.id) == null) {
+        return (
+          SendPostResult.sendFailed,
+          progress?.latestPost ?? created.post,
+        );
+      }
       deliveryStopwatch.stop();
       emitFlowEvent(
         layer: 'FL',
@@ -392,6 +408,8 @@ Future<Map<String, PostRecipientDelivery>> _loadExistingPostPassDeliveries(
 Future<void> _runRecipientFanout({
   required P2PService p2pService,
   required int maxConcurrentRecipients,
+  bool inboxFirstWhenDisconnected = false,
+  bool Function()? isEligible,
   required List<CreatedLocalPostRecipient> resolvedRecipients,
   required Future<String> Function(CreatedLocalPostRecipient recipient)
   buildWireEnvelope,
@@ -416,11 +434,14 @@ Future<void> _runRecipientFanout({
   Future<void> runRecipient(CreatedLocalPostRecipient recipient) async {
     final attemptedAt = DateTime.now().toUtc().toIso8601String();
     try {
+      if (isEligible?.call() == false) return;
       final wireEnvelope = await buildWireEnvelope(recipient);
+      if (isEligible?.call() == false) return;
       final delivery = await _deliverToRecipient(
         p2pService: p2pService,
         recipientPeerId: recipient.contact.peerId,
         wireEnvelope: wireEnvelope,
+        inboxFirstWhenDisconnected: inboxFirstWhenDisconnected,
       );
 
       if (fatalError != null) {
@@ -527,58 +548,50 @@ SendPostResult _resultForAggregate(PostDeliveryAggregate aggregate) {
 Future<String> _buildWireEnvelope({
   required PostModel post,
   required ContactModel recipient,
-  required List<String> recipientPeerIds,
   Bridge? bridge,
   int? nearbyDistanceM,
 }) async {
-  final envelope = PostCreateEnvelope.fromPost(post);
-  // G3/KC-P3 fail-closed gate: a post whose attachment rows carry key
-  // material must NEVER downgrade to plaintext v1 — media_keys only travel
-  // inside ML-KEM v2 envelopes. Text-only and pre-flip keyless-media posts
-  // keep today's fallback.
-  final mediaEncryptionRequired = envelope.mediaKeys?.isNotEmpty == true;
-  if (bridge == null || recipient.mlKemPublicKey == null) {
-    if (mediaEncryptionRequired) {
-      throw _postMediaEncryptionRequired(
-        post: post,
-        recipient: recipient,
-        reason: bridge == null
-            ? 'post_media_encryption_unavailable'
-            : 'post_recipient_missing_mlkem_key',
-      );
-    }
-    return envelope.toJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
+  final recipientKey = recipient.mlKemPublicKey;
+  if (recipientKey == null || recipientKey.isEmpty) {
+    throw const _RecipientDeliveryBuildException('recipient_missing_mlkem_key');
+  }
+  if (bridge == null) {
+    throw const _RecipientDeliveryBuildException(
+      'thought_encrypt_failed:bridge_unavailable',
     );
   }
 
-  final encryptResult = await callEncryptMessage(
-    bridge: bridge,
-    recipientMlKemPublicKey: recipient.mlKemPublicKey!,
-    plaintext: envelope.toInnerJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
-    ),
-  );
-
+  late final Map<String, dynamic> encryptResult;
+  try {
+    encryptResult = await callEncryptMessage(
+      bridge: bridge,
+      recipientMlKemPublicKey: recipientKey,
+      plaintext: PostCreateEnvelope.fromPost(
+        post,
+      ).toInnerJson(nearbyDistanceM: nearbyDistanceM),
+    );
+  } catch (_) {
+    throw const _RecipientDeliveryBuildException(
+      'thought_encrypt_failed:bridge_error',
+    );
+  }
   if (encryptResult['ok'] != true) {
-    if (mediaEncryptionRequired) {
-      final errorCode = encryptResult['errorCode']?.toString();
-      throw _postMediaEncryptionRequired(
-        post: post,
-        recipient: recipient,
-        reason: errorCode == null || errorCode.isEmpty
-            ? 'post_media_encrypt_failed'
-            : 'post_media_encrypt_failed:$errorCode',
-      );
-    }
-    return envelope.toJson(
-      selectedPeerIds: post.audience.selectedPeerIds,
-      recipientPeerIds: recipientPeerIds,
-      nearbyDistanceM: nearbyDistanceM,
+    final code = encryptResult['errorCode']?.toString();
+    throw _RecipientDeliveryBuildException(
+      'thought_encrypt_failed:${code == null || code.isEmpty ? 'unknown' : code}',
+    );
+  }
+  final kem = encryptResult['kem'];
+  final ciphertext = encryptResult['ciphertext'];
+  final nonce = encryptResult['nonce'];
+  if (kem is! String ||
+      ciphertext is! String ||
+      nonce is! String ||
+      kem.isEmpty ||
+      ciphertext.isEmpty ||
+      nonce.isEmpty) {
+    throw const _RecipientDeliveryBuildException(
+      'thought_encrypt_failed:invalid_response',
     );
   }
 
@@ -586,27 +599,10 @@ Future<String> _buildWireEnvelope({
     eventId: post.eventId,
     createdAt: post.createdAt,
     senderPeerId: post.senderPeerId,
-    kem: encryptResult['kem'] as String,
-    ciphertext: encryptResult['ciphertext'] as String,
-    nonce: encryptResult['nonce'] as String,
+    kem: kem,
+    ciphertext: ciphertext,
+    nonce: nonce,
   );
-}
-
-_RecipientDeliveryBuildException _postMediaEncryptionRequired({
-  required PostModel post,
-  required ContactModel recipient,
-  required String reason,
-}) {
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'POST_MEDIA_ENCRYPTION_REQUIRED',
-    details: {
-      'postId': post.id,
-      'recipientPeerId': recipient.peerId,
-      'reason': reason,
-    },
-  );
-  return _RecipientDeliveryBuildException(reason);
 }
 
 Future<String> _buildPostPassWireEnvelope({
@@ -655,14 +651,17 @@ Future<_DeliveryAttempt> _deliverToRecipient({
   required P2PService p2pService,
   required String recipientPeerId,
   required String wireEnvelope,
+  bool inboxFirstWhenDisconnected = false,
 }) async {
   var directFailureReason = 'direct_send_failed';
   try {
-    final directReady = await ensurePostRecipientDirectConnection(
-      p2pService: p2pService,
-      recipientPeerId: recipientPeerId,
-      interactiveBudget: _interactivePostBudget,
-    );
+    final directReady = inboxFirstWhenDisconnected
+        ? p2pService.isConnectedToPeer(recipientPeerId)
+        : await ensurePostRecipientDirectConnection(
+            p2pService: p2pService,
+            recipientPeerId: recipientPeerId,
+            interactiveBudget: _interactivePostBudget,
+          );
     if (directReady) {
       final sendResult = await p2pService.sendMessageWithReply(
         recipientPeerId,
@@ -729,11 +728,13 @@ class _RecipientDeliveryBuildException implements Exception {
 }
 
 class _PostDeliveryProgress {
+  final Future<bool> Function() canPersist;
   PostModel latestPost;
   final Map<String, PostRecipientDelivery> deliveriesByRecipient;
   PostDeliveryAggregate aggregate;
 
   _PostDeliveryProgress({
+    required this.canPersist,
     required this.latestPost,
     required this.deliveriesByRecipient,
   }) : aggregate = aggregatePostDeliveryStatusFromDeliveries(
@@ -746,6 +747,7 @@ class _PostDeliveryProgress {
     required String attemptedAt,
     required _DeliveryAttempt delivery,
   }) async {
+    if (!await canPersist()) return;
     final existingDelivery = deliveriesByRecipient[recipientPeerId];
     final updatedDelivery = PostRecipientDelivery(
       postId: latestPost.id,
@@ -765,6 +767,7 @@ class _PostDeliveryProgress {
     deliveriesByRecipient[recipientPeerId] = updatedDelivery;
     await postRepo.saveRecipientDelivery(updatedDelivery);
 
+    if (!await canPersist()) return;
     aggregate = aggregatePostDeliveryStatusFromDeliveries(
       deliveriesByRecipient.values,
     );

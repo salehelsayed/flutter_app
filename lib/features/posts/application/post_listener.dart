@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -16,12 +17,15 @@ class PostListener {
   final PostRepository postRepo;
   final ContactRepository contactRepo;
   final Bridge? bridge;
+  final MediaFileManager? mediaFileManager;
+  final DateTime Function() now;
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final NotificationService? notificationService;
   final Future<PostMediaAttachmentModel> Function({
     required PostMediaAttachmentModel attachment,
     required String postId,
-  })? hydratePostMediaFn;
+  })?
+  hydratePostMediaFn;
 
   StreamSubscription<ChatMessage>? _subscription;
   final _postController = StreamController<PostModel>.broadcast();
@@ -31,10 +35,12 @@ class PostListener {
     required this.postRepo,
     required this.contactRepo,
     this.bridge,
+    this.mediaFileManager,
     this.getOwnMlKemSecretKey,
     this.notificationService,
     this.hydratePostMediaFn,
-  });
+    DateTime Function()? nowProvider,
+  }) : now = nowProvider ?? DateTime.now;
 
   Stream<PostModel> get incomingPostStream => _postController.stream;
 
@@ -62,8 +68,10 @@ class PostListener {
       postRepo: postRepo,
       contactRepo: contactRepo,
       bridge: bridge,
+      mediaFileManager: mediaFileManager,
       ownMlKemSecretKey: ownMlKemSecretKey,
       hydratePostMediaFn: hydratePostMediaFn,
+      nowProvider: now,
     );
     if (result != HandleIncomingPostResult.postCreated || post == null) {
       emitFlowEvent(
@@ -75,6 +83,7 @@ class PostListener {
     }
 
     final sender = await contactRepo.getContact(post.senderPeerId);
+    if (_expired(post)) return;
     if (sender != null &&
         !sender.isArchived &&
         notificationService != null &&
@@ -85,6 +94,21 @@ class PostListener {
         payload: NotificationRouteTarget.post(post.id).toPayload(),
       );
     }
+    if (_expired(post)) {
+      final notifications = notificationService;
+      if (notifications is ConversationNotificationCancellation) {
+        await (notifications as ConversationNotificationCancellation)
+            .cancelConversationNotification(
+              NotificationRouteTarget.post(post.id).toPayload(),
+            );
+      }
+      return;
+    }
     _postController.add(post);
+  }
+
+  bool _expired(PostModel post) {
+    final expiry = DateTime.tryParse(post.expiresAt);
+    return expiry == null || !expiry.isAfter(now().toUtc());
   }
 }

@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/posts/application/dismiss_pin_use_case.dart';
 import 'package:flutter_app/features/posts/application/edit_pinned_post_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_pinned_posts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_posts_feed_use_case.dart';
@@ -12,10 +11,12 @@ import 'package:flutter_app/features/posts/application/remove_pin_use_case.dart'
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 
+import '../test/core/bridge/fake_bridge.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';
 import '../test/shared/fakes/in_memory_contact_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
+import '../test/features/posts/support/legacy_post_state.dart';
 
 ContactModel _contact(String peerId, String username) {
   return ContactModel(
@@ -25,16 +26,18 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
 void main() {
   testWidgets(
-    'fresh sender edit clears the receiver dismissal and updates the feed snapshot',
+    'pinning and editing a thought are rejected without changing either peer',
     (tester) async {
       final network = FakeP2PNetwork();
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      bobService.connectedPeers.add('peer-cara');
 
       final bobContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-cara', 'Cara'));
@@ -55,6 +58,8 @@ void main() {
         contactRepo: bobContacts,
       )..start();
       final caraPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: caraRouter.postCreateStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
@@ -79,6 +84,7 @@ void main() {
       });
 
       final (sendResult, createdPost) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: bobService,
         postRepo: bobPosts,
         contactRepo: bobContacts,
@@ -91,21 +97,28 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       final postId = createdPost!.id;
+      final senderBefore = await snapshotLegacyPostState(
+        bobPosts,
+        postId: postId,
+      );
+      final receiverBefore = await snapshotLegacyPostState(
+        caraPosts,
+        postId: postId,
+      );
       final (pinResult, _) = await pinPost(
         p2pService: bobService,
         postRepo: bobPosts,
         postId: postId,
         senderPeerId: 'peer-bob',
       );
-      expect(pinResult, PinPostResult.success);
+      expect(pinResult, PinPostResult.sendFailed);
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(
         (await loadPinnedPosts(postRepo: caraPosts)).map((post) => post.id),
-        <String>[postId],
+        isEmpty,
       );
 
-      await dismissPin(postRepo: caraPosts, postId: postId);
       expect(await loadPinnedPosts(postRepo: caraPosts), isEmpty);
 
       final (editResult, _) = await editPinnedPost(
@@ -115,23 +128,31 @@ void main() {
         senderPeerId: 'peer-bob',
         text: 'Fresh blankets and hot tea available.',
       );
-      expect(editResult, EditPinnedPostResult.success);
+      expect(editResult, EditPinnedPostResult.sendFailed);
       await tester.pump(const Duration(milliseconds: 50));
 
       final caraPinned = await loadPinnedPosts(postRepo: caraPosts);
       final caraFeed = await loadPostsFeed(postRepo: caraPosts);
-      expect(caraPinned.map((post) => post.id), <String>[postId]);
-      expect(caraPinned.single.text, 'Fresh blankets and hot tea available.');
-      expect(caraFeed.single.text, 'Fresh blankets and hot tea available.');
+      expect(caraPinned, isEmpty);
+      expect(caraFeed.single.text, 'Original offer text.');
+      expect(
+        await snapshotLegacyPostState(bobPosts, postId: postId),
+        senderBefore,
+      );
+      expect(
+        await snapshotLegacyPostState(caraPosts, postId: postId),
+        receiverBefore,
+      );
     },
   );
 
   testWidgets(
-    'sender remove clears the receiver pinned section but keeps the 24-hour feed card',
+    'pinning and removal are rejected while the 24-hour feed thought stays intact',
     (tester) async {
       final network = FakeP2PNetwork();
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      bobService.connectedPeers.add('peer-cara');
 
       final bobContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-cara', 'Cara'));
@@ -144,6 +165,8 @@ void main() {
       final caraRouter = IncomingMessageRouter(p2pService: caraService)
         ..start();
       final caraPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: caraRouter.postCreateStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
@@ -166,6 +189,7 @@ void main() {
       });
 
       final (sendResult, createdPost) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: bobService,
         postRepo: bobPosts,
         contactRepo: bobContacts,
@@ -178,6 +202,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       final postId = createdPost!.id;
+      final senderBefore = await snapshotLegacyPostState(
+        bobPosts,
+        postId: postId,
+      );
+      final receiverBefore = await snapshotLegacyPostState(
+        caraPosts,
+        postId: postId,
+      );
       await pinPost(
         p2pService: bobService,
         postRepo: bobPosts,
@@ -187,7 +219,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
       expect(
         (await loadPinnedPosts(postRepo: caraPosts)).map((post) => post.id),
-        <String>[postId],
+        isEmpty,
       );
 
       final (removeResult, _) = await removePin(
@@ -196,17 +228,28 @@ void main() {
         postId: postId,
         senderPeerId: 'peer-bob',
       );
-      expect(removeResult, RemovePinResult.success);
+      expect(removeResult, RemovePinResult.sendFailed);
       await tester.pump(const Duration(milliseconds: 50));
 
       final caraPinned = await loadPinnedPosts(postRepo: caraPosts);
-      final caraFeed = await loadPostsFeed(
-        postRepo: caraPosts,
-        nowProvider: () => DateTime.parse('2026-03-15T12:00:00.000Z'),
-      );
+      final caraFeed = await loadPostsFeed(postRepo: caraPosts);
 
       expect(caraPinned, isEmpty);
       expect(caraFeed.map((post) => post.id), contains(postId));
+      expect(
+        DateTime.parse(
+          caraFeed.single.expiresAt,
+        ).difference(DateTime.parse(caraFeed.single.createdAt)),
+        const Duration(hours: 24),
+      );
+      expect(
+        await snapshotLegacyPostState(bobPosts, postId: postId),
+        senderBefore,
+      );
+      expect(
+        await snapshotLegacyPostState(caraPosts, postId: postId),
+        receiverBefore,
+      );
     },
   );
 }

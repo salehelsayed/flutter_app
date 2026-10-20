@@ -1253,7 +1253,7 @@ void main() {
         "StartupTiming.instance.mark('run_app_called')",
       );
       final recovery = post.indexOf('ensurePrivateMediaColdRecovery()');
-      final postsSweep = post.indexOf('sweepExpiredPosts(');
+      final postsSweep = post.indexOf('ensurePostColdRecovery()');
       final invitesSweep = post.indexOf('sweepExpiredGroupInvites(');
       final deletionReconciliation = post.indexOf(
         'groupMediaDeletionReconciler.runBounded()',
@@ -1270,7 +1270,7 @@ void main() {
         'startIosSenderProjectionAfterRunApp(',
         "StartupTiming.instance.mark('run_app_called')",
         'ensurePrivateMediaColdRecovery()',
-        'sweepExpiredPosts(',
+        'ensurePostColdRecovery()',
         'sweepExpiredGroupInvites(',
         'groupMediaDeletionReconciler.runBounded()',
         'startIntroPollerAfterColdRecovery(',

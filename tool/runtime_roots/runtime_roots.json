@@ -2454,6 +2454,20 @@
       ]
     },
     {
+      "path": "lib/features/posts/application/publish_post_presence_update_use_case.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "Plan 407 / Thoughts",
+      "reason": "Nearby presence publishing is retained for legacy tests; the disabled production nearby service no longer imports it.",
+      "condition": "Revisit with removal of the legacy Posts presence surface and its preservation tests.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
       "path": "lib/features/posts/application/post_pass_follow_on_support.dart",
       "rootKinds": [],
       "disposition": "candidate",

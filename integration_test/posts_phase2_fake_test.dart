@@ -15,11 +15,14 @@ import 'package:flutter_app/features/posts/application/send_post_comment_use_cas
 import 'package:flutter_app/features/posts/application/send_post_reaction_use_case.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_comment_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_reaction_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '_support/fake_secure_key_store.dart';
+import '../test/core/bridge/fake_bridge.dart';
 import '../test/shared/fakes/fake_media_file_manager.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';
@@ -34,12 +37,13 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
 void main() {
   testWidgets(
-    'offline comment replay and duplicate hearts converge through the receiver recipient set',
+    'offline legacy comments and duplicate hearts are rejected without revealing recipients',
     (tester) async {
       final network = FakeP2PNetwork();
       final aliceService = FakeP2PService(
@@ -47,7 +51,9 @@ void main() {
         network: network,
       );
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      aliceService.connectedPeers.add('peer-bob');
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      aliceService.connectedPeers.add('peer-cara');
 
       final aliceContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-bob', 'Bob'))
@@ -69,11 +75,15 @@ void main() {
       final aliceRouter = IncomingMessageRouter(p2pService: aliceService)
         ..start();
       final bobPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: bobRouter.postCreateStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
       )..start();
       final caraPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: caraRouter.postCreateStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
@@ -110,6 +120,7 @@ void main() {
       });
 
       final (sendResult, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
@@ -123,7 +134,7 @@ void main() {
       expect(sendResult, SendPostResult.success);
       expect(post, isNotNull);
       final sentPost = post!;
-      expect(await bobPosts.getRecipientDeliveries(sentPost.id), hasLength(2));
+      expect(await bobPosts.getRecipientDeliveries(sentPost.id), isEmpty);
 
       aliceService.setOnline(false);
       final (commentResult, comment) = await sendPostComment(
@@ -137,16 +148,30 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(commentResult, SendPostCommentResult.success);
-      expect(comment, isNotNull);
+      expect(commentResult, SendPostCommentResult.sendFailed);
+      expect(comment, isNull);
+      expect(network.inboxCount('peer-alice'), 0);
+      final commentCreatedAt = DateTime.now().toUtc().toIso8601String();
+      final legacyComment = PostCommentEnvelope(
+        eventId: 'legacy-comment-event',
+        createdAt: commentCreatedAt,
+        senderPeerId: 'peer-bob',
+        commentId: 'legacy-comment',
+        postId: sentPost.id,
+        body: 'I can lend one.',
+        commentedAt: commentCreatedAt,
+      ).toJson();
+      await bobService.storeInInbox('peer-alice', legacyComment);
+      await bobService.sendMessageWithReply('peer-cara', legacyComment);
+      await tester.pump(const Duration(milliseconds: 50));
       expect(network.inboxCount('peer-alice'), 1);
-      expect(await caraPosts.loadComments(sentPost.id), hasLength(1));
+      expect(await caraPosts.loadComments(sentPost.id), isEmpty);
 
       aliceService.setOnline(true);
       await aliceService.drainOfflineInbox();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(await alicePosts.loadComments(sentPost.id), hasLength(1));
+      expect(await alicePosts.loadComments(sentPost.id), isEmpty);
       network.duplicateOnDeliver = true;
 
       final reactionResult = await sendPostReaction(
@@ -162,21 +187,51 @@ void main() {
         postRepo: bobPosts,
         contactRepo: bobContacts,
         postId: sentPost.id,
-        commentId: comment!.id,
+        commentId: 'legacy-comment',
         senderPeerId: 'peer-bob',
         isActive: true,
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(reactionResult.$1, SendPostReactionResult.success);
-      expect(commentReactionResult.$1, SendPostCommentReactionResult.success);
-      expect(await alicePosts.loadPostReactions(sentPost.id), hasLength(1));
-      expect(await alicePosts.loadCommentReactions(comment.id), hasLength(1));
+      expect(reactionResult.$1, SendPostReactionResult.sendFailed);
+      expect(
+        commentReactionResult.$1,
+        SendPostCommentReactionResult.sendFailed,
+      );
+      await bobService.sendMessageWithReply(
+        'peer-alice',
+        PostReactionEnvelope.buildPostReactionJson(
+          eventId: 'legacy-heart-event',
+          createdAt: commentCreatedAt,
+          senderPeerId: 'peer-bob',
+          postId: sentPost.id,
+          isActive: true,
+        ),
+      );
+      await bobService.sendMessageWithReply(
+        'peer-alice',
+        PostReactionEnvelope.buildCommentReactionJson(
+          eventId: 'legacy-comment-heart-event',
+          createdAt: commentCreatedAt,
+          senderPeerId: 'peer-bob',
+          postId: sentPost.id,
+          commentId: 'legacy-comment',
+          isActive: true,
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(await alicePosts.loadPostReactions(sentPost.id), isEmpty);
+      expect(await alicePosts.loadCommentReactions('legacy-comment'), isEmpty);
+      expect(await alicePosts.loadPendingChildEvents(sentPost.id), isEmpty);
+      expect(
+        (await alicePosts.getPost(sentPost.id))!.expiresAt,
+        sentPost.expiresAt,
+      );
     },
   );
 
   testWidgets(
-    'media post delivery, heart, and offline comment replay stay coherent across users',
+    'media thoughts remain intact when hearts and offline comments are rejected',
     (tester) async {
       final network = FakeP2PNetwork();
       final aliceService = FakeP2PService(
@@ -184,6 +239,7 @@ void main() {
         network: network,
       );
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      aliceService.connectedPeers.add('peer-bob');
 
       final aliceContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-bob', 'Bob'));
@@ -199,6 +255,8 @@ void main() {
         ..start();
       final bobRouter = IncomingMessageRouter(p2pService: bobService)..start();
       final bobPostListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: bobRouter.postCreateStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
@@ -231,6 +289,7 @@ void main() {
       );
 
       final (sendResult, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
@@ -325,14 +384,14 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(heartResult.$1, SendPostReactionResult.success);
-      expect(await alicePosts.loadPostReactions(sentPost.id), hasLength(1));
+      expect(heartResult.$1, SendPostReactionResult.sendFailed);
+      expect(await alicePosts.loadPostReactions(sentPost.id), isEmpty);
 
       final aliceFeedAfterHeart = await loadPostsFeed(
         postRepo: alicePosts,
         viewerPeerId: 'peer-alice',
       );
-      expect(aliceFeedAfterHeart.single.heartCount, 1);
+      expect(aliceFeedAfterHeart.single.heartCount, 0);
 
       aliceService.setOnline(false);
       final (commentResult, comment) = await sendPostComment(
@@ -346,24 +405,23 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect(commentResult, SendPostCommentResult.success);
-      expect(comment, isNotNull);
-      expect(network.inboxCount('peer-alice'), 1);
+      expect(commentResult, SendPostCommentResult.sendFailed);
+      expect(comment, isNull);
+      expect(network.inboxCount('peer-alice'), 0);
 
       aliceService.setOnline(true);
       await aliceService.drainOfflineInbox();
       await tester.pump(const Duration(milliseconds: 50));
 
       final aliceComments = await alicePosts.loadComments(sentPost.id);
-      expect(aliceComments, hasLength(1));
-      expect(aliceComments.single.body, 'I can lend one.');
+      expect(aliceComments, isEmpty);
 
       final aliceFeedAfterComment = await loadPostsFeed(
         postRepo: alicePosts,
         viewerPeerId: 'peer-alice',
       );
-      expect(aliceFeedAfterComment.single.commentCount, 1);
-      expect(aliceFeedAfterComment.single.heartCount, 1);
+      expect(aliceFeedAfterComment.single.commentCount, 0);
+      expect(aliceFeedAfterComment.single.heartCount, 0);
     },
   );
 
@@ -464,6 +522,7 @@ void main() {
 
     for (final mediaCase in cases) {
       final (result, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
@@ -545,7 +604,15 @@ void main() {
                 network.retrieveInbox('peer-bob').single['message'] as String,
               )
               as Map<String, dynamic>;
-      final snapshot = payload['payload']['snapshot'] as Map<String, dynamic>;
+      expect(payload['version'], '2');
+      final innerPayload =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      expect(innerPayload.containsKey('recipient_peer_ids'), isFalse);
+      final snapshot = innerPayload['snapshot'] as Map<String, dynamic>;
       expect(snapshot['media_kind'], mediaCase.expectedKind);
       expect(snapshot['media'], hasLength(1));
     }

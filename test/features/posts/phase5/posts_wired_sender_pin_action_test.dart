@@ -69,7 +69,7 @@ void main() {
   }
 
   testWidgets(
-    'shows author pin action and adds the post to the pinned section',
+    'legacy author pin action cannot add a thought to the pinned section',
     (tester) async {
       await postRepository.savePost(
         postPinBasePost(authorPeerId: 'peer-bob', authorUsername: 'Bob'),
@@ -94,12 +94,15 @@ void main() {
       await tester.tap(find.byIcon(Icons.bookmark_border));
       await tester.pump();
 
-      expect(find.text('Pinned posts'), findsOneWidget);
+      expect(find.text('Pinned posts'), findsNothing);
+      expect(await postRepository.getPostPinState('post-1'), isNull);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
+      expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
     },
   );
 
   testWidgets(
-    'supports repeated author pin and remove cycles in the wired screen',
+    'repeated legacy author pin attempts leave the thought unchanged',
     (tester) async {
       await postRepository.savePost(
         postPinBasePost(authorPeerId: 'peer-bob', authorUsername: 'Bob'),
@@ -119,49 +122,23 @@ void main() {
       await tester.pumpWidget(buildWidget());
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.bookmark_border));
-      await tester.pump();
-
-      expect(find.text('Pinned posts'), findsOneWidget);
-      expect(find.byIcon(Icons.bookmark_border), findsNothing);
-
-      await tester.tap(find.text('Pinned posts'));
-      await tester.pump();
-      await tester.tap(find.text('Remove'));
-      await tester.pump();
-
-      expect(find.text('Pinned posts'), findsNothing);
-      expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
-      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
-      expect(
-        (await postRepository.getPostPinState('post-1'))!.state,
-        'removed',
-      );
-
-      await tester.tap(find.byIcon(Icons.bookmark_border));
-      await tester.pump();
-
-      expect(find.text('Pinned posts'), findsOneWidget);
-      expect((await postRepository.getPost('post-1'))!.keepAvailable, isTrue);
-      expect((await postRepository.getPostPinState('post-1'))!.state, 'active');
-
-      await tester.tap(find.text('Pinned posts'));
-      await tester.pump();
-      await tester.tap(find.text('Remove'));
-      await tester.pump();
-
-      final finalPinState = await postRepository.getPostPinState('post-1');
-      expect(find.text('Pinned posts'), findsNothing);
-      expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
-      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
-      expect(finalPinState, isNotNull);
-      expect(finalPinState, isA<PostPinStateModel>());
-      expect(finalPinState!.state, 'removed');
+      for (var attempt = 0; attempt < 2; attempt++) {
+        await tester.tap(find.byIcon(Icons.bookmark_border));
+        await tester.pump();
+        expect(find.text('Pinned posts'), findsNothing);
+        expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
+        expect(
+          (await postRepository.getPost('post-1'))!.keepAvailable,
+          isFalse,
+        );
+        expect(await postRepository.getPostPinState('post-1'), isNull);
+        expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
+      }
     },
   );
 
   testWidgets(
-    'queued remove hides the pinned section and surfaces a retry message',
+    'legacy remove action fails without mutating a seeded pin or queuing retry',
     (tester) async {
       await postRepository.savePost(
         postPinBasePost(
@@ -206,13 +183,11 @@ void main() {
       await tester.tap(find.text('Remove'));
       await tester.pump();
 
-      expect(find.text('Pinned posts'), findsNothing);
-      expect(find.text('Pin removal queued for retry'), findsOneWidget);
-      expect((await postRepository.getPost('post-1'))!.keepAvailable, isFalse);
-      expect(
-        (await postRepository.getPostPinState('post-1'))!.state,
-        'removed',
-      );
+      expect(find.text('Pinned posts'), findsOneWidget);
+      expect(find.text('Pin removal failed'), findsOneWidget);
+      expect(await postRepository.loadRetryableFollowOnOutboxJobs(), isEmpty);
+      expect((await postRepository.getPost('post-1'))!.keepAvailable, isTrue);
+      expect((await postRepository.getPostPinState('post-1'))!.state, 'active');
     },
   );
 }

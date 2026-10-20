@@ -374,3 +374,31 @@ class GeolocatorNearbyLocationPlatformAdapter
     };
   }
 }
+
+/// Plan 407: the production Thoughts runtime never requests or publishes location.
+class DisabledNearbyLocationService implements NearbyLocationService {
+  const DisabledNearbyLocationService();
+
+  Future<NearbyComposeAvailability> _off() async =>
+      const NearbyComposeAvailability(
+        state: NearbyComposeAvailabilityState.sharingOff,
+      );
+
+  @override
+  Future<NearbyComposeAvailability> loadComposeAvailability() => _off();
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnStartup() => _off();
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnResume() => _off();
+  @override
+  Future<NearbyComposeAvailability> refreshSilentlyOnPostsOpen() => _off();
+  @override
+  Future<NearbyComposeAvailability> refreshInteractivelyFromSettings() =>
+      _off();
+  @override
+  Future<NearbyComposeAvailability> refreshInteractivelyFromCompose() => _off();
+  @override
+  Future<void> handleSharingDisabled() async {}
+  @override
+  Future<bool> openAppSettings() async => false;
+}

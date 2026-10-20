@@ -25,7 +25,7 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
-const _createdAt = '2026-03-15T10:15:30.000Z';
+late String _createdAt;
 
 void main() {
   late FakeP2PNetwork network;
@@ -37,6 +37,7 @@ void main() {
   late _EncryptedPostUser recipient3;
 
   setUp(() {
+    _createdAt = DateTime.now().toUtc().toIso8601String();
     network = FakeP2PNetwork();
     relayStore = RelayMediaStore();
     tempDir = Directory.systemTemp.createTempSync('post-create-enc-media-');
@@ -75,6 +76,7 @@ void main() {
       recipient3,
     ]) {
       author.addContact(recipient);
+      author.p2pService.connectedPeers.add(recipient.peerId);
       recipient.addContact(author);
       recipient.start();
     }
@@ -97,8 +99,8 @@ void main() {
   });
 
   Uint8List plaintextBytes() => Uint8List.fromList(
-        List<int>.generate(512, (index) => (index * 23 + 1) & 0xff),
-      );
+    List<int>.generate(512, (index) => (index * 23 + 1) & 0xff),
+  );
 
   Future<List<PostMediaAttachmentModel>> attachAndDeliver({
     required List<_EncryptedPostUser> recipients,
@@ -152,22 +154,23 @@ void main() {
     final preparedPost = post.copyWith(media: attachments);
     await author.postRepo.savePost(preparedPost);
 
-    final (deliveryResult, _) = await PostDeliveryRunner(
-      p2pService: author.p2pService,
-      postRepo: author.postRepo,
-      bridge: author.bridge,
-    ).execute(
-      CreatedLocalPost(
-        post: preparedPost,
-        resolvedRecipients: recipients
-            .map(
-              (recipient) => CreatedLocalPostRecipient(
-                contact: author.contactFor(recipient.peerId),
-              ),
-            )
-            .toList(growable: false),
-      ),
-    );
+    final (deliveryResult, _) =
+        await PostDeliveryRunner(
+          p2pService: author.p2pService,
+          postRepo: author.postRepo,
+          bridge: author.bridge,
+        ).execute(
+          CreatedLocalPost(
+            post: preparedPost,
+            resolvedRecipients: recipients
+                .map(
+                  (recipient) => CreatedLocalPostRecipient(
+                    contact: author.contactFor(recipient.peerId),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        );
     expect(deliveryResult, SendPostResult.success);
     return attachments;
   }
@@ -186,9 +189,9 @@ void main() {
 
       await recipient1.waitForDownloadedMedia('post-1');
 
-      final received =
-          (await recipient1.postRepo.loadPostMediaAttachments('post-1'))
-              .single;
+      final received = (await recipient1.postRepo.loadPostMediaAttachments(
+        'post-1',
+      )).single;
       expect(received.isEncrypted, isTrue);
       expect(received.encryptionKeyBase64, attachment.encryptionKeyBase64);
       expect(received.encryptionScheme, attachment.encryptionScheme);
@@ -221,8 +224,7 @@ void main() {
     },
   );
 
-  test('legacy plaintext post from an old sender still round-trips',
-      () async {
+  test('legacy plaintext post from an old sender still round-trips', () async {
     relayStore.uploadedBytesByBlobId['blob-legacy-1'] = plaintextBytes();
     relayStore.mimeByBlobId['blob-legacy-1'] = 'image/jpeg';
 
@@ -259,8 +261,9 @@ void main() {
     await author.p2pService.sendMessageWithReply(recipient1.peerId, legacyWire);
 
     await recipient1.waitForDownloadedMedia('post-1');
-    final received =
-        (await recipient1.postRepo.loadPostMediaAttachments('post-1')).single;
+    final received = (await recipient1.postRepo.loadPostMediaAttachments(
+      'post-1',
+    )).single;
     expect(received.isEncrypted, isFalse);
     expect(received.encryptionKeyBase64, isNull);
     expect(received.downloadStatus, 'done');
@@ -285,9 +288,9 @@ void main() {
         recipient3,
       ]) {
         await recipient.waitForDownloadedMedia('post-1');
-        final received =
-            (await recipient.postRepo.loadPostMediaAttachments('post-1'))
-                .single;
+        final received = (await recipient.postRepo.loadPostMediaAttachments(
+          'post-1',
+        )).single;
         final restoredBytes = File(
           await recipient.mediaFileManager.resolveStoredPath(
             received.localPath!,
@@ -371,26 +374,27 @@ void main() {
 
       final preparedPost = post.copyWith(media: attachments);
       await author.postRepo.savePost(preparedPost);
-      final (deliveryResult, _) = await PostDeliveryRunner(
-        p2pService: author.p2pService,
-        postRepo: author.postRepo,
-        bridge: author.bridge,
-      ).execute(
-        CreatedLocalPost(
-          post: preparedPost,
-          resolvedRecipients: <CreatedLocalPostRecipient>[
-            CreatedLocalPostRecipient(
-              contact: author.contactFor(recipient1.peerId),
+      final (deliveryResult, _) =
+          await PostDeliveryRunner(
+            p2pService: author.p2pService,
+            postRepo: author.postRepo,
+            bridge: author.bridge,
+          ).execute(
+            CreatedLocalPost(
+              post: preparedPost,
+              resolvedRecipients: <CreatedLocalPostRecipient>[
+                CreatedLocalPostRecipient(
+                  contact: author.contactFor(recipient1.peerId),
+                ),
+              ],
             ),
-          ],
-        ),
-      );
+          );
       expect(deliveryResult, SendPostResult.success);
 
       await recipient1.waitForDownloadedMedia('post-voice');
-      final received =
-          (await recipient1.postRepo.loadPostMediaAttachments('post-voice'))
-              .single;
+      final received = (await recipient1.postRepo.loadPostMediaAttachments(
+        'post-voice',
+      )).single;
       expect(received.kind, 'voice');
       expect(received.waveform, waveform);
       expect(received.durationMs, 2100);
@@ -404,103 +408,106 @@ void main() {
     },
   );
 
-  test('carousel (multi-attachment) post: per-attachment keys, all decrypt',
-      () async {
-    final firstBytes = Uint8List.fromList(
-      List<int>.generate(300, (index) => (index * 3 + 1) & 0xff),
-    );
-    final secondBytes = Uint8List.fromList(
-      List<int>.generate(300, (index) => (index * 5 + 2) & 0xff),
-    );
-    final firstSource = File('${tempDir.path}/alice-one.jpg')
-      ..writeAsBytesSync(firstBytes, flush: true);
-    final secondSource = File('${tempDir.path}/alice-two.jpg')
-      ..writeAsBytesSync(secondBytes, flush: true);
+  test(
+    'carousel (multi-attachment) post: per-attachment keys, all decrypt',
+    () async {
+      final firstBytes = Uint8List.fromList(
+        List<int>.generate(300, (index) => (index * 3 + 1) & 0xff),
+      );
+      final secondBytes = Uint8List.fromList(
+        List<int>.generate(300, (index) => (index * 5 + 2) & 0xff),
+      );
+      final firstSource = File('${tempDir.path}/alice-one.jpg')
+        ..writeAsBytesSync(firstBytes, flush: true);
+      final secondSource = File('${tempDir.path}/alice-two.jpg')
+        ..writeAsBytesSync(secondBytes, flush: true);
 
-    final post = PostModel(
-      id: 'post-carousel',
-      eventId: 'evt-post-carousel',
-      senderPeerId: author.peerId,
-      authorPeerId: author.peerId,
-      authorUsername: author.username,
-      text: 'carousel',
-      audience: PostAudience.allFriends(),
-      createdAt: _createdAt,
-      visibleAt: _createdAt,
-      expiresAt: '2026-03-18T10:15:30.000Z',
-      isIncoming: false,
-      deliveryStatus: 'sending',
-      mediaKind: 'image_carousel',
-    );
-    await author.postRepo.savePost(post);
-    await author.postRepo.saveRecipientDelivery(
-      PostRecipientDelivery(
-        postId: 'post-carousel',
-        recipientPeerId: recipient1.peerId,
-        deliveryStatus: 'pending',
-        lastAttemptAt: _createdAt,
-        deliveryPath: 'post_create',
+      final post = PostModel(
+        id: 'post-carousel',
+        eventId: 'evt-post-carousel',
+        senderPeerId: author.peerId,
+        authorPeerId: author.peerId,
+        authorUsername: author.username,
+        text: 'carousel',
+        audience: PostAudience.allFriends(),
         createdAt: _createdAt,
-        updatedAt: _createdAt,
-      ),
-    );
+        visibleAt: _createdAt,
+        expiresAt: '2026-03-18T10:15:30.000Z',
+        isIncoming: false,
+        deliveryStatus: 'sending',
+        mediaKind: 'image_carousel',
+      );
+      await author.postRepo.savePost(post);
+      await author.postRepo.saveRecipientDelivery(
+        PostRecipientDelivery(
+          postId: 'post-carousel',
+          recipientPeerId: recipient1.peerId,
+          deliveryStatus: 'pending',
+          lastAttemptAt: _createdAt,
+          deliveryPath: 'post_create',
+          createdAt: _createdAt,
+          updatedAt: _createdAt,
+        ),
+      );
 
-    final (attachResult, attachments) = await attachPostMedia(
-      postId: 'post-carousel',
-      postRepo: author.postRepo,
-      secureKeyStore: author.secureKeyStore,
-      imageProcessor: author.imageProcessor,
-      drafts: <PostMediaDraft>[
-        PostMediaDraft(localFilePath: firstSource.path, mime: 'image/jpeg'),
-        PostMediaDraft(localFilePath: secondSource.path, mime: 'image/jpeg'),
-      ],
-      mediaFileManager: author.mediaFileManager,
-      bridge: author.bridge,
-    );
-    expect(attachResult, AttachPostMediaResult.success);
-    expect(attachments, hasLength(2));
-    expect(
-      attachments[0].encryptionKeyBase64,
-      isNot(attachments[1].encryptionKeyBase64),
-    );
-
-    final preparedPost = post.copyWith(media: attachments);
-    await author.postRepo.savePost(preparedPost);
-    final (deliveryResult, _) = await PostDeliveryRunner(
-      p2pService: author.p2pService,
-      postRepo: author.postRepo,
-      bridge: author.bridge,
-    ).execute(
-      CreatedLocalPost(
-        post: preparedPost,
-        resolvedRecipients: <CreatedLocalPostRecipient>[
-          CreatedLocalPostRecipient(
-            contact: author.contactFor(recipient1.peerId),
-          ),
+      final (attachResult, attachments) = await attachPostMedia(
+        postId: 'post-carousel',
+        postRepo: author.postRepo,
+        secureKeyStore: author.secureKeyStore,
+        imageProcessor: author.imageProcessor,
+        drafts: <PostMediaDraft>[
+          PostMediaDraft(localFilePath: firstSource.path, mime: 'image/jpeg'),
+          PostMediaDraft(localFilePath: secondSource.path, mime: 'image/jpeg'),
         ],
-      ),
-    );
-    expect(deliveryResult, SendPostResult.success);
+        mediaFileManager: author.mediaFileManager,
+        bridge: author.bridge,
+      );
+      expect(attachResult, AttachPostMediaResult.success);
+      expect(attachments, hasLength(2));
+      expect(
+        attachments[0].encryptionKeyBase64,
+        isNot(attachments[1].encryptionKeyBase64),
+      );
 
-    await recipient1.waitForDownloadedMedia('post-carousel');
-    final received = await recipient1.postRepo.loadPostMediaAttachments(
-      'post-carousel',
-    );
-    expect(received, hasLength(2));
-    final restoredByPosition = <int, Uint8List>{
-      for (final attachment in received)
-        attachment.position: File(
-          await recipient1.mediaFileManager.resolveStoredPath(
-            attachment.localPath!,
-          ),
-        ).readAsBytesSync(),
-    };
-    expect(restoredByPosition[0], orderedEquals(firstBytes));
-    expect(restoredByPosition[1], orderedEquals(secondBytes));
-  });
+      final preparedPost = post.copyWith(media: attachments);
+      await author.postRepo.savePost(preparedPost);
+      final (deliveryResult, _) =
+          await PostDeliveryRunner(
+            p2pService: author.p2pService,
+            postRepo: author.postRepo,
+            bridge: author.bridge,
+          ).execute(
+            CreatedLocalPost(
+              post: preparedPost,
+              resolvedRecipients: <CreatedLocalPostRecipient>[
+                CreatedLocalPostRecipient(
+                  contact: author.contactFor(recipient1.peerId),
+                ),
+              ],
+            ),
+          );
+      expect(deliveryResult, SendPostResult.success);
+
+      await recipient1.waitForDownloadedMedia('post-carousel');
+      final received = await recipient1.postRepo.loadPostMediaAttachments(
+        'post-carousel',
+      );
+      expect(received, hasLength(2));
+      final restoredByPosition = <int, Uint8List>{
+        for (final attachment in received)
+          attachment.position: File(
+            await recipient1.mediaFileManager.resolveStoredPath(
+              attachment.localPath!,
+            ),
+          ).readAsBytesSync(),
+      };
+      expect(restoredByPosition[0], orderedEquals(firstBytes));
+      expect(restoredByPosition[1], orderedEquals(secondBytes));
+    },
+  );
 
   test(
-    'pass of an encrypted authored post: pass re-mints blobId+key; recipient decrypts via pass media_keys',
+    'passing an encrypted thought is rejected without minting blobs or sending keys',
     () async {
       // recipient1 receives the encrypted authored post, then passes it
       // along to recipient2 (who never saw the original post_create).
@@ -533,27 +540,21 @@ void main() {
         recipientPeerIds: <String>[recipient2.peerId],
         resolveStoredPathFn: recipient1.mediaFileManager.resolveStoredPath,
       );
-      expect(passResult, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      await recipient2.waitForDownloadedMedia('post-1');
-      final received =
-          (await recipient2.postRepo.loadPostMediaAttachments('post-1'))
-              .single;
-      // The pass re-mints a fresh blob + key (shipped pass behavior over the
-      // new encrypted source).
-      expect(received.blobId, isNot(originalBlobId));
-      expect(received.isEncrypted, isTrue);
+      expect(passResult, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await recipient2.postRepo.getPost('post-1'), isNull);
       expect(
-        received.encryptionKeyBase64,
-        isNot(attachments.single.encryptionKeyBase64),
+        await recipient2.postRepo.loadPostMediaAttachments('post-1'),
+        isEmpty,
       );
-      final restoredBytes = File(
-        await recipient2.mediaFileManager.resolveStoredPath(
-          received.localPath!,
-        ),
-      ).readAsBytesSync();
-      expect(restoredBytes, orderedEquals(plaintextBytes()));
+      expect(await recipient1.postRepo.loadPostPasses('post-1'), isEmpty);
+      expect(
+        (await recipient1.postRepo.loadPostMediaAttachments(
+          'post-1',
+        )).single.blobId,
+        originalBlobId,
+      );
+      expect(relayStore.uploadedBytesByBlobId.keys, [originalBlobId]);
     },
   );
 }

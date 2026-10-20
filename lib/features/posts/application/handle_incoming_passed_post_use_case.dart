@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'dart:convert' show base64Decode;
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -35,6 +36,10 @@ Future<(HandleIncomingPassedPostResult, PostModel?)> handleIncomingPassedPost({
   String? ownMlKemSecretKey,
   HydratePostMediaFn? hydratePostMediaFn,
 }) async {
+  if (rejectLegacyPostFeature('post_pass')) {
+    return (HandleIncomingPassedPostResult.notPostPass, null);
+  }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'POST_PASS_RECEIVE_START',

@@ -3,6 +3,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -21,6 +22,7 @@ ContactModel _contact(
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
     isBlocked: blocked,
     isArchived: archived,
   );
@@ -50,6 +52,7 @@ void main() {
 
     final (result, post) = await sendPost(
       p2pService: aliceService,
+      bridge: FakeBridge(),
       postRepo: posts,
       contactRepo: contacts,
       senderPeerId: 'peer-alice',
@@ -59,7 +62,13 @@ void main() {
     );
 
     expect(result, SendPostResult.success);
-    final deliveries = await posts.getRecipientDeliveries(post!.id);
+    expect(
+      DateTime.parse(
+        post!.expiresAt,
+      ).difference(DateTime.parse(post.createdAt)),
+      const Duration(hours: 24),
+    );
+    final deliveries = await posts.getRecipientDeliveries(post.id);
     expect(deliveries.map((delivery) => delivery.recipientPeerId), [
       'peer-bob',
     ]);
@@ -72,10 +81,12 @@ void main() {
       contacts.addTestContact(_contact('peer-cara', 'Cara'));
 
       FakeP2PService(peerId: 'peer-bob', network: network);
+      aliceService.connectedPeers.add('peer-bob');
       // Cara is offline, so the use case should fall back to the inbox.
 
       final (result, post) = await sendPost(
         p2pService: aliceService,
+        bridge: FakeBridge(),
         postRepo: posts,
         contactRepo: contacts,
         senderPeerId: 'peer-alice',
@@ -114,6 +125,7 @@ void main() {
 
       final (result, post) = await sendPost(
         p2pService: aliceService,
+        bridge: FakeBridge(),
         postRepo: posts,
         contactRepo: contacts,
         senderPeerId: 'peer-alice',

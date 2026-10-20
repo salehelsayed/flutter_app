@@ -107,16 +107,9 @@ void main() {
         snapshotRepo: snapshots,
       );
 
-      expect(result, HandleIncomingPostPresenceResult.snapshotUpdated);
-      expect(snapshot, isNotNull);
-      expect(snapshot!.peerId, 'peer-bob');
-      expect(snapshot.status, ContactPresenceSnapshotStatus.active);
-      expect(snapshot.latE3, 52520);
-      expect(snapshot.lngE3, 13405);
-      expect(snapshot.accuracyM, 120);
-      expect(snapshot.capturedAt, '2026-03-15T11:10:00.000Z');
-      expect(snapshot.updatedAt, '2026-03-15T11:10:05.000Z');
-      expect((await snapshots.load('peer-bob'))?.toMap(), snapshot.toMap());
+      expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
+      expect(snapshot, isNull);
+      expect(await snapshots.load('peer-bob'), isNull);
     });
 
     test('falls back to message.timestamp when created_at is absent', () async {
@@ -133,10 +126,9 @@ void main() {
         snapshotRepo: snapshots,
       );
 
-      expect(result, HandleIncomingPostPresenceResult.snapshotUpdated);
-      expect(snapshot, isNotNull);
-      expect(snapshot!.updatedAt, '2026-03-15T11:10:42.000Z');
-      expect((await snapshots.load('peer-bob'))?.updatedAt, snapshot.updatedAt);
+      expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
+      expect(snapshot, isNull);
+      expect(await snapshots.load('peer-bob'), isNull);
     });
 
     test(
@@ -173,7 +165,7 @@ void main() {
         snapshotRepo: snapshots,
       );
 
-      expect(result, HandleIncomingPostPresenceResult.unknownSender);
+      expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
       expect(snapshot, isNull);
       expect(await snapshots.load('peer-bob'), isNull);
     });
@@ -192,7 +184,7 @@ void main() {
         snapshotRepo: snapshots,
       );
 
-      expect(result, HandleIncomingPostPresenceResult.blockedSender);
+      expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
       expect(snapshot, isNull);
       expect(await snapshots.load('peer-bob'), isNull);
     });
@@ -231,7 +223,7 @@ void main() {
           snapshotRepo: snapshots,
         );
 
-        expect(result, HandleIncomingPostPresenceResult.staleSnapshot);
+        expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
         expect(snapshot, isNull);
         expect(
           (await snapshots.load('peer-bob'))?.toMap(),
@@ -343,7 +335,7 @@ void main() {
           snapshotRepo: snapshots,
         );
 
-        expect(result, HandleIncomingPostPresenceResult.invalidPayload);
+        expect(result, HandleIncomingPostPresenceResult.notPostPresenceUpdate);
         expect(snapshot, isNull);
         expect(await snapshots.load('peer-bob'), isNull);
       });

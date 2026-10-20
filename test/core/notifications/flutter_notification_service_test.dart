@@ -857,6 +857,31 @@ void main() {
     },
   );
 
+  test(
+    'Plan 407 expiry cancels exactly the displayed thought notification',
+    () async {
+      final service = buildService();
+      await service.initialize();
+      await service.showNotification(
+        title: 'Friend',
+        body: 'Private thought',
+        payload: 'post:thought-1',
+      );
+      final thoughtId = (log.last.arguments as Map)['id'];
+      await service.showNotification(
+        title: 'Another friend',
+        body: 'Live thought',
+        payload: 'post:thought-2',
+      );
+      final liveId = (log.last.arguments as Map)['id'];
+      expect(thoughtId, isNot(liveId));
+      await service.cancelConversationNotification('post:thought-1');
+      final cancellation = log.lastWhere((call) => call.method == 'cancel');
+      expect((cancellation.arguments as Map)['id'], thoughtId);
+      expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
+    },
+  );
+
   test('generic anchored group payloads coalesce on the group card', () async {
     final service = buildService();
     await service.initialize();

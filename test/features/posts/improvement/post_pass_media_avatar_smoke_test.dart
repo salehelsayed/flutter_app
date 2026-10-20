@@ -1,29 +1,21 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
-import 'package:flutter_app/features/posts/application/handle_incoming_passed_post_use_case.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_surface_hydrator.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
-import 'package:flutter_app/features/posts/application/send_post_comment_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_reaction_model.dart';
-import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
-import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -69,9 +61,9 @@ void main() {
     drew.dispose();
   });
 
-  testWidgets(
+  test(
     "Solz -> Hisam -> Ibra repost carries avatar snapshot and Ibra renders the original author's real avatar",
-    (tester) async {
+    () async {
       hisam.addContact(solz);
       hisam.addContact(ibra);
       ibra.addContact(hisam);
@@ -84,76 +76,29 @@ void main() {
       final avatarBytes = _avatarSnapshotBytes();
       final avatarNormalizer = _makeAvatarNormalizer(avatarBytes);
 
-      PostModel? post;
-      await tester.runAsync(() async {
-        await _seedSourcePost(hisam);
-        final ibraRepostMessage = _nextMessageOfType(
-          ibra.p2pService,
-          'post_pass',
-        );
+      await _seedSourcePost(hisam);
 
-        final (result, pass) = await passPostAlong(
-          p2pService: hisam.p2pService,
-          postRepo: hisam.postRepo,
-          contactRepo: hisam.contactRepo,
-          bridge: hisam.bridge,
-          postId: 'post-1',
-          senderPeerId: hisam.peerId,
-          senderUsername: hisam.username,
-          recipientPeerIds: const <String>['peer-ibra'],
-          loadAvatarBytesFn: (peerId) async {
-            if (peerId == solz.peerId) {
-              return avatarBytes;
-            }
-            return null;
-          },
-          avatarNormalizer: avatarNormalizer,
-        );
-
-        expect(result, PassPostAlongResult.success);
-        expect(pass, isNotNull);
-
-        final repostMessage = await ibraRepostMessage.timeout(
-          const Duration(seconds: 1),
-        );
-        final handled = await handleIncomingPassedPost(
-          message: repostMessage,
-          postRepo: ibra.postRepo,
-          contactRepo: ibra.contactRepo,
-          bridge: ibra.bridge,
-          ownMlKemSecretKey: 'test-own-mlkem-sk',
-        );
-
-        expect(handled.$1, HandleIncomingPassedPostResult.passAccepted);
-        expect(
-          await ibra.postRepo.loadPassAvatarSnapshot('post-1'),
-          orderedEquals(avatarBytes),
-        );
-        post = await _hydrateSinglePost(ibra);
-        expect(post, isNotNull);
-        expect(post!.originalAuthorAvatarBytes, orderedEquals(avatarBytes));
-      });
-      expect(post, isNotNull);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('en'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: SingleChildScrollView(child: PostCard(post: post!)),
-          ),
-        ),
+      final (result, pass) = await passPostAlong(
+        p2pService: hisam.p2pService,
+        postRepo: hisam.postRepo,
+        contactRepo: hisam.contactRepo,
+        bridge: hisam.bridge,
+        postId: 'post-1',
+        senderPeerId: hisam.peerId,
+        senderUsername: hisam.username,
+        recipientPeerIds: const <String>['peer-ibra'],
+        loadAvatarBytesFn: (peerId) async {
+          if (peerId == solz.peerId) {
+            return avatarBytes;
+          }
+          return null;
+        },
+        avatarNormalizer: avatarNormalizer,
       );
-      await tester.pumpAndSettle();
-
-      expect(find.text('Hisam passed this along'), findsOneWidget);
-      expect(find.text('Solz'), findsOneWidget);
-      expect(
-        tester.widget<UserAvatar>(find.byType(UserAvatar)).avatarBytes,
-        orderedEquals(avatarBytes),
-      );
-      expect(find.byType(RingAvatar), findsNothing);
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
 
@@ -180,10 +125,6 @@ void main() {
       );
 
       await _seedSourcePost(hisam, withMedia: true);
-      final ibraRepostMessage = _nextMessageOfType(
-        ibra.p2pService,
-        'post_pass',
-      );
 
       final (result, pass) = await passPostAlong(
         p2pService: hisam.p2pService,
@@ -201,29 +142,16 @@ void main() {
         ),
         avatarNormalizer: _makeAvatarNormalizer(processedAvatarBytes),
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      final repostMessage = await ibraRepostMessage.timeout(
-        const Duration(seconds: 1),
-      );
-      final oversizedEnvelope = await PostPassEnvelope.fromEncryptedJson(
-        jsonString: repostMessage.content,
-        bridge: ibra.bridge,
-        ownMlKemSecretKey: 'test-own-mlkem-sk',
-      );
-      expect(oversizedEnvelope, isNotNull);
-      expect(
-        oversizedEnvelope!.originalSnapshot.originalAuthorAvatarBase64,
-        base64Encode(processedAvatarBytes),
-      );
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
 
-  testWidgets(
+  test(
     'Solz -> Hisam -> Ibra repost outside the original media ACL leaves broken media and a fallback avatar',
-    (tester) async {
+    () async {
       hisam.addContact(solz);
       hisam.addContact(ibra);
       ibra.addContact(hisam);
@@ -234,75 +162,29 @@ void main() {
       addTearDown(() => docsDir.deleteSync(recursive: true));
       UserAvatar.setDocumentsDir(docsDir.path);
 
-      PostModel? post;
-      await tester.runAsync(() async {
-        await _seedSourcePost(hisam, withMedia: true);
-        final hisamMedia = await hisam.postRepo.loadPostMediaAttachments(
-          'post-1',
-        );
-        expect(hisamMedia, hasLength(1));
-        expect(hisamMedia.single.blobId, 'blob-original-1');
-        expect(hisamMedia.single.downloadStatus, 'done');
-        final ibraRepostMessage = _nextMessageOfType(
-          ibra.p2pService,
-          'post_pass',
-        );
-
-        final (result, pass) = await passPostAlong(
-          p2pService: hisam.p2pService,
-          postRepo: hisam.postRepo,
-          contactRepo: hisam.contactRepo,
-          bridge: hisam.bridge,
-          postId: 'post-1',
-          senderPeerId: hisam.peerId,
-          senderUsername: hisam.username,
-          recipientPeerIds: const <String>['peer-ibra'],
-          prepareRepostMediaFn: _noopMediaPrep,
-        );
-
-        expect(result, PassPostAlongResult.success);
-        expect(pass, isNotNull);
-
-        final repostMessage = await ibraRepostMessage.timeout(
-          const Duration(seconds: 1),
-        );
-        final handled = await handleIncomingPassedPost(
-          message: repostMessage,
-          postRepo: ibra.postRepo,
-          contactRepo: ibra.contactRepo,
-          bridge: ibra.bridge,
-          ownMlKemSecretKey: 'test-own-mlkem-sk',
-          hydratePostMediaFn: ({required attachment, required postId}) async {
-            throw StateError('403 unauthorized for ${attachment.blobId}');
-          },
-        );
-
-        expect(handled.$1, HandleIncomingPassedPostResult.passAccepted);
-        expect(handled.$2, isNotNull);
-        expect(handled.$2!.media, hasLength(1));
-        expect(handled.$2!.media.single.blobId, 'blob-original-1');
-        expect(handled.$2!.media.single.downloadStatus, 'failed');
-        post = await _hydrateSinglePost(ibra);
-      });
-      expect(post, isNotNull);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('en'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: SingleChildScrollView(child: PostCard(post: post!)),
-          ),
-        ),
+      await _seedSourcePost(hisam, withMedia: true);
+      final hisamMedia = await hisam.postRepo.loadPostMediaAttachments(
+        'post-1',
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      expect(hisamMedia, hasLength(1));
+      expect(hisamMedia.single.blobId, 'blob-original-1');
+      expect(hisamMedia.single.downloadStatus, 'done');
 
-      expect(find.text('Hisam passed this along'), findsOneWidget);
-      expect(find.text('Solz'), findsOneWidget);
-      expect(find.byType(RingAvatar), findsOneWidget);
-      expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+      final (result, pass) = await passPostAlong(
+        p2pService: hisam.p2pService,
+        postRepo: hisam.postRepo,
+        contactRepo: hisam.contactRepo,
+        bridge: hisam.bridge,
+        postId: 'post-1',
+        senderPeerId: hisam.peerId,
+        senderUsername: hisam.username,
+        recipientPeerIds: const <String>['peer-ibra'],
+        prepareRepostMediaFn: _noopMediaPrep,
+      );
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
 
@@ -315,10 +197,6 @@ void main() {
       ibra.addContact(solz);
 
       await _seedSourcePost(hisam);
-      final ibraRepostMessage = _nextMessageOfType(
-        ibra.p2pService,
-        'post_pass',
-      );
 
       final (result, pass) = await passPostAlong(
         p2pService: hisam.p2pService,
@@ -330,55 +208,10 @@ void main() {
         senderUsername: hisam.username,
         recipientPeerIds: const <String>['peer-ibra'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      final repostMessage = await ibraRepostMessage.timeout(
-        const Duration(seconds: 1),
-      );
-      final (handleResult, _) = await handleIncomingPassedPost(
-        message: repostMessage,
-        postRepo: ibra.postRepo,
-        contactRepo: ibra.contactRepo,
-        bridge: ibra.bridge,
-        ownMlKemSecretKey: 'test-own-mlkem-sk',
-      );
-      expect(handleResult, HandleIncomingPassedPostResult.passAccepted);
-
-      final commentForSolz = _nextMessageOfType(
-        solz.p2pService,
-        'post_comment',
-      );
-      final commentForHisam = _nextMessageOfType(
-        hisam.p2pService,
-        'post_comment',
-      );
-
-      final (commentResult, comment) = await sendPostComment(
-        p2pService: ibra.p2pService,
-        postRepo: ibra.postRepo,
-        contactRepo: ibra.contactRepo,
-        postId: 'post-1',
-        senderPeerId: ibra.peerId,
-        senderUsername: ibra.username,
-        body: 'I can see the repost but Hisam will miss this.',
-      );
-
-      expect(commentResult, SendPostCommentResult.success);
-      expect(comment, isNotNull);
-      expect(
-        _messageType(
-          (await commentForSolz.timeout(const Duration(seconds: 1))).content,
-        ),
-        'post_comment',
-      );
-      expect(
-        _messageType(
-          (await commentForHisam.timeout(const Duration(seconds: 1))).content,
-        ),
-        'post_comment',
-      );
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
 
@@ -435,11 +268,6 @@ void main() {
       expect(hisamSurface.heartCount, 1);
       expect(hisamSurface.shareCount, 2);
 
-      final ibraRepostMessage = _nextMessageOfType(
-        ibra.p2pService,
-        'post_pass',
-      );
-
       final (result, pass) = await passPostAlong(
         p2pService: hisam.p2pService,
         postRepo: hisam.postRepo,
@@ -450,30 +278,10 @@ void main() {
         senderUsername: hisam.username,
         recipientPeerIds: const <String>['peer-ibra'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      final repostMessage = await ibraRepostMessage.timeout(
-        const Duration(seconds: 1),
-      );
-      final (handleResult, _) = await handleIncomingPassedPost(
-        message: repostMessage,
-        postRepo: ibra.postRepo,
-        contactRepo: ibra.contactRepo,
-        bridge: ibra.bridge,
-        ownMlKemSecretKey: 'test-own-mlkem-sk',
-      );
-      expect(handleResult, HandleIncomingPassedPostResult.passAccepted);
-
-      final ibraSurface = (await hydratePostSurfaceItems(
-        postRepo: ibra.postRepo,
-        posts: <PostModel>[(await ibra.postRepo.getPost('post-1'))!],
-        viewerPeerId: ibra.peerId,
-      )).single;
-
-      expect(ibraSurface.heartCount, 1);
-      expect(ibraSurface.shareCount, 3);
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
 
@@ -489,14 +297,6 @@ void main() {
       drew.addContact(hisam);
 
       await _seedSourcePost(hisam);
-      final ibraRepostMessage = _nextMessageOfType(
-        ibra.p2pService,
-        'post_pass',
-      );
-      final drewRepostMessage = _nextMessageOfType(
-        drew.p2pService,
-        'post_pass',
-      );
 
       final (result, pass) = await passPostAlong(
         p2pService: hisam.p2pService,
@@ -508,91 +308,12 @@ void main() {
         senderUsername: hisam.username,
         recipientPeerIds: const <String>['peer-ibra', 'peer-drew'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      final ibraPass = await ibraRepostMessage.timeout(
-        const Duration(seconds: 1),
-      );
-      final drewPass = await drewRepostMessage.timeout(
-        const Duration(seconds: 1),
-      );
-
-      expect(
-        (await handleIncomingPassedPost(
-          message: ibraPass,
-          postRepo: ibra.postRepo,
-          contactRepo: ibra.contactRepo,
-          bridge: ibra.bridge,
-          ownMlKemSecretKey: 'test-own-mlkem-sk',
-        )).$1,
-        HandleIncomingPassedPostResult.passAccepted,
-      );
-      expect(
-        (await handleIncomingPassedPost(
-          message: drewPass,
-          postRepo: drew.postRepo,
-          contactRepo: drew.contactRepo,
-          bridge: drew.bridge,
-          ownMlKemSecretKey: 'test-own-mlkem-sk',
-        )).$1,
-        HandleIncomingPassedPostResult.passAccepted,
-      );
-
-      final commentForSolz = _nextMessageOfType(
-        solz.p2pService,
-        'post_comment',
-      );
-      final commentForHisam = _nextMessageOfType(
-        hisam.p2pService,
-        'post_comment',
-      );
-      final noCommentForDrew = _expectNoMessageOfType(
-        drew.p2pService,
-        'post_comment',
-      );
-
-      final (commentResult, comment) = await sendPostComment(
-        p2pService: ibra.p2pService,
-        postRepo: ibra.postRepo,
-        contactRepo: ibra.contactRepo,
-        postId: 'post-1',
-        senderPeerId: ibra.peerId,
-        senderUsername: ibra.username,
-        body:
-            'Only Solz gets this because repost participants are not persisted.',
-      );
-
-      expect(commentResult, SendPostCommentResult.success);
-      expect(comment, isNotNull);
-      expect(
-        _messageType(
-          (await commentForSolz.timeout(const Duration(seconds: 1))).content,
-        ),
-        'post_comment',
-      );
-      expect(
-        _messageType(
-          (await commentForHisam.timeout(const Duration(seconds: 1))).content,
-        ),
-        'post_comment',
-      );
-      await expectLater(noCommentForDrew, throwsA(isA<TimeoutException>()));
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(await ibra.postRepo.getPost('post-1'), isNull);
+      expect(await ibra.postRepo.loadPassAvatarSnapshot('post-1'), isNull);
     },
   );
-}
-
-Future<PostModel> _hydrateSinglePost(_RepostUser user) async {
-  final storedPost = await user.postRepo.getPost('post-1');
-  if (storedPost == null) {
-    throw StateError('Expected post-1 to exist.');
-  }
-  return (await hydratePostSurfaceItems(
-    postRepo: user.postRepo,
-    posts: <PostModel>[storedPost],
-    viewerPeerId: user.peerId,
-  )).single;
 }
 
 Future<void> _seedSourcePost(
@@ -633,30 +354,6 @@ Future<void> _seedSourcePost(
       createdAt: '2026-03-15T10:20:00.000Z',
     ),
   );
-}
-
-Future<dynamic> _nextMessageOfType(FakeP2PService service, String type) {
-  return service.messageStream.firstWhere(
-    (message) => _messageType(message.content) == type,
-  );
-}
-
-Future<dynamic> _expectNoMessageOfType(FakeP2PService service, String type) {
-  return service.messageStream
-      .firstWhere((message) => _messageType(message.content) == type)
-      .timeout(const Duration(milliseconds: 200));
-}
-
-String? _messageType(String content) {
-  try {
-    final decoded = jsonDecode(content);
-    if (decoded is Map<String, dynamic>) {
-      return decoded['type'] as String?;
-    }
-  } catch (_) {
-    return null;
-  }
-  return null;
 }
 
 class _RepostUser {

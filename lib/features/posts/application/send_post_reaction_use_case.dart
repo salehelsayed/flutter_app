@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -30,6 +31,10 @@ Future<(SendPostReactionResult, PostReactionModel?)> sendPostReaction({
   required bool isActive,
   int maxConcurrentRecipients = defaultPostFollowOnDeliveryConcurrency,
 }) async {
+  if (rejectLegacyPostFeature('post_reaction')) {
+    return (SendPostReactionResult.sendFailed, null);
+  }
+
   if (!p2pService.currentState.isStarted) {
     return (SendPostReactionResult.nodeNotRunning, null);
   }

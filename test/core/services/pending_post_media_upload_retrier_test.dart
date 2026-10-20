@@ -26,6 +26,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -42,9 +43,12 @@ PostModel _post({
     authorUsername: 'Alice',
     text: '',
     audience: PostAudience.allFriends(),
-    createdAt: '2026-03-16T10:00:00.000Z',
-    visibleAt: '2026-03-16T10:00:00.000Z',
-    expiresAt: '2026-03-19T10:00:00.000Z',
+    createdAt: DateTime.now().toUtc().toIso8601String(),
+    visibleAt: DateTime.now().toUtc().toIso8601String(),
+    expiresAt: DateTime.now()
+        .toUtc()
+        .add(const Duration(hours: 24))
+        .toIso8601String(),
     isIncoming: false,
     deliveryStatus: deliveryStatus,
     mediaKind: mediaKind,
@@ -130,7 +134,7 @@ void main() {
         contactRepo: contacts,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
-        bridge: FakeBridge(),
+        bridge: PassthroughCryptoBridge(),
         retryDebounce: Duration.zero,
         periodicRetryInterval: const Duration(hours: 1),
         uploadPostMediaFn:
@@ -212,7 +216,7 @@ void main() {
         p2pService: p2pService,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
-        bridge: FakeBridge(),
+        bridge: PassthroughCryptoBridge(),
         accountMigrationNetworkGate:
             ({String? peerId, required String operation}) async {
               gateCalls++;
@@ -270,7 +274,7 @@ void main() {
         p2pService: p2pService,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
-        bridge: FakeBridge(),
+        bridge: PassthroughCryptoBridge(),
       );
       final retriedAgain = await retryPendingPostMediaUploads(
         postRepo: posts,
@@ -278,7 +282,7 @@ void main() {
         p2pService: p2pService,
         secureKeyStore: secureKeyStore,
         imageProcessor: imageProcessor,
-        bridge: FakeBridge(),
+        bridge: PassthroughCryptoBridge(),
       );
 
       expect(retried, 1);

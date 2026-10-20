@@ -1,4 +1,4 @@
-import 'dart:convert';
+import '../support/legacy_post_state.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
@@ -7,7 +7,6 @@ import 'package:flutter_app/features/posts/application/pass_post_along_use_case.
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
-import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -64,12 +63,14 @@ void main() {
   });
 
   test(
-    'encrypted repost direct delivery goes through router and listener for both explicit recipient and original author',
+    'rejects legacy pass: encrypted repost direct delivery goes through router and listener for both explicit recipient and original author',
     () async {
       await _seedSharedPost(sender: sender, author: author);
-      final authorWireMessage = author.p2pService.messageStream.first;
-      final recipientWireMessage = recipient.p2pService.messageStream.first;
 
+      final previousPassState = await snapshotLegacyPostState(
+        sender.postRepo,
+        postId: 'post-1',
+      );
       final (result, pass) = await passPostAlong(
         p2pService: sender.p2pService,
         postRepo: sender.postRepo,
@@ -80,83 +81,24 @@ void main() {
         senderUsername: sender.username,
         recipientPeerIds: const <String>['peer-cara'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-      await _waitForPassCount(author, expectedCount: 1);
-      await _waitForPassCount(recipient, expectedCount: 1);
-
-      final authorJson =
-          jsonDecode(
-                (await authorWireMessage.timeout(
-                  const Duration(seconds: 1),
-                )).content,
-              )
-              as Map<String, dynamic>;
-      final recipientJson =
-          jsonDecode(
-                (await recipientWireMessage.timeout(
-                  const Duration(seconds: 1),
-                )).content,
-              )
-              as Map<String, dynamic>;
-      final authorPayload = _decodeEncryptedPassPayload(authorJson);
-      final recipientPayload = _decodeEncryptedPassPayload(recipientJson);
-
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
       expect(
-        PostPassEnvelope.parseEncryptedEnvelope(jsonEncode(authorJson)),
-        isNotNull,
-      );
-      expect(
-        PostPassEnvelope.parseEncryptedEnvelope(jsonEncode(recipientJson)),
-        isNotNull,
-      );
-      expect(authorJson['version'], '2');
-      expect(recipientJson['version'], '2');
-      expect(authorPayload['post_id'], 'post-1');
-      expect(recipientPayload['post_id'], 'post-1');
-      expect(authorPayload['participant_peer_ids'], <String>[
-        'peer-alice',
-        'peer-bob',
-        'peer-cara',
-      ]);
-      expect(recipientPayload['participant_peer_ids'], <String>[
-        'peer-alice',
-        'peer-bob',
-        'peer-cara',
-      ]);
-      expect(authorPayload['repost_total_baseline'], 0);
-      expect(recipientPayload['repost_total_baseline'], 0);
-      expect(await recipient.postRepo.getPost('post-1'), isNotNull);
-      expect(await author.postRepo.getPost('post-1'), isNotNull);
-      expect(
-        await author.postRepo.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
-      );
-      expect(
-        await recipient.postRepo.loadRepostEngagementParticipantPeerIds(
-          'post-1',
-        ),
-        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
-      );
-      expect(
-        sender.bridge.commandLog.where(
-          (command) => command == 'message.encrypt',
-        ),
-        hasLength(2),
+        await snapshotLegacyPostState(sender.postRepo, postId: 'post-1'),
+        previousPassState,
       );
     },
   );
 
   test(
-    'encrypted multi-recipient repost teaches the author about all new recipients while keeping each recipient copy scoped to itself',
+    'rejects legacy pass: encrypted multi-recipient repost teaches the author about all new recipients while keeping each recipient copy scoped to itself',
     () async {
       await _seedSharedPost(sender: sender, author: author);
-      final authorWireMessage = author.p2pService.messageStream.first;
-      final recipientWireMessage = recipient.p2pService.messageStream.first;
-      final secondRecipientWireMessage =
-          secondRecipient.p2pService.messageStream.first;
 
+      final previousPassState = await snapshotLegacyPostState(
+        sender.postRepo,
+        postId: 'post-1',
+      );
       final (result, pass) = await passPostAlong(
         p2pService: sender.p2pService,
         postRepo: sender.postRepo,
@@ -167,69 +109,11 @@ void main() {
         senderUsername: sender.username,
         recipientPeerIds: const <String>['peer-cara', 'peer-dana'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-      await _waitForPassCount(author, expectedCount: 1);
-      await _waitForPassCount(recipient, expectedCount: 1);
-      await _waitForPassCount(secondRecipient, expectedCount: 1);
-
-      final authorPayload = _decodeEncryptedPassPayload(
-        jsonDecode(
-              (await authorWireMessage.timeout(
-                const Duration(seconds: 1),
-              )).content,
-            )
-            as Map<String, dynamic>,
-      );
-      final recipientPayload = _decodeEncryptedPassPayload(
-        jsonDecode(
-              (await recipientWireMessage.timeout(
-                const Duration(seconds: 1),
-              )).content,
-            )
-            as Map<String, dynamic>,
-      );
-      final secondRecipientPayload = _decodeEncryptedPassPayload(
-        jsonDecode(
-              (await secondRecipientWireMessage.timeout(
-                const Duration(seconds: 1),
-              )).content,
-            )
-            as Map<String, dynamic>,
-      );
-
-      expect(authorPayload['participant_peer_ids'], <String>[
-        'peer-alice',
-        'peer-bob',
-        'peer-cara',
-        'peer-dana',
-      ]);
-      expect(recipientPayload['participant_peer_ids'], <String>[
-        'peer-alice',
-        'peer-bob',
-        'peer-cara',
-      ]);
-      expect(secondRecipientPayload['participant_peer_ids'], <String>[
-        'peer-alice',
-        'peer-bob',
-        'peer-dana',
-      ]);
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
       expect(
-        await author.postRepo.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-alice', 'peer-bob', 'peer-cara', 'peer-dana'},
-      );
-      expect(
-        await recipient.postRepo.loadRepostEngagementParticipantPeerIds(
-          'post-1',
-        ),
-        <String>{'peer-alice', 'peer-bob', 'peer-cara'},
-      );
-      expect(
-        await secondRecipient.postRepo.loadRepostEngagementParticipantPeerIds(
-          'post-1',
-        ),
-        <String>{'peer-alice', 'peer-bob', 'peer-dana'},
+        await snapshotLegacyPostState(sender.postRepo, postId: 'post-1'),
+        previousPassState,
       );
     },
   );
@@ -254,30 +138,6 @@ Future<void> _seedSharedPost({
   );
   await sender.postRepo.savePost(post);
   await author.postRepo.savePost(post);
-}
-
-Future<void> _waitForPassCount(
-  _EncryptedPassUser user, {
-  required int expectedCount,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadPostPasses('post-1')).length ==
-        expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for encrypted repost delivery');
 }
 
 class _EncryptedPassUser {
@@ -356,9 +216,4 @@ class _EncryptedPassUser {
     postRepo.dispose();
     p2pService.dispose();
   }
-}
-
-Map<String, dynamic> _decodeEncryptedPassPayload(Map<String, dynamic> json) {
-  final encrypted = json['encrypted'] as Map<String, dynamic>;
-  return jsonDecode(encrypted['ciphertext'] as String) as Map<String, dynamic>;
 }

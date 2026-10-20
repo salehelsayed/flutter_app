@@ -1,5 +1,6 @@
 import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:math';
@@ -381,7 +382,6 @@ import 'package:flutter_app/features/push/application/wake_token_reissue_coalesc
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
-import 'package:flutter_app/features/posts/application/publish_post_presence_update_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_presence_listener.dart';
 import 'package:flutter_app/features/posts/application/post_comment_listener.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
@@ -390,6 +390,7 @@ import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/application/post_reaction_listener.dart';
 import 'package:flutter_app/features/groups/application/sweep_expired_group_invites_use_case.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
+import 'package:flutter_app/features/posts/application/post_expiry_scheduler.dart';
 import 'package:flutter_app/features/posts/data/repositories/contact_presence_snapshot_repository_impl.dart';
 import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:flutter_app/features/posts/data/repositories/posts_privacy_settings_repository_impl.dart';
@@ -703,10 +704,13 @@ final class ProductionApplicationBootstrap
     // Engine teardown (native request or Dart `detached`) ends a live call
     // first, so its terminate can still resolve the peer from SQLCipher and
     // leave through Go before either is shut down.
+    void Function()? disposeThoughtExpiry;
     final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
-      shutdownRuntime: () =>
-          canonicalWritableRuntimeSession?.shutdown() ??
-          Future<bool>.value(true),
+      shutdownRuntime: () {
+        disposeThoughtExpiry?.call();
+        return canonicalWritableRuntimeSession?.shutdown() ??
+            Future<bool>.value(true);
+      },
     );
     Future<bool> shutdownCanonicalRuntime() =>
         canonicalRuntimeShutdownSequence.shutdown();
@@ -4469,6 +4473,7 @@ final class ProductionApplicationBootstrap
           iosNotificationRecoveryCoordinator?.settleConversationRead,
       onAllNotificationsCleared: iosNotificationRecoveryCoordinator?.reconcile,
     );
+
     final groupNotificationPresentationCoordinator =
         GroupNotificationPresentationCoordinator();
 
@@ -6181,30 +6186,8 @@ final class ProductionApplicationBootstrap
       quiesceIncomingMedia: () => mediaAttachmentRepository
           .runGroupMediaBlobCustodyLifecycle<void>(() async {}),
     );
-    nearbyLocationService = NearbyLocationServiceImpl(
-      settingsRepository: postsPrivacySettingsRepository,
-      platformAdapter: GeolocatorNearbyLocationPlatformAdapter(),
-      publishPostPresenceUpdate:
-          ({
-            required status,
-            required capturedAt,
-            latE3,
-            lngE3,
-            accuracyM,
-            reason,
-          }) {
-            return publishPostPresenceUpdate(
-              p2pService: p2pService,
-              contactRepo: contactRepository,
-              status: status,
-              capturedAt: capturedAt,
-              latE3: latE3,
-              lngE3: lngE3,
-              accuracyM: accuracyM,
-              reason: reason,
-            );
-          },
-    );
+    // Plan 407: no startup or resume location work for Thoughts.
+    nearbyLocationService = const DisabledNearbyLocationService();
 
     // Create message router — single subscription, routes by type
     final messageRouter = IncomingMessageRouter(p2pService: p2pService);
@@ -6818,6 +6801,7 @@ final class ProductionApplicationBootstrap
     }
 
     final postListener = PostListener(
+      mediaFileManager: mediaFileManager,
       postCreateStream: messageRouter.postCreateStream,
       postRepo: postRepository,
       contactRepo: contactRepository,
@@ -9320,6 +9304,45 @@ final class ProductionApplicationBootstrap
       ),
     );
 
+    final postExpiryScheduler = PostExpiryScheduler(
+      postChanges: postRepository.postChanges,
+      onPostChanged: (postId) async {
+        // App-root's resume sweep may delete before this scheduler runs. Its
+        // postChanges ID still retires the exact card; failed cancellations
+        // remain queued by the scheduler until a later attempt succeeds.
+        if (await postRepository.getPost(postId) == null) {
+          await notificationService.cancelConversationNotification(
+            NotificationRouteTarget.post(postId).toPayload(),
+          );
+        }
+      },
+      loadNextExpiry: () => dbLoadNextPostExpiry(db),
+      sweep: () async {
+        await sweepExpiredPosts(
+          postRepo: postRepository,
+          mediaFileManager: mediaFileManager,
+        );
+      },
+    );
+    final postExpiryLifecycle = PostExpiryLifecycleBinding(postExpiryScheduler);
+    disposeThoughtExpiry = postExpiryLifecycle.dispose;
+    Future<void>? postColdRecovery;
+    Future<void> ensurePostColdRecovery() => postColdRecovery ??= () async {
+      try {
+        // DB migrations have completed before this bootstrap receives `db`.
+        // Orphans from a killed upgrade are removed before any post retry.
+        await mediaFileManager.deleteOrphanPostMedia(
+          await dbLoadAllPostIds(db),
+        );
+        await postExpiryScheduler.start();
+        postExpiryLifecycle.attach();
+      } catch (_) {
+        // A later startup retry must run the failed local cleanup again.
+        postColdRecovery = null;
+        rethrow;
+      }
+    }();
+
     final pendingPostMediaUploadRetrier = PendingPostMediaUploadRetrier(
       p2pService: p2pService,
       postRepo: postRepository,
@@ -9395,6 +9418,10 @@ final class ProductionApplicationBootstrap
       if (liveServicesStarted) {
         return;
       }
+      await liveServiceStartupSteps.runAsync(
+        'thoughts_local_cleanup',
+        ensurePostColdRecovery,
+      );
       // 234 Session 03: this is the shared cold-start recovery future also
       // kicked after runApp. Await it before even consulting the network gate so
       // bridge/listener/P2P startup can never overtake local terminalization and
@@ -9991,8 +10018,10 @@ final class ProductionApplicationBootstrap
         directMediaBlobLocalCleanup: cleanupDirectMediaBlobCustodyLocally,
         stopPrivateMediaExpiryScheduler:
             privateMediaLifecycleForegroundRuntime.onBackgrounded,
-        disposePrivateMediaExpiryScheduler:
-            privateMediaLifecycleForegroundRuntime.dispose,
+        disposePrivateMediaExpiryScheduler: () {
+          disposeThoughtExpiry?.call();
+          privateMediaLifecycleForegroundRuntime.dispose();
+        },
         chatMessageListener: chatMessageListener,
         postListener: postListener,
         postCommentListener: postCommentListener,
@@ -10478,7 +10507,10 @@ final class ProductionApplicationBootstrap
         // Migrated-out startup has already refused account runtime work. Keep
         // the canonical lease until normal teardown, so a background engine
         // cannot reopen storage between deletion and secure-key cleanup.
-        eraseLocalAccountDatabase: () => eraseEncryptedDatabase(db),
+        eraseLocalAccountDatabase: () async {
+          disposeThoughtExpiry?.call();
+          await eraseEncryptedDatabase(db);
+        },
         accountMigrationRecoverExportPause: () async {
           if (accountMigrationTransferRuntime.hasActiveExportRun) {
             return false;
@@ -10520,6 +10552,7 @@ final class ProductionApplicationBootstrap
           }
         },
         onAppDetached: () async {
+          disposeThoughtExpiry?.call();
           if (kDebugMode && Platform.isAndroid) {
             DebugCallEvidenceObserver.uninstall(debugCallEvidenceObserver);
           }
@@ -10567,16 +10600,12 @@ final class ProductionApplicationBootstrap
       // causally ordered behind it.
       unawaited(ensurePrivateMediaColdRecovery());
       unawaited(
-        sweepExpiredPosts(
-          postRepo: postRepository,
-          mediaFileManager: mediaFileManager,
-        ).catchError((Object error, StackTrace stackTrace) {
+        ensurePostColdRecovery().catchError((Object error) {
           emitFlowEvent(
             layer: 'FL',
             event: 'POST_SWEEP_STARTUP_ERROR',
-            details: {'error': error.toString()},
+            details: {'errorType': error.runtimeType.toString()},
           );
-          return <String>[];
         }),
       );
       unawaited(

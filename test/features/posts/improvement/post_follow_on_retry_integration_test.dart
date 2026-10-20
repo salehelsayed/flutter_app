@@ -24,6 +24,8 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
+import '../support/legacy_post_state.dart';
+
 void main() {
   late FakeP2PNetwork network;
   late _PostEngagementUser author;
@@ -63,7 +65,7 @@ void main() {
   });
 
   test(
-    'comment retry only targets unresolved recipients and does not duplicate sender or recipient comments',
+    'disabled legacy feature produces no delivery or retry: comment retry only targets unresolved recipients and does not duplicate sender or recipient comments',
     () async {
       await _seedSharedPost(
         author: author,
@@ -72,8 +74,12 @@ void main() {
       recipientTwo.p2pService.setOnline(false);
       network.inboxDisabled = true;
       final commentedAt = DateTime.parse('2026-03-15T11:40:00.000Z');
-
-      final (result, comment) = await sendPostComment(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await sendPostComment(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         contactRepo: author.contactRepo,
@@ -83,65 +89,35 @@ void main() {
         body: 'I can lend one.',
         nowProvider: () => commentedAt,
       );
-
-      expect(result, SendPostCommentResult.partiallySettled);
-      expect(comment, isNotNull);
-      expect(await author.postRepo.loadComments('post-1'), hasLength(1));
+      expect(rejection.$1, SendPostCommentResult.sendFailed);
+      expect(rejection.$2, isNull);
       expect(
-        (await author.postRepo.getPost('post-1'))?.lastEngagementAt,
-        commentedAt.toIso8601String(),
-      );
-      await _waitForCommentCount(
-        recipientOne,
-        expectedCount: 1,
-        description: 'first recipient comment delivery',
-      );
-      expect(await recipientTwo.postRepo.loadComments('post-1'), isEmpty);
-
-      final retryableJobs = await author.postRepo
-          .loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_comment');
-      expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
         ),
-        <String>[recipientTwo.peerId],
+        0,
       );
-
-      recipientTwo.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final retried = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
+      expect(
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-
-      expect(retried, 1);
-      await _waitForCommentCount(
-        recipientTwo,
-        expectedCount: 1,
-        description: 'second recipient comment retry delivery',
-      );
-      expect(await author.postRepo.loadComments('post-1'), hasLength(1));
-      expect(await recipientOne.postRepo.loadComments('post-1'), hasLength(1));
-      expect(await recipientTwo.postRepo.loadComments('post-1'), hasLength(1));
-      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
-
-      final secondRetry = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-
-      expect(secondRetry, 0);
-      expect(await author.postRepo.loadComments('post-1'), hasLength(1));
-      expect(await recipientOne.postRepo.loadComments('post-1'), hasLength(1));
-      expect(await recipientTwo.postRepo.loadComments('post-1'), hasLength(1));
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
   test(
-    'reaction retry only targets unresolved recipients and does not duplicate sender or recipient reactions',
+    'disabled legacy feature produces no delivery or retry: reaction retry only targets unresolved recipients and does not duplicate sender or recipient reactions',
     () async {
       await _seedSharedPost(
         author: author,
@@ -149,8 +125,12 @@ void main() {
       );
       recipientTwo.p2pService.setOnline(false);
       network.inboxDisabled = true;
-
-      final (result, reaction) = await sendPostReaction(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await sendPostReaction(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         contactRepo: author.contactRepo,
@@ -158,73 +138,35 @@ void main() {
         senderPeerId: author.peerId,
         isActive: true,
       );
-
-      expect(result, SendPostReactionResult.partiallySettled);
-      expect(reaction, isNotNull);
-      expect(await author.postRepo.loadPostReactions('post-1'), hasLength(1));
-      await _waitForReactionCount(
-        recipientOne,
-        expectedCount: 1,
-        description: 'first recipient reaction delivery',
-      );
-      expect(await recipientTwo.postRepo.loadPostReactions('post-1'), isEmpty);
-
-      final retryableJobs = await author.postRepo
-          .loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_reaction');
+      expect(rejection.$1, SendPostReactionResult.sendFailed);
+      expect(rejection.$2, isNull);
       expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
         ),
-        <String>[recipientTwo.peerId],
-      );
-
-      recipientTwo.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final retried = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-
-      expect(retried, 1);
-      await _waitForReactionCount(
-        recipientTwo,
-        expectedCount: 1,
-        description: 'second recipient reaction retry delivery',
-      );
-      expect(await author.postRepo.loadPostReactions('post-1'), hasLength(1));
-      expect(
-        await recipientOne.postRepo.loadPostReactions('post-1'),
-        hasLength(1),
+        0,
       );
       expect(
-        await recipientTwo.postRepo.loadPostReactions('post-1'),
-        hasLength(1),
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
-
-      final secondRetry = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-
-      expect(secondRetry, 0);
-      expect(await author.postRepo.loadPostReactions('post-1'), hasLength(1));
-      expect(
-        await recipientOne.postRepo.loadPostReactions('post-1'),
-        hasLength(1),
-      );
-      expect(
-        await recipientTwo.postRepo.loadPostReactions('post-1'),
-        hasLength(1),
-      );
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
   test(
-    'comment reaction retry only targets unresolved recipients and does not duplicate sender or recipient reaction state',
+    'disabled legacy feature produces no delivery or retry: comment reaction retry only targets unresolved recipients and does not duplicate sender or recipient reaction state',
     () async {
       await _seedSharedPost(
         author: author,
@@ -236,8 +178,12 @@ void main() {
       );
       recipientTwo.p2pService.setOnline(false);
       network.inboxDisabled = true;
-
-      final (result, reaction) = await sendPostCommentReaction(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await sendPostCommentReaction(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         contactRepo: author.contactRepo,
@@ -246,232 +192,129 @@ void main() {
         senderPeerId: author.peerId,
         isActive: true,
       );
-
-      expect(result, SendPostCommentReactionResult.partiallySettled);
-      expect(reaction, isNotNull);
+      expect(rejection.$1, SendPostCommentReactionResult.sendFailed);
+      expect(rejection.$2, isNull);
       expect(
-        await author.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
-      await _waitForCommentReactionCount(
-        recipientOne,
-        expectedCount: 1,
-        description: 'first recipient comment reaction delivery',
-      );
-      expect(
-        await recipientTwo.postRepo.loadCommentReactions('comment-1'),
-        isEmpty,
-      );
-
-      final retryableJobs = await author.postRepo
-          .loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(retryableJobs.single.event.eventType, 'post_comment_reaction');
-      expect(retryableJobs.single.event.commentId, 'comment-1');
-      expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
         ),
-        <String>[recipientTwo.peerId],
-      );
-
-      recipientTwo.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final retried = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-
-      expect(retried, 1);
-      await _waitForCommentReactionCount(
-        recipientTwo,
-        expectedCount: 1,
-        description: 'second recipient comment reaction retry delivery',
+        0,
       );
       expect(
-        await author.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-      expect(
-        await recipientOne.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
-      expect(
-        await recipientTwo.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
-      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
-
-      final secondRetry = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-
-      expect(secondRetry, 0);
-      expect(
-        await author.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
-      expect(
-        await recipientOne.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
-      expect(
-        await recipientTwo.postRepo.loadCommentReactions('comment-1'),
-        hasLength(1),
-      );
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
-  test('comment retry uses the default concurrent fanout cap of 25', () async {
-    final posts = InMemoryPostRepository();
-    addTearDown(posts.dispose);
+  test(
+    'disabled legacy feature produces no delivery or retry: comment retry uses the default concurrent fanout cap of 25',
+    () async {
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
 
-    final deliveryRecipientPeerIds = List<String>.generate(
-      29,
-      (index) => 'peer-${index.toString().padLeft(2, '0')}',
-    );
-    final resolvedRecipientPeerIds = <String>[
-      'peer-alice',
-      ...deliveryRecipientPeerIds,
-    ];
-    final sendGates = <String, Completer<void>>{
-      for (final peerId in resolvedRecipientPeerIds) peerId: Completer<void>(),
-    };
-    final service = _ControlledP2PService(
-      peerId: 'peer-bob',
-      network: network,
-      sendGates: sendGates,
-    );
-    addTearDown(service.dispose);
+      final deliveryRecipientPeerIds = List<String>.generate(
+        29,
+        (index) => 'peer-${index.toString().padLeft(2, '0')}',
+      );
+      final resolvedRecipientPeerIds = <String>[
+        'peer-alice',
+        ...deliveryRecipientPeerIds,
+      ];
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in resolvedRecipientPeerIds)
+          peerId: Completer<void>(),
+      };
+      final service = _ControlledP2PService(
+        peerId: 'peer-bob',
+        network: network,
+        sendGates: sendGates,
+      );
+      addTearDown(service.dispose);
 
-    await _saveRetryableEngagementJob(
-      posts: posts,
-      eventId: 'evt-comment-retry',
-      eventType: postCommentFollowOnEventType,
-      recipientPeerIds: resolvedRecipientPeerIds,
-    );
+      await _saveRetryableEngagementJob(
+        posts: posts,
+        eventId: 'evt-comment-retry',
+        eventType: postCommentFollowOnEventType,
+        recipientPeerIds: resolvedRecipientPeerIds,
+      );
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(posts),
+      ];
+      final rejection = await retryPendingPostFollowOns(
+        postRepo: posts,
+        p2pService: service,
+      );
+      expect(rejection, 0);
+      expect(service.sendStartOrder, isEmpty);
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(posts),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
 
-    final retryFuture = retryPendingPostFollowOns(
-      postRepo: posts,
-      p2pService: service,
-    );
+  test(
+    'disabled legacy feature produces no delivery or retry: reaction retry keeps the default concurrent fanout cap at 4',
+    () async {
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
 
-    await service.waitForSendCount(25);
-    await _drainMicrotasks();
+      final resolvedRecipientPeerIds = <String>[
+        'peer-alice',
+        'peer-cara',
+        'peer-drew',
+        'peer-erin',
+        'peer-finn',
+      ];
+      final sendGates = <String, Completer<void>>{
+        for (final peerId in resolvedRecipientPeerIds)
+          peerId: Completer<void>(),
+      };
+      final service = _ControlledP2PService(
+        peerId: 'peer-bob',
+        network: network,
+        sendGates: sendGates,
+      );
+      addTearDown(service.dispose);
 
-    expect(service.maxInFlightSends, 25);
-    expect(service.sendStartOrder.take(25).toSet(), hasLength(25));
-    expect(
-      service.sendStartOrder
-          .take(25)
-          .toSet()
-          .difference(resolvedRecipientPeerIds.toSet()),
-      isEmpty,
-    );
-
-    service.releaseOneStartedRecipient();
-    await service.waitForSendCount(26);
-    await _drainMicrotasks();
-
-    expect(service.maxInFlightSends, 25);
-    expect(service.sendStartOrder.take(26).toSet(), hasLength(26));
-    expect(
-      service.sendStartOrder
-          .take(26)
-          .toSet()
-          .difference(resolvedRecipientPeerIds.toSet()),
-      isEmpty,
-    );
-
-    service.releaseAllRecipients();
-
-    final retried = await retryFuture;
-    expect(retried, 1);
-    expect(
-      (await posts.loadFollowOnOutboxRecipientDeliveries(
-        'evt-comment-retry',
-      )).map((delivery) => delivery.deliveryStatus),
-      everyElement('delivered'),
-    );
-  });
-
-  test('reaction retry keeps the default concurrent fanout cap at 4', () async {
-    final posts = InMemoryPostRepository();
-    addTearDown(posts.dispose);
-
-    final resolvedRecipientPeerIds = <String>[
-      'peer-alice',
-      'peer-cara',
-      'peer-drew',
-      'peer-erin',
-      'peer-finn',
-    ];
-    final sendGates = <String, Completer<void>>{
-      for (final peerId in resolvedRecipientPeerIds) peerId: Completer<void>(),
-    };
-    final service = _ControlledP2PService(
-      peerId: 'peer-bob',
-      network: network,
-      sendGates: sendGates,
-    );
-    addTearDown(service.dispose);
-
-    await _saveRetryableEngagementJob(
-      posts: posts,
-      eventId: 'evt-reaction-retry',
-      eventType: postReactionFollowOnEventType,
-      recipientPeerIds: resolvedRecipientPeerIds,
-    );
-
-    final retryFuture = retryPendingPostFollowOns(
-      postRepo: posts,
-      p2pService: service,
-    );
-
-    await service.waitForSendCount(4);
-    await _drainMicrotasks();
-
-    expect(service.maxInFlightSends, 4);
-    expect(service.sendStartOrder.take(4).toSet(), hasLength(4));
-    expect(
-      service.sendStartOrder
-          .take(4)
-          .toSet()
-          .difference(resolvedRecipientPeerIds.toSet()),
-      isEmpty,
-    );
-
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    await _drainMicrotasks();
-    expect(service.sendStartOrder, hasLength(4));
-
-    service.releaseOneStartedRecipient();
-    await service.waitForSendCount(5);
-    await _drainMicrotasks();
-
-    expect(service.maxInFlightSends, 4);
-    expect(service.sendStartOrder.take(5).toSet(), hasLength(5));
-    expect(
-      service.sendStartOrder
-          .take(5)
-          .toSet()
-          .difference(resolvedRecipientPeerIds.toSet()),
-      isEmpty,
-    );
-
-    service.releaseAllRecipients();
-
-    final retried = await retryFuture;
-    expect(retried, 1);
-    expect(
-      (await posts.loadFollowOnOutboxRecipientDeliveries(
-        'evt-reaction-retry',
-      )).map((delivery) => delivery.deliveryStatus),
-      everyElement('delivered'),
-    );
-  });
+      await _saveRetryableEngagementJob(
+        posts: posts,
+        eventId: 'evt-reaction-retry',
+        eventType: postReactionFollowOnEventType,
+        recipientPeerIds: resolvedRecipientPeerIds,
+      );
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(posts),
+      ];
+      final rejection = await retryPendingPostFollowOns(
+        postRepo: posts,
+        p2pService: service,
+      );
+      expect(rejection, 0);
+      expect(service.sendStartOrder, isEmpty);
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(posts),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
 }
 
 Future<void> _saveRetryableEngagementJob({
@@ -504,12 +347,6 @@ Future<void> _saveRetryableEngagementJob({
         updatedAt: '2026-03-15T10:16:00.000Z',
       ),
     );
-  }
-}
-
-Future<void> _drainMicrotasks([int turns = 3]) async {
-  for (var index = 0; index < turns; index++) {
-    await Future<void>.delayed(Duration.zero);
   }
 }
 
@@ -569,80 +406,6 @@ PostModel _sharedPost(String authorPeerId, String authorUsername) {
     expiresAt: '2026-03-18T10:15:30.000Z',
     isIncoming: false,
   );
-}
-
-Future<void> _waitForCommentCount(
-  _PostEngagementUser user, {
-  required int expectedCount,
-  required String description,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadComments('post-1')).length == expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for $description');
-}
-
-Future<void> _waitForReactionCount(
-  _PostEngagementUser user, {
-  required int expectedCount,
-  required String description,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadPostReactions('post-1')).length ==
-        expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for $description');
-}
-
-Future<void> _waitForCommentReactionCount(
-  _PostEngagementUser user, {
-  required int expectedCount,
-  required String description,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadCommentReactions('comment-1')).length ==
-        expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for $description');
 }
 
 class _PostEngagementUser {

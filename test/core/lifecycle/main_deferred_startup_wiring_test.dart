@@ -119,6 +119,7 @@ void main() {
       final startupBody = productionSource.substring(start, end);
 
       const asyncSteps = <String, String>{
+        'thoughts_local_cleanup': 'ensurePostColdRecovery',
         'private_media_cold_recovery':
             'await ensurePrivateMediaColdRecovery();',
         'direct_media_blob_local_cleanup':

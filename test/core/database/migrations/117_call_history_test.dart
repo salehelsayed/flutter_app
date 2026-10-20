@@ -43,7 +43,7 @@ void main() {
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
       );
-      expect(currentIdentityDatabaseVersion, 121);
+      expect(currentIdentityDatabaseVersion, 122);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       expect(await db.query(kCallHistoryTable), isEmpty);
 
@@ -121,8 +121,8 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '117_call_history');
         expect(entries.single.run, same(runCallHistoryMigration));
-        // v118 call read state and v119 quiet recovery follow v117.
-        expect(registry[registry.length - 5], same(entries.single));
+        // v118-v122, including Thoughts reset, follow v117.
+        expect(registry[registry.length - 6], same(entries.single));
       }
     },
   );

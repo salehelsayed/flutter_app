@@ -4,6 +4,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -18,6 +19,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -54,6 +56,7 @@ void main() {
       );
 
       final (result, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: stoppedService,
         postRepo: posts,
         contactRepo: contacts,
@@ -77,6 +80,7 @@ void main() {
       network.inboxDisabled = true;
 
       final (result, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
@@ -108,6 +112,7 @@ void main() {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
     final (result, post) = await sendPost(
+      bridge: FakeBridge(),
       p2pService: aliceService,
       postRepo: posts,
       contactRepo: contacts,

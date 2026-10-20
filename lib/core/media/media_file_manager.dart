@@ -590,6 +590,32 @@ class MediaFileManager {
     );
   }
 
+  /// Plan 407: finish crash-interrupted cleanup before post retriers start.
+  Future<void> deleteOrphanPostMedia(Set<String> existingPostIds) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final root = Directory(p.join(appDir.path, 'post_media'));
+    if (!await root.exists()) return;
+    await for (final entry in root.list(followLinks: false)) {
+      if (entry is! Directory ||
+          existingPostIds.contains(p.basename(entry.path))) {
+        continue;
+      }
+      await deleteAppOwnedMediaDirectoryIfExists(
+        directory: entry,
+        caller: 'MediaFileManager.deleteOrphanPostMedia',
+        reason: 'orphan_post_media_cleanup',
+        recursive: true,
+      );
+      // A failed deletion must block startup so retriers cannot overtake it.
+      if (await entry.exists()) {
+        throw FileSystemException(
+          'Could not remove orphan post media',
+          entry.path,
+        );
+      }
+    }
+  }
+
   Future<Directory> _mediaDir(String contactPeerId) async {
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(appDir.path, 'media', contactPeerId));

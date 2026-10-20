@@ -225,19 +225,18 @@ class IncomingMessageRouter {
         case 'post_create':
           _postCreateController.add(message);
         case 'post_comment':
-          _postCommentController.add(message);
         case 'post_reaction':
-          _postReactionController.add(message);
         case 'post_comment_reaction':
-          _postCommentReactionController.add(message);
         case 'post_presence_update':
-          _postPresenceController.add(message);
         case 'post_pass':
-          _postPassController.add(message);
         case 'post_pin_update':
-          _postPinUpdateController.add(message);
         case 'post_pin_remove':
-          _postPinRemoveController.add(message);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'POST_FEATURE_DISABLED_DROP',
+            details: {'type': type},
+          );
+          break;
         case 'readiness_proof':
           // The inbox coordinator consumes this transport readiness signal.
           // It has no conversation/UI destination.

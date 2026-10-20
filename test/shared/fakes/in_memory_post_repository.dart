@@ -143,10 +143,7 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<List<PostModel>> loadExpiredPosts(String nowIso) async {
     return _posts.values
-        .where(
-          (post) =>
-              !post.keepAvailable && post.expiresAt.compareTo(nowIso) <= 0,
-        )
+        .where((post) => post.expiresAt.compareTo(nowIso) <= 0)
         .toList(growable: false)
       ..sort((a, b) => a.expiresAt.compareTo(b.expiresAt));
   }

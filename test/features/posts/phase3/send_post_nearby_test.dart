@@ -6,6 +6,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
@@ -21,6 +22,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: DateTime.now().toUtc().toIso8601String(),
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -118,6 +120,7 @@ void main() {
     );
 
     final (result, post) = await sendPost(
+      bridge: FakeBridge(),
       p2pService: p2pService,
       postRepo: posts,
       contactRepo: contacts,
@@ -188,6 +191,7 @@ void main() {
         ]);
 
     final (result, post) = await sendPost(
+      bridge: FakeBridge(),
       p2pService: p2pService,
       postRepo: posts,
       contactRepo: contacts,

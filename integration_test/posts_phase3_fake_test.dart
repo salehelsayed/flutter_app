@@ -10,6 +10,7 @@ import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 
+import '../test/core/bridge/fake_bridge.dart';
 import '../test/shared/fakes/fake_p2p_network.dart';
 import '../test/shared/fakes/fake_p2p_service_integration.dart';
 import '../test/shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
@@ -25,6 +26,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -59,7 +61,7 @@ class _FakeNearbyLocationPlatformAdapter
 
 void main() {
   testWidgets(
-    'nearby fanout stays radius-qualified and replay-safe after send time',
+    'legacy presence is dropped while all-friends thoughts stay replay-safe',
     (tester) async {
       final freshTime = DateTime.now().toUtc().subtract(
         const Duration(minutes: 5),
@@ -74,6 +76,7 @@ void main() {
       );
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
       final caraService = FakeP2PService(peerId: 'peer-cara', network: network);
+      aliceService.connectedPeers.add('peer-cara');
 
       final aliceContacts = InMemoryContactRepository()
         ..addTestContact(_contact('peer-bob', 'Bob'))
@@ -225,11 +228,15 @@ void main() {
         snapshotRepo: aliceSnapshots,
       )..start();
       final bobListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: bobRouter.postCreateStream,
         postRepo: bobPosts,
         contactRepo: bobContacts,
       )..start();
       final caraListener = PostListener(
+        bridge: FakeBridge(),
+        getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
         postCreateStream: caraRouter.postCreateStream,
         postRepo: caraPosts,
         contactRepo: caraContacts,
@@ -256,19 +263,20 @@ void main() {
       await aliceNearbyService.refreshInteractivelyFromSettings();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect((await aliceSnapshots.load('peer-bob'))?.lngE3, 13412);
-      expect((await aliceSnapshots.load('peer-cara'))?.lngE3, 13420);
+      expect(await aliceSnapshots.load('peer-bob'), isNull);
+      expect(await aliceSnapshots.load('peer-cara'), isNull);
 
       bobService.setOnline(false);
 
       final (result, sentPost) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: alicePosts,
         contactRepo: aliceContacts,
         senderPeerId: 'peer-alice',
         senderUsername: 'Alice',
         text: 'Lost dog near the bridge.',
-        audience: PostAudience.peopleNearby(radiusM: 500),
+        audience: PostAudience.allFriends(),
         contactPresenceSnapshotRepository: aliceSnapshots,
         postsPrivacySettingsRepository: alicePrivacySettings,
       );
@@ -277,7 +285,8 @@ void main() {
       expect(sentPost, isNotNull);
       expect(network.inboxCount('peer-bob'), 1);
       expect(network.inboxCount('peer-cara'), 0);
-      expect(await caraPosts.loadFeed(), isEmpty);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(await caraPosts.loadFeed(), hasLength(1));
 
       bobService.setOnline(true);
       bobPlatform.currentPosition = NearbyDevicePosition(
@@ -289,25 +298,25 @@ void main() {
       await bobNearbyService.refreshInteractivelyFromCompose();
       await tester.pump(const Duration(milliseconds: 50));
 
-      expect((await aliceSnapshots.load('peer-bob'))?.lngE3, 13422);
+      expect(await aliceSnapshots.load('peer-bob'), isNull);
 
       await bobService.drainOfflineInbox();
       await tester.pump(const Duration(milliseconds: 50));
 
       final bobFeed = await loadPostsFeed(postRepo: bobPosts);
       expect(bobFeed, hasLength(1));
-      expect(bobFeed.single.audience.kind, PostAudienceKind.peopleNearby);
-      expect(bobFeed.single.nearbyDistanceM, 474);
-      expect(bobFeed.single.nearbyDistanceLabel, '450m away');
-      expect(bobFeed.single.nearbySenderLatE3, 52520);
-      expect(bobFeed.single.nearbySenderLngE3, 13405);
+      expect(bobFeed.single.audience.kind, PostAudienceKind.allFriends);
+      expect(bobFeed.single.nearbyDistanceM, isNull);
+      expect(bobFeed.single.nearbyDistanceLabel, isNull);
+      expect(bobFeed.single.nearbySenderLatE3, isNull);
+      expect(bobFeed.single.nearbySenderLngE3, isNull);
       expect(
         (await bobPosts.getRecipientDeliveries(
           bobFeed.single.id,
         )).map((entry) => entry.recipientPeerId),
-        <String>['peer-bob'],
+        isEmpty,
       );
-      expect(await caraPosts.loadFeed(), isEmpty);
+      expect(await caraPosts.loadFeed(), hasLength(1));
     },
   );
 }

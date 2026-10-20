@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'dart:convert' show base64Decode;
 import 'dart:io';
 import 'dart:typed_data';
@@ -28,6 +29,7 @@ const _uuid = Uuid();
 const _maxPassAvatarBytes = 65536;
 
 enum PassPostAlongResult {
+  notAllowed,
   success,
   partiallySettled,
   queuedForRetry,
@@ -137,6 +139,10 @@ Future<(PassPostAlongResult, CreatedLocalPostPass?)> createLocalPostPass({
   AvatarNormalizationHelper? avatarNormalizer,
   ResolveStoredPathFn? resolveStoredPathFn,
 }) async {
+  if (rejectLegacyPostFeature('post_pass')) {
+    return (PassPostAlongResult.notAllowed, null);
+  }
+
   if (!p2pService.currentState.isStarted) {
     _emitRepostCreateAbort(postId: postId, reason: 'node_not_running');
     return (PassPostAlongResult.nodeNotRunning, null);

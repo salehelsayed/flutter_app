@@ -46,9 +46,12 @@ PostModel _post({
     authorUsername: 'Alice',
     text: 'Need a ladder',
     audience: PostAudience.allFriends(),
-    createdAt: '2026-03-15T10:00:00.000Z',
-    visibleAt: '2026-03-15T10:00:00.000Z',
-    expiresAt: '2026-03-18T10:00:00.000Z',
+    createdAt: DateTime.now().toUtc().toIso8601String(),
+    visibleAt: DateTime.now().toUtc().toIso8601String(),
+    expiresAt: DateTime.now()
+        .toUtc()
+        .add(const Duration(hours: 24))
+        .toIso8601String(),
     isIncoming: isIncoming,
     deliveryStatus: deliveryStatus,
   );
@@ -205,7 +208,8 @@ void main() {
   test(
     'reconnect runs media recovery before post-create delivery retry',
     () async {
-      final recordingP2PService = _RecordingFakeP2PService();
+      final recordingP2PService = _RecordingFakeP2PService()
+        ..isConnectedToPeerResult = true;
       final orderLog = recordingP2PService.orderLog;
       contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
       await posts.savePost(_post(id: 'post-ordered', deliveryStatus: 'failed'));
@@ -252,7 +256,7 @@ void main() {
   );
 
   test(
-    'offline to online transition retries queued repost deliveries through the post delivery retrier',
+    'offline to online transition leaves legacy repost deliveries unchanged',
     () async {
       contacts.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
       await posts.savePost(
@@ -299,24 +303,24 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      expect(p2pService.sendMessageWithReplyCallCount, 1);
-      expect(bridge.commandLog, contains('message.encrypt'));
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
       final deliveries = await posts.getPostPassRecipientDeliveries(
         pass.passId,
       );
       expect(deliveries, hasLength(1));
-      expect(deliveries.single.deliveryStatus, 'delivered');
-      expect(await posts.loadRetryableOutgoingPostPasses(), isEmpty);
+      expect(deliveries.single.deliveryStatus, 'failed');
+      expect(await posts.loadRetryableOutgoingPostPasses(), hasLength(1));
       expect(
         (await posts.loadPostPasses('post-pass-source')).single.deliveryStatus,
-        'sent',
+        'failed',
       );
       expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
     },
   );
 
   test(
-    'offline to online transition retries queued repost deliveries with the post-create concurrency cap of 25',
+    'offline to online transition retries thoughts with the concurrency cap of 25',
     () async {
       final recipientPeerIds = List<String>.generate(
         30,
@@ -334,6 +338,7 @@ void main() {
       );
       p2pService.dispose();
       p2pService = controlledP2PService;
+      controlledP2PService.isConnectedToPeerResult = true;
       retrier = PendingPostDeliveryRetrier(
         p2pService: controlledP2PService,
         postRepo: posts,
@@ -343,21 +348,7 @@ void main() {
         periodicRetryInterval: const Duration(hours: 1),
       );
 
-      await posts.savePost(_post(id: 'post-pass-25', deliveryStatus: 'sent'));
-      await posts.savePostPass(
-        const PostPassModel(
-          passId: 'pass-25',
-          eventId: 'evt-pass-25',
-          postId: 'post-pass-25',
-          senderPeerId: 'peer-self',
-          passerPeerId: 'peer-self',
-          passerUsername: 'Alice',
-          passedAt: '2026-03-15T10:00:02.000Z',
-          createdAt: '2026-03-15T10:00:02.000Z',
-          isIncoming: false,
-          deliveryStatus: 'failed',
-        ),
-      );
+      await posts.savePost(_post(id: 'post-pass-25', deliveryStatus: 'failed'));
 
       contacts.seed(
         recipientPeerIds.map((peerId) => _contact(peerId, peerId)).toList(),
@@ -366,8 +357,6 @@ void main() {
         await posts.saveRecipientDelivery(
           PostRecipientDelivery(
             postId: 'post-pass-25',
-            deliveryOwnerKind: postRecipientDeliveryOwnerKindPass,
-            deliveryOwnerId: 'pass-25',
             recipientPeerId: peerId,
             deliveryStatus: 'failed',
             lastAttemptAt: '2026-03-15T10:00:03.000Z',
@@ -416,7 +405,7 @@ void main() {
 
       await Future<void>.delayed(const Duration(milliseconds: 20));
 
-      final deliveries = await posts.getPostPassRecipientDeliveries('pass-25');
+      final deliveries = await posts.getRecipientDeliveries('post-pass-25');
       expect(deliveries, hasLength(30));
       expect(
         deliveries.every((delivery) => delivery.deliveryStatus == 'delivered'),
@@ -426,10 +415,7 @@ void main() {
         bridge.commandLog.where((command) => command == 'message.encrypt'),
         hasLength(30),
       );
-      expect(
-        (await posts.loadPostPasses('post-pass-25')).single.deliveryStatus,
-        'sent',
-      );
+      expect((await posts.getPost('post-pass-25'))!.deliveryStatus, 'sent');
       expect(controlledP2PService.maxInFlightSends, 25);
     },
   );

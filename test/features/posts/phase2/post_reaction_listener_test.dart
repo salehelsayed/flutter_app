@@ -35,7 +35,7 @@ PostModel _post(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
   );
 }
 
@@ -102,29 +102,39 @@ void main() {
     await commentReactionController.close();
   });
 
-  test('emits updates for post hearts and persists the latest state', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
-    await posts.savePost(_post('post-1'));
+  test(
+    'drops post reactions without emitting updates or persisting state',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      await posts.savePost(_post('post-1'));
 
-    postReactionController.add(
-      _reactionMessage(
-        type: 'post_reaction',
-        senderPeerId: 'peer-bob',
-        postId: 'post-1',
-        reactionId: 'post_heart:post-1:peer-bob',
-        eventId: 'evt-reaction-1',
-        isActive: true,
-      ),
-    );
+      final emitted = <Object>[];
+      final subscription = listener.incomingPostReactionStream.listen(
+        emitted.add,
+      );
+      addTearDown(subscription.cancel);
+      postReactionController.add(
+        _reactionMessage(
+          type: 'post_reaction',
+          senderPeerId: 'peer-bob',
+          postId: 'post-1',
+          reactionId: 'post_heart:post-1:peer-bob',
+          eventId: 'evt-reaction-1',
+          isActive: true,
+        ),
+      );
 
-    final update = await listener.incomingPostReactionStream.first.timeout(
-      const Duration(seconds: 1),
-    );
-    expect(update.reactionId, 'post_heart:post-1:peer-bob');
-    expect((await posts.loadPostReactions('post-1')).single.isActive, isTrue);
-  });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+      expect(notifications.shownGeneric, isEmpty);
+      expect(emitted, isEmpty);
+    },
+  );
 
-  test('stages comment-heart events until the target comment exists', () async {
+  test('drops orphan comment reactions without staging them', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     await posts.savePost(_post('post-1'));
     await posts.saveComment(
@@ -152,11 +162,14 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
+    expect(await posts.loadComments('post-1'), hasLength(1));
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
     expect(await posts.loadCommentReactions('comment-2'), isEmpty);
-    expect(await posts.loadPendingChildEvents('post-1'), hasLength(1));
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
   });
 
-  test('shows notifications for hearts on the local user post', () async {
+  test('does not notify for reactions on the local user thought', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     await posts.savePost(_ownPost('post-1'));
 
@@ -172,8 +185,11 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(notifications.shownGeneric, hasLength(1));
-    expect(notifications.shownGeneric.single.payload, 'post:post-1');
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-2'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
   });
 }
 
@@ -188,7 +204,7 @@ PostModel _ownPost(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
     isIncoming: false,
   );
 }

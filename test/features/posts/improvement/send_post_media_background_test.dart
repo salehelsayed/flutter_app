@@ -12,6 +12,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -26,6 +27,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 
@@ -408,6 +410,7 @@ void main() {
       expect(prepared.mediaDrafts, isEmpty);
 
       final (deliveryResult, deliveredPost) = await PostDeliveryRunner(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: posts,
       ).execute(prepared);
@@ -418,7 +421,13 @@ void main() {
       final inboxMessage =
           network.retrieveInbox('peer-bob').single['message'] as String;
       final payload = jsonDecode(inboxMessage) as Map<String, dynamic>;
-      final snapshot = payload['payload']['snapshot'] as Map<String, dynamic>;
+      final inner =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      final snapshot = inner['snapshot'] as Map<String, dynamic>;
       expect(snapshot['media_kind'], 'image');
       expect(snapshot['media'][0]['blob_id'], 'blob-1');
     },

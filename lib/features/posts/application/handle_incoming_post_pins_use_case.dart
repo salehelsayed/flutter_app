@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -36,6 +37,10 @@ handleIncomingPostPinUpdate({
   required ContactRepository contactRepo,
   bool allowStaging = true,
 }) async {
+  if (rejectLegacyPostFeature('post_pin_update')) {
+    return (HandleIncomingPostPinUpdateResult.notPostPinUpdate, null);
+  }
+
   final envelope = PostPinUpdateEnvelope.fromJson(message.content);
   if (envelope == null) {
     return (HandleIncomingPostPinUpdateResult.notPostPinUpdate, null);
@@ -130,6 +135,10 @@ handleIncomingPostPinRemove({
   required ContactRepository contactRepo,
   bool allowStaging = true,
 }) async {
+  if (rejectLegacyPostFeature('post_pin_remove')) {
+    return (HandleIncomingPostPinRemoveResult.notPostPinRemove, null);
+  }
+
   final envelope = PostPinRemoveEnvelope.fromJson(message.content);
   if (envelope == null) {
     return (HandleIncomingPostPinRemoveResult.notPostPinRemove, null);

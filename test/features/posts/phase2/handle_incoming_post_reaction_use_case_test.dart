@@ -35,7 +35,7 @@ PostModel _post(String postId) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
   );
 }
 
@@ -119,30 +119,10 @@ void main() {
     posts.dispose();
   });
 
-  test(
-    'stages orphan post reactions when the parent post is missing',
-    () async {
-      final (result, reaction) = await handleIncomingPostReaction(
-        message: _postReactionMessage(
-          senderPeerId: 'peer-bob',
-          postId: 'post-1',
-          reactionId: 'post_heart:post-1:peer-bob',
-          eventId: 'evt-reaction-1',
-          isActive: true,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostReactionResult.stagedPendingParent);
-      expect(reaction, isNull);
-      expect(await posts.loadPendingChildEvents('post-1'), hasLength(1));
-    },
-  );
-
-  test('stores post heart state for an existing post', () async {
-    await posts.savePost(_post('post-1'));
-
+  test('rejects orphan post reactions without staging them', () async {
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
     final (result, reaction) = await handleIncomingPostReaction(
       message: _postReactionMessage(
         senderPeerId: 'peer-bob',
@@ -155,17 +135,77 @@ void main() {
       contactRepo: contacts,
     );
 
-    expect(result, HandleIncomingPostReactionResult.reactionApplied);
-    expect(reaction, isNotNull);
-    expect((await posts.loadPostReactions('post-1')).single.isActive, isTrue);
+    expect(result, HandleIncomingPostReactionResult.notPostReaction);
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
   });
 
-  test('dedupes older post heart updates for the same reaction id', () async {
+  test('rejects post reactions for an existing thought', () async {
+    await posts.savePost(_post('post-1'));
+
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, reaction) = await handleIncomingPostReaction(
+      message: _postReactionMessage(
+        senderPeerId: 'peer-bob',
+        postId: 'post-1',
+        reactionId: 'post_heart:post-1:peer-bob',
+        eventId: 'evt-reaction-1',
+        isActive: true,
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+
+    expect(result, HandleIncomingPostReactionResult.notPostReaction);
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
+  });
+
+  test('rejects both newer and older updates to the same reaction', () async {
     await posts.savePost(_post('post-1'));
     final newerReactionAt = DateTime.now().toUtc().subtract(
       const Duration(minutes: 1),
     );
     final olderReactionAt = newerReactionAt.subtract(const Duration(hours: 1));
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
     await handleIncomingPostReaction(
       message: _postReactionMessage(
         senderPeerId: 'peer-bob',
@@ -192,33 +232,76 @@ void main() {
       contactRepo: contacts,
     );
 
-    expect(result, HandleIncomingPostReactionResult.staleIgnored);
-    expect((await posts.loadPostReactions('post-1')).single.isActive, isFalse);
-  });
-
-  test('stages comment hearts when the target comment is missing', () async {
-    await posts.savePost(_post('post-1'));
-
-    final (result, reaction) = await handleIncomingPostCommentReaction(
-      message: _commentReactionMessage(
-        senderPeerId: 'peer-bob',
-        postId: 'post-1',
-        commentId: 'comment-1',
-        reactionId: 'comment_heart:comment-1:peer-bob',
-        eventId: 'evt-comment-reaction-1',
-        isActive: true,
-      ),
-      postRepo: posts,
-      contactRepo: contacts,
+    expect(result, HandleIncomingPostReactionResult.notPostReaction);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
     );
-
-    expect(result, HandleIncomingPostCommentReactionResult.stagedPendingParent);
-    expect(reaction, isNull);
-    expect(await posts.loadPendingChildEvents('post-1'), hasLength(1));
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
   });
 
   test(
-    'persists the incoming sender as a repost-engagement participant for repost-thread comment reactions',
+    'rejects comment reactions when the target comment is missing',
+    () async {
+      await posts.savePost(_post('post-1'));
+
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
+      final (result, reaction) = await handleIncomingPostCommentReaction(
+        message: _commentReactionMessage(
+          senderPeerId: 'peer-bob',
+          postId: 'post-1',
+          commentId: 'comment-1',
+          reactionId: 'comment_heart:comment-1:peer-bob',
+          eventId: 'evt-comment-reaction-1',
+          isActive: true,
+        ),
+        postRepo: posts,
+        contactRepo: contacts,
+      );
+
+      expect(
+        result,
+        HandleIncomingPostCommentReactionResult.notPostCommentReaction,
+      );
+      expect(reaction, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+      expect(
+        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+        previousParticipants,
+      );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
+    },
+  );
+
+  test(
+    'rejects repost comment reactions without adding a participant',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -255,6 +338,9 @@ void main() {
       );
       contacts.addTestContact(_contact('peer-ibra', 'Ibra'));
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, reaction) = await handleIncomingPostCommentReaction(
         message: _commentReactionMessage(
           senderPeerId: 'peer-ibra',
@@ -268,17 +354,34 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentReactionResult.reactionApplied);
-      expect(reaction, isNotNull);
+      expect(
+        result,
+        HandleIncomingPostCommentReactionResult.notPostCommentReaction,
+      );
+      expect(reaction, isNull);
+      expect(await posts.loadComments('post-1'), hasLength(1));
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-ibra'},
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
   test(
-    'accepts a trusted repost-thread reaction from a non-contact sender',
+    'rejects post reactions from trusted non-contact participants',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -313,6 +416,9 @@ void main() {
         createdAt: '2026-03-15T11:16:30.000Z',
       );
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, reaction) = await handleIncomingPostReaction(
         message: _postReactionMessage(
           senderPeerId: 'peer-ibra',
@@ -325,17 +431,31 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostReactionResult.reactionApplied);
-      expect(reaction, isNotNull);
+      expect(result, HandleIncomingPostReactionResult.notPostReaction);
+      expect(reaction, isNull);
+      expect(await posts.loadComments('post-1'), isEmpty);
+      expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
   test(
-    'accepts a trusted repost-thread comment reaction from a non-contact sender',
+    'rejects comment reactions from trusted non-contact participants',
     () async {
       await posts.savePost(
         _post('post-1').copyWith(
@@ -381,6 +501,9 @@ void main() {
         createdAt: '2026-03-15T11:16:30.000Z',
       );
 
+      final previousPost = await posts.getPost('post-1');
+      final previousParticipants = await posts
+          .loadRepostEngagementParticipantPeerIds('post-1');
       final (result, reaction) = await handleIncomingPostCommentReaction(
         message: _commentReactionMessage(
           senderPeerId: 'peer-ibra',
@@ -394,198 +517,273 @@ void main() {
         contactRepo: contacts,
       );
 
-      expect(result, HandleIncomingPostCommentReactionResult.reactionApplied);
-      expect(reaction, isNotNull);
       expect(
-        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-ibra', 'peer-solz'},
+        result,
+        HandleIncomingPostCommentReactionResult.notPostCommentReaction,
       );
-    },
-  );
-
-  test(
-    'rejects an unknown non-contact post reaction sender when no trusted repost-thread state exists',
-    () async {
-      await posts.savePost(_post('post-1'));
-
-      final (result, reaction) = await handleIncomingPostReaction(
-        message: _postReactionMessage(
-          senderPeerId: 'peer-ibra',
-          postId: 'post-1',
-          reactionId: 'post_heart:post-1:peer-ibra',
-          eventId: 'evt-reaction-unknown',
-          isActive: true,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostReactionResult.unknownSender);
       expect(reaction, isNull);
+      expect(await posts.loadComments('post-1'), hasLength(1));
       expect(await posts.loadPostReactions('post-1'), isEmpty);
+      expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+      expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
       expect(
         await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        isEmpty,
+        previousParticipants,
       );
+      if (previousPost != null) {
+        expect(
+          (await posts.getPost('post-1'))?.expiresAt,
+          previousPost.expiresAt,
+        );
+        expect(
+          (await posts.getPost('post-1'))?.lastEngagementAt,
+          previousPost.lastEngagementAt,
+        );
+      }
     },
   );
 
-  test(
-    'rejects a blocked direct post reaction sender even when the repost thread trusts that peer',
-    () async {
-      await posts.savePost(
-        _post('post-1').copyWith(
-          senderPeerId: 'peer-hisam',
-          authorPeerId: 'peer-solz',
-          authorUsername: 'Solz',
-        ),
-      );
-      await posts.savePostOrigin(
-        const PostOriginModel(
-          postId: 'post-1',
-          originKind: PostOriginKind.pass,
-          passId: 'pass-1',
-          passerPeerId: 'peer-hisam',
-          passerUsername: 'Hisam',
-          passCreatedAt: '2026-03-15T11:15:30.000Z',
-        ),
-      );
-      await posts.saveRepostEngagementParticipant(
-        postId: 'post-1',
-        participantPeerId: 'peer-solz',
-        createdAt: '2026-03-15T11:15:30.000Z',
-      );
-      await posts.saveRepostEngagementParticipant(
-        postId: 'post-1',
-        participantPeerId: 'peer-hisam',
-        createdAt: '2026-03-15T11:15:30.000Z',
-      );
-      contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+  test('rejects post reactions from unknown non-contact senders', () async {
+    await posts.savePost(_post('post-1'));
 
-      final (result, reaction) = await handleIncomingPostReaction(
-        message: _postReactionMessage(
-          senderPeerId: 'peer-ibra',
-          postId: 'post-1',
-          reactionId: 'post_heart:post-1:peer-ibra',
-          eventId: 'evt-reaction-blocked',
-          isActive: true,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, reaction) = await handleIncomingPostReaction(
+      message: _postReactionMessage(
+        senderPeerId: 'peer-ibra',
+        postId: 'post-1',
+        reactionId: 'post_heart:post-1:peer-ibra',
+        eventId: 'evt-reaction-unknown',
+        isActive: true,
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
 
-      expect(result, HandleIncomingPostReactionResult.blockedSender);
-      expect(reaction, isNull);
-      expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(result, HandleIncomingPostReactionResult.notPostReaction);
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
       expect(
-        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-solz'},
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
       );
-    },
-  );
-
-  test(
-    'rejects an unknown non-contact comment reaction sender when no trusted repost-thread state exists',
-    () async {
-      await posts.savePost(_post('post-1'));
-      await posts.saveComment(
-        const PostCommentModel(
-          id: 'comment-1',
-          eventId: 'evt-comment-1',
-          postId: 'post-1',
-          senderPeerId: 'peer-alice',
-          authorUsername: 'Alice',
-          body: 'I can help too.',
-          commentedAt: '2026-03-15T11:16:00.000Z',
-        ),
-      );
-
-      final (result, reaction) = await handleIncomingPostCommentReaction(
-        message: _commentReactionMessage(
-          senderPeerId: 'peer-ibra',
-          postId: 'post-1',
-          commentId: 'comment-1',
-          reactionId: 'comment_heart:comment-1:peer-ibra',
-          eventId: 'evt-comment-reaction-unknown',
-          isActive: true,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostCommentReactionResult.unknownSender);
-      expect(reaction, isNull);
-      expect(await posts.loadCommentReactions('post-1'), isEmpty);
       expect(
-        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        isEmpty,
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
       );
-    },
-  );
+    }
+  });
 
-  test(
-    'rejects a blocked direct comment reaction sender even when the repost thread trusts that peer',
-    () async {
-      await posts.savePost(
-        _post('post-1').copyWith(
-          senderPeerId: 'peer-hisam',
-          authorPeerId: 'peer-solz',
-          authorUsername: 'Solz',
-        ),
-      );
-      await posts.saveComment(
-        const PostCommentModel(
-          id: 'comment-1',
-          eventId: 'evt-comment-1',
-          postId: 'post-1',
-          senderPeerId: 'peer-solz',
-          authorUsername: 'Solz',
-          body: 'I can help too.',
-          commentedAt: '2026-03-15T11:16:00.000Z',
-        ),
-      );
-      await posts.savePostOrigin(
-        const PostOriginModel(
-          postId: 'post-1',
-          originKind: PostOriginKind.pass,
-          passId: 'pass-1',
-          passerPeerId: 'peer-hisam',
-          passerUsername: 'Hisam',
-          passCreatedAt: '2026-03-15T11:15:30.000Z',
-        ),
-      );
-      await posts.saveRepostEngagementParticipant(
+  test('rejects post reactions from blocked trusted participants', () async {
+    await posts.savePost(
+      _post('post-1').copyWith(
+        senderPeerId: 'peer-hisam',
+        authorPeerId: 'peer-solz',
+        authorUsername: 'Solz',
+      ),
+    );
+    await posts.savePostOrigin(
+      const PostOriginModel(
         postId: 'post-1',
-        participantPeerId: 'peer-solz',
-        createdAt: '2026-03-15T11:15:30.000Z',
-      );
-      await posts.saveRepostEngagementParticipant(
+        originKind: PostOriginKind.pass,
+        passId: 'pass-1',
+        passerPeerId: 'peer-hisam',
+        passerUsername: 'Hisam',
+        passCreatedAt: '2026-03-15T11:15:30.000Z',
+      ),
+    );
+    await posts.saveRepostEngagementParticipant(
+      postId: 'post-1',
+      participantPeerId: 'peer-solz',
+      createdAt: '2026-03-15T11:15:30.000Z',
+    );
+    await posts.saveRepostEngagementParticipant(
+      postId: 'post-1',
+      participantPeerId: 'peer-hisam',
+      createdAt: '2026-03-15T11:15:30.000Z',
+    );
+    contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, reaction) = await handleIncomingPostReaction(
+      message: _postReactionMessage(
+        senderPeerId: 'peer-ibra',
         postId: 'post-1',
-        participantPeerId: 'peer-hisam',
-        createdAt: '2026-03-15T11:15:30.000Z',
-      );
-      contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+        reactionId: 'post_heart:post-1:peer-ibra',
+        eventId: 'evt-reaction-blocked',
+        isActive: true,
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
 
-      final (result, reaction) = await handleIncomingPostCommentReaction(
-        message: _commentReactionMessage(
-          senderPeerId: 'peer-ibra',
-          postId: 'post-1',
-          commentId: 'comment-1',
-          reactionId: 'comment_heart:comment-1:peer-ibra',
-          eventId: 'evt-comment-reaction-blocked',
-          isActive: true,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-
-      expect(result, HandleIncomingPostCommentReactionResult.blockedSender);
-      expect(reaction, isNull);
-      expect(await posts.loadCommentReactions('post-1'), isEmpty);
+    expect(result, HandleIncomingPostReactionResult.notPostReaction);
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), isEmpty);
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
       expect(
-        await posts.loadRepostEngagementParticipantPeerIds('post-1'),
-        <String>{'peer-hisam', 'peer-solz'},
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
       );
-    },
-  );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
+  });
+
+  test('rejects comment reactions from unknown non-contact senders', () async {
+    await posts.savePost(_post('post-1'));
+    await posts.saveComment(
+      const PostCommentModel(
+        id: 'comment-1',
+        eventId: 'evt-comment-1',
+        postId: 'post-1',
+        senderPeerId: 'peer-alice',
+        authorUsername: 'Alice',
+        body: 'I can help too.',
+        commentedAt: '2026-03-15T11:16:00.000Z',
+      ),
+    );
+
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, reaction) = await handleIncomingPostCommentReaction(
+      message: _commentReactionMessage(
+        senderPeerId: 'peer-ibra',
+        postId: 'post-1',
+        commentId: 'comment-1',
+        reactionId: 'comment_heart:comment-1:peer-ibra',
+        eventId: 'evt-comment-reaction-unknown',
+        isActive: true,
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+
+    expect(
+      result,
+      HandleIncomingPostCommentReactionResult.notPostCommentReaction,
+    );
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), hasLength(1));
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
+  });
+
+  test('rejects comment reactions from blocked trusted participants', () async {
+    await posts.savePost(
+      _post('post-1').copyWith(
+        senderPeerId: 'peer-hisam',
+        authorPeerId: 'peer-solz',
+        authorUsername: 'Solz',
+      ),
+    );
+    await posts.saveComment(
+      const PostCommentModel(
+        id: 'comment-1',
+        eventId: 'evt-comment-1',
+        postId: 'post-1',
+        senderPeerId: 'peer-solz',
+        authorUsername: 'Solz',
+        body: 'I can help too.',
+        commentedAt: '2026-03-15T11:16:00.000Z',
+      ),
+    );
+    await posts.savePostOrigin(
+      const PostOriginModel(
+        postId: 'post-1',
+        originKind: PostOriginKind.pass,
+        passId: 'pass-1',
+        passerPeerId: 'peer-hisam',
+        passerUsername: 'Hisam',
+        passCreatedAt: '2026-03-15T11:15:30.000Z',
+      ),
+    );
+    await posts.saveRepostEngagementParticipant(
+      postId: 'post-1',
+      participantPeerId: 'peer-solz',
+      createdAt: '2026-03-15T11:15:30.000Z',
+    );
+    await posts.saveRepostEngagementParticipant(
+      postId: 'post-1',
+      participantPeerId: 'peer-hisam',
+      createdAt: '2026-03-15T11:15:30.000Z',
+    );
+    contacts.addTestContact(_contact('peer-ibra', 'Ibra', blocked: true));
+
+    final previousPost = await posts.getPost('post-1');
+    final previousParticipants = await posts
+        .loadRepostEngagementParticipantPeerIds('post-1');
+    final (result, reaction) = await handleIncomingPostCommentReaction(
+      message: _commentReactionMessage(
+        senderPeerId: 'peer-ibra',
+        postId: 'post-1',
+        commentId: 'comment-1',
+        reactionId: 'comment_heart:comment-1:peer-ibra',
+        eventId: 'evt-comment-reaction-blocked',
+        isActive: true,
+      ),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+
+    expect(
+      result,
+      HandleIncomingPostCommentReactionResult.notPostCommentReaction,
+    );
+    expect(reaction, isNull);
+    expect(await posts.loadComments('post-1'), hasLength(1));
+    expect(await posts.loadPostReactions('post-1'), isEmpty);
+    expect(await posts.loadCommentReactions('comment-1'), isEmpty);
+    expect(await posts.loadPendingChildEvents('post-1'), isEmpty);
+    expect(
+      await posts.loadRepostEngagementParticipantPeerIds('post-1'),
+      previousParticipants,
+    );
+    if (previousPost != null) {
+      expect(
+        (await posts.getPost('post-1'))?.expiresAt,
+        previousPost.expiresAt,
+      );
+      expect(
+        (await posts.getPost('post-1'))?.lastEngagementAt,
+        previousPost.lastEngagementAt,
+      );
+    }
+  });
 }

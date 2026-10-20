@@ -1,6 +1,6 @@
 # 407 — Thoughts on the Posts engine
 
-Status: proposal, not started
+Status: Step 1 implemented; validation in progress. Steps 2–4 not started.
 Branch: UI-Update
 Date: 2026-10-20 (line numbers checked after rebasing UI-Update on main 999a297ef). Scope cut to a first version the same day (owner decision).
 
@@ -147,6 +147,11 @@ Tests:
 Done when: the validation procedure passes for this step and no test still asserts 3-day expiry, reaction or comment handling, plaintext fallback, recipient lists on the wire or stored pins.
 
 Owner approved (2026-10-20) re-pinning the DTR-18 digest of `production_application_bootstrap.dart` for this step (see "Locked files").
+
+Implementation (2026-10-20): the shared lifetime policy, receive/read/retry boundaries, migration 122, restart-safe orphan cleanup, disabled legacy handlers and nearby service, encrypted delivery without audience lists, and foreground expiry scheduler are implemented. The scheduler is composed in `production_application_bootstrap.dart` with its own lifecycle observer and existing teardown callbacks; `application_root.dart`, `handle_app_resumed.dart`, and the locked Posts repository adapter remain unchanged. Notification cancellation uses the exact post route, including deletions performed by the existing resume sweep. Failed cold cleanup releases its cached future so startup can retry.
+
+Validation evidence is retained in ignored `.codex-test-logs/plan407-step1/`. Focused Posts and database checks passed after updating obsolete expectations; first-attempt failures remain preserved. The affected selection, required `core-host-all`, `feature-host-all`, and native Posts gate are still being completed. Step 1 is not accepted until those required checks pass. No full `host-all` or release certification is claimed.
+
 
 ### Step 2 — Thoughts on today's orbit
 

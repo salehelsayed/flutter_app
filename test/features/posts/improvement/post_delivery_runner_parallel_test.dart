@@ -20,7 +20,7 @@ import '../../../core/bridge/fake_bridge.dart';
 ContactModel _contact(
   String peerId,
   String username, {
-  String? mlKemPublicKey,
+  String? mlKemPublicKey = 'test-mlkem',
 }) {
   return ContactModel(
     peerId: peerId,
@@ -79,6 +79,7 @@ void main() {
     final runFuture = PostDeliveryRunner(
       p2pService: service,
       postRepo: posts,
+      bridge: FakeBridge(),
     ).execute(created);
 
     await service
@@ -143,6 +144,7 @@ void main() {
     final runFuture = PostDeliveryRunner(
       p2pService: service,
       postRepo: posts,
+      bridge: FakeBridge(),
       maxConcurrentRecipients: 2,
     ).execute(created);
 
@@ -200,6 +202,7 @@ void main() {
       final runFuture = PostDeliveryRunner(
         p2pService: service,
         postRepo: blockedPosts,
+        bridge: FakeBridge(),
         maxConcurrentRecipients: 1,
       ).execute(created);
 
@@ -464,6 +467,7 @@ Future<Duration> _measureDeliveryDuration({
     final (result, post) = await PostDeliveryRunner(
       p2pService: service,
       postRepo: posts,
+      bridge: FakeBridge(),
       maxConcurrentRecipients: maxConcurrentRecipients,
     ).execute(created);
     stopwatch.stop();
@@ -494,6 +498,9 @@ class _ControlledP2PService extends FakeP2PService {
     required super.network,
     this.policies = const <String, _PeerPolicy>{},
   });
+
+  @override
+  bool isConnectedToPeer(String peerId) => true;
 
   Future<void> waitForSendCount(int count) async {
     while (sendStartOrder.length < count) {
@@ -540,7 +547,11 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     final policy = policies[toPeerId] ?? const _PeerPolicy();
     final gate = policy.inboxGate;
     if (gate != null) {
@@ -588,10 +599,7 @@ class _PeerPolicy {
   final bool throwOnInbox = false;
   final bool requireDiscoverAndDialBeforeSend = false;
 
-  const _PeerPolicy({
-    this.sendGate,
-    this.sendDelay,
-  });
+  const _PeerPolicy({this.sendGate, this.sendDelay});
 }
 
 class _BlockingWritePostRepository extends InMemoryPostRepository {

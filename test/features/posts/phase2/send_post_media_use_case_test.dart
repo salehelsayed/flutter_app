@@ -10,6 +10,7 @@ import 'package:flutter_app/features/posts/domain/models/post_media_attachment_m
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -48,6 +49,7 @@ void main() {
       );
 
       final (result, post) = await sendPost(
+        bridge: FakeBridge(),
         p2pService: aliceService,
         postRepo: posts,
         contactRepo: contacts,
@@ -113,7 +115,13 @@ void main() {
       final inboxMessage =
           network.retrieveInbox('peer-bob').single['message'] as String;
       final payload = jsonDecode(inboxMessage) as Map<String, dynamic>;
-      final snapshot = payload['payload']['snapshot'] as Map<String, dynamic>;
+      final inner =
+          jsonDecode(
+                (payload['encrypted'] as Map<String, dynamic>)['ciphertext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      final snapshot = inner['snapshot'] as Map<String, dynamic>;
       expect(snapshot['media_kind'], 'image');
       expect(snapshot['media'], hasLength(1));
       expect(snapshot['media'][0]['blob_id'], 'blob-1');
@@ -122,6 +130,7 @@ void main() {
 
   test('allows voice-only posts when media is attached', () async {
     final (result, post) = await sendPost(
+      bridge: FakeBridge(),
       p2pService: aliceService,
       postRepo: posts,
       contactRepo: contacts,
@@ -194,5 +203,6 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }

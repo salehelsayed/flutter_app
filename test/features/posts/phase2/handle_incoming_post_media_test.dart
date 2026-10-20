@@ -33,6 +33,7 @@ void main() {
       final hydratedBlobIds = <String>[];
 
       final (result, post) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _mediaPostMessage(),
         postRepo: posts,
         contactRepo: contacts,
@@ -60,6 +61,7 @@ void main() {
     'incoming post_create with media_keys persists attachments with key/nonce/scheme/hash and isEncrypted=true',
     () async {
       final (result, _) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _encryptedMediaPostMessage(mediaKeys: _wireMediaKeys()),
         postRepo: posts,
         contactRepo: contacts,
@@ -88,6 +90,7 @@ void main() {
     'incoming post_create without media_keys persists plaintext attachments exactly as today',
     () async {
       final (result, _) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _mediaPostMessage(),
         postRepo: posts,
         contactRepo: contacts,
@@ -108,6 +111,7 @@ void main() {
     'dedup preserve-existing keeps the stored row crypto metadata when a duplicate copy arrives',
     () async {
       final (first, _) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _encryptedMediaPostMessage(mediaKeys: _wireMediaKeys()),
         postRepo: posts,
         contactRepo: contacts,
@@ -117,6 +121,7 @@ void main() {
       expect(first, HandleIncomingPostResult.postCreated);
 
       final (second, _) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _encryptedMediaPostMessage(mediaKeys: _wireMediaKeys()),
         postRepo: posts,
         contactRepo: contacts,
@@ -133,58 +138,55 @@ void main() {
   );
 
   test(
-    'pass-then-create ordering: keyed rows survive the keyless create merge',
+    'a rejected pass cannot seed attachment keys before an author copy',
     () async {
       final (passResult, _) = await handleIncomingPassedPost(
         message: _passMessageWithKeys(),
         postRepo: posts,
         contactRepo: contacts,
       );
-      expect(passResult, HandleIncomingPassedPostResult.passAccepted);
+      expect(passResult, HandleIncomingPassedPostResult.notPostPass);
 
-      final keyed = (await posts.loadPostMediaAttachments('post-1')).single;
-      expect(keyed.encryptionKeyBase64, 'pass-key-b64');
-      expect(keyed.isEncrypted, isTrue);
+      expect(await posts.loadPostMediaAttachments('post-1'), isEmpty);
 
       // The author's own keyless v1 copy arrives later (legacy sender).
       final (createResult, _) = await handleIncomingPost(
+        nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
         message: _mediaPostMessage(blobId: 'blob-pass-1'),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-      expect(createResult, HandleIncomingPostResult.duplicate);
-
-      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-      expect(stored.encryptionKeyBase64, 'pass-key-b64');
-      expect(stored.encryptionNonce, 'pass-nonce-b64');
-      expect(stored.isEncrypted, isTrue);
-    },
-  );
-
-  test(
-    'create-then-pass ordering: key-less rows are not repaired by a later keyed pass',
-    () async {
-      final (createResult, _) = await handleIncomingPost(
-        message: _mediaPostMessage(),
         postRepo: posts,
         contactRepo: contacts,
       );
       expect(createResult, HandleIncomingPostResult.postCreated);
 
-      final (passResult, _) = await handleIncomingPassedPost(
-        message: _passMessageWithKeys(),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
-      expect(passResult, HandleIncomingPassedPostResult.passAccepted);
-
-      // Existing-post early return: media rows stay keyless (Non-goal 3).
       final stored = (await posts.loadPostMediaAttachments('post-1')).single;
       expect(stored.encryptionKeyBase64, isNull);
-      expect(stored.blobId, 'blob-1');
+      expect(stored.encryptionNonce, isNull);
       expect(stored.isEncrypted, isFalse);
     },
   );
+
+  test('a rejected keyed pass cannot change an existing author copy', () async {
+    final (createResult, _) = await handleIncomingPost(
+      nowProvider: () => DateTime.parse('2026-03-15T12:00:00Z'),
+      message: _mediaPostMessage(),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+    expect(createResult, HandleIncomingPostResult.postCreated);
+
+    final (passResult, _) = await handleIncomingPassedPost(
+      message: _passMessageWithKeys(),
+      postRepo: posts,
+      contactRepo: contacts,
+    );
+    expect(passResult, HandleIncomingPassedPostResult.notPostPass);
+
+    // Existing-post early return: media rows stay keyless (Non-goal 3).
+    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+    expect(stored.encryptionKeyBase64, isNull);
+    expect(stored.blobId, 'blob-1');
+    expect(stored.isEncrypted, isFalse);
+  });
 }
 
 ContactModel _contact(String peerId, String username) {

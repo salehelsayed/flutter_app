@@ -1,6 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/reconcile_pending_post_child_events_use_case.dart';
@@ -10,7 +14,6 @@ import 'package:flutter_app/features/posts/domain/models/post_create_envelope.da
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart'
     show PostMediaCryptoEntry;
-import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 enum HandleIncomingPostResult {
@@ -19,6 +22,7 @@ enum HandleIncomingPostResult {
   unknownSender,
   blockedSender,
   duplicate,
+  expired,
 }
 
 typedef HydratePostMediaFn =
@@ -34,6 +38,8 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   Bridge? bridge,
   String? ownMlKemSecretKey,
   HydratePostMediaFn? hydratePostMediaFn,
+  MediaFileManager? mediaFileManager,
+  DateTime Function()? nowProvider,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -82,6 +88,35 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     return (HandleIncomingPostResult.blockedSender, null);
   }
 
+  final now = (nowProvider?.call() ?? DateTime.now()).toUtc();
+  final suppliedCreatedAt = DateTime.parse(envelope.createdAt).toUtc();
+  final createdAt = suppliedCreatedAt.isAfter(now) ? now : suppliedCreatedAt;
+  if (ThoughtLifetime.isExpired(createdAt, now)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_RECEIVE_EXPIRED',
+      details: {'postId': envelope.postId},
+    );
+    return (HandleIncomingPostResult.expired, null);
+  }
+  final incomingPost = _sanitizeIncomingPost(
+    envelope
+        .toPostModel(isIncoming: true, deliveryStatus: 'delivered')
+        .copyWith(
+          createdAt: createdAt.toIso8601String(),
+          visibleAt: createdAt.toIso8601String(),
+          expiresAt: ThoughtLifetime.expiresAt(createdAt).toIso8601String(),
+          keepAvailable: false,
+        ),
+  );
+
+  Future<bool> isStillEligible() async =>
+      !ThoughtLifetime.isExpired(
+        createdAt,
+        nowProvider?.call() ?? DateTime.now(),
+      ) &&
+      await postRepo.getPost(envelope!.postId) != null;
+
   final existingPost = await postRepo.getPost(envelope.postId);
   if (existingPost != null) {
     final existingOrigin = await postRepo.getPostOrigin(envelope.postId);
@@ -94,15 +129,9 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
 
     final mergedPost = _mergeExistingRepostedCopy(
       existingPost: existingPost,
-      envelope: envelope,
+      incomingPost: incomingPost,
     );
     await postRepo.savePost(mergedPost);
-    await _saveRecipientDeliveries(
-      postRepo: postRepo,
-      postId: mergedPost.id,
-      recipientPeerIds: envelope.recipientPeerIds,
-      createdAt: envelope.createdAt,
-    );
     final storedMedia = await _storeIncomingMedia(
       postRepo: postRepo,
       postId: mergedPost.id,
@@ -111,7 +140,13 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       hydratePostMediaFn: hydratePostMediaFn,
       existingMedia: await postRepo.loadPostMediaAttachments(mergedPost.id),
       hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
+      isStillEligible: isStillEligible,
+      mediaFileManager: mediaFileManager,
     );
+    if (!await isStillEligible()) {
+      await postRepo.deletePostCascade(mergedPost.id);
+      return (HandleIncomingPostResult.expired, null);
+    }
     await postRepo.savePostOrigin(
       PostOriginModel(
         postId: mergedPost.id,
@@ -140,19 +175,8 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     );
   }
 
-  final post = _sanitizeIncomingPost(
-    envelope.toPostModel(
-      isIncoming: true,
-      deliveryStatus: 'delivered',
-    ),
-  );
+  final post = incomingPost;
   await postRepo.savePost(post);
-  await _saveRecipientDeliveries(
-    postRepo: postRepo,
-    postId: post.id,
-    recipientPeerIds: envelope.recipientPeerIds,
-    createdAt: envelope.createdAt,
-  );
   final storedMedia = await _storeIncomingMedia(
     postRepo: postRepo,
     postId: post.id,
@@ -160,7 +184,13 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     mediaKeys: envelope.mediaKeys,
     hydratePostMediaFn: hydratePostMediaFn,
     hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
+    isStillEligible: isStillEligible,
+    mediaFileManager: mediaFileManager,
   );
+  if (!await isStillEligible()) {
+    await postRepo.deletePostCascade(post.id);
+    return (HandleIncomingPostResult.expired, null);
+  }
   await reconcilePendingPostChildEvents(
     postId: post.id,
     postRepo: postRepo,
@@ -189,14 +219,8 @@ String _laterTimestamp(String currentIso, String candidateIso) {
 
 PostModel _mergeExistingRepostedCopy({
   required PostModel existingPost,
-  required PostCreateEnvelope envelope,
+  required PostModel incomingPost,
 }) {
-  final incomingPost = _sanitizeIncomingPost(
-    envelope.toPostModel(
-      isIncoming: true,
-      deliveryStatus: 'delivered',
-    ),
-  );
   return existingPost.copyWith(
     eventId: incomingPost.eventId,
     senderPeerId: incomingPost.senderPeerId,
@@ -226,32 +250,13 @@ PostModel _sanitizeIncomingPost(PostModel post) {
   );
 }
 
-Future<void> _saveRecipientDeliveries({
-  required PostRepository postRepo,
-  required String postId,
-  required List<String> recipientPeerIds,
-  required String createdAt,
-}) async {
-  for (final recipientPeerId in recipientPeerIds) {
-    await postRepo.saveRecipientDelivery(
-      PostRecipientDelivery(
-        postId: postId,
-        recipientPeerId: recipientPeerId,
-        deliveryStatus: 'locked',
-        lastAttemptAt: createdAt,
-        deliveryPath: 'post_create',
-        createdAt: createdAt,
-        updatedAt: createdAt,
-      ),
-    );
-  }
-}
-
 Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
   required PostRepository postRepo,
   required String postId,
   required List<PostMediaAttachmentModel> incomingMedia,
   required String hydrateErrorEvent,
+  required Future<bool> Function() isStillEligible,
+  MediaFileManager? mediaFileManager,
   Map<String, PostMediaCryptoEntry>? mediaKeys,
   HydratePostMediaFn? hydratePostMediaFn,
   List<PostMediaAttachmentModel> existingMedia =
@@ -262,6 +267,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
   };
   final storedMedia = <PostMediaAttachmentModel>[];
   for (final attachment in incomingMedia) {
+    if (!await isStillEligible()) return const [];
     final preservedAttachment = existingById[attachment.mediaId];
     if (preservedAttachment != null) {
       storedMedia.add(preservedAttachment);
@@ -289,6 +295,10 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
         attachment: pendingAttachment,
         postId: postId,
       );
+      if (!await isStillEligible()) {
+        await _removeLateHydratedMedia(hydrated.localPath, mediaFileManager);
+        return const [];
+      }
       await postRepo.savePostMediaAttachment(hydrated);
       storedMedia.add(hydrated);
     } catch (e) {
@@ -301,6 +311,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
           'error': e.toString(),
         },
       );
+      if (!await isStillEligible()) return const [];
       final failedAttachment = pendingAttachment.copyWith(
         downloadStatus: 'failed',
       );
@@ -327,4 +338,27 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
     return a.mediaId.compareTo(b.mediaId);
   });
   return storedMedia;
+}
+
+Future<void> _removeLateHydratedMedia(
+  String? localPath,
+  MediaFileManager? mediaFileManager,
+) async {
+  if (localPath == null) return;
+  try {
+    final resolvedPath = await (mediaFileManager ?? MediaFileManager())
+        .resolveStoredPath(localPath);
+    final file = File(resolvedPath);
+    if (await file.exists()) await file.delete();
+    final parent = file.parent;
+    if (await parent.exists() && await parent.list().isEmpty) {
+      await parent.delete();
+    }
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_EXPIRED_MEDIA_CLEANUP_ERROR',
+      details: {'error': error.toString()},
+    );
+  }
 }

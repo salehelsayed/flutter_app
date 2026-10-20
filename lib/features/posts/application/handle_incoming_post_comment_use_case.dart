@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -25,6 +26,10 @@ handleIncomingPostComment({
   required ContactRepository contactRepo,
   bool allowStaging = true,
 }) async {
+  if (rejectLegacyPostFeature('post_comment')) {
+    return (HandleIncomingPostCommentResult.notPostComment, null);
+  }
+
   final envelope = PostCommentEnvelope.fromJson(message.content);
   if (envelope == null) {
     return (HandleIncomingPostCommentResult.notPostComment, null);

@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'dart:convert';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -27,6 +28,10 @@ handleIncomingPostPresence({
   required ContactRepository contactRepo,
   required ContactPresenceSnapshotRepository snapshotRepo,
 }) async {
+  if (rejectLegacyPostFeature('post_presence_update')) {
+    return (HandleIncomingPostPresenceResult.notPostPresenceUpdate, null);
+  }
+
   Map<String, dynamic> json;
   try {
     json = jsonDecode(message.content) as Map<String, dynamic>;

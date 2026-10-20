@@ -90,8 +90,8 @@ void main() {
   });
 
   Uint8List sourceBytes([int seed = 3]) => Uint8List.fromList(
-        List<int>.generate(400, (index) => (index * seed + 7) & 0xff),
-      );
+    List<int>.generate(400, (index) => (index * seed + 7) & 0xff),
+  );
 
   File writeSource(String name, [int seed = 3]) {
     final file = File('${tempDir.path}/$name');
@@ -112,6 +112,7 @@ void main() {
       final source = writeSource('photo.jpg');
 
       final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -162,6 +163,7 @@ void main() {
       final source = writeSource('photo.jpg');
 
       final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -197,6 +199,7 @@ void main() {
       final source = writeSource('photo.jpg');
 
       final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -222,6 +225,7 @@ void main() {
       final source = writeSource('photo.jpg');
 
       final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -239,47 +243,51 @@ void main() {
     },
   );
 
-  test('.enc temp deleted in finally on success AND on upload failure',
-      () async {
-    final source = writeSource('photo.jpg');
+  test(
+    '.enc temp deleted in finally on success AND on upload failure',
+    () async {
+      final source = writeSource('photo.jpg');
 
-    final (result, _) = await attachPostMedia(
-      postId: 'post-1',
-      postRepo: posts,
-      secureKeyStore: secureKeyStore,
-      imageProcessor: imageProcessor,
-      drafts: <PostMediaDraft>[
-        PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
-      ],
-      mediaFileManager: mediaFileManager,
-      bridge: bridge,
-    );
-    expect(result, AttachPostMediaResult.success);
-    // RED-coupling rule: absence-of-temp is only meaningful if the encrypt
-    // step actually ran in the same scenario.
-    expect(bridge.commandLog, contains('blob:encrypt'));
-    expect(encTempsUnder(tempDir), isEmpty);
+      final (result, _) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
+        postId: 'post-1',
+        postRepo: posts,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        drafts: <PostMediaDraft>[
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: mediaFileManager,
+        bridge: bridge,
+      );
+      expect(result, AttachPostMediaResult.success);
+      // RED-coupling rule: absence-of-temp is only meaningful if the encrypt
+      // step actually ran in the same scenario.
+      expect(bridge.commandLog, contains('blob:encrypt'));
+      expect(encTempsUnder(tempDir), isEmpty);
 
-    bridge.failMediaUpload = true;
-    final failedSource = writeSource('photo2.jpg', 5);
-    final (failedResult, _) = await attachPostMedia(
-      postId: 'post-1',
-      postRepo: posts,
-      secureKeyStore: secureKeyStore,
-      imageProcessor: imageProcessor,
-      drafts: <PostMediaDraft>[
-        PostMediaDraft(localFilePath: failedSource.path, mime: 'image/jpeg'),
-      ],
-      mediaFileManager: mediaFileManager,
-      bridge: bridge,
-    );
-    expect(failedResult, AttachPostMediaResult.uploadFailed);
-    expect(
-      bridge.commandLog.where((command) => command == 'blob:encrypt'),
-      hasLength(2),
-    );
-    expect(encTempsUnder(tempDir), isEmpty);
-  });
+      bridge.failMediaUpload = true;
+      final failedSource = writeSource('photo2.jpg', 5);
+      final (failedResult, _) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
+        postId: 'post-1',
+        postRepo: posts,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        drafts: <PostMediaDraft>[
+          PostMediaDraft(localFilePath: failedSource.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: mediaFileManager,
+        bridge: bridge,
+      );
+      expect(failedResult, AttachPostMediaResult.uploadFailed);
+      expect(
+        bridge.commandLog.where((command) => command == 'blob:encrypt'),
+        hasLength(2),
+      );
+      expect(encTempsUnder(tempDir), isEmpty);
+    },
+  );
 
   test(
     'processed plaintext temp deleted after successful upload; voice source passes through untouched',
@@ -287,6 +295,7 @@ void main() {
       final source = writeSource('photo.jpg');
 
       final (result, _) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -299,16 +308,24 @@ void main() {
       );
 
       expect(result, AttachPostMediaResult.success);
-      expect(File('${source.path}_processed').existsSync(), isFalse,
-          reason: 'the processed plaintext temp must be deleted post-upload');
-      expect(source.existsSync(), isTrue,
-          reason: 'the draft source is the recovery-replay re-upload source '
-              'and must survive attachPostMedia');
+      expect(
+        File('${source.path}_processed').existsSync(),
+        isFalse,
+        reason: 'the processed plaintext temp must be deleted post-upload',
+      );
+      expect(
+        source.existsSync(),
+        isTrue,
+        reason:
+            'the draft source is the recovery-replay re-upload source '
+            'and must survive attachPostMedia',
+      );
 
       // Voice passes through _prepareDraft unchanged: processedPath ==
       // source, so the processed-temp delete guard must not remove it.
       final voiceSource = writeSource('clip.m4a', 9);
       final (voiceResult, voiceAttachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
         postId: 'post-1',
         postRepo: posts,
         secureKeyStore: secureKeyStore,
@@ -336,6 +353,7 @@ void main() {
     final second = writeSource('two.jpg', 11);
 
     final (result, attachments) = await attachPostMedia(
+      nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
       postId: 'post-1',
       postRepo: posts,
       secureKeyStore: secureKeyStore,
@@ -350,10 +368,7 @@ void main() {
 
     expect(result, AttachPostMediaResult.success);
     expect(attachments, hasLength(2));
-    expect(
-      attachments[0].blobId,
-      isNot(attachments[1].blobId),
-    );
+    expect(attachments[0].blobId, isNot(attachments[1].blobId));
     expect(
       attachments[0].encryptionKeyBase64,
       isNot(attachments[1].encryptionKeyBase64),
@@ -364,26 +379,29 @@ void main() {
     );
   });
 
-  test('allowedPeers ACL unchanged: author + recipient delivery peers',
-      () async {
-    final source = writeSource('photo.jpg');
+  test(
+    'allowedPeers ACL unchanged: author + recipient delivery peers',
+    () async {
+      final source = writeSource('photo.jpg');
 
-    final (result, attachments) = await attachPostMedia(
-      postId: 'post-1',
-      postRepo: posts,
-      secureKeyStore: secureKeyStore,
-      imageProcessor: imageProcessor,
-      drafts: <PostMediaDraft>[
-        PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
-      ],
-      mediaFileManager: mediaFileManager,
-      bridge: bridge,
-    );
+      final (result, attachments) = await attachPostMedia(
+        nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
+        postId: 'post-1',
+        postRepo: posts,
+        secureKeyStore: secureKeyStore,
+        imageProcessor: imageProcessor,
+        drafts: <PostMediaDraft>[
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: mediaFileManager,
+        bridge: bridge,
+      );
 
-    expect(result, AttachPostMediaResult.success);
-    expect(
-      relayStore.allowedPeersByBlobId[attachments.single.blobId],
-      unorderedEquals(<String>['peer-self', 'peer-bob']),
-    );
-  });
+      expect(result, AttachPostMediaResult.success);
+      expect(
+        relayStore.allowedPeersByBlobId[attachments.single.blobId],
+        unorderedEquals(<String>['peer-self', 'peer-bob']),
+      );
+    },
+  );
 }

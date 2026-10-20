@@ -50,8 +50,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -116,7 +115,11 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<void> warmBackground() async {}
@@ -148,71 +151,81 @@ void main() {
     p2pService.dispose();
   });
 
-  test('routes post_pin_update envelopes to postPinUpdateStream', () async {
-    final received = router.postPinUpdateStream.first;
-    p2pService.controller.add(
-      ChatMessage(
-        from: 'peer-bob',
-        to: 'self',
-        content: jsonEncode(<String, Object?>{
-          'type': 'post_pin_update',
-          'version': '1',
-          'event_id': 'evt-pin-1',
-          'created_at': '2026-03-15T11:20:00.000Z',
-          'sender_peer_id': 'peer-bob',
-          'payload': <String, Object?>{
-            'pin_event_id': 'pin-evt-1',
-            'post_id': 'post-1',
-            'state': 'active',
-            'pinned_at': '2026-03-15T11:20:00.000Z',
-            'snapshot': <String, Object?>{
+  test(
+    'drops legacy post_pin_update envelopes to postPinUpdateStream',
+    () async {
+      final received = <ChatMessage>[];
+      final subscription = router.postPinUpdateStream.listen(received.add);
+      addTearDown(subscription.cancel);
+      p2pService.controller.add(
+        ChatMessage(
+          from: 'peer-bob',
+          to: 'self',
+          content: jsonEncode(<String, Object?>{
+            'type': 'post_pin_update',
+            'version': '1',
+            'event_id': 'evt-pin-1',
+            'created_at': '2026-03-15T11:20:00.000Z',
+            'sender_peer_id': 'peer-bob',
+            'payload': <String, Object?>{
+              'pin_event_id': 'pin-evt-1',
               'post_id': 'post-1',
-              'author_peer_id': 'peer-bob',
-              'author_username': 'Bob',
-              'post_created_at': '2026-03-15T10:15:30.000Z',
-              'audience': <String, Object?>{'kind': 'all_friends'},
-              'text': 'Updated offer text.',
-              'media_kind': 'none',
-              'media': const <Object?>[],
-              'keep_available': true,
-              'expires_at': '2026-03-18T10:15:30.000Z',
+              'state': 'active',
+              'pinned_at': '2026-03-15T11:20:00.000Z',
+              'snapshot': <String, Object?>{
+                'post_id': 'post-1',
+                'author_peer_id': 'peer-bob',
+                'author_username': 'Bob',
+                'post_created_at': '2026-03-15T10:15:30.000Z',
+                'audience': <String, Object?>{'kind': 'all_friends'},
+                'text': 'Updated offer text.',
+                'media_kind': 'none',
+                'media': const <Object?>[],
+                'keep_available': true,
+                'expires_at': '2026-03-18T10:15:30.000Z',
+              },
             },
-          },
-        }),
-        timestamp: '2026-03-15T11:20:00.000Z',
-        isIncoming: true,
-      ),
-    );
+          }),
+          timestamp: '2026-03-15T11:20:00.000Z',
+          isIncoming: true,
+        ),
+      );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_pin_update"'));
-  });
+      await Future<void>.delayed(Duration.zero);
+      expect(received, isEmpty);
+    },
+  );
 
-  test('routes post_pin_remove envelopes to postPinRemoveStream', () async {
-    final received = router.postPinRemoveStream.first;
-    p2pService.controller.add(
-      ChatMessage(
-        from: 'peer-bob',
-        to: 'self',
-        content: jsonEncode(<String, Object?>{
-          'type': 'post_pin_remove',
-          'version': '1',
-          'event_id': 'evt-pin-remove-1',
-          'created_at': '2026-03-15T11:25:00.000Z',
-          'sender_peer_id': 'peer-bob',
-          'payload': <String, Object?>{
-            'pin_event_id': 'pin-remove-1',
-            'post_id': 'post-1',
-            'removed_at': '2026-03-15T11:25:00.000Z',
-            'reason': 'removed',
-          },
-        }),
-        timestamp: '2026-03-15T11:25:00.000Z',
-        isIncoming: true,
-      ),
-    );
+  test(
+    'drops legacy post_pin_remove envelopes to postPinRemoveStream',
+    () async {
+      final received = <ChatMessage>[];
+      final subscription = router.postPinRemoveStream.listen(received.add);
+      addTearDown(subscription.cancel);
+      p2pService.controller.add(
+        ChatMessage(
+          from: 'peer-bob',
+          to: 'self',
+          content: jsonEncode(<String, Object?>{
+            'type': 'post_pin_remove',
+            'version': '1',
+            'event_id': 'evt-pin-remove-1',
+            'created_at': '2026-03-15T11:25:00.000Z',
+            'sender_peer_id': 'peer-bob',
+            'payload': <String, Object?>{
+              'pin_event_id': 'pin-remove-1',
+              'post_id': 'post-1',
+              'removed_at': '2026-03-15T11:25:00.000Z',
+              'reason': 'removed',
+            },
+          }),
+          timestamp: '2026-03-15T11:25:00.000Z',
+          isIncoming: true,
+        ),
+      );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_pin_remove"'));
-  });
+      await Future<void>.delayed(Duration.zero);
+      expect(received, isEmpty);
+    },
+  );
 }

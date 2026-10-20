@@ -50,8 +50,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -116,7 +115,11 @@ class _FakeP2PService implements P2PService {
   Future<bool> stopNode() async => true;
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
 
   @override
   Future<void> warmBackground() async {}
@@ -148,8 +151,10 @@ void main() {
     p2pService.dispose();
   });
 
-  test('routes post_comment envelopes to postCommentStream', () async {
-    final received = router.postCommentStream.first;
+  test('drops legacy post_comment envelopes to postCommentStream', () async {
+    final received = <ChatMessage>[];
+    final subscription = router.postCommentStream.listen(received.add);
+    addTearDown(subscription.cancel);
     p2pService.controller.add(
       ChatMessage(
         from: 'peer-bob',
@@ -172,12 +177,14 @@ void main() {
       ),
     );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_comment"'));
+    await Future<void>.delayed(Duration.zero);
+    expect(received, isEmpty);
   });
 
-  test('routes post_reaction envelopes to postReactionStream', () async {
-    final received = router.postReactionStream.first;
+  test('drops legacy post_reaction envelopes to postReactionStream', () async {
+    final received = <ChatMessage>[];
+    final subscription = router.postReactionStream.listen(received.add);
+    addTearDown(subscription.cancel);
     p2pService.controller.add(
       ChatMessage(
         from: 'peer-bob',
@@ -201,14 +208,18 @@ void main() {
       ),
     );
 
-    final message = await received.timeout(const Duration(seconds: 1));
-    expect(message.content, contains('"type":"post_reaction"'));
+    await Future<void>.delayed(Duration.zero);
+    expect(received, isEmpty);
   });
 
   test(
-    'routes post_comment_reaction envelopes to postCommentReactionStream',
+    'drops legacy post_comment_reaction envelopes to postCommentReactionStream',
     () async {
-      final received = router.postCommentReactionStream.first;
+      final received = <ChatMessage>[];
+      final subscription = router.postCommentReactionStream.listen(
+        received.add,
+      );
+      addTearDown(subscription.cancel);
       p2pService.controller.add(
         ChatMessage(
           from: 'peer-bob',
@@ -233,8 +244,8 @@ void main() {
         ),
       );
 
-      final message = await received.timeout(const Duration(seconds: 1));
-      expect(message.content, contains('"type":"post_comment_reaction"'));
+      await Future<void>.delayed(Duration.zero);
+      expect(received, isEmpty);
     },
   );
 }

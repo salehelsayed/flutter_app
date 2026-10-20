@@ -1,3 +1,4 @@
+import '../support/legacy_post_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -5,9 +6,7 @@ import 'package:flutter_app/features/posts/application/pass_post_along_use_case.
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
-import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
-import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -53,7 +52,7 @@ void main() {
   });
 
   test(
-    'receiver keeps one card when a reposted copy is later replaced by the direct author copy',
+    'rejects legacy pass: receiver keeps one card when a reposted copy is later replaced by the direct author copy',
     () async {
       const sharedPost = PostModel(
         id: 'post-1',
@@ -70,6 +69,10 @@ void main() {
       );
       await passer.postRepo.savePost(sharedPost);
 
+      final previousPassState = await snapshotLegacyPostState(
+        passer.postRepo,
+        postId: sharedPost.id,
+      );
       final (passResult, pass) = await passPostAlong(
         p2pService: passer.p2pService,
         postRepo: passer.postRepo,
@@ -81,50 +84,17 @@ void main() {
         recipientPeerIds: const <String>['peer-cara'],
         nowProvider: () => DateTime.parse('2026-03-15T11:15:00.000Z'),
       );
-
-      expect(passResult, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      await _waitForCondition(
-        () async =>
-            (await receiver.postRepo.getPost('post-1'))?.passedByUsername ==
-            'Alice',
-        'receiver repost delivery',
+      expect(passResult, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(
+        await snapshotLegacyPostState(passer.postRepo, postId: sharedPost.id),
+        previousPassState,
       );
-
-      final directEnvelope = PostCreateEnvelope.fromPost(sharedPost).toJson();
-      final sendResult = await author.p2pService.sendMessageWithReply(
-        receiver.peerId,
-        directEnvelope,
-      );
-      expect(sendResult.sent, isTrue);
-
-      await _waitForCondition(
-        () async =>
-            (await receiver.postRepo.getPostOrigin('post-1'))?.originKind ==
-            PostOriginKind.direct,
-        'receiver direct merge',
-      );
-
-      final feed = await receiver.postRepo.loadFeed();
-      final mergedPost = await receiver.postRepo.getPost('post-1');
-      final mergedOrigin = await receiver.postRepo.getPostOrigin('post-1');
-
-      expect(feed, hasLength(1));
-      expect(mergedPost, isNotNull);
-      expect(mergedPost!.senderPeerId, 'peer-bob');
-      expect(mergedPost.authorPeerId, 'peer-bob');
-      expect(mergedPost.passedByUsername, 'Alice');
-      expect(mergedPost.visibleAt, '2026-03-15T11:15:00.000Z');
-      expect(mergedOrigin, isNotNull);
-      expect(mergedOrigin!.originKind, PostOriginKind.direct);
-      expect(mergedOrigin.passerUsername, 'Alice');
-      expect(mergedOrigin.passCreatedAt, '2026-03-15T11:15:00.000Z');
     },
   );
 
   test(
-    'receiver keeps one merged card when the direct author copy replays after a repost merge',
+    'rejects legacy pass: receiver keeps one merged card when the direct author copy replays after a repost merge',
     () async {
       const sharedPost = PostModel(
         id: 'post-1',
@@ -141,6 +111,10 @@ void main() {
       );
       await passer.postRepo.savePost(sharedPost);
 
+      final previousPassState = await snapshotLegacyPostState(
+        passer.postRepo,
+        postId: sharedPost.id,
+      );
       final (passResult, pass) = await passPostAlong(
         p2pService: passer.p2pService,
         postRepo: passer.postRepo,
@@ -152,80 +126,14 @@ void main() {
         recipientPeerIds: const <String>['peer-cara'],
         nowProvider: () => DateTime.parse('2026-03-15T11:15:00.000Z'),
       );
-
-      expect(passResult, PassPostAlongResult.success);
-      expect(pass, isNotNull);
-
-      await _waitForCondition(
-        () async =>
-            (await receiver.postRepo.getPost('post-1'))?.passedByUsername ==
-            'Alice',
-        'receiver repost delivery',
+      expect(passResult, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
+      expect(
+        await snapshotLegacyPostState(passer.postRepo, postId: sharedPost.id),
+        previousPassState,
       );
-
-      final directEnvelope = PostCreateEnvelope.fromPost(sharedPost).toJson();
-
-      final firstSendResult = await author.p2pService.sendMessageWithReply(
-        receiver.peerId,
-        directEnvelope,
-      );
-      expect(firstSendResult.sent, isTrue);
-
-      await _waitForCondition(
-        () async =>
-            (await receiver.postRepo.getPostOrigin('post-1'))?.originKind ==
-            PostOriginKind.direct,
-        'receiver direct merge',
-      );
-
-      final replaySendResult = await author.p2pService.sendMessageWithReply(
-        receiver.peerId,
-        directEnvelope,
-      );
-      expect(replaySendResult.sent, isTrue);
-
-      await _waitForCondition(() async {
-        final feed = await receiver.postRepo.loadFeed();
-        final origin = await receiver.postRepo.getPostOrigin('post-1');
-        return feed.length == 1 && origin?.originKind == PostOriginKind.direct;
-      }, 'receiver direct replay merge');
-
-      final feed = await receiver.postRepo.loadFeed();
-      final mergedPost = await receiver.postRepo.getPost('post-1');
-      final mergedOrigin = await receiver.postRepo.getPostOrigin('post-1');
-
-      expect(feed, hasLength(1));
-      expect(await receiver.postRepo.loadPostPassCount('post-1'), 1);
-      expect(mergedPost, isNotNull);
-      expect(mergedPost!.senderPeerId, 'peer-bob');
-      expect(mergedPost.authorPeerId, 'peer-bob');
-      expect(mergedPost.passedByUsername, 'Alice');
-      expect(mergedPost.visibleAt, '2026-03-15T11:15:00.000Z');
-      expect(mergedOrigin, isNotNull);
-      expect(mergedOrigin!.originKind, PostOriginKind.direct);
-      expect(mergedOrigin.passerUsername, 'Alice');
-      expect(mergedOrigin.passCreatedAt, '2026-03-15T11:15:00.000Z');
     },
   );
-}
-
-Future<void> _waitForCondition(
-  Future<bool> Function() condition,
-  String description,
-) async {
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for $description');
 }
 
 class _MergeUser {

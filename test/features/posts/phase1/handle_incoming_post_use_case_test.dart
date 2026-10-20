@@ -80,6 +80,7 @@ void main() {
     final (result, post) = await handleIncomingPost(
       message: _messageFromEnvelope(envelope),
       postRepo: posts,
+      nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
       contactRepo: contacts,
     );
 
@@ -94,6 +95,7 @@ void main() {
     final (result, post) = await handleIncomingPost(
       message: _messageFromEnvelope(envelope),
       postRepo: posts,
+      nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
       contactRepo: contacts,
     );
 
@@ -108,11 +110,13 @@ void main() {
     final first = await handleIncomingPost(
       message: _messageFromEnvelope(envelope),
       postRepo: posts,
+      nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
       contactRepo: contacts,
     );
     final second = await handleIncomingPost(
       message: _messageFromEnvelope(envelope),
       postRepo: posts,
+      nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
       contactRepo: contacts,
     );
 
@@ -153,6 +157,7 @@ void main() {
       final (result, post) = await handleIncomingPost(
         message: _messageFromEnvelope(envelope),
         postRepo: posts,
+        nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
         contactRepo: contacts,
       );
 
@@ -189,6 +194,7 @@ void main() {
           transportSender: envelope.senderPeerId,
         ),
         postRepo: posts,
+        nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
         contactRepo: contacts,
       );
 
@@ -213,6 +219,7 @@ void main() {
           transportSender: envelope.senderPeerId,
         ),
         postRepo: posts,
+        nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
         contactRepo: contacts,
       );
 
@@ -222,32 +229,31 @@ void main() {
     },
   );
 
-  test(
-    'rejects post_create when created_at is beyond allowed future skew',
-    () async {
-      contacts.addTestContact(_contact('peer-bob', 'Bob'));
-      final futureCreatedAt = DateTime.now()
-          .toUtc()
-          .add(const Duration(minutes: 6))
-          .toIso8601String();
-      final json = jsonDecode(envelope.toJson()) as Map<String, dynamic>;
-      json['created_at'] = futureCreatedAt;
+  test('clamps a future creation time to the receiving clock', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    final futureCreatedAt = DateTime.now()
+        .toUtc()
+        .add(const Duration(minutes: 6))
+        .toIso8601String();
+    final json = jsonDecode(envelope.toJson()) as Map<String, dynamic>;
+    json['created_at'] = futureCreatedAt;
 
-      final (result, post) = await handleIncomingPost(
-        message: _messageFromJson(
-          jsonEncode(json),
-          transportSender: envelope.senderPeerId,
-          timestamp: futureCreatedAt,
-        ),
-        postRepo: posts,
-        contactRepo: contacts,
-      );
+    final (result, post) = await handleIncomingPost(
+      message: _messageFromJson(
+        jsonEncode(json),
+        transportSender: envelope.senderPeerId,
+        timestamp: futureCreatedAt,
+      ),
+      postRepo: posts,
+      nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
+      contactRepo: contacts,
+    );
 
-      expect(result, HandleIncomingPostResult.notPostCreate);
-      expect(post, isNull);
-      expect(await posts.postExists('post-1'), isFalse);
-    },
-  );
+    expect(result, HandleIncomingPostResult.postCreated);
+    expect(post!.createdAt, '2026-03-15T13:00:00.000Z');
+    expect(post.expiresAt, '2026-03-16T13:00:00.000Z');
+    expect(await posts.postExists('post-1'), isTrue);
+  });
 
   test(
     'sanitizes dangerous bidi controls in incoming post text and author username',
@@ -271,6 +277,7 @@ void main() {
       final (result, post) = await handleIncomingPost(
         message: _messageFromEnvelope(sanitizedEnvelope),
         postRepo: posts,
+        nowProvider: () => DateTime.parse('2026-03-15T13:00:00Z'),
         contactRepo: contacts,
       );
 

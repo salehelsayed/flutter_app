@@ -113,6 +113,7 @@ void main() {
       p2pService: p2pService,
       postRepo: posts,
       bridge: bridge,
+      nowProvider: () => DateTime.parse('2026-06-12T12:00:00Z'),
     ).execute(
       CreatedLocalPost(
         post: post,
@@ -124,8 +125,7 @@ void main() {
   }
 
   Map<String, dynamic> inboxEnvelope(String peerId) {
-    final message =
-        network.retrieveInbox(peerId).single['message'] as String;
+    final message = network.retrieveInbox(peerId).single['message'] as String;
     return jsonDecode(message) as Map<String, dynamic>;
   }
 
@@ -170,7 +170,7 @@ void main() {
   );
 
   test(
-    'recipient without an ML-KEM key: media post fails closed per recipient — no envelope sent, delivery row failed with post_recipient_missing_mlkem_key',
+    'recipient without an ML-KEM key: media post fails closed per recipient — no envelope sent, delivery row failed with recipient_missing_mlkem_key',
     () async {
       final post = mediaPost(<PostMediaAttachmentModel>[keyedAttachment()]);
       await seed(post);
@@ -180,15 +180,15 @@ void main() {
       ]);
 
       expect(result, SendPostResult.sendFailed);
-      expect(network.retrieveInbox('peer-bob'), isEmpty,
-          reason: 'no v1 plaintext envelope may ship a keyed media post');
+      expect(
+        network.retrieveInbox('peer-bob'),
+        isEmpty,
+        reason: 'no v1 plaintext envelope may ship a keyed media post',
+      );
 
       final delivery = (await posts.getRecipientDeliveries('post-1')).single;
       expect(delivery.deliveryStatus, 'failed');
-      expect(
-        delivery.lastError,
-        contains('post_recipient_missing_mlkem_key'),
-      );
+      expect(delivery.lastError, contains('recipient_missing_mlkem_key'));
     },
   );
 
@@ -217,11 +217,11 @@ void main() {
 
       final delivery = (await posts.getRecipientDeliveries('post-1')).single;
       expect(delivery.deliveryStatus, 'failed');
-      expect(delivery.lastError, contains('post_media_encrypt_failed'));
+      expect(delivery.lastError, 'thought_encrypt_failed:ENCRYPT_UNAVAILABLE');
     },
   );
 
-  test('text-only post to a keyless recipient still delivers v1', () async {
+  test('text-only thought to a keyless recipient fails closed', () async {
     final post = mediaPost(const <PostMediaAttachmentModel>[]);
     await seed(post);
 
@@ -229,14 +229,16 @@ void main() {
       contact('peer-bob', withMlKemKey: false),
     ]);
 
-    expect(result, SendPostResult.success);
-    final envelope = inboxEnvelope('peer-bob');
-    expect(envelope['version'], '1');
-    expect(envelope['type'], 'post_create');
+    expect(result, SendPostResult.sendFailed);
+    expect(network.retrieveInbox('peer-bob'), isEmpty);
+    expect(
+      (await posts.getRecipientDeliveries('post-1')).single.lastError,
+      'recipient_missing_mlkem_key',
+    );
   });
 
   test(
-    'media post with keyless legacy attachment rows (pre-flip plaintext upload) still delivers v1 plaintext',
+    'keyless legacy attachment rows never allow a plaintext thought envelope',
     () async {
       final post = mediaPost(<PostMediaAttachmentModel>[
         keylessLegacyAttachment(),
@@ -247,12 +249,12 @@ void main() {
         contact('peer-bob', withMlKemKey: false),
       ]);
 
-      // G3 scoping: empty mediaKeys leaves the legacy fallback live — the
-      // blob is already plaintext on the relay (TTL-bounded residual).
-      expect(result, SendPostResult.success);
-      final envelope = inboxEnvelope('peer-bob');
-      expect(envelope['version'], '1');
-      expect(jsonEncode(envelope), isNot(contains('media_keys')));
+      expect(result, SendPostResult.sendFailed);
+      expect(network.retrieveInbox('peer-bob'), isEmpty);
+      expect(
+        (await posts.getRecipientDeliveries('post-1')).single.lastError,
+        'recipient_missing_mlkem_key',
+      );
     },
   );
 

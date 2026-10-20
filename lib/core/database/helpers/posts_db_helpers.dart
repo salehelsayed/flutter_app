@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import '../../utils/thought_lifetime.dart';
 
 void _emitPostsDbTiming({
   required String event,
@@ -129,7 +130,12 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
   }
 }
 
-Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
+Future<Map<String, Object?>?> dbLoadPost(
+  Database db,
+  String postId, {
+  DateTime Function()? nowProvider,
+}) async {
+  final nowIso = (nowProvider ?? DateTime.now)().toUtc().toIso8601String();
   final stopwatch = Stopwatch()..start();
   try {
     final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
@@ -162,10 +168,10 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
         LEFT JOIN (
           $localSharedToCountSubquery
         ) psc ON psc.post_id = p.post_id
-        WHERE p.post_id = ?
+        WHERE p.post_id = ? AND julianday(p.expires_at) > julianday(?)
         LIMIT 1
       ''',
-      <Object?>[postId],
+      <Object?>[postId, nowIso],
     );
     final row = rows.isEmpty ? null : rows.first;
     _emitPostsDbTiming(
@@ -193,8 +199,10 @@ Future<Map<String, Object?>?> dbLoadPost(Database db, String postId) async {
 
 Future<List<Map<String, Object?>>> dbLoadPostsByIds(
   Database db,
-  List<String> postIds,
-) async {
+  List<String> postIds, {
+  DateTime Function()? nowProvider,
+}) async {
+  final nowIso = (nowProvider ?? DateTime.now)().toUtc().toIso8601String();
   final uniquePostIds = postIds.toSet().toList(growable: false);
   if (uniquePostIds.isEmpty) {
     return const <Map<String, Object?>>[];
@@ -207,7 +215,8 @@ Future<List<Map<String, Object?>>> dbLoadPostsByIds(
       uniquePostIds.length,
       '?',
     ).join(', ');
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
         SELECT
           p.*,
           po.origin_kind,
@@ -235,7 +244,10 @@ Future<List<Map<String, Object?>>> dbLoadPostsByIds(
           $localSharedToCountSubquery
         ) psc ON psc.post_id = p.post_id
         WHERE p.post_id IN ($placeholders)
-      ''', uniquePostIds);
+          AND julianday(p.expires_at) > julianday(?)
+      ''',
+      <Object?>[...uniquePostIds, nowIso],
+    );
     _emitPostsDbTiming(
       event: 'POSTS_DB_LOAD_BY_IDS_TIMING',
       stopwatch: stopwatch,
@@ -259,12 +271,17 @@ Future<List<Map<String, Object?>>> dbLoadPostsByIds(
   }
 }
 
-Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
+Future<List<Map<String, Object?>>> dbLoadPostsFeed(
+  Database db, {
+  DateTime Function()? nowProvider,
+}) async {
+  final nowIso = (nowProvider ?? DateTime.now)().toUtc().toIso8601String();
   final stopwatch = Stopwatch()..start();
   try {
     final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
     final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
-    final rows = await db.rawQuery('''
+    final rows = await db.rawQuery(
+      '''
       SELECT
         p.*,
         po.origin_kind,
@@ -292,8 +309,11 @@ Future<List<Map<String, Object?>>> dbLoadPostsFeed(Database db) async {
         $localSharedToCountSubquery
       ) psc ON psc.post_id = p.post_id
       WHERE COALESCE(fs.is_hidden, 0) = 0
+        AND julianday(p.expires_at) > julianday(?)
       ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
-    ''');
+    ''',
+      <Object?>[nowIso],
+    );
     _emitPostsDbTiming(
       event: 'POSTS_DB_LOAD_FEED_TIMING',
       stopwatch: stopwatch,
@@ -340,11 +360,17 @@ Future<Map<String, int>> dbLoadViewerSharedToCountsForPosts(
 }
 
 Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
-  Database db,
-) async {
+  Database db, {
+  DateTime Function()? nowProvider,
+}) async {
+  final cutoff = (nowProvider ?? DateTime.now)()
+      .toUtc()
+      .subtract(ThoughtLifetime.duration)
+      .toIso8601String();
   final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
   final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
-  return db.rawQuery('''
+  return db.rawQuery(
+    '''
       SELECT
         p.*,
         po.origin_kind,
@@ -373,8 +399,11 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
       ) psc ON psc.post_id = p.post_id
       WHERE p.is_incoming = 0
         AND p.delivery_status IN ('sending', 'partial', 'failed')
+        AND julianday(p.post_created_at) > julianday(?)
       ORDER BY p.visible_at DESC, p.post_created_at DESC, p.post_id DESC
-    ''');
+    ''',
+    <Object?>[cutoff],
+  );
 }
 
 Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
@@ -411,8 +440,7 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
       LEFT JOIN (
         $localSharedToCountSubquery
       ) psc ON psc.post_id = p.post_id
-      WHERE p.keep_available = 0
-        AND p.expires_at <= ?
+      WHERE julianday(p.expires_at) <= julianday(?)
     ''',
     <Object?>[nowIso],
   );
@@ -420,6 +448,11 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
 
 Future<void> dbDeletePostCascade(Database db, String postId) async {
   await dbWriteTransaction(db, (txn) async {
+    await txn.rawDelete(
+      'DELETE FROM post_follow_on_outbox_recipient_deliveries WHERE event_id IN (SELECT event_id FROM post_follow_on_outbox_events WHERE post_id = ?)',
+      <Object?>[postId],
+    );
+    await _deleteRequiredPostRows(txn, 'post_follow_on_outbox_events', postId);
     await _deleteRequiredPostRows(txn, 'post_comment_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_comments', postId);
@@ -463,4 +496,18 @@ Future<void> _deleteRequiredPostRows(
     );
   }
   await txn.delete(table, where: 'post_id = ?', whereArgs: <Object?>[postId]);
+}
+
+/// Includes hidden thoughts: their media and notifications still need expiry.
+Future<DateTime?> dbLoadNextPostExpiry(Database db) async {
+  final rows = await db.rawQuery(
+    'SELECT MIN(expires_at) AS expires_at FROM posts',
+  );
+  final value = rows.first['expires_at'] as String?;
+  return value == null ? null : DateTime.tryParse(value)?.toUtc();
+}
+
+Future<Set<String>> dbLoadAllPostIds(Database db) async {
+  final rows = await db.query('posts', columns: <String>['post_id']);
+  return rows.map((row) => row['post_id'] as String).toSet();
 }

@@ -23,117 +23,135 @@ void main() {
       harness.dispose();
     });
 
-    test('local notification tap stores a pending target before opening Posts', () async {
-      await routeNotificationPayload(
-        payload: 'post:post-local',
-        onRouteTarget: harness.handleRouteTarget,
-      );
+    test(
+      'local notification tap stores a pending target before opening Posts',
+      () async {
+        await routeNotificationPayload(
+          payload: 'post:post-local',
+          onRouteTarget: harness.handleRouteTarget,
+        );
 
-      expect(harness.pendingTargetStore.target?.postId, 'post-local');
-      // 214: still on the orbit resting default — no navigation before the
-      // post arrives (the forced feed switch happens only at reveal).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.revealPostsSurfaceCalls, 0);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
+        expect(harness.pendingTargetStore.target?.postId, 'post-local');
+        // 214: still on the orbit resting default — no navigation before the
+        // post arrives (the forced feed switch happens only at reveal).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.revealPostsSurfaceCalls, 0);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
 
-    test('post-comment tap preserves the comment target before opening Posts', () async {
-      await routeNotificationPayload(
-        payload: 'post_comment:post-local:comment-1',
-        onRouteTarget: harness.handleRouteTarget,
-      );
+    test(
+      'post-comment tap preserves the comment target before opening Posts',
+      () async {
+        await routeNotificationPayload(
+          payload: 'post_comment:post-local:comment-1',
+          onRouteTarget: harness.handleRouteTarget,
+        );
 
-      expect(harness.pendingTargetStore.target?.postId, 'post-local');
-      expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-      // 214: no navigation before the post arrives (orbit resting default).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.revealPostsSurfaceCalls, 0);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
+        expect(harness.pendingTargetStore.target?.postId, 'post-local');
+        expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
+        // 214: no navigation before the post arrives (orbit resting default).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.revealPostsSurfaceCalls, 0);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
 
-    test('onMessageOpenedApp routes through the shared pending target flow', () async {
-      await routeRemoteNotificationOpen(
-        data: const <String, dynamic>{
-          'type': 'post_create',
-          'post_id': 'post-opened-app',
-        },
-        onRouteTarget: harness.handleRouteTarget,
-        onMissingRouteTarget: harness.drainOfflineInbox,
-      );
-
-      expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
-      // 214: no navigation before the post arrives (orbit resting default).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
-
-    test('post_comment remote opens route through the shared pending target flow', () async {
-      await routeRemoteNotificationOpen(
-        data: const <String, dynamic>{
-          'type': 'post_comment',
-          'post_id': 'post-opened-app',
-          'comment_id': 'comment-1',
-        },
-        onRouteTarget: harness.handleRouteTarget,
-        onMissingRouteTarget: harness.drainOfflineInbox,
-      );
-
-      expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
-      expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-      // 214: no navigation before the post arrives (orbit resting default).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
-
-    test('getInitialMessage routes through the shared pending target flow', () async {
-      await routeInitialRemoteNotificationOpen(
-        getInitialMessage: () async => const RemoteMessage(
-          data: <String, dynamic>{
+    test(
+      'onMessageOpenedApp routes through the shared pending target flow',
+      () async {
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
             'type': 'post_create',
-            'post_id': 'post-initial-remote',
+            'post_id': 'post-opened-app',
           },
-        ),
-        onRouteTarget: harness.handleRouteTarget,
-        onMissingRouteTarget: harness.drainOfflineInbox,
-      );
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.drainOfflineInbox,
+        );
 
-      expect(
-        harness.pendingTargetStore.target?.postId,
-        'post-initial-remote',
-      );
-      // 214: no navigation before the post arrives (orbit resting default).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
+        expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
+        // 214: no navigation before the post arrives (orbit resting default).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
 
-    test('terminated local fallback launch routes through the shared pending target flow', () async {
-      await routeInitialLocalNotificationOpen(
-        consumeInitialPayload: () async => 'post:post-initial-local',
-        onRouteTarget: harness.handleRouteTarget,
-      );
+    test(
+      'post_comment remote opens route through the shared pending target flow',
+      () async {
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{
+            'type': 'post_comment',
+            'post_id': 'post-opened-app',
+            'comment_id': 'comment-1',
+          },
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.drainOfflineInbox,
+        );
 
-      expect(
-        harness.pendingTargetStore.target?.postId,
-        'post-initial-local',
-      );
-      // 214: no navigation before the post arrives (orbit resting default).
-      expect(harness.appShellController.activeTab, AppShellTab.orbit);
-      expect(harness.drainOfflineInboxCalls, 1);
-    });
+        expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
+        expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
+        // 214: no navigation before the post arrives (orbit resting default).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
 
-    test('repo observation opens Posts and clears the fallback status', () async {
-      await routeNotificationPayload(
-        payload: 'post:post-observed',
-        onRouteTarget: harness.handleRouteTarget,
-      );
+    test(
+      'getInitialMessage routes through the shared pending target flow',
+      () async {
+        await routeInitialRemoteNotificationOpen(
+          getInitialMessage: () async => const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'post_create',
+              'post_id': 'post-initial-remote',
+            },
+          ),
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.drainOfflineInbox,
+        );
 
-      await harness.postRepository.savePost(_post(id: 'post-observed'));
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(
+          harness.pendingTargetStore.target?.postId,
+          'post-initial-remote',
+        );
+        // 214: no navigation before the post arrives (orbit resting default).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
 
-      expect(harness.appShellController.activeTab, AppShellTab.feed);
-      expect(harness.revealPostsSurfaceCalls, 1);
-      expect(harness.pendingTargetStore.statusMessage, isNull);
-    });
+    test(
+      'terminated local fallback launch routes through the shared pending target flow',
+      () async {
+        await routeInitialLocalNotificationOpen(
+          consumeInitialPayload: () async => 'post:post-initial-local',
+          onRouteTarget: harness.handleRouteTarget,
+        );
+
+        expect(harness.pendingTargetStore.target?.postId, 'post-initial-local');
+        // 214: no navigation before the post arrives (orbit resting default).
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
+        expect(harness.drainOfflineInboxCalls, 1);
+      },
+    );
+
+    test(
+      'repo observation opens Posts and clears the fallback status',
+      () async {
+        await routeNotificationPayload(
+          payload: 'post:post-observed',
+          onRouteTarget: harness.handleRouteTarget,
+        );
+
+        await harness.postRepository.savePost(_post(id: 'post-observed'));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(harness.appShellController.activeTab, AppShellTab.feed);
+        expect(harness.revealPostsSurfaceCalls, 1);
+        expect(harness.pendingTargetStore.statusMessage, isNull);
+      },
+    );
 
     test('timeout opens Posts with the approved fallback message', () async {
       final timeoutHarness = _CoordinatorHarness(
@@ -157,37 +175,41 @@ void main() {
       expect(timeoutHarness.revealPostsSurfaceCalls, 1);
     });
 
-    test('pending target expires after the approved budget if the post never arrives', () async {
-      final expiryHarness = _CoordinatorHarness(
-        waitBudget: const Duration(milliseconds: 20),
-        expiryBudget: const Duration(milliseconds: 60),
-      );
-      addTearDown(expiryHarness.dispose);
+    test(
+      'pending target expires after the approved budget if the post never arrives',
+      () async {
+        final expiryHarness = _CoordinatorHarness(
+          waitBudget: const Duration(milliseconds: 20),
+          expiryBudget: const Duration(milliseconds: 60),
+        );
+        addTearDown(expiryHarness.dispose);
 
-      await routeNotificationPayload(
-        payload: 'post:post-expire',
-        onRouteTarget: expiryHarness.handleRouteTarget,
-      );
+        await routeNotificationPayload(
+          payload: 'post:post-expire',
+          onRouteTarget: expiryHarness.handleRouteTarget,
+        );
 
-      await Future<void>.delayed(const Duration(milliseconds: 90));
+        await Future<void>.delayed(const Duration(milliseconds: 90));
 
-      expect(expiryHarness.pendingTargetStore.target, isNull);
-      expect(expiryHarness.pendingTargetStore.statusMessage, isNull);
-    });
+        expect(expiryHarness.pendingTargetStore.target, isNull);
+        expect(expiryHarness.pendingTargetStore.statusMessage, isNull);
+      },
+    );
 
-    test('missing remote route target falls back to inbox drain without setting a pending post target', () async {
-      await routeRemoteNotificationOpen(
-        data: const <String, dynamic>{
-          'type': 'post_create',
-        },
-        onRouteTarget: harness.handleRouteTarget,
-        onMissingRouteTarget: harness.drainOfflineInbox,
-      );
+    test(
+      'missing remote route target falls back to inbox drain without setting a pending post target',
+      () async {
+        await routeRemoteNotificationOpen(
+          data: const <String, dynamic>{'type': 'post_create'},
+          onRouteTarget: harness.handleRouteTarget,
+          onMissingRouteTarget: harness.drainOfflineInbox,
+        );
 
-      expect(harness.pendingTargetStore.target, isNull);
-      expect(harness.drainOfflineInboxCalls, 1);
-      expect(harness.revealPostsSurfaceCalls, 0);
-    });
+        expect(harness.pendingTargetStore.target, isNull);
+        expect(harness.drainOfflineInboxCalls, 1);
+        expect(harness.revealPostsSurfaceCalls, 0);
+      },
+    );
   });
 }
 
@@ -205,6 +227,7 @@ class _CoordinatorHarness {
     Duration expiryBudget = const Duration(seconds: 30),
   }) {
     coordinator = PostNotificationOpenCoordinator(
+      nowProvider: () => DateTime.utc(2026, 3, 15, 12),
       pendingTargetStore: pendingTargetStore,
       postRepository: postRepository,
       appShellController: appShellController,

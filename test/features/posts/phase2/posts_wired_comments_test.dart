@@ -267,40 +267,45 @@ void main() {
     },
   );
 
-  testWidgets('submits comments from the sheet and extends the post expiry', (
-    tester,
-  ) async {
-    contactRepository.seed([_contact('peer-bob', 'Bob')]);
-    FakeP2PService(peerId: 'peer-bob', network: network);
-    await postRepository.savePost(_post(id: 'post-1', text: 'Need a ladder'));
-    await postRepository.saveRecipientDelivery(
-      _delivery(postId: 'post-1', recipientPeerId: 'peer-self'),
-    );
+  testWidgets(
+    'legacy comment submit stores nothing and cannot extend thought expiry',
+    (tester) async {
+      contactRepository.seed([_contact('peer-bob', 'Bob')]);
+      FakeP2PService(peerId: 'peer-bob', network: network);
+      await postRepository.savePost(_post(id: 'post-1', text: 'Need a ladder'));
+      await postRepository.saveRecipientDelivery(
+        _delivery(postId: 'post-1', recipientPeerId: 'peer-self'),
+      );
 
-    await tester.pumpWidget(buildWidget());
-    await tester.pump();
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
 
-    await _openCommentsSheet(tester);
+      await _openCommentsSheet(tester);
 
-    await tester.enterText(find.byType(TextField), 'I can lend one.');
-    await tester.tap(find.byIcon(Icons.send_rounded));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+      await tester.enterText(find.byType(TextField), 'I can lend one.');
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
 
-    expect(find.text('1 comment'), findsOneWidget);
-    expect(find.text('I can lend one.'), findsOneWidget);
+      expect(find.text('No comments'), findsOneWidget);
 
-    final comments = await postRepository.loadComments('post-1');
-    expect(comments, hasLength(1));
-    expect(comments.single.body, 'I can lend one.');
-    expect(
-      (await postRepository.getPost('post-1'))?.lastEngagementAt,
-      isNotNull,
-    );
-  });
+      final comments = await postRepository.loadComments('post-1');
+      expect(comments, isEmpty);
+      expect(
+        (await postRepository.getPost('post-1'))?.expiresAt,
+        _post(id: 'post-1', text: 'Need a ladder').expiresAt,
+      );
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(
+        (await postRepository.getPost('post-1'))?.lastEngagementAt,
+        isNull,
+      );
+    },
+  );
 
   testWidgets(
-    'shows a locally persisted comment in the sender sheet before network delivery completes',
+    'legacy comment submit stays rejected through delayed network delivery',
     (tester) async {
       contactRepository.seed([_contact('peer-bob', 'Bob')]);
       FakeP2PService(peerId: 'peer-bob', network: network);
@@ -320,12 +325,16 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));
 
-      expect(find.text('1 comment'), findsOneWidget);
-      expect(find.text('I can lend one.'), findsOneWidget);
+      expect(find.text('No comments'), findsOneWidget);
 
       final comments = await postRepository.loadComments('post-1');
-      expect(comments, hasLength(1));
-      expect(comments.single.body, 'I can lend one.');
+      expect(comments, isEmpty);
+      expect(
+        (await postRepository.getPost('post-1'))?.expiresAt,
+        _post(id: 'post-1', text: 'Need a ladder').expiresAt,
+      );
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
 
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pump(const Duration(milliseconds: 150));

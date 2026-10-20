@@ -64,6 +64,7 @@ void main() {
         },
       );
 
+      aliceService.connectedPeers.add('peer-bob');
       final created = await _createLocalPost(
         posts: posts,
         contacts: contacts,
@@ -74,6 +75,7 @@ void main() {
       final (result, post) = await PostDeliveryRunner(
         p2pService: aliceService,
         postRepo: posts,
+        bridge: FakeBridge(),
       ).execute(created);
 
       expect(result, SendPostResult.partialSuccess);
@@ -102,6 +104,7 @@ void main() {
     FakeP2PService(peerId: 'peer-bob', network: network);
     final aliceService = FakeP2PService(peerId: 'peer-alice', network: network);
 
+    aliceService.connectedPeers.add('peer-bob');
     final created = await _createLocalPost(
       posts: posts,
       contacts: contacts,
@@ -111,6 +114,7 @@ void main() {
     final (result, post) = await PostDeliveryRunner(
       p2pService: aliceService,
       postRepo: posts,
+      bridge: FakeBridge(),
     ).execute(created);
 
     expect(result, SendPostResult.success);
@@ -138,6 +142,7 @@ void main() {
       },
     );
 
+    aliceService.connectedPeers.add('peer-bob');
     final created = await _createLocalPost(
       posts: posts,
       contacts: contacts,
@@ -147,6 +152,7 @@ void main() {
     final (result, post) = await PostDeliveryRunner(
       p2pService: aliceService,
       postRepo: posts,
+      bridge: FakeBridge(),
     ).execute(created);
 
     expect(result, SendPostResult.sendFailed);
@@ -171,6 +177,7 @@ void main() {
         },
       );
 
+      aliceService.connectedPeers.add('peer-bob');
       final created = await _createLocalPost(
         posts: posts,
         contacts: contacts,
@@ -180,6 +187,7 @@ void main() {
       final (result, post) = await PostDeliveryRunner(
         p2pService: aliceService,
         postRepo: posts,
+        bridge: FakeBridge(),
       ).execute(created);
 
       expect(result, SendPostResult.sendFailed);
@@ -203,6 +211,7 @@ void main() {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     final aliceService = FakeP2PService(peerId: 'peer-alice', network: network);
 
+    aliceService.connectedPeers.add('peer-bob');
     final created = await _createLocalPost(
       posts: posts,
       contacts: contacts,
@@ -212,6 +221,7 @@ void main() {
     final (result, _) = await PostDeliveryRunner(
       p2pService: aliceService,
       postRepo: posts,
+      bridge: FakeBridge(),
     ).execute(created);
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
@@ -220,7 +230,7 @@ void main() {
   });
 
   test(
-    'execute discovers and dials recipients before direct post send',
+    'execute sends disconnected recipients to inbox without discovery or dial',
     () async {
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
       final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
@@ -243,17 +253,18 @@ void main() {
       final (result, post) = await PostDeliveryRunner(
         p2pService: aliceService,
         postRepo: posts,
+        bridge: FakeBridge(),
       ).execute(created);
 
       expect(result, SendPostResult.success);
       expect(post.deliveryStatus, 'sent');
-      expect(aliceService.discoverAttempts, <String>['peer-bob']);
-      expect(aliceService.dialAttempts, <String>['peer-bob']);
-      expect(network.inboxCount('peer-bob'), 0);
+      expect(aliceService.discoverAttempts, isEmpty);
+      expect(aliceService.dialAttempts, isEmpty);
+      expect(network.inboxCount('peer-bob'), 1);
 
       final deliveries = await posts.getRecipientDeliveries(post.id);
-      expect(deliveries.single.deliveryStatus, 'delivered');
-      expect(deliveries.single.deliveryPath, 'direct');
+      expect(deliveries.single.deliveryStatus, 'inbox');
+      expect(deliveries.single.deliveryPath, 'inbox');
     },
   );
 
@@ -444,29 +455,30 @@ void main() {
         createdAt: '2026-03-15T10:00:02.000Z',
         isIncoming: false,
       );
-      final snapshotPost = _post(
-        id: 'post-pass-keydrop',
-        deliveryStatus: 'available',
-        isIncoming: true,
-      ).copyWith(
-        authorPeerId: 'peer-bob',
-        authorUsername: 'Bob',
-        mediaKind: 'image',
-        media: const <PostMediaAttachmentModel>[
-          PostMediaAttachmentModel(
-            mediaId: 'media-1',
-            postId: 'post-pass-keydrop',
-            blobId: 'blob-enc-1',
-            kind: 'image',
-            mime: 'image/jpeg',
-            sizeBytes: 2048,
-            createdAt: '2026-03-15T10:00:00.000Z',
-            encryptionKeyBase64: 'row-key-b64',
-            encryptionNonce: 'row-nonce-b64',
-            isEncrypted: true,
-          ),
-        ],
-      );
+      final snapshotPost =
+          _post(
+            id: 'post-pass-keydrop',
+            deliveryStatus: 'available',
+            isIncoming: true,
+          ).copyWith(
+            authorPeerId: 'peer-bob',
+            authorUsername: 'Bob',
+            mediaKind: 'image',
+            media: const <PostMediaAttachmentModel>[
+              PostMediaAttachmentModel(
+                mediaId: 'media-1',
+                postId: 'post-pass-keydrop',
+                blobId: 'blob-enc-1',
+                kind: 'image',
+                mime: 'image/jpeg',
+                sizeBytes: 2048,
+                createdAt: '2026-03-15T10:00:00.000Z',
+                encryptionKeyBase64: 'row-key-b64',
+                encryptionNonce: 'row-nonce-b64',
+                isEncrypted: true,
+              ),
+            ],
+          );
 
       final (result, deliveredPass) =
           await PostDeliveryRunner(
@@ -640,7 +652,11 @@ class _PolicyFakeP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     final policy = policies[toPeerId];
     if (policy?.throwOnInbox == true) {
       throw StateError('inbox failed for $toPeerId');

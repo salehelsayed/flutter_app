@@ -15,6 +15,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/compose_post_she
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
@@ -61,6 +62,7 @@ void main() {
       contactRepository.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
       network.ackDelay = const Duration(seconds: 3);
       FakeP2PService(peerId: 'peer-bob', network: network);
+      p2pService.connectedPeers.add('peer-bob');
 
       await tester.pumpWidget(_buildWidget(postRepo: posts));
       await tester.pump();
@@ -105,6 +107,7 @@ void main() {
       contactRepository.seed(<ContactModel>[_contact('peer-bob', 'Bob')]);
       network.ackDelay = const Duration(seconds: 1);
       FakeP2PService(peerId: 'peer-bob', network: network);
+      p2pService.connectedPeers.add('peer-bob');
 
       await tester.pumpWidget(
         _buildWidget(
@@ -338,6 +341,7 @@ void main() {
     network.ackDelay = const Duration(seconds: 1);
     network.inboxDisabled = true;
     FakeP2PService(peerId: 'peer-bob', network: network);
+    p2pService.connectedPeers.add('peer-bob');
 
     await tester.pumpWidget(_buildWidget(postRepo: posts));
     await tester.pump();
@@ -512,6 +516,7 @@ Widget _buildWidget({
       contactRepo: contactRepository,
       postRepo: postRepo,
       p2pService: p2pService,
+      bridge: FakeBridge(),
       activeTab: 'posts',
       onSwitchView: (_) {},
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
@@ -531,6 +536,7 @@ ContactModel _contact(String peerId, String username) {
     username: username,
     signature: 'sig-$peerId',
     scannedAt: '2026-03-15T10:00:00.000Z',
+    mlKemPublicKey: 'mlkem-$peerId',
   );
 }
 

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
@@ -150,6 +151,7 @@ Future<int> retryPendingPostDeliveries({
   required ContactRepository contactRepo,
   required P2PService p2pService,
   Bridge? bridge,
+  DateTime Function()? nowProvider,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
 }) async {
@@ -166,7 +168,11 @@ Future<int> retryPendingPostDeliveries({
   var retriedCount = 0;
 
   for (final post in retryablePosts) {
-    if (post.isIncoming) {
+    if (post.isIncoming ||
+        ThoughtLifetime.isExpired(
+          DateTime.parse(post.createdAt),
+          nowProvider?.call() ?? DateTime.now(),
+        )) {
       continue;
     }
 
@@ -233,7 +239,11 @@ Future<int> retryPendingPostDeliveries({
       );
     }
 
-    if (retryRecipients.isEmpty) {
+    if (retryRecipients.isEmpty ||
+        ThoughtLifetime.isExpired(
+          DateTime.parse(post.createdAt),
+          nowProvider?.call() ?? DateTime.now(),
+        )) {
       continue;
     }
 
@@ -242,6 +252,7 @@ Future<int> retryPendingPostDeliveries({
       p2pService: p2pService,
       postRepo: postRepo,
       bridge: bridge,
+      nowProvider: nowProvider,
     ).execute(
       CreatedLocalPost(
         post: hydratedPost,
@@ -250,103 +261,6 @@ Future<int> retryPendingPostDeliveries({
             .map((delivery) => delivery.recipientPeerId)
             .toList(growable: false),
       ),
-    );
-  }
-
-  final retryablePasses = await postRepo.loadRetryableOutgoingPostPasses();
-  for (final pass in retryablePasses) {
-    if (pass.isIncoming) {
-      continue;
-    }
-
-    final deliveries = await postRepo.getPostPassRecipientDeliveries(
-      pass.passId,
-    );
-    if (deliveries.isEmpty) {
-      continue;
-    }
-
-    final aggregate = aggregatePostDeliveryStatusFromDeliveries(deliveries);
-    final unresolvedDeliveries = deliveries
-        .where(
-          (delivery) =>
-              !isSuccessfulRecipientDeliveryStatus(delivery.deliveryStatus),
-        )
-        .toList(growable: false);
-    if (unresolvedDeliveries.isEmpty) {
-      if (aggregate.deliveryStatus != pass.deliveryStatus) {
-        await postRepo.savePostPass(
-          pass.copyWith(deliveryStatus: aggregate.deliveryStatus),
-        );
-      }
-      continue;
-    }
-
-    final sourcePost = await postRepo.getPost(pass.postId);
-    if (sourcePost == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PENDING_POST_RETRIER_MISSING_PASS_SOURCE_POST',
-        details: {'passId': pass.passId, 'postId': pass.postId},
-      );
-      continue;
-    }
-
-    final attachments = await postRepo.loadPostMediaAttachments(sourcePost.id);
-    final hydratedPost = sourcePost.copyWith(
-      mediaKind: sourcePost.mediaKind == 'none' && attachments.isNotEmpty
-          ? PostMediaAttachmentModel.deriveMediaKind(attachments)
-          : sourcePost.mediaKind,
-      media: attachments,
-    );
-    if (hydratedPost.mediaKind != 'none' && hydratedPost.media.isEmpty) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'PENDING_POST_RETRIER_SKIPPED_PENDING_PASS_MEDIA',
-        details: {'passId': pass.passId, 'postId': hydratedPost.id},
-      );
-      continue;
-    }
-
-    final retryRecipients = <CreatedLocalPostRecipient>[];
-    for (final delivery in unresolvedDeliveries) {
-      final contact = await contactRepo.getContact(delivery.recipientPeerId);
-      if (contact == null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'PENDING_POST_RETRIER_MISSING_PASS_CONTACT',
-          details: {
-            'passId': pass.passId,
-            'recipientPeerId': delivery.recipientPeerId,
-          },
-        );
-        continue;
-      }
-      retryRecipients.add(
-        CreatedLocalPostRecipient(
-          contact: contact,
-          nearbyDistanceM: delivery.nearbyDistanceM,
-        ),
-      );
-    }
-
-    if (retryRecipients.isEmpty) {
-      continue;
-    }
-
-    retriedCount++;
-    await PostDeliveryRunner(
-      p2pService: p2pService,
-      postRepo: postRepo,
-      bridge: bridge,
-      maxConcurrentRecipients: defaultPostDeliveryConcurrency,
-    ).executePostPass(
-      pass: pass,
-      snapshotPost: hydratedPost,
-      resolvedRecipients: retryRecipients,
-      allRecipientPeerIds: deliveries
-          .map((delivery) => delivery.recipientPeerId)
-          .toList(growable: false),
     );
   }
 

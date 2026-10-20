@@ -92,28 +92,79 @@ void main() {
     );
   }
 
-  testWidgets('opens an eligible-recipient picker and sends a pass envelope', (
-    tester,
-  ) async {
-    contactRepository.seed([
-      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
-      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
-      _contact(
-        'peer-dan',
-        'Dan',
-        blocked: true,
-        mlKemPublicKey: 'mlkem-peer-dan',
-      ),
-      _contact(
-        'peer-eve',
-        'Eve',
-        archived: true,
-        mlKemPublicKey: 'mlkem-peer-eve',
-      ),
-    ]);
-    await postRepository.savePost(_post());
+  testWidgets(
+    'keeps the legacy pass picker open without creating or sending a pass',
+    (tester) async {
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+        _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+        _contact(
+          'peer-dan',
+          'Dan',
+          blocked: true,
+          mlKemPublicKey: 'mlkem-peer-dan',
+        ),
+        _contact(
+          'peer-eve',
+          'Eve',
+          archived: true,
+          mlKemPublicKey: 'mlkem-peer-eve',
+        ),
+      ]);
+      await postRepository.savePost(_post());
 
-    final events = await _captureFlowEvents(() async {
+      final events = await _captureFlowEvents(() async {
+        await tester.pumpWidget(buildWidget());
+        await tester.pump();
+
+        await tester.tap(find.byIcon(Icons.repeat));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(find.widgetWithText(CheckboxListTile, 'Cara'), findsOneWidget);
+        expect(find.widgetWithText(CheckboxListTile, 'Bob'), findsNothing);
+        expect(find.widgetWithText(CheckboxListTile, 'Dan'), findsNothing);
+        expect(find.widgetWithText(CheckboxListTile, 'Eve'), findsNothing);
+
+        await tester.tap(find.text('Cara'));
+        await tester.pump();
+        await tester.tap(find.text('Send pass'));
+        await tester.pump();
+        expect(find.text('Sending...'), findsNothing);
+        await tester.pump();
+      });
+      expect(await postRepository.loadPostPasses('post-1'), isEmpty);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(
+        _flowEventDetails(events, 'POST_FEATURE_DISABLED_DROP'),
+        isNotEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_RESOLVED'),
+        isEmpty,
+      );
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_MISSING'),
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
+    'rejects a second legacy pass attempt without starting delivery',
+    (tester) async {
+      contactRepository.seed([
+        _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
+        _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
+      ]);
+      await postRepository.savePost(
+        _post(
+          senderPeerId: 'peer-alice',
+          authorPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+        ),
+      );
       await tester.pumpWidget(buildWidget());
       await tester.pump();
 
@@ -121,64 +172,17 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.widgetWithText(CheckboxListTile, 'Cara'), findsOneWidget);
-      expect(find.widgetWithText(CheckboxListTile, 'Bob'), findsNothing);
-      expect(find.widgetWithText(CheckboxListTile, 'Dan'), findsNothing);
-      expect(find.widgetWithText(CheckboxListTile, 'Eve'), findsNothing);
-
       await tester.tap(find.text('Cara'));
       await tester.pump();
       await tester.tap(find.text('Send pass'));
       await tester.pump();
-      expect(find.text('Sending...'), findsOneWidget);
-      await tester.runAsync(() async {
-        for (var attempt = 0; attempt < 80; attempt++) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          final localPasses = await postRepository.loadPostPasses('post-1');
-          if (localPasses.isNotEmpty) {
-            return;
-          }
-        }
-      });
-      await tester.pump();
-    });
-    expect(await postRepository.loadPostPasses('post-1'), hasLength(1));
-    expect(
-      _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_RESOLVED'),
-      isNotEmpty,
-    );
-    expect(
-      _flowEventDetails(events, 'POST_PASS_AVATAR_PATH_MISSING'),
-      isNotEmpty,
-    );
-  });
 
-  testWidgets('starts pass delivery from the picker', (tester) async {
-    contactRepository.seed([
-      _contact('peer-bob', 'Bob', mlKemPublicKey: 'mlkem-peer-bob'),
-      _contact('peer-cara', 'Cara', mlKemPublicKey: 'mlkem-peer-cara'),
-    ]);
-    await postRepository.savePost(
-      _post(
-        senderPeerId: 'peer-alice',
-        authorPeerId: 'peer-alice',
-        authorUsername: 'Alice',
-      ),
-    );
-    await tester.pumpWidget(buildWidget());
-    await tester.pump();
-
-    await tester.tap(find.byIcon(Icons.repeat));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-
-    await tester.tap(find.text('Cara'));
-    await tester.pump();
-    await tester.tap(find.text('Send pass'));
-    await tester.pump();
-
-    expect(find.text('Sending...'), findsOneWidget);
-  });
+      expect(find.text('Sending...'), findsNothing);
+      expect(await postRepository.loadPostPasses('post-1'), isEmpty);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+    },
+  );
 }
 
 Future<List<Map<String, dynamic>>> _captureFlowEvents(

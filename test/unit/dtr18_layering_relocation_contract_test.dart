@@ -285,6 +285,7 @@ const _applicationRootNormalizedSha256 =
 // local missed-call notifier. No provider payload or ownership boundary moves.
 // P1 wires debug call envelope/timer/output observers and existing fixture
 // controls through this app-owned composition; ordinary callbacks stay null.
+// Plan 407: reviewed thought expiry/recovery wiring and disabled nearby publishing.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -388,7 +389,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    'c0b181437fe2bcfc5b8aac315f3aa0105ea54bd97c6c9980a14f22be1b36d764';
+    '3ad841b37581753657a5ab22dc319005c62f006306543c76bb50c90f963a83b2';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -405,8 +406,9 @@ const _productionBootstrapNormalizedSha256 =
 // restores the legacy reciprocal closure described above.
 // The same P1 observation/fixture wiring updates this remainder; the scoped
 // historical-notification database callback stays byte-identical.
+// Plan 407: reviewed thought expiry/recovery wiring and disabled nearby publishing.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '75223461a12d3ac295d7ebd24ca6bb304a954e135e6984ff19bc14bd03e5befa';
+    '34ad8e9ad46e1470f7ebc917d90126e0667a12707381cc557e1c14c780eb98a4';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -1,13 +1,10 @@
-import 'dart:convert';
+import '../support/legacy_post_state.dart';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart' show sha256;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
-import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/pass_post_along_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_pass_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -27,7 +24,6 @@ void main() {
   late _EncryptedMediaUser recipient;
   late RelayMediaStore relayStore;
   late Directory tempDir;
-  late TempPostMediaFileManager mediaFileManager;
 
   setUp(() {
     network = FakeP2PNetwork();
@@ -59,10 +55,7 @@ void main() {
     author.start();
     recipient.start();
 
-    tempDir = Directory.systemTemp.createTempSync(
-      'post-pass-encrypted-media-',
-    );
-    mediaFileManager = TempPostMediaFileManager(tempDir.path);
+    tempDir = Directory.systemTemp.createTempSync('post-pass-encrypted-media-');
   });
 
   tearDown(() {
@@ -75,7 +68,7 @@ void main() {
   });
 
   test(
-    'encrypted repost media uploads ciphertext, preserves recipient ACL, and decrypts back to the original bytes',
+    'rejects legacy pass: encrypted repost media uploads ciphertext, preserves recipient ACL, and decrypts back to the original bytes',
     () async {
       final originalBytes = Uint8List.fromList(
         List<int>.generate(256, (index) => (index * 17) & 0xff),
@@ -115,6 +108,10 @@ void main() {
         ),
       );
 
+      final previousPassState = await snapshotLegacyPostState(
+        sender.postRepo,
+        postId: 'post-1',
+      );
       final (result, pass) = await passPostAlong(
         p2pService: sender.p2pService,
         postRepo: sender.postRepo,
@@ -125,80 +122,17 @@ void main() {
         senderUsername: sender.username,
         recipientPeerIds: const <String>['peer-ibra'],
       );
-
-      expect(result, PassPostAlongResult.success);
-      expect(pass, isNotNull);
+      expect(result, PassPostAlongResult.notAllowed);
+      expect(pass, isNull);
       expect(
-        sender.bridge.commandLog.where((command) => command == 'blob:encrypt'),
-        hasLength(1),
+        await snapshotLegacyPostState(sender.postRepo, postId: 'post-1'),
+        previousPassState,
       );
-      expect(
-        sender.bridge.commandLog.where((command) => command == 'media:upload'),
-        hasLength(1),
-      );
-      expect(
-        sender.bridge.commandLog.where((command) => command == 'message.encrypt'),
-        hasLength(2),
-      );
-
-      await _waitForPassCount(sender, expectedCount: 1);
-      await _waitForPassCount(author, expectedCount: 1);
-      await _waitForPassCount(recipient, expectedCount: 1);
-
-      final relayBlobId = sender.relayStore.blobIds.single;
-      expect(relayBlobId, isNot('blob-original-1'));
-      expect(sender.relayStore.allowedPeersByBlobId[relayBlobId], isNotNull);
-      expect(
-        sender.relayStore.allowedPeersByBlobId[relayBlobId]!,
-        unorderedEquals(<String>[
-          sender.peerId,
-          recipient.peerId,
-          author.peerId,
-        ]),
-      );
-      expect(
-        sender.relayStore.ciphertextByBlobId[relayBlobId],
-        isNotNull,
-      );
-      expect(
-        sender.relayStore.ciphertextByBlobId[relayBlobId]!,
-        isNot(equals(originalBytes)),
-      );
-
-      final recipientPass = (await recipient.postRepo.loadPostPasses('post-1'))
-          .single;
-      expect(recipientPass.innerPayloadJson, isNotNull);
-      await _waitForMediaAttachmentCount(recipient, expectedCount: 1);
-      final recipientAttachment = (await recipient.postRepo
-              .loadPostMediaAttachments('post-1'))
-          .single;
-      expect(recipientAttachment.isEncrypted, isTrue);
-      expect(recipientAttachment.blobId, relayBlobId);
-      expect(recipientAttachment.encryptionKeyBase64, isNotNull);
-      expect(recipientAttachment.encryptionNonce, isNotNull);
-
-      final hydratedAttachment = await downloadPostMedia(
-        bridge: recipient.bridge,
-        postRepo: recipient.postRepo,
-        mediaFileManager: mediaFileManager,
-        attachment: recipientAttachment,
-      );
-
-      expect(hydratedAttachment.downloadStatus, 'done');
-      expect(hydratedAttachment.localPath, isNotNull);
-
-      final localPath = await mediaFileManager.localPathForPostAttachment(
-        postId: 'post-1',
-        blobId: relayBlobId,
-        mime: 'image/jpeg',
-      );
-      final restoredBytes = await File(localPath).readAsBytes();
-      expect(restoredBytes, orderedEquals(originalBytes));
     },
   );
 
   test(
-    'pass crypto entries carry scheme=blob_aes_256_gcm_v1 and content_hash of the CIPHERTEXT (G6/MIG-012 provenance)',
+    'rejects legacy pass: pass crypto entries carry scheme=blob_aes_256_gcm_v1 and content_hash of the CIPHERTEXT (G6/MIG-012 provenance)',
     () async {
       final originalBytes = Uint8List.fromList(
         List<int>.generate(256, (index) => (index * 17) & 0xff),
@@ -236,6 +170,10 @@ void main() {
         ),
       );
 
+      final previousPassState = await snapshotLegacyPostState(
+        sender.postRepo,
+        postId: 'post-1',
+      );
       final (result, _) = await passPostAlong(
         p2pService: sender.p2pService,
         postRepo: sender.postRepo,
@@ -246,36 +184,11 @@ void main() {
         senderUsername: sender.username,
         recipientPeerIds: const <String>['peer-ibra'],
       );
-      expect(result, PassPostAlongResult.success);
-
-      await _waitForPassCount(recipient, expectedCount: 1);
-      await _waitForMediaAttachmentCount(recipient, expectedCount: 1);
-
-      final relayBlobId = sender.relayStore.blobIds.single;
-      final ciphertext = sender.relayStore.ciphertextByBlobId[relayBlobId]!;
-      final ciphertextHash = sha256.convert(ciphertext).toString();
-      final plaintextHash = sha256.convert(originalBytes).toString();
-
-      final recipientAttachment = (await recipient.postRepo
-              .loadPostMediaAttachments('post-1'))
-          .single;
+      expect(result, PassPostAlongResult.notAllowed);
       expect(
-        recipientAttachment.encryptionScheme,
-        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        await snapshotLegacyPostState(sender.postRepo, postId: 'post-1'),
+        previousPassState,
       );
-      // Provenance, both directions: the hash IS of the encrypted artifact
-      // and is NOT of the plaintext source.
-      expect(recipientAttachment.contentHash, ciphertextHash);
-      expect(recipientAttachment.contentHash, isNot(plaintextHash));
-
-      final recipientPass = (await recipient.postRepo.loadPostPasses('post-1'))
-          .single;
-      final innerPayload =
-          jsonDecode(recipientPass.innerPayloadJson!) as Map<String, dynamic>;
-      final entry = (innerPayload['media_keys']
-          as Map<String, dynamic>)['media-1'] as Map<String, dynamic>;
-      expect(entry['scheme'], kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
-      expect(entry['content_hash'], ciphertextHash);
     },
   );
 }
@@ -359,52 +272,4 @@ class _EncryptedMediaUser {
     postRepo.dispose();
     p2pService.dispose();
   }
-}
-
-Future<void> _waitForPassCount(
-  _EncryptedMediaUser user, {
-  required int expectedCount,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadPostPasses('post-1')).length ==
-        expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for repost delivery');
-}
-
-Future<void> _waitForMediaAttachmentCount(
-  _EncryptedMediaUser user, {
-  required int expectedCount,
-}) async {
-  Future<bool> condition() async {
-    return (await user.postRepo.loadPostMediaAttachments('post-1')).length ==
-        expectedCount;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for repost media attachment');
 }

@@ -19,6 +19,8 @@ import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../phase5/support/post_pin_fixtures.dart';
 import 'support/controlled_post_pin_delivery_harness.dart';
 
+import '../support/legacy_post_state.dart';
+
 void main() {
   late FakeP2PNetwork network;
   late _PostPinUser author;
@@ -140,266 +142,167 @@ void main() {
   );
 
   test(
-    'pin remove retries unresolved recipients and clears the pinned section after recovery',
+    'disabled legacy feature produces no delivery or retry: pin remove retries unresolved recipients and clears the pinned section after recovery',
     () async {
       await _seedSharedPost(
         author: author,
         recipients: <_PostPinUser>[recipientOne, recipientTwo],
       );
-
-      final (pinResult, _) = await pinPost(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await pinPost(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
         nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(pinResult, PinPostResult.success);
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'first recipient to receive the initial pin',
-      );
-      await _waitForPinnedRecipientState(
-        recipientTwo,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'second recipient to receive the initial pin',
-      );
-
-      recipientTwo.p2pService.setOnline(false);
-      network.inboxDisabled = true;
-
-      final (removeResult, pinState) = await removePin(
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      final removal = await removePin(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
-        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(removeResult, RemovePinResult.partiallySettled);
-      expect(pinState, isNotNull);
-      expect(pinState!.state, 'removed');
+      expect(removal.$1, RemovePinResult.sendFailed);
+      expect(removal.$2, isNull);
       expect(
-        (await author.postRepo.getPostPinState('post-1'))!.state,
-        'removed',
-      );
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'removed',
-        expectedKeepAvailable: false,
-        description: 'first recipient to receive the pin removal',
-      );
-      expect(
-        (await recipientTwo.postRepo.getPostPinState('post-1'))!.state,
-        'active',
-      );
-
-      final retryableJobs = await author.postRepo
-          .loadRetryableFollowOnOutboxJobs();
-      expect(retryableJobs, hasLength(1));
-      expect(
-        retryableJobs.single.recipientDeliveries.map(
-          (delivery) => delivery.recipientPeerId,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
         ),
-        <String>[recipientTwo.peerId],
+        0,
       );
-
-      recipientTwo.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final retried = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
+      expect(
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-
-      expect(retried, 1);
-      await _waitForPinnedRecipientState(
-        recipientTwo,
-        expectedState: 'removed',
-        expectedKeepAvailable: false,
-        description: 'second recipient to receive the retried pin removal',
-      );
-      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
   test(
-    'a retried stale pin remove does not override a later re-pin for the same post',
+    'disabled legacy feature produces no delivery or retry: a retried stale pin remove does not override a later re-pin for the same post',
     () async {
       await _seedSharedPost(
         author: author,
         recipients: <_PostPinUser>[recipientOne],
       );
-
-      final (initialPinResult, _) = await pinPost(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await pinPost(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
         nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(initialPinResult, PinPostResult.success);
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'recipient to receive the initial pin',
-      );
-
-      recipientOne.p2pService.setOnline(false);
-      network.inboxDisabled = true;
-
-      final (removeResult, _) = await removePin(
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      final removal = await removePin(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
-        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(removeResult, RemovePinResult.queuedForRetry);
-
-      recipientOne.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final (secondPinResult, _) = await pinPost(
-        p2pService: author.p2pService,
-        postRepo: author.postRepo,
-        postId: 'post-1',
-        senderPeerId: author.peerId,
-        nowProvider: () => DateTime.parse('2026-03-15T11:30:00.000Z'),
-      );
-
-      expect(secondPinResult, PinPostResult.success);
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'recipient to receive the later replacement pin',
-      );
-
-      await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
+      expect(removal.$1, RemovePinResult.sendFailed);
+      expect(removal.$2, isNull);
       expect(
-        (await recipientOne.postRepo.getPostPinState('post-1'))!.state,
-        'active',
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
       expect(
-        (await recipientOne.postRepo.getPost('post-1'))!.keepAvailable,
-        isTrue,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-      expect(
-        (await author.postRepo.loadRetryableFollowOnOutboxJobs())
-            .where((job) => job.event.eventType == 'post_pin_update')
-            .toList(growable: false),
-        isEmpty,
-      );
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 
   test(
-    'a retried stale pin remove fanout preserves the later re-pin on all recipients',
+    'disabled legacy feature produces no delivery or retry: a retried stale pin remove fanout preserves the later re-pin on all recipients',
     () async {
       await _seedSharedPost(
         author: author,
         recipients: <_PostPinUser>[recipientOne, recipientTwo],
       );
-
-      final (initialPinResult, _) = await pinPost(
+      final before = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      final rejection = await pinPost(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
         nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(initialPinResult, PinPostResult.success);
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'first recipient to receive the initial pin',
-      );
-      await _waitForPinnedRecipientState(
-        recipientTwo,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'second recipient to receive the initial pin',
-      );
-
-      recipientOne.p2pService.setOnline(false);
-      recipientTwo.p2pService.setOnline(false);
-      network.inboxDisabled = true;
-
-      final (removeResult, _) = await removePin(
+      expect(rejection.$1, PinPostResult.sendFailed);
+      expect(rejection.$2, isNull);
+      final removal = await removePin(
         p2pService: author.p2pService,
         postRepo: author.postRepo,
         postId: 'post-1',
         senderPeerId: author.peerId,
-        nowProvider: () => DateTime.parse('2026-03-15T11:25:00.000Z'),
+        nowProvider: () => DateTime.parse('2026-03-15T11:20:00.000Z'),
       );
-
-      expect(removeResult, RemovePinResult.queuedForRetry);
-
-      recipientOne.p2pService.setOnline(true);
-      recipientTwo.p2pService.setOnline(true);
-      network.inboxDisabled = false;
-
-      final (secondPinResult, _) = await pinPost(
-        p2pService: author.p2pService,
-        postRepo: author.postRepo,
-        postId: 'post-1',
-        senderPeerId: author.peerId,
-        nowProvider: () => DateTime.parse('2026-03-15T11:30:00.000Z'),
-      );
-
-      expect(secondPinResult, PinPostResult.success);
-      await _waitForPinnedRecipientState(
-        recipientOne,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'first recipient to receive the later replacement pin',
-      );
-      await _waitForPinnedRecipientState(
-        recipientTwo,
-        expectedState: 'active',
-        expectedKeepAvailable: true,
-        description: 'second recipient to receive the later replacement pin',
-      );
-
-      final retried = await retryPendingPostFollowOns(
-        postRepo: author.postRepo,
-        p2pService: author.p2pService,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-
-      expect(retried, 1);
+      expect(removal.$1, RemovePinResult.sendFailed);
+      expect(removal.$2, isNull);
       expect(
-        (await recipientOne.postRepo.getPostPinState('post-1'))!.state,
-        'active',
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
       expect(
-        (await recipientOne.postRepo.getPost('post-1'))!.keepAvailable,
-        isTrue,
+        await retryPendingPostFollowOns(
+          postRepo: author.postRepo,
+          p2pService: author.p2pService,
+        ),
+        0,
       );
-      expect(
-        (await recipientTwo.postRepo.getPostPinState('post-1'))!.state,
-        'active',
-      );
-      expect(
-        (await recipientTwo.postRepo.getPost('post-1'))!.keepAvailable,
-        isTrue,
-      );
-      expect(await author.postRepo.loadRetryableFollowOnOutboxJobs(), isEmpty);
+      final after = <Map<String, Object?>>[
+        await snapshotLegacyPostState(author.postRepo),
+        await snapshotLegacyPostState(recipientOne.postRepo),
+        await snapshotLegacyPostState(recipientTwo.postRepo),
+      ];
+      expect(after, before);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
     },
   );
 }
@@ -435,37 +338,6 @@ Future<void> _seedSharedPost({
       ),
     );
   }
-}
-
-Future<void> _waitForPinnedRecipientState(
-  _PostPinUser user, {
-  required String expectedState,
-  required bool expectedKeepAvailable,
-  required String description,
-}) async {
-  Future<bool> condition() async {
-    final pinState = await user.postRepo.getPostPinState('post-1');
-    final post = await user.postRepo.getPost('post-1');
-    if (pinState == null || post == null) {
-      return false;
-    }
-    return pinState.state == expectedState &&
-        post.keepAvailable == expectedKeepAvailable;
-  }
-
-  if (await condition()) {
-    return;
-  }
-
-  final deadline = DateTime.now().add(const Duration(seconds: 1));
-  while (DateTime.now().isBefore(deadline)) {
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    if (await condition()) {
-      return;
-    }
-  }
-
-  throw StateError('Timed out waiting for $description');
 }
 
 class _PostPinUser {

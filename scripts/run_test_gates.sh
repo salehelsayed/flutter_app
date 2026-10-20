@@ -1616,6 +1616,12 @@ classify_path() {
     return 0
   fi
 
+  # Existing app-root call regression is selected by affected-calls.
+  if [[ "$path" == "test/app/call_back_feedback_test.dart" ]]; then
+    printf 'app call feedback direct suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/core/services/.*_test\.dart$ ]]; then
     printf 'core services direct suite'
     return 0
@@ -1709,7 +1715,8 @@ classify_path() {
     return 0
   fi
 
-  if [[ "$path" =~ ^test/features/[^/]+/(application|domain|infrastructure|presentation|improvement|phase[1-5]|regression)/.*_test\.dart$ ]]; then
+  # Prototype tests are already swept by feature-host-all.
+  if [[ "$path" =~ ^test/features/[^/]+/(application|domain|infrastructure|presentation|improvement|phase[1-5]|regression|prototypes)/.*_test\.dart$ ]]; then
     printf 'feature-local direct suite'
     return 0
   fi
