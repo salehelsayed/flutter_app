@@ -86,6 +86,12 @@ emulator topology; physical-default evidence validation remains strict. Audio an
 direct-media fixture modes delegate their existing local fixture controllers;
 generic major lists these as `local_fixture_mode_required`. Fixture modes require
 explicit primary/fourth emulator pins and a private interface in env/local config.
+The shared `SIMS_DISPOSABLE_ANDROID_JOURNEYS` flag selects the two-emulator
+pair topology. Single-emulator update/contact fixtures select their explicitly
+pinned primary emulator independently; setting the global flag just for such a
+case also changes the parent pair. Keep the emulator transport and APK identity
+guards intact. The [causal runner regression](../../.codex-test-logs/plan407-step1/post-reboot-single-fixture-fix/summary.json)
+retains the original constructor failure and the focused preservation checks.
 `AndroidInstallOverGuard` admits an existing single APK at the same version code,
 backs it up and uses only `adb install -r` for install/restoration. It does not
 reset app data or create fresh fixtures. Protected fresh-reset phone campaigns
@@ -2895,6 +2901,16 @@ the existing `com.mknoon.sims.notifications` client, with package/project matche
 The redacted discovery receipts and hashes are in
 `.codex-test-logs/plan407-step1/provider-setup-provenance/`. These establish setup
 availability, not notification delivery.
+
+The physical iOS payload XCUI campaign has a source-confirmed fixture blocker:
+each phase removes the receiver app, deleting its Documents identity database,
+then username-only auto-setup creates a new random identity. Its handoff checks
+still require the fixed peer from the manifest/request. Keychain persistence
+does not recreate the missing database row. Until that fixture lifecycle is
+repaired, signing and receiver-bootstrap readiness do not establish campaign
+execution or APNs delivery. The [source trace](../../.codex-test-logs/plan407-step1/post-reboot-ios-precondition-source-trace.redacted.json)
+records this precondition without claiming a launched iOS scenario or changing
+production identity recovery.
 
 The Android group-media row accepts `full_suite.relay_addresses`; it does not
 require the local fixture. The central builder embeds `MKNOON_RELAY_ADDRESSES`

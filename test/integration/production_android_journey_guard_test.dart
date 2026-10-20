@@ -152,11 +152,10 @@ void main() {
   );
 
   test(
-    'SE41 uses one explicit emulator and refuses phone and iOS bindings',
+    'SE41 uses its explicit emulator without changing the shared pair topology',
     () {
       final values = environment()
-        ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
-        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+        ..['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
       final (apk, digest) = prepared(productionUpdateCheckAndroidProfile);
       values['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_LOCAL'] = apk.path;
       values['SIMS_ARTIFACT_SHA256'] = digest;
@@ -168,16 +167,16 @@ void main() {
             runner: _IdleDevices(),
           );
       final journey = create();
+      expect(values, isNot(contains('SIMS_DISPOSABLE_ANDROID_JOURNEYS')));
+      expect(journey.disposableAndroidJourneys, isTrue);
       expect(journey.actors, hasLength(1));
       expect(journey.alice.device, emulator);
       expect(journey.alice.packageName, productionUpdateCheckAndroidPackage);
       expect(journey.profileId, productionUpdateCheckAndroidProfile);
       expect(journey.artifact.path, apk.path);
       expect(() => create('kx0028'), throwsArgumentError);
-      values.remove('SIMS_DISPOSABLE_ANDROID_JOURNEYS');
-      values['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] = physical;
+      values.remove('SIMS_ANDROID_EMULATOR_DEVICE_ID');
       expect(create, throwsStateError);
-      values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
       values['SIMS_ANDROID_EMULATOR_DEVICE_ID'] = physical;
       expect(create, throwsStateError);
     },
@@ -232,11 +231,9 @@ void main() {
   );
 
   test(
-    'contact deletion uses one disposable emulator and the existing journey APK',
+    'contact deletion uses its explicit emulator without a global pair flag',
     () {
-      final values = environment()
-        ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
-        ..['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+      final values = environment();
       ProductionAndroidJourney create(String id) =>
           ProductionAndroidJourney.fromEnvironment(
             id,
@@ -246,13 +243,88 @@ void main() {
           );
       for (final id in ['kx0010', 'kx0011', 'kx0012', 'kx0013', 'kx0014']) {
         final journey = create(id);
+        expect(journey.disposableAndroidJourneys, isTrue);
         expect(journey.actors, hasLength(1));
         expect(journey.alice.device, emulator);
         expect(journey.profileId, productionJourneyAndroidProfile);
         expect(journey.alice.packageName, productionJourneyAndroidPackage);
       }
+      values.remove('SIMS_ANDROID_EMULATOR_DEVICE_ID');
+      expect(() => create('kx0010'), throwsStateError);
       values['SIMS_ANDROID_EMULATOR_DEVICE_ID'] = physical;
       expect(() => create('kx0010'), throwsStateError);
+    },
+  );
+
+  test(
+    'pair journeys keep the physical and emulator pins without the flag',
+    () {
+      final values = environment()
+        ..['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
+      final journey = ProductionAndroidJourney.fromEnvironment(
+        'production.routing_smoke',
+        temporary,
+        environment: values,
+      );
+      expect(journey.disposableAndroidJourneys, isFalse);
+      expect(journey.alice.device, physical);
+      expect(journey.bob.device, emulator);
+      expect(journey.actors, hasLength(2));
+    },
+  );
+
+  test('emulator-only pairs still require the explicit global flag', () {
+    final values = environment()
+      ..remove('SIMS_ANDROID_PHYSICAL_DEVICE_ID')
+      ..['SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID'] = 'emulator-4004';
+    ProductionAndroidJourney create() =>
+        ProductionAndroidJourney.fromEnvironment(
+          'production.routing_smoke',
+          temporary,
+          environment: values,
+        );
+    expect(create, throwsStateError);
+    values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '0';
+    expect(create, throwsStateError);
+    values['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] = 'emulator-4004';
+    expect(create, throwsStateError);
+    values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] = '1';
+    final journey = create();
+    expect(journey.alice.device, 'emulator-4004');
+    expect(journey.bob.device, emulator);
+  });
+
+  test(
+    'single fixtures verify emulator transport before capturing app state',
+    () async {
+      for (final scenario in ['kx0020', 'kx0010']) {
+        final values = environment();
+        if (scenario == 'kx0020') {
+          final (apk, digest) = prepared(productionUpdateCheckAndroidProfile);
+          values['SIMS_ARTIFACT_ANDROID_E2E_PRODUCTION_CALL_LOCAL'] = apk.path;
+          values['SIMS_ARTIFACT_SHA256'] = digest;
+        }
+        var captured = false;
+        final journey = ProductionAndroidJourney.fromEnvironment(
+          scenario,
+          temporary,
+          environment: values,
+          runner: _IdleDevices(),
+          captureGuard:
+              ({
+                required devices,
+                required packageName,
+                required backupLabel,
+                required preparedArtifact,
+                required expectedArtifactSha256,
+              }) async {
+                captured = true;
+                throw StateError('must not capture');
+              },
+        );
+        await expectLater(journey.prepare(), throwsStateError);
+        expect(captured, isFalse);
+      }
     },
   );
 

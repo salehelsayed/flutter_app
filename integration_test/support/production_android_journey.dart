@@ -302,17 +302,13 @@ final class ProductionAndroidJourney implements ProductionJourney {
             primary: false,
           );
     }
-    disposableAndroidJourneys =
-        scenario != 'production.startup_resume_performance' &&
-        values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1';
     final singleFixture =
         productionUpdateCheckJourneys.contains(scenario) ||
         productionContactDeleteJourneys.contains(scenario);
-    if (singleFixture && !disposableAndroidJourneys) {
-      throw StateError(
-        'Single-peer fixtures require an explicit disposable emulator.',
-      );
-    }
+    disposableAndroidJourneys =
+        singleFixture ||
+        (scenario != 'production.startup_resume_performance' &&
+            values['SIMS_DISPOSABLE_ANDROID_JOURNEYS'] == '1');
     physical = required(
       singleFixture
           ? 'SIMS_ANDROID_EMULATOR_DEVICE_ID'
