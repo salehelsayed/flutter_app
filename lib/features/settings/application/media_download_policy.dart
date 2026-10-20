@@ -70,7 +70,10 @@ class MediaDownloadPolicy {
     if (userInitiated) return true;
 
     // Terminal states are never automatic work.
-    if (downloadStatus == kMediaDownloadStatusDownloadFailed) return false;
+    if (downloadStatus == kMediaDownloadStatusDownloadFailed ||
+        downloadStatus == kMediaDownloadStatusUnavailable) {
+      return false;
+    }
 
     return preferences.isAutoDownloadEnabled(
       kind: conversationKind,

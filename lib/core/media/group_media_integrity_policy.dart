@@ -7,6 +7,7 @@ import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -14,15 +15,20 @@ const String kMediaDownloadStatusPending = 'pending';
 const String kMediaDownloadStatusDownloading = 'downloading';
 const String kMediaDownloadStatusDone = 'done';
 const String kMediaDownloadStatusFailed = 'failed';
+
+/// A direct transport retry burst ended; another trigger or tap may retry.
+const String kMediaDownloadStatusRetryWaiting = 'retry_waiting';
+
+/// The relay explicitly answered that this item is absent or unauthorized.
+const String kMediaDownloadStatusUnavailable = 'unavailable';
 const String kMediaDownloadStatusIntegrityFailed = 'integrity_failed';
 const String kMediaDownloadStatusUploadPending = 'upload_pending';
 const String kMediaDownloadStatusUploadFailed = 'upload_failed';
 const String kMediaDownloadStatusUploadCancelled = 'upload_cancelled';
 
-/// Terminal, honest "couldn't fetch this from the relay" state reached when a
-/// transient `failed` row exhausts [kMaxDownloadRetries], or immediately on a
-/// relay "not found" / "not authorized" response. Distinct from the Go bridge
-/// EVENT name `'media:download_failed'` (a different namespace).
+/// Nontransport retry budget exhausted, or an older ambiguous terminal row.
+/// Explicit relay absence now uses [kMediaDownloadStatusUnavailable]. Distinct
+/// from the Go bridge event `'media:download_failed'` (a separate namespace).
 const String kMediaDownloadStatusDownloadFailed = 'download_failed';
 
 /// 229: local-only "user removed the downloaded copy, message kept" state.
@@ -114,13 +120,14 @@ class GroupMediaIntegrityPolicy {
 
   /// Whether a failed download should still be auto/UI-retried.
   ///
-  /// Only a transient `failed` row is retryable, and only while its
-  /// `download_retry_count` stays below [kMaxDownloadRetries] (INV-DL-1). Once
-  /// the budget is exhausted the use case flips it to the terminal
-  /// `download_failed` status, which is NOT retryable. `integrity_failed`
-  /// (tamper) is never retried unless the descriptor itself changes
-  /// (INV-DL-3) — a behaviour change from when it returned true here.
+  /// Ordinary direct transport bursts wait for another trigger in
+  /// `retry_waiting`. Other `failed` rows retain the original bounded counter.
+  /// `download_failed`, explicit absence and integrity failures do not receive
+  /// automatic retries.
   static bool isRetryableDownloadFailure(MediaAttachment attachment) {
+    if (attachment.downloadStatus == kMediaDownloadStatusRetryWaiting) {
+      return attachment.ownerLane == MediaOwnerLane.direct;
+    }
     if (attachment.downloadStatus != kMediaDownloadStatusFailed) {
       return false;
     }
@@ -133,8 +140,13 @@ class GroupMediaIntegrityPolicy {
   }) {
     switch (attachment.downloadStatus) {
       case kMediaDownloadStatusFailed:
+        // Only owned direct/group receivers have the recovery wiring here.
+        // Unowned adapters retain their existing failure state until a durable
+        // recovery owner is provided for that feature.
+        return attachment.ownerLane == null;
       case kMediaDownloadStatusIntegrityFailed:
       case kMediaDownloadStatusDownloadFailed:
+      case kMediaDownloadStatusUnavailable:
       case kMediaDownloadStatusUploadFailed:
       case kMediaDownloadStatusUploadCancelled:
         return true;

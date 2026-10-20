@@ -4383,11 +4383,14 @@ Future<int> dbRecordDirectPrivateMediaDownloadFailureIfEligible(
   bool clearLocalPath = false,
 }) {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      (failureStatus == kMediaDownloadStatusPending && incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
   return dbWriteTransaction(db, (txn) async {
@@ -4542,11 +4545,14 @@ Future<int> dbRecordGroupPrivateMediaDownloadFailureIfEligible(
   bool clearLocalPath = false,
 }) {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      (failureStatus == kMediaDownloadStatusPending && incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
   return dbWriteTransaction(db, (txn) async {
@@ -5646,6 +5652,8 @@ Future<void> dbUpdateMediaDownloadStatus(
 /// user-retry paths — every automatic entry point filters evicted rows out
 /// before the use case runs.
 const Set<String> kMediaDownloadClaimableStatuses = {
+  kMediaDownloadStatusRetryWaiting,
+  kMediaDownloadStatusUnavailable,
   kMediaDownloadStatusPending,
   kMediaDownloadStatusDownloading,
   kMediaDownloadStatusFailed,
@@ -5975,11 +5983,14 @@ Future<int> dbRecordOrdinaryGroupMediaDownloadFailureExact(
   required bool clearLocalPath,
 }) async {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      (failureStatus == kMediaDownloadStatusPending && incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
 
@@ -6721,10 +6732,32 @@ LIMIT ?
   );
 }
 
-/// Loads all media attachments with download_status = 'pending'.
-///
-/// Untyped by design: its only consumer resolves rows by unique attachment
-/// ID (link_incoming_local_media fallback), which cannot cross lanes.
+/// Bounded direct receive recovery, including pre-fix failures under their cap.
+/// The listener applies the existing parent and user download policies.
+Future<List<String>> dbLoadRetryableDirectMediaMessageIds(
+  Database db, {
+  String? afterMessageId,
+  int limit = 25,
+}) async {
+  final rows = await db.query(
+    'media_attachments',
+    distinct: true,
+    columns: ['message_id'],
+    where:
+        "owner_lane = ? AND message_id > ? AND (download_status IN ('pending', 'downloading', "
+        "'retry_waiting') OR (download_status = 'failed' AND COALESCE(download_retry_count, 0) < ?))",
+    whereArgs: [
+      MediaOwnerLane.direct.dbValue,
+      afterMessageId ?? '',
+      kMaxDownloadRetries,
+    ],
+    orderBy: 'message_id ASC',
+    limit: limit,
+  );
+  return rows.map((row) => row['message_id']! as String).toList();
+}
+
+/// Loads pending rows for the unique-ID local-file linking fallback.
 Future<List<Map<String, Object?>>> dbLoadPendingMediaDownloads(
   Database db,
 ) async {

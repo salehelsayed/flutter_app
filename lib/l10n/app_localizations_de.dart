@@ -1291,6 +1291,16 @@ class AppLocalizationsDe extends AppLocalizations {
       'Anhänge zu groß – entfernen Sie einige zum Senden.';
 
   @override
+  String get media_retry_later =>
+      'Noch nicht geladen. Tippe, um es erneut zu versuchen.';
+
+  @override
+  String get media_no_longer_available => 'Nicht mehr verfügbar';
+
+  @override
+  String get media_open_failed => 'Datei konnte nicht geöffnet werden';
+
+  @override
   String get media_unavailable => 'Medien nicht verfügbar';
 
   @override

@@ -16,6 +16,7 @@ import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/transient_transport_error.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 export 'package:flutter_app/core/media/upload_media_outcome.dart';
@@ -296,22 +297,8 @@ bool _isTerminalMediaErrorMessage(String message) {
       normalized.contains('stat file');
 }
 
-bool _isConnectivityMediaErrorMessage(String message) {
-  final normalized = message.toLowerCase();
-  return normalized.contains('relay unreachable') ||
-      normalized.contains('relay unavailable') ||
-      normalized.contains('network is unreachable') ||
-      normalized.contains('no route to host') ||
-      normalized.contains('connection refused') ||
-      normalized.contains('connection reset') ||
-      normalized.contains('broken pipe') ||
-      normalized.contains('dial ') ||
-      normalized.startsWith('dial') ||
-      normalized.contains('stream reset') ||
-      normalized.contains('open stream') ||
-      normalized.contains('failed to open stream') ||
-      normalized.contains('protocol stream');
-}
+bool _isConnectivityMediaErrorMessage(String message) =>
+    TransientTransportError.matches(message);
 
 bool _isSyntacticallyValidMime(String mime) =>
     RegExp(r'^[^/\s]+/[^/\s]+$').hasMatch(mime.trim());

@@ -1762,7 +1762,7 @@ void main() {
         owner: MediaOwnerLane.direct,
         'msg-001',
       )).firstWhere((a) => a.id == testAttachment.id);
-      expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
+      expect(stored.downloadStatus, kMediaDownloadStatusUnavailable);
       // Budget unchanged: the relay-unavailable terminal burns 0 retries.
       expect(stored.downloadRetryCount, 1);
     });
@@ -1866,7 +1866,7 @@ void main() {
           isNull,
         );
         persisted = await stored(unauthorized.id);
-        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(persisted.downloadStatus, kMediaDownloadStatusUnavailable);
         expect(
           persisted.downloadRetryCount,
           2,
@@ -1876,7 +1876,7 @@ void main() {
         expect(atomicRepo.atomicFailureCalls.last.incrementRetryCount, isFalse);
         expect(
           atomicRepo.atomicFailureCalls.last.failureStatus,
-          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusUnavailable,
         );
         expect(
           events.where(
@@ -1906,7 +1906,7 @@ void main() {
           isNull,
         );
         persisted = await stored(notFound.id);
-        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(persisted.downloadStatus, kMediaDownloadStatusUnavailable);
         expect(
           persisted.downloadRetryCount,
           1,
@@ -1918,7 +1918,7 @@ void main() {
           groupId: groupId,
           messageId: notFound.messageId,
           incrementRetryCount: false,
-          failureStatus: kMediaDownloadStatusDownloadFailed,
+          failureStatus: kMediaDownloadStatusUnavailable,
           expectedDownloadStatus: kMediaDownloadStatusDownloading,
           expectedLocalPath: null,
           clearLocalPath: false,
@@ -2965,7 +2965,7 @@ void main() {
           mediaRepo.downloadStatusUpdates,
           equals([
             (testAttachment.id, kMediaDownloadStatusDownloading),
-            (testAttachment.id, kMediaDownloadStatusDownloadFailed),
+            (testAttachment.id, kMediaDownloadStatusUnavailable),
           ]),
         );
         expect(mediaRepo.localPathUpdates, isEmpty);
@@ -3199,32 +3199,51 @@ void main() {
       },
     );
 
-    test('watchdog timeout preserves the .part file', () async {
-      final timeoutBridge = _TimeoutAfterWriteBridge();
-      final sizedAttachment = testAttachment.copyWith(size: 3);
-
-      final result = await downloadMedia(
-        owner: MediaOwnerLane.direct,
-        bridge: timeoutBridge,
-        mediaAttachmentRepo: mediaRepo,
-        mediaFileManager: fileManager,
-        attachment: sizedAttachment,
-        contactPeerId: 'contact-A',
-      );
-
-      expect(result, isNull);
-      expect(
-        mediaRepo.downloadStatusUpdates.last.$2,
-        'failed',
-        reason: 'row goes failed so the UI can offer retry',
-      );
-      final partPath = '${tempDir.path}/contact-A/blob-download-001.jpg.part';
-      expect(
-        await File(partPath).exists(),
-        isTrue,
-        reason: 'transient failure must never destroy completed bytes',
-      );
-    });
+    test(
+      'watchdog preserves complete part then automatic retry adopts without redownload',
+      () async {
+        final timeoutBridge = _TimeoutAfterWriteBridge();
+        final sizedAttachment = testAttachment.copyWith(size: 3);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: timeoutBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: sizedAttachment,
+          contactPeerId: 'contact-A',
+        );
+        final preserved = events.indexWhere(
+          (e) =>
+              e['event'] == 'MEDIA_DOWNLOAD_PART_PRESERVED' &&
+              (e['details'] as Map)['stagedExists'] == true &&
+              (e['details'] as Map)['stagedBytes'] == 3,
+        );
+        final adopted = events.indexWhere(
+          (e) => e['event'] == 'MEDIA_DOWNLOAD_COMPLETE_PART_ADOPTED',
+        );
+        expect(
+          preserved,
+          greaterThanOrEqualTo(0),
+          reason: 'the first watchdog failure retained its actual bytes',
+        );
+        expect(adopted, greaterThan(preserved));
+        expect(result!.downloadStatus, kMediaDownloadStatusDone);
+        expect(
+          timeoutBridge.sendCallCount,
+          1,
+          reason:
+              'recovery uses retained complete bytes, not another native transfer',
+        );
+        final resolved = await fileManager.resolveStoredPath(result.localPath!);
+        expect(
+          await File(resolved).readAsBytes(),
+          timeoutBridge.downloadedBytes,
+        );
+      },
+    );
 
     test('retry adopts complete .part without bridge call', () async {
       final sizedAttachment = testAttachment.copyWith(size: 3);

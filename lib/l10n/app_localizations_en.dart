@@ -1267,6 +1267,15 @@ class AppLocalizationsEn extends AppLocalizations {
       'Attachments too large — remove some to send.';
 
   @override
+  String get media_retry_later => 'Couldn\'t load yet. Tap to try again.';
+
+  @override
+  String get media_no_longer_available => 'No longer available';
+
+  @override
+  String get media_open_failed => 'Couldn\'t open this file';
+
+  @override
   String get media_unavailable => 'Media unavailable';
 
   @override

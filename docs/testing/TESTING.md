@@ -3767,6 +3767,57 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **Ordinary direct-media transport interruption:** a QUIC `stateless reset`
+  or `connection closed ... transport error` does not establish that the relay
+  lost the blob. Go can surface premature stream closure as `download incomplete:
+  wrote N/size, err=EOF` or `read response: EOF`; the shared upload/download
+  transport classifier recognizes these forms. The default relay list is two
+  addresses of one peer, and Go can issue two server requests within one Dart
+  download attempt. The legacy receiver formerly persisted `failed` after its
+  first transient failure, rendering unavailable without autonomous backoff.
+  Transport failures now preserve the nontransport counter and persist `pending`
+  during a three-attempt burst with 1s/2s delays, then `retry_waiting`. The next
+  tap, app resume or connectivity trigger can start another bounded burst.
+  Older `failed` rows retain their original bounded counter.
+
+  Existing primary app-level recovery uses a paged direct-owner query across all
+  media types, even without a mounted chat, and reuses the normal policy and UI
+  stream. A restore edge during active work is coalesced into a follow-up pass
+  after that work finishes. OS-restored flush starts the existing group download
+  coordinator after releasing its short outgoing-flush guard, so a held incoming
+  transfer cannot swallow a fresh zero-age outgoing restore pass. Async group
+  errors remain isolated; the permanent overlap regression preserves two outgoing
+  passes before the held receive completes. Parent lifecycle, private-media policy,
+  user download preferences and typed ownership remain authoritative. The small recovery
+  registry has one contract test for eligible owned states and lifecycle wiring;
+  unowned adapters keep their prior failure behavior pending separate work.
+  Image/video, voice and document tiles show loading during automatic recovery,
+  a localized tap-to-retry prompt after transport backoff, confirmed unavailable
+  only for absence or lost local copies, and a distinct cannot-open message for
+  integrity/decode failures. EN/DE/AR widget cases assert the approved exact copy.
+
+  [The camera/caption regression](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart)
+  uses a real multi-megabyte EXIF-oriented JPEG, actual legacy upload/send,
+  online receive or real inbox staging/replay, current SQLite migrations and
+  repositories, durable files, exact byte hash, grid decode/open gate, full
+  recipient frame and persisted caption. Its native compressor callback is a
+  prepared-image stub and its bridge crypto is XOR; it does not certify iOS
+  camera/compression, Go AES-GCM, a live relay/circuit or a signed build. The
+  first causal baseline fails on `pending` versus `failed`; online/offline
+  image controls pass. Explicit mixed-multi-relay aggregate-not-found retry
+  remains a case-scoped KNOWN GAP because Go reports only its final error;
+  the default single-peer configuration does not establish that scenario.
+  Raw first attempts and final check receipts are retained in
+  `build/kayan-safe/media-unavailable/logs/`; fixture/setup failures must stay
+  distinguished from product regression failures and passing scenarios.
+
+  Current [relay store source](../../go-relay-server/media.go) persists blob
+  metadata in disk sidecars and loads it on restart. The June reliability
+  audit's in-memory-only description is superseded for current source.
+  Successful fetch alone does not delete: relay ACK follows verified durable
+  local commit. Recipient documents/media storage is not an OS cache, and
+  user storage eviction commits `evicted` before removing its local file.
+
 - **R2-7 short chat viewport:** the Pixel 7a landscape keyboard left about
   128 logical pixels for the direct chat, and the normal header plus composer
   overflowed (device screenshot in

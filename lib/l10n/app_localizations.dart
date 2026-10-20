@@ -2200,6 +2200,24 @@ abstract class AppLocalizations {
   /// **'Attachments too large — remove some to send.'**
   String get media_attachments_too_large_note;
 
+  /// No description provided for @media_retry_later.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load yet. Tap to try again.'**
+  String get media_retry_later;
+
+  /// No description provided for @media_no_longer_available.
+  ///
+  /// In en, this message translates to:
+  /// **'No longer available'**
+  String get media_no_longer_available;
+
+  /// No description provided for @media_open_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open this file'**
+  String get media_open_failed;
+
   /// No description provided for @media_unavailable.
   ///
   /// In en, this message translates to:

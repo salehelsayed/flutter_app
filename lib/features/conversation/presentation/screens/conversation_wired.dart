@@ -2434,6 +2434,15 @@ class _ConversationWiredState extends State<ConversationWired>
             await _autoDownloadAllowed(resolved)) {
           MediaAttachment? downloaded;
           try {
+            await _refreshMessageWithMediaSnapshot(
+              message.id,
+              _replaceAttachmentById(
+                storedAttachments,
+                resolved.copyWith(
+                  downloadStatus: kMediaDownloadStatusDownloading,
+                ),
+              ),
+            );
             downloaded = await widget.downloadMediaFn(
               bridge: bridge,
               mediaAttachmentRepo: mediaAttachmentRepo,
@@ -2864,6 +2873,13 @@ class _ConversationWiredState extends State<ConversationWired>
       }
 
       final resolved = await _resolveAttachmentForDisplay(attachment);
+      await _refreshMessageWithMediaSnapshot(
+        messageId,
+        _replaceAttachmentById(
+          attachments,
+          resolved.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+        ),
+      );
       final downloaded = await widget.downloadMediaFn(
         bridge: bridge,
         mediaAttachmentRepo: mediaAttachmentRepo,

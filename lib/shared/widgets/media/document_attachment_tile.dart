@@ -5,6 +5,7 @@ import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'media_display_helpers.dart';
 
 /// Hands one document to the system: open it, save it to Files or share it.
 typedef DocumentEgressPerformer =
@@ -56,6 +57,7 @@ class DocumentAttachmentTile extends StatelessWidget {
       );
 
   bool get _isUnavailable =>
+      receiverMediaShowsRetryPrompt(attachment) ||
       attachment.downloadStatus == kMediaDownloadStatusEvicted ||
       GroupMediaIntegrityPolicy.isUnavailableMedia(
         attachment,
@@ -67,7 +69,8 @@ class DocumentAttachmentTile extends StatelessWidget {
   bool get _canDownloadManually =>
       _isSupported &&
       onRetryUnavailableMedia != null &&
-      attachment.downloadStatus == kMediaDownloadStatusPending;
+      attachment.downloadStatus == kMediaDownloadStatusPending &&
+      (attachment.downloadRetryCount ?? 0) == 0;
 
   bool get _isInProgress =>
       _isSupported && !_isReady && !_isUnavailable && !_canDownloadManually;
@@ -80,16 +83,27 @@ class DocumentAttachmentTile extends StatelessWidget {
     final name = _isSupported
         ? (attachment.fileName ?? 'PDF')
         : l10n.media_document_unsupported;
-    final subtitle = _isSupported
-        ? 'PDF · ${_formatSize(attachment.size)}'
-        : (attachment.fileName ?? _formatSize(attachment.size));
+    final failureText = receiverMediaFailureText(
+      l10n,
+      attachment,
+      canRetry: onRetryUnavailableMedia != null && _isSupported,
+    );
+    final subtitle =
+        failureText ??
+        (_isSupported
+            ? 'PDF · ${_formatSize(attachment.size)}'
+            : (attachment.fileName ?? _formatSize(attachment.size)));
 
     Widget trailing;
-    if (_isUnavailable && onRetryUnavailableMedia != null && _isSupported) {
+    if (_isUnavailable &&
+        attachment.downloadStatus != kMediaDownloadStatusUnavailable &&
+        attachment.downloadStatus != kMediaDownloadStatusIntegrityFailed &&
+        onRetryUnavailableMedia != null &&
+        _isSupported) {
       trailing = IconButton(
         key: retryKey(attachment.id),
         icon: const Icon(Icons.refresh),
-        tooltip: l10n.media_retry_unavailable,
+        tooltip: l10n.btn_retry,
         onPressed: onRetryUnavailableMedia,
       );
     } else if (_canDownloadManually) {
@@ -156,7 +170,7 @@ class DocumentAttachmentTile extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         subtitle,
-                        maxLines: 1,
+                        maxLines: failureText == null ? 1 : 3,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall,
                       ),
@@ -212,7 +226,13 @@ class DocumentAttachmentTile extends StatelessWidget {
       result = await performer(destination, attachment);
     } catch (_) {
       messenger?.showSnackBar(
-        SnackBar(content: Text(l10n.media_document_open_failed)),
+        SnackBar(
+          content: Text(
+            destination == MediaEgressDestination.open
+                ? l10n.media_open_failed
+                : l10n.media_egress_result_failed,
+          ),
+        ),
       );
       return;
     }
@@ -228,7 +248,7 @@ class DocumentAttachmentTile extends StatelessWidget {
       MediaEgressOutcome.rejected ||
       MediaEgressOutcome.platformFailure =>
         destination == MediaEgressDestination.open
-            ? l10n.media_document_open_failed
+            ? l10n.media_open_failed
             : l10n.media_egress_result_failed,
     };
     if (message != null) {

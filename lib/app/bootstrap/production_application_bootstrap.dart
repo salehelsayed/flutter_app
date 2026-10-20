@@ -5544,6 +5544,8 @@ final class ProductionApplicationBootstrap
       return completed;
     }
 
+    late final ChatMessageListener chatMessageListener;
+
     Future<int> drainDirectMediaBlobCustody() async {
       final result = await directMediaBlobCustodyDrain.runNetworkBounded();
       emitFlowEvent(
@@ -5554,6 +5556,23 @@ final class ProductionApplicationBootstrap
           'retained': result.retained,
           'failed': result.failed,
         },
+      );
+      // This existing primary-only hook runs on app resume and the OS/network
+      // restored pass. The listener also updates an open conversation, while
+      // durable retries no longer depend on a conversation route being mounted.
+      // A large incoming transfer must not hold the restored-network text and
+      // outgoing flush behind it. The existing listener owns/coalesces the pass.
+      unawaited(
+        chatMessageListener.retryIncompleteMediaDownloads().catchError((
+          Object error,
+        ) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DIRECT_MEDIA_DOWNLOAD_RECOVERY_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+          return 0;
+        }),
       );
       return result.completed;
     }
@@ -5741,7 +5760,6 @@ final class ProductionApplicationBootstrap
     localWsServer.configureMigrationTransferHandler(
       accountMigrationTransferRuntime.handleMigrationTransferRequest,
     );
-    late final ChatMessageListener chatMessageListener;
     late final GroupMessageListener groupMessageListener;
     late final IntroductionListener introductionListener;
     // 171: forward-declared so the p2pService inbox-replay closure (below) can
@@ -6738,6 +6756,13 @@ final class ProductionApplicationBootstrap
     // Create chat message listener (sendDeliveryReceiptForPeer is hoisted above
     // the P2PServiceImpl construction so the F7 deletion replay can reference it).
     chatMessageListener = ChatMessageListener(
+      loadRetryableMediaMessageIds:
+          ({String? afterMessageId, int limit = 25}) =>
+              dbLoadRetryableDirectMediaMessageIds(
+                db,
+                afterMessageId: afterMessageId,
+                limit: limit,
+              ),
       transportAuthority: directTransportAuthority,
       chatMessageStream: messageRouter.chatMessageStream,
       messageRepo: messageRepository,

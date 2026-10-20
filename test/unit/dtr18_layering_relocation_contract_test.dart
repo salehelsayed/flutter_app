@@ -388,7 +388,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    'c0b181437fe2bcfc5b8aac315f3aa0105ea54bd97c6c9980a14f22be1b36d764';
+    '4e4e33ea2b964f92eb0a26f261119dd90d96c045c2e7186bfe1675d62104f0a6';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -405,8 +405,11 @@ const _productionBootstrapNormalizedSha256 =
 // restores the legacy reciprocal closure described above.
 // The same P1 observation/fixture wiring updates this remainder; the scoped
 // historical-notification database callback stays byte-identical.
+// Media transport recovery composes the existing incoming listener into the
+// primary lifecycle hook with a paged loader; the historical callback and
+// app-owned P2P responsibility are unchanged. Both bootstrap pins cover this.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '75223461a12d3ac295d7ebd24ca6bb304a954e135e6984ff19bc14bd03e5befa';
+    '0c46caf60f5ec69bf21eed0536ba32e1a06950e37a44c510307f92bdaa62a610';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -444,6 +447,7 @@ const _resumeDirectiveFiles = <String>{
   'integration_test/transport_e2e_test.dart',
   'lib/app/application_root.dart',
   'lib/app/bootstrap/production_application_bootstrap.dart',
+  'test/features/conversation/integration/camera_caption_relay_delivery_test.dart',
   'test/core/lifecycle/app_lifecycle_recovery_test.dart',
   'test/core/lifecycle/background_reconnect_smoke_test.dart',
   'test/core/lifecycle/connectivity_lifecycle_test.dart',

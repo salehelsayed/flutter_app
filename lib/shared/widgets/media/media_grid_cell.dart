@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -174,11 +175,18 @@ class MediaGridCell extends StatelessWidget {
       (GroupMediaIntegrityPolicy.hasValidContentHash(attachment) &&
           attachment.hasEncryptionMetadata);
 
+  bool get _isRetryableDirectFailure =>
+      attachment.ownerLane == MediaOwnerLane.direct &&
+      attachment.downloadStatus == kMediaDownloadStatusFailed &&
+      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
+
   bool get _showsUnavailableMedia =>
-      GroupMediaIntegrityPolicy.isUnavailableMedia(
-        attachment,
-        requireVerifiedContentHash: requireVerifiedContentHash,
-      ) ||
+      receiverMediaShowsRetryPrompt(attachment) ||
+      (!_isRetryableDirectFailure &&
+          GroupMediaIntegrityPolicy.isUnavailableMedia(
+            attachment,
+            requireVerifiedContentHash: requireVerifiedContentHash,
+          )) ||
       // 117 Session 2: the group MIME allow-list + size policy are a
       // verified-group rendering gate, NOT a 1:1 concern. For 1:1
       // (requireVerifiedContentHash == false) availability is determined by
@@ -202,7 +210,8 @@ class MediaGridCell extends StatelessWidget {
 
   bool get _canRetryUnavailableMedia =>
       onRetryUnavailableMedia != null &&
-      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
+      (GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment) ||
+          receiverMediaShowsRetryPrompt(attachment));
 
   /// 229: user-removed local copy — a truthful terminal-ish state, never an
   /// indefinite loader, with a user-authoritative explicit Retry (not gated
@@ -215,7 +224,8 @@ class MediaGridCell extends StatelessWidget {
   /// instead of an endless loader. `downloading` keeps the loader.
   bool get _canDownloadManually =>
       onRetryUnavailableMedia != null &&
-      attachment.downloadStatus == kMediaDownloadStatusPending;
+      attachment.downloadStatus == kMediaDownloadStatusPending &&
+      (attachment.downloadRetryCount ?? 0) == 0;
 
   Widget _buildContent(BuildContext context) {
     final isImage = attachment.mediaType == 'image';
@@ -260,7 +270,10 @@ class MediaGridCell extends StatelessWidget {
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(context),
-        error: Builder(builder: _buildUnavailablePlaceholder),
+        error: Builder(
+          builder: (context) =>
+              _buildUnavailablePlaceholder(context, cannotOpen: true),
+        ),
         videoThumbnailResolver: videoThumbnailResolver,
         renderedSemanticsLabel: renderedSemanticsLabel,
       );
@@ -357,13 +370,26 @@ class MediaGridCell extends StatelessWidget {
     );
   }
 
-  Widget _buildUnavailablePlaceholder(BuildContext context) {
+  Widget _buildUnavailablePlaceholder(
+    BuildContext context, {
+    bool cannotOpen = false,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     final readable = context.backgroundReadableColors;
     final statusLabel =
-        GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(attachment)
-        ? l10n.media_could_not_verify
-        : l10n.media_unavailable;
+        receiverMediaFailureText(
+          l10n,
+          attachment,
+          canRetry: _canRetryUnavailableMedia,
+          cannotOpen:
+              cannotOpen ||
+              (attachment.downloadStatus == kMediaDownloadStatusDone &&
+                  _resolvedExistingLocalPath != null),
+          localCopyMissing:
+              attachment.downloadStatus == kMediaDownloadStatusDone &&
+              _resolvedExistingLocalPath == null,
+        ) ??
+        l10n.media_unavailable;
     final statusStyle = TextStyle(
       color: readable.textSecondary,
       fontSize: 12,
@@ -433,7 +459,7 @@ class MediaGridCell extends StatelessWidget {
                   ),
                   Semantics(
                     container: true,
-                    label: l10n.media_retry_unavailable,
+                    label: l10n.btn_retry,
                     button: true,
                     excludeSemantics: true,
                     onTap: onRetryUnavailableMedia,
@@ -470,12 +496,15 @@ class MediaGridCell extends StatelessWidget {
   /// terminal unavailable).
   Widget _buildDownloadPlaceholder(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final retrying =
+        _isRetryableDirectFailure || (attachment.downloadRetryCount ?? 0) > 0;
+    final actionLabel = retrying ? l10n.btn_retry : l10n.media_download;
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.03),
       child: Center(
         child: Semantics(
           container: true,
-          label: l10n.media_download,
+          label: actionLabel,
           button: true,
           child: IconButton(
             key: ValueKey(
@@ -484,8 +513,10 @@ class MediaGridCell extends StatelessWidget {
             iconSize: 28,
             color: const Color(0xFF4ecdc4),
             onPressed: onRetryUnavailableMedia,
-            tooltip: l10n.media_download,
-            icon: const Icon(Icons.download_rounded),
+            tooltip: actionLabel,
+            icon: Icon(
+              retrying ? Icons.refresh_rounded : Icons.download_rounded,
+            ),
           ),
         ),
       ),

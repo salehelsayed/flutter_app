@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audio_session/audio_session.dart';
@@ -967,7 +968,7 @@ void main() {
 
         // Tamper gets the distinct honest label and is NOT retryable — retrying
         // the same descriptor would just re-fail.
-        expect(find.text("Couldn't verify this media"), findsOneWidget);
+        expect(find.text("Couldn't open this file"), findsOneWidget);
         expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
         expect(find.byType(WaveformSeekBar), findsNothing);
         expect(find.byType(Slider), findsNothing);
@@ -976,33 +977,30 @@ void main() {
     );
 
     testWidgets(
-      'transient failed audio under the ceiling still exposes a retry affordance',
+      'retryable failed audio stays silent while automatic retry is possible',
       (tester) async {
         var retried = false;
         final failed = baseAttachment.copyWith(
           localPath: '/tmp/failed.m4a',
           downloadStatus: kMediaDownloadStatusFailed,
           downloadRetryCount: 1,
+          ownerLane: MediaOwnerLane.direct,
         );
 
         await tester.pumpWidget(
           buildApp(failed, onRetryUnavailableMedia: () => retried = true),
         );
 
-        expect(find.text('Media unavailable'), findsOneWidget);
-        expect(
-          find.bySemanticsLabel('Retry unavailable media'),
-          findsOneWidget,
-        );
-
-        await tester.tap(find.byIcon(Icons.refresh_rounded));
-        await tester.pump();
-        expect(retried, isTrue);
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(find.text("Couldn't load yet. Tap to try again."), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.bySemanticsLabel('Retry'), findsNothing);
+        expect(retried, isFalse);
       },
     );
 
     testWidgets(
-      'terminal download_failed audio shows the unavailable label and NO retry',
+      'ambiguous legacy download_failed offers an honest explicit retry',
       (tester) async {
         var retried = false;
         final terminal = baseAttachment.copyWith(
@@ -1015,10 +1013,14 @@ void main() {
           buildApp(terminal, onRetryUnavailableMedia: () => retried = true),
         );
 
-        expect(find.text('Media unavailable'), findsOneWidget);
-        expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+        expect(
+          find.text("Couldn't load yet. Tap to try again."),
+          findsOneWidget,
+        );
+        expect(find.bySemanticsLabel('Retry'), findsOneWidget);
         expect(find.byType(WaveformSeekBar), findsNothing);
-        expect(retried, isFalse);
+        await tester.tap(find.byIcon(Icons.refresh_rounded));
+        expect(retried, isTrue);
       },
     );
 

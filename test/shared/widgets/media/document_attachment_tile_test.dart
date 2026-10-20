@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -167,12 +168,12 @@ void main() {
       );
     });
 
-    testWidgets('a failed download offers retry', (tester) async {
+    testWidgets('a deferred download offers an honest retry', (tester) async {
       var retried = 0;
       await tester.pumpWidget(
         _wrap(
           DocumentAttachmentTile(
-            attachment: _pdf(status: 'failed'),
+            attachment: _pdf(status: kMediaDownloadStatusRetryWaiting),
             onRetryUnavailableMedia: () => retried++,
           ),
         ),

@@ -1283,6 +1283,15 @@ class AppLocalizationsAr extends AppLocalizations {
       'المرفقات كبيرة جدًا — أزل بعضها للإرسال.';
 
   @override
+  String get media_retry_later => 'لم يتم التحميل بعد. اضغط للمحاولة مرة أخرى.';
+
+  @override
+  String get media_no_longer_available => 'لم تعد متاحة';
+
+  @override
+  String get media_open_failed => 'تعذر فتح هذا الملف';
+
+  @override
   String get media_unavailable => 'الوسائط غير متاحة';
 
   @override

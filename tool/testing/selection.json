@@ -198,12 +198,16 @@
     "media-bytes": {
       "kind": "flutter",
       "paths": [
-        "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+        "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart",
+        "test/features/conversation/integration/camera_caption_relay_delivery_test.dart",
+        "test/features/conversation/integration/media_eviction_redownload_test.dart",
+        "test/core/media/media_download_transport_budget_test.dart",
+        "test/features/conversation/application/media_transport_error_classification_test.dart"
       ],
-      "boundary": "Upload ciphertext differs, envelope hydrates key metadata, receiver downloaded file equals original bytes; legacy envelope fixture",
-      "limitations": "Content-transforming fake crypto and relay; does not prove native cipher, received viewer, or actual old binary",
+      "boundary": "Legacy encrypted media bytes plus real large JPEG/caption sender-to-receiver SQLite/files/full viewer over online and offline inbox; exact transport errors retain pending backoff/recovery, connected absence stays terminal",
+      "limitations": "XOR test crypto and fake relay transport; native camera/compressor, Go AES-GCM, actual relay/circuit and historical signed builds remain unproven. Mixed multi-relay aggregate-not-found desired retry is a case-scoped KNOWN GAP",
       "timeout_seconds": 900,
-      "estimated_seconds": 4,
+      "estimated_seconds": null,
       "requirements": [
         "flutter"
       ],
@@ -212,15 +216,7 @@
         "lib/core/bridge/",
         "lib/core/media/"
       ],
-      "inspected": true,
-      "runtime_basis": {
-        "kind": "measured",
-        "seconds": 3.365,
-        "status": "PASS",
-        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
-        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
-        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
-      }
+      "inspected": true
     },
     "media-viewer": {
       "kind": "flutter",
@@ -562,7 +558,8 @@
       "paths": [
         "test/core/media/",
         "test/shared/widgets/media/",
-        "test/features/share/"
+        "test/features/share/",
+        "test/core/utils/transient_transport_error_test.dart"
       ],
       "boundary": "Shared media owner, viewer and egress serve direct/group/share journeys",
       "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
@@ -2195,7 +2192,7 @@
     "production-notification-sound": {
       "kind": "sims",
       "capability": "production.notification_sound",
-      "boundary": "Production S1\u2013S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
+      "boundary": "Production S1–S16 sound request, real visibility, encrypted media projection and native OS disposition with S15 control",
       "timeout_seconds": 7200,
       "estimated_seconds": null,
       "requirements": [
@@ -4984,7 +4981,9 @@
         "test/core/media/*",
         "test/core/widgets/video_processing_notice_test.dart",
         "test/shared/widgets/media/*",
-        "test/features/share/*"
+        "test/features/share/*",
+        "lib/core/utils/transient_transport_error.dart",
+        "test/core/utils/transient_transport_error_test.dart"
       ],
       "checks": [
         "media-bytes",

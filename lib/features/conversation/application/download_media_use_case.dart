@@ -17,6 +17,7 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/transient_transport_error.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -46,6 +47,7 @@ class _MediaDiagnosticAttempt {
   final String? traceId;
   String failureReason = 'unknown';
   bool hasFailure = false;
+  bool retryTransport = false;
   String stage = 'preflight';
 
   void record(
@@ -743,30 +745,85 @@ Future<MediaAttachment?> downloadMedia({
       final diagnosticAttempt = _MediaDiagnosticAttempt(traceId);
       diagnosticAttempt.record('preflight', 'started');
       try {
-        final result = await _downloadMediaDiagnosed(
-          bridge: bridge,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-          attachment: attachment,
-          contactPeerId: contactPeerId,
-          owner: owner,
-          messageRepo: messageRepo,
-          groupMessageRepo: groupMessageRepo,
-          intent: intent,
-          enforceGroupMediaPolicy: enforceGroupMediaPolicy,
-          transferStallTimeout: transferStallTimeout,
-          transferMaxTimeout: transferMaxTimeout,
-          latePrivateTransferScrubDelay: latePrivateTransferScrubDelay,
-          nowMs: nowMs,
-          groupMediaAutomaticDownloadAttemptStarted:
-              groupMediaAutomaticDownloadAttemptStarted,
-          groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
-          strictGroupMediaDownloadAttemptStarted:
-              strictGroupMediaDownloadAttemptStarted,
-          strictGroupMediaVerifiedCiphertext:
-              strictGroupMediaVerifiedCiphertext,
-          diagnosticAttempt: diagnosticAttempt,
-        );
+        MediaAttachment? result;
+        var currentAttachment = attachment;
+        // Transport interruption is not proof that the relay lost the blob.
+        // Bound each active burst; retained pending rows can retry on the next
+        // foreground/connectivity/user trigger without a terminal retry cap.
+        for (var attempt = 0; attempt < 3; attempt++) {
+          diagnosticAttempt.retryTransport = false;
+          result = await _downloadMediaDiagnosed(
+            bridge: bridge,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            attachment: currentAttachment,
+            contactPeerId: contactPeerId,
+            owner: owner,
+            messageRepo: messageRepo,
+            groupMessageRepo: groupMessageRepo,
+            intent: intent,
+            enforceGroupMediaPolicy: enforceGroupMediaPolicy,
+            transferStallTimeout: transferStallTimeout,
+            transferMaxTimeout: transferMaxTimeout,
+            latePrivateTransferScrubDelay: latePrivateTransferScrubDelay,
+            nowMs: nowMs,
+            groupMediaAutomaticDownloadAttemptStarted:
+                groupMediaAutomaticDownloadAttemptStarted,
+            groupMediaPostClaimPreCommit: groupMediaPostClaimPreCommit,
+            strictGroupMediaDownloadAttemptStarted:
+                strictGroupMediaDownloadAttemptStarted,
+            strictGroupMediaVerifiedCiphertext:
+                strictGroupMediaVerifiedCiphertext,
+            diagnosticAttempt: diagnosticAttempt,
+          );
+          if (result != null ||
+              owner != MediaOwnerLane.direct ||
+              !diagnosticAttempt.retryTransport) {
+            break;
+          }
+          final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: owner,
+          );
+          final matches = rows.where((row) => row.id == attachment.id);
+          if (matches.isEmpty) break;
+          final pending = matches.single;
+          if (pending.downloadStatus != kMediaDownloadStatusPending) break;
+          if (attempt == 2) {
+            await mediaAttachmentRepo.saveAttachment(
+              pending.copyWith(
+                downloadStatus: kMediaDownloadStatusRetryWaiting,
+              ),
+              owner: owner,
+            );
+            break;
+          }
+          final delay = Duration(seconds: 1 << attempt);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'MEDIA_DOWNLOAD_TRANSPORT_RETRY_SCHEDULED',
+            details: {
+              'burstAttempt': attempt + 2,
+              'delayMs': delay.inMilliseconds,
+            },
+          );
+          await Future<void>.delayed(delay);
+          // Deletion, another download, or a terminal decision while backing
+          // off must remain authoritative; never retry a stale attachment.
+          final freshRows = await mediaAttachmentRepo.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: owner,
+          );
+          final fresh = freshRows.where((row) => row.id == attachment.id);
+          if (fresh.isEmpty ||
+              !{
+                kMediaDownloadStatusPending,
+                kMediaDownloadStatusDone,
+              }.contains(fresh.single.downloadStatus)) {
+            break;
+          }
+          currentAttachment = fresh.single;
+        }
         diagnostics.finishAttempt(
           feature: 'media',
           traceId: traceId,
@@ -1545,20 +1602,27 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
     }
 
     // Bounded download retry budget (Finding 09 Phase 3, INV-DL-1/2/5).
-    // Each transient download failure persists download_retry_count + 1:
+    // Only nontransport failures consume the bounded download retry counter.
+    // Transport interruption retains pending authority and local burst backoff:
     // the status goes through updateDownloadStatus (single-column, kept for
     // observability), and the counter through a full-row saveAttachment
     // (updateDownloadStatus cannot carry it). At/over the ceiling the row
     // flips to the terminal `download_failed` status. A successful local
     // path commit resets the counter to 0 (see dbUpdateMediaLocalPath).
     Future<String> persistTransientDownloadFailure({
+      bool keepPending = false,
       bool clearLocalPath = false,
       String expectedDownloadStatus = kMediaDownloadStatusDownloading,
       String? expectedLocalPath,
       bool privateLockHeld = false,
     }) async {
-      final nextCount = (attachment.downloadRetryCount ?? 0) + 1;
-      final status = nextCount >= kMaxDownloadRetries
+      diagnosticAttempt.retryTransport =
+          keepPending && !requiresDirectPrivateCommit;
+      final nextCount =
+          (attachment.downloadRetryCount ?? 0) + (keepPending ? 0 : 1);
+      final status = keepPending
+          ? kMediaDownloadStatusPending
+          : nextCount >= kMaxDownloadRetries
           ? kMediaDownloadStatusDownloadFailed
           : kMediaDownloadStatusFailed;
       if (requiresDirectPrivateCommit) {
@@ -1568,8 +1632,10 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
             attachment.id,
             messageId: attachment.messageId,
             nowMs: currentNowMs(),
-            incrementRetryCount: true,
-            failureStatus: kMediaDownloadStatusFailed,
+            incrementRetryCount: !keepPending,
+            failureStatus: keepPending
+                ? kMediaDownloadStatusPending
+                : kMediaDownloadStatusFailed,
             expectedDownloadStatus: expectedDownloadStatus,
             expectedLocalPath: expectedLocalPath,
             clearLocalPath: clearLocalPath,
@@ -1579,8 +1645,10 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
             attachment.id,
             messageId: attachment.messageId,
             nowMs: currentNowMs(),
-            incrementRetryCount: true,
-            failureStatus: kMediaDownloadStatusFailed,
+            incrementRetryCount: !keepPending,
+            failureStatus: keepPending
+                ? kMediaDownloadStatusPending
+                : kMediaDownloadStatusFailed,
             expectedDownloadStatus: expectedDownloadStatus,
             expectedLocalPath: expectedLocalPath,
             clearLocalPath: clearLocalPath,
@@ -1590,8 +1658,10 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       }
       if (ordinaryGroupDownloadFailureRepo != null) {
         await recordOrdinaryGroupDownloadFailure(
-          incrementRetryCount: true,
-          failureStatus: kMediaDownloadStatusFailed,
+          incrementRetryCount: !keepPending,
+          failureStatus: keepPending
+              ? kMediaDownloadStatusPending
+              : kMediaDownloadStatusFailed,
           expectedDownloadStatus: expectedDownloadStatus,
           expectedLocalPath:
               expectedLocalPath ?? ordinaryGroupExpectedLocalPath,
@@ -1626,7 +1696,7 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
               messageId: attachment.messageId,
               nowMs: currentNowMs(),
               incrementRetryCount: false,
-              failureStatus: kMediaDownloadStatusDownloadFailed,
+              failureStatus: kMediaDownloadStatusUnavailable,
               expectedDownloadStatus: kMediaDownloadStatusDownloading,
             );
         return;
@@ -1634,7 +1704,7 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       if (ordinaryGroupDownloadFailureRepo != null) {
         await recordOrdinaryGroupDownloadFailure(
           incrementRetryCount: false,
-          failureStatus: kMediaDownloadStatusDownloadFailed,
+          failureStatus: kMediaDownloadStatusUnavailable,
           expectedDownloadStatus: kMediaDownloadStatusDownloading,
           expectedLocalPath: ordinaryGroupExpectedLocalPath,
           clearLocalPath: false,
@@ -1644,14 +1714,12 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       try {
         await mediaAttachmentRepo.updateDownloadStatus(
           attachment.id,
-          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusUnavailable,
         );
       } catch (_) {}
       try {
         await mediaAttachmentRepo.saveAttachment(
-          attachment.copyWith(
-            downloadStatus: kMediaDownloadStatusDownloadFailed,
-          ),
+          attachment.copyWith(downloadStatus: kMediaDownloadStatusUnavailable),
           owner: owner,
         );
       } catch (_) {}
@@ -3194,10 +3262,19 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
         // terminal "expired on server" state — flip straight to
         // download_failed without burning the retry budget. Any other relay
         // error is a bounded transient failure.
-        if (isRelayUnavailableError(result['errorMessage'])) {
+        if (!TransientTransportError.matches(
+              result['errorMessage'],
+              code: result['errorCode'],
+            ) &&
+            isRelayUnavailableError(result['errorMessage'])) {
           await markRelayUnavailableDownloadFailed();
         } else {
-          await persistTransientDownloadFailure();
+          await persistTransientDownloadFailure(
+            keepPending: TransientTransportError.matches(
+              result['errorMessage'],
+              code: result['errorCode'],
+            ),
+          );
         }
 
         final repairedLocalAttachment =
@@ -3806,7 +3883,11 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       } catch (_) {}
 
       try {
-        await persistTransientDownloadFailure();
+        await persistTransientDownloadFailure(
+          keepPending:
+              diagnosticAttempt.stage == 'download' &&
+              TransientTransportError.matches(e),
+        );
       } catch (_) {}
 
       final localAttachment = await useCompletedLocalAttachmentIfAvailable(
