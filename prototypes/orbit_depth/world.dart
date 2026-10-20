@@ -315,6 +315,185 @@ class _ThoughtRow extends StatelessWidget {
 }
 
 /// Inside a Space: its things, one card each.
+/// One moment on a Space's shelf: a thought kept under its tag, or a thing
+/// kept in it.
+class _ShelfEntry {
+  /// The quiet divider it sits under: "this week", "August".
+  final String when;
+  final String title;
+  final String? line;
+  final Widget? lead;
+  final String key;
+  final VoidCallback onTap;
+
+  const _ShelfEntry({
+    required this.when,
+    required this.title,
+    required this.key,
+    required this.onTap,
+    this.line,
+    this.lead,
+  });
+}
+
+String _whenForAge(String age) {
+  final minutes = _minutesAgo(age);
+  if (minutes < 7 * 24 * 60) return 'this week';
+  if (minutes < 30 * 24 * 60) return 'this month';
+  return 'earlier';
+}
+
+/// A Space as a shelf over time, not a feed: newest first, under quiet time
+/// dividers, one short line each, so it still reads at a glance when it has
+/// grown for years. No counts and no ratings.
+class _Shelf extends StatelessWidget {
+  final String owner;
+  final _Space space;
+
+  const _Shelf({required this.owner, required this.space});
+
+  List<_ShelfEntry> _entries(BuildContext context) => [
+    if (owner == 'you' && space.tag != null)
+      for (var i = 0; i < _yourThoughts.length; i++)
+        if (_tagsIn(_yourThoughts[i].thought.text).contains(space.tag))
+          _thoughtEntry(context, i),
+    for (var i = 0; i < space.kept.length; i++)
+      _ShelfEntry(
+        when: space.kept[i].when,
+        title: _withoutTags(space.kept[i].text),
+        key: 'shelf-kept-$i',
+        onTap: () => _openKeptSheet(context, owner, space.kept[i]),
+      ),
+  ];
+
+  _ShelfEntry _thoughtEntry(BuildContext context, int i) {
+    final t = _yourThoughts[i];
+    final photo =
+        t.media.where((m) => m.photo != null).firstOrNull?.photo ??
+        t.thought.photo;
+    return _ShelfEntry(
+      when: _whenForAge(t.thought.age),
+      title: _withoutTags(t.thought.text),
+      line: _ago(t.thought.age),
+      key: 'shelf-thought-${t.id}',
+      lead: photo == null
+          ? null
+          : ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image(
+                image: _photo(photo),
+                width: 46,
+                height: 46,
+                fit: BoxFit.cover,
+              ),
+            ),
+      onTap: () => _openThought(context, 'you', i),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    String? when;
+    for (final e in _entries(context)) {
+      if (e.when != when) {
+        when = e.when;
+        rows.add(
+          Padding(
+            padding: const EdgeInsets.only(top: 16, bottom: 6),
+            child: Text(
+              '── $when ${'─' * 40}',
+              key: ValueKey('shelf-when-$when'),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              style: _mono.copyWith(color: _faint, fontSize: 11.5),
+            ),
+          ),
+        );
+      }
+      rows.add(_ShelfRow(entry: e));
+    }
+    return ListView(
+      key: ValueKey('space-${space.title}'),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+      children: [
+        if (space.tag != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              owner == 'you'
+                  ? '#${space.tag} · on your ${(_spaceRing[space.title] ?? _Ring.friends).label} ring'
+                  : '#${space.tag}',
+              style: _mono.copyWith(color: _muted, fontSize: 12),
+            ),
+          ),
+        if (rows.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32),
+            child: Text(
+              'Write a thought with #${space.tag} and it lands here.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _muted, fontSize: 14.5),
+            ),
+          ),
+        ...rows,
+      ],
+    );
+  }
+}
+
+class _ShelfRow extends StatelessWidget {
+  final _ShelfEntry entry;
+
+  const _ShelfRow({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final e = entry;
+    return InkWell(
+      key: ValueKey(e.key),
+      borderRadius: BorderRadius.circular(12),
+      onTap: e.onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Row(
+          children: [
+            if (e.lead case final lead?) ...[lead, const SizedBox(width: 12)],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    e.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: _ink,
+                      fontSize: 15.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (e.line case final line?)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Text(
+                        line,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: _muted, fontSize: 13),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SpacePage extends StatelessWidget {
   final String owner;
   final _Space space;
@@ -332,25 +511,7 @@ class _SpacePage extends StatelessWidget {
             _DiveHeader(
               trail: [owner == 'you' ? 'You' : owner, space.title],
             ),
-            Expanded(
-              child: ListView(
-                key: ValueKey('space-${space.title}'),
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
-                children: [
-                  for (final item in space.items)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _ItemCard(
-                        owner: owner,
-                        item: item,
-                        kind: space.kind,
-                        onOpen: () =>
-                            _openItemSheet(context, owner, item, space.kind),
-                      ),
-                    ),
-                ],
-              ),
-            ),
+            Expanded(child: _Shelf(owner: owner, space: space)),
           ],
         ),
       ),

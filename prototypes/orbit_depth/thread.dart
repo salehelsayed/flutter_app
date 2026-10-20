@@ -59,6 +59,14 @@ class _ThoughtPage extends StatefulWidget {
   State<_ThoughtPage> createState() => _ThoughtPageState();
 }
 
+/// A short thought with nothing attached reads full screen as a quote:
+/// large and centred, since no face above it holds its place.
+bool _isQuote(_Post post) =>
+    post.attachments.isEmpty &&
+    post.space == null &&
+    post.paragraphs.length == 1 &&
+    post.paragraphs.first.length <= 90;
+
 class _ThoughtPageState extends State<_ThoughtPage> {
   late final List<_Post> _posts = _threadOf(widget.owner);
   late final int _index = widget.post.clamp(0, _posts.length - 1);
@@ -141,30 +149,75 @@ class _ThoughtPageState extends State<_ThoughtPage> {
                 ],
               ),
             ),
-            Expanded(
-              child: ListView(
-                key: ValueKey('thought-$owner-$_index'),
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                children: [
-                  _PostCard(
-                    post: post,
-                    maxHeight: 2000,
-                    expand: 1,
-                    k: OrbitDepthTuning.cardScale,
-                    alpha: 1,
-                    front: false,
-                    onOpen: () {},
-                    onSpace: post.space == null
-                        ? null
-                        : () => _openSpace(context, owner, post.space!),
+            if (_isQuote(post))
+              Expanded(
+                child: Center(
+                  key: ValueKey('thought-$owner-$_index'),
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(28, 12, 28, 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        GestureDetector(
+                          onLongPressStart: _mine
+                              ? null
+                              : (d) => _reactAt(
+                                  context,
+                                  d.globalPosition,
+                                  owner,
+                                  _index,
+                                ),
+                          child: Text(
+                            post.paragraphs.first,
+                            key: ValueKey('quote-$owner-$_index'),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: _chat.textPrimary,
+                              fontSize: 30,
+                              fontWeight: FontWeight.w500,
+                              height: 1.25,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        if (_mine)
+                          _YourThoughtStats(id: _yourThoughts[_index].id)
+                        else if (_replyLine(owner, _index) != null)
+                          _ReplyLine(owner: owner, post: _index, k: 1),
+                      ],
+                    ),
                   ),
-                  if (_mine)
-                    _YourThoughtStats(id: _yourThoughts[_index].id)
-                  else if (_replyLine(owner, _index) != null)
-                    _ReplyLine(owner: owner, post: _index, k: 1),
-                ],
+                ),
+              )
+            else
+              Expanded(
+                child: ListView(
+                  key: ValueKey('thought-$owner-$_index'),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  children: [
+                    _PostCard(
+                      post: post,
+                      maxHeight: 2000,
+                      expand: 1,
+                      k: OrbitDepthTuning.cardScale,
+                      alpha: 1,
+                      front: false,
+                      onOpen: () {},
+                      onReact: _mine
+                          ? null
+                          : (at) => _reactAt(context, at, owner, _index),
+                      onSpace: post.space == null
+                          ? null
+                          : () => _openSpace(context, owner, post.space!),
+                    ),
+                    if (_mine)
+                      _YourThoughtStats(id: _yourThoughts[_index].id)
+                    else if (_replyLine(owner, _index) != null)
+                      _ReplyLine(owner: owner, post: _index, k: 1),
+                  ],
+                ),
               ),
-            ),
             if (!_mine)
               Padding(
                 padding: EdgeInsets.fromLTRB(
@@ -181,7 +234,11 @@ class _ThoughtPageState extends State<_ThoughtPage> {
                       child: Row(
                         key: const ValueKey('private-reply'),
                         children: [
-                          const Icon(Icons.lock_outline, size: 13, color: _accent),
+                          const Icon(
+                            Icons.lock_outline,
+                            size: 13,
+                            color: _accent,
+                          ),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(

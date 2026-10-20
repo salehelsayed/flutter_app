@@ -635,7 +635,10 @@ class _DmScreen extends StatefulWidget {
   /// A thought of theirs the next message answers.
   final _Quote? quote;
 
-  const _DmScreen({required this.name, this.quote});
+  /// The row of faces a chat opened from the orbit carries.
+  final _ChatStrip? strip;
+
+  const _DmScreen({required this.name, this.quote, this.strip});
 
   @override
   State<_DmScreen> createState() => _DmScreenState();
@@ -645,7 +648,10 @@ class _DmScreenState extends State<_DmScreen> {
   final TextEditingController _field = TextEditingController();
   late _Quote? _about = widget.quote;
 
-  _Dm get _dm => _dms.putIfAbsent(widget.name, () => _Dm([]));
+  /// Who the chat is with; the strip can switch it.
+  late String _name = widget.name;
+
+  _Dm get _dm => _dms.putIfAbsent(_name, () => _Dm([]));
 
   @override
   void initState() {
@@ -681,9 +687,24 @@ class _DmScreenState extends State<_DmScreen> {
     final text = _field.text.trim();
     if (text.isEmpty) return;
     HapticFeedback.lightImpact();
-    _sayDirect(widget.name, text, about: _about);
+    _sayDirect(_name, text, about: _about);
     _field.clear();
     if (_about != null) setState(() => _about = null);
+  }
+
+  /// Another face in the strip: their chat, their new thought ready to quote,
+  /// the way tapping them on the orbit would.
+  void _switchTo(String name) {
+    if (name == _name) return;
+    HapticFeedback.selectionClick();
+    final friend = _friends.where((f) => f.name == name).firstOrNull;
+    setState(() {
+      _name = name;
+      _about = friend == null ? null : _freshQuote(friend);
+      _field.clear();
+    });
+    widget.strip!.current.value = name;
+    _markRead();
   }
 
   @override
@@ -696,7 +717,7 @@ class _DmScreenState extends State<_DmScreen> {
     // A quote heads only the first reply to its thought.
     final items = <Widget>[
       if (via != null)
-        _IntroducedNote(name: widget.name, via: via, line: dm.bridgeLine),
+        _IntroducedNote(name: _name, via: via, line: dm.bridgeLine),
       for (var i = 0; i < messages.length; i++) ...[
         if (messages[i].about case final q?
             when !messages.take(i).any((m) => q.same(m.about)))
@@ -704,50 +725,103 @@ class _DmScreenState extends State<_DmScreen> {
         _ChatBubble(messages[i]),
       ],
     ];
-    return Scaffold(
-      backgroundColor: const Color(0xE60C0E14),
-      body: Padding(
-        padding: EdgeInsets.only(top: pad.top, bottom: keyboard),
-        child: Column(
-          children: [
-            _ChatHeader(widget.name, via: via),
-            Expanded(
-              child: ListView(
-                key: ValueKey('dm-${widget.name}'),
-                reverse: true,
-                keyboardDismissBehavior:
-                    ScrollViewKeyboardDismissBehavior.onDrag,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                children: items.reversed.toList(),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                10,
-                0,
-                10,
-                keyboard > 0 ? 8 : pad.bottom + 8,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_about case final q?)
-                    _QuoteChip(
-                      quote: q,
-                      onDrop: () => setState(() => _about = null),
-                    ),
-                  _Composer(
-                    controller: _field,
-                    hint: _about == null
-                        ? 'Message ${widget.name}…'
-                        : 'Reply to ${widget.name}…',
-                    onSend: _send,
-                  ),
-                ],
-              ),
-            ),
-          ],
+    final strip = widget.strip;
+    final talk = Column(
+      children: [
+        _ChatHeader(_name, via: via, inStrip: strip != null),
+        Expanded(
+          child: ListView(
+            key: ValueKey('dm-$_name'),
+            reverse: true,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+            children: items.reversed.toList(),
+          ),
         ),
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            10,
+            0,
+            10,
+            keyboard > 0 ? 8 : pad.bottom + 8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_about case final q?)
+                _QuoteChip(
+                  quote: q,
+                  onDrop: () => setState(() => _about = null),
+                ),
+              _Composer(
+                controller: _field,
+                hint: _about == null ? 'Message $_name…' : 'Reply to $_name…',
+                onSend: _send,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (strip == null) {
+      return Scaffold(
+        backgroundColor: const Color(0xE60C0E14),
+        body: Padding(
+          padding: EdgeInsets.only(top: pad.top, bottom: keyboard),
+          child: talk,
+        ),
+      );
+    }
+    // Opened from the orbit: the row fades in where the faces land, and the
+    // chat rises under it.
+    final route = ModalRoute.of(context)!;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: AnimatedBuilder(
+        animation: Listenable.merge([route.animation!, strip.current]),
+        child: talk,
+        builder: (context, talk) {
+          final t = route.animation!.value;
+          final settled = route.animation!.status == AnimationStatus.completed;
+          return Padding(
+            padding: EdgeInsets.only(bottom: keyboard),
+            child: Column(
+              children: [
+                Opacity(
+                  opacity: _span(t, 0.35, 0.9),
+                  child: ColoredBox(
+                    color: _dmGround,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: pad.top),
+                      child: _ChatStripBar(
+                        strip: strip,
+                        onPick: _switchTo,
+                        facesShown: settled,
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: FractionalTranslation(
+                    translation: Offset(
+                      0,
+                      1 - Curves.easeOutCubic.transform(_span(t, 0.3, 1)),
+                    ),
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: _dmGround,
+                        border: Border(
+                          top: BorderSide(color: Color(0x1FE8ECE9)),
+                        ),
+                      ),
+                      child: talk,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -869,26 +943,33 @@ class _ChatHeader extends StatelessWidget {
   /// For someone who is not your friend: the friend who connects you.
   final String? via;
 
-  const _ChatHeader(this.other, {this.via});
+  /// Under the strip of faces, which carries back and the photo.
+  final bool inStrip;
+
+  const _ChatHeader(this.other, {this.via, this.inStrip = false});
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(4, 0, 16, 0),
+    padding: inStrip
+        ? const EdgeInsets.fromLTRB(16, 10, 16, 10)
+        : const EdgeInsets.fromLTRB(4, 0, 16, 0),
     child: Row(
       children: [
-        IconButton(
-          tooltip: 'Back',
-          icon: const Icon(Icons.arrow_back, color: _ink),
-          onPressed: () {
-            FocusScope.of(context).unfocus();
-            Navigator.of(context).maybePop();
-          },
-        ),
-        GestureDetector(
-          onTap: () => _openWorld(context, other, fromChat: true),
-          child: _personPhoto(other, 34),
-        ),
-        const SizedBox(width: 10),
+        if (!inStrip) ...[
+          IconButton(
+            tooltip: 'Back',
+            icon: const Icon(Icons.arrow_back, color: _ink),
+            onPressed: () {
+              FocusScope.of(context).unfocus();
+              Navigator.of(context).maybePop();
+            },
+          ),
+          GestureDetector(
+            onTap: () => _openWorld(context, other, fromChat: true),
+            child: _personPhoto(other, 34),
+          ),
+          const SizedBox(width: 10),
+        ],
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1129,9 +1210,12 @@ class _ReplyLine extends StatelessWidget {
     final line = _replyLine(owner, post);
     if (line == null) return SizedBox(height: height * k);
     final (msg, reaction) = line;
+    // Your own words confirm what you did; theirs stay in the chat.
     final text = msg == null
         ? 'You reacted $reaction'
-        : '${msg.mine ? 'You' : owner}: ${msg.text}';
+        : msg.mine
+        ? 'You: ${msg.text}'
+        : '$owner wrote back';
     const lift = [Shadow(color: Color(0xB3000000), blurRadius: 10)];
     return GestureDetector(
       key: ValueKey('reply-line-$owner'),

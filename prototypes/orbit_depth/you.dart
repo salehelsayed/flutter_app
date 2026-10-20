@@ -4,8 +4,9 @@ part of 'orbit_depth_prototype_screen.dart';
 // through your friends. A thought is shared from the plus on your photo in
 // the middle of the orbit: to Close, to Friends, or to people you pick. It
 // stays on the orbit for 24 h, then in your Thoughts for 30 days. Under each
-// thought you see reactions and how many wrote to you, never who viewed it
-// and never what anyone wrote; that is in your chats.
+// thought you see each friend's reaction on their face and who wrote to
+// you; never a count, never who viewed it, and never what anyone wrote,
+// which is in your chats.
 
 /// Who a thought goes to.
 enum _Audience { close, friends, picked }
@@ -30,7 +31,7 @@ List<_MyThought> _seedThoughts() => [
   const _MyThought(
     0,
     _PastThought(
-      'ran 5k in 28:55. slowly getting there',
+      'ran 5k in 28:55. slowly getting there #runs',
       age: '2 d',
       kind: _ThoughtKind.photo,
       photo: 'trip_road',
@@ -46,7 +47,7 @@ List<_MyThought> _seedThoughts() => [
   const _MyThought(
     1,
     _PastThought(
-      'chapter 12 of Thinking, Fast and Slow. my brain hurts',
+      'chapter 12 of Thinking, Fast and Slow. my brain hurts #books',
       age: '4 d',
       space: 'Books',
     ),
@@ -56,7 +57,7 @@ List<_MyThought> _seedThoughts() => [
   const _MyThought(
     2,
     _PastThought(
-      'sunset at the falls. worth the climb',
+      'sunset at the falls. worth the climb #walks',
       age: '6 d',
       kind: _ThoughtKind.photo,
       photo: 'trip_falls',
@@ -67,6 +68,107 @@ List<_MyThought> _seedThoughts() => [
 ];
 
 int _nextThoughtId = 100;
+
+// Tags: a #word in a thought keeps it with others like it. They are yours:
+// nobody follows a tag, and nobody else sees your list of them. A tag you
+// put in your world becomes a Space, on the ring of the people who can
+// open it.
+
+final _tagPattern = RegExp(r'#([\p{L}\p{N}_-]+)', unicode: true);
+final _tagAtEnd = RegExp(r'#([\p{L}\p{N}_-]*)$', unicode: true);
+
+List<String> _tagsIn(String text) => [
+  for (final m in _tagPattern.allMatches(text)) m.group(1)!.toLowerCase(),
+];
+
+String _withoutTags(String text) =>
+    text.replaceAll(_tagPattern, '').replaceAll(RegExp(r'\s+'), ' ').trim();
+
+_Space? _spaceTagged(String tag) =>
+    _yourSpaces.where((s) => s.tag == tag).firstOrNull;
+
+/// Every tag you have used, newest first, then your Spaces' tags.
+List<String> _yourTags() {
+  final tags = <String>[];
+  for (final t in _yourThoughts) {
+    for (final tag in _tagsIn(t.thought.text)) {
+      if (!tags.contains(tag)) tags.add(tag);
+    }
+  }
+  for (final s in _yourSpaces) {
+    if (s.tag case final tag? when !tags.contains(tag)) tags.add(tag);
+  }
+  return tags;
+}
+
+/// The newest thought kept under [tag], without its tags.
+String? _latestTagged(String? tag) {
+  if (tag == null) return null;
+  for (final t in _yourThoughts) {
+    if (_tagsIn(t.thought.text).contains(tag)) {
+      return _withoutTags(t.thought.text);
+    }
+  }
+  return null;
+}
+
+/// Tags you said "not now" to: never offered again.
+final Set<String> _notNowTags = {};
+
+/// The one gentle offer: a tag you came back to that is not a Space yet.
+String? _tagToOffer() {
+  final uses = <String, int>{};
+  for (final t in _yourThoughts) {
+    for (final tag in _tagsIn(t.thought.text).toSet()) {
+      uses[tag] = (uses[tag] ?? 0) + 1;
+    }
+  }
+  for (final MapEntry(key: tag, value: n) in uses.entries) {
+    if (n >= 2 && _spaceTagged(tag) == null && !_notNowTags.contains(tag)) {
+      return tag;
+    }
+  }
+  return null;
+}
+
+/// Your words with their tags set in the terminal type: in a Space's ring
+/// colour when the tag is a Space, quiet otherwise. With [onSpace], a
+/// Space's tag opens its shelf.
+TextSpan _taggedSpan(
+  String text,
+  TextStyle style, {
+  void Function(_Space space)? onSpace,
+}) {
+  final spans = <InlineSpan>[];
+  var at = 0;
+  for (final m in _tagPattern.allMatches(text)) {
+    if (m.start > at) spans.add(TextSpan(text: text.substring(at, m.start)));
+    final space = _spaceTagged(m.group(1)!.toLowerCase());
+    final tagStyle = _mono.copyWith(
+      fontSize: (style.fontSize ?? 16) - 2,
+      color: space == null
+          ? const Color(0xFF8C968F)
+          : (_spaceRing[space.title] ?? _Ring.friends).color,
+    );
+    spans.add(
+      space != null && onSpace != null
+          ? WidgetSpan(
+              alignment: PlaceholderAlignment.baseline,
+              baseline: TextBaseline.alphabetic,
+              child: GestureDetector(
+                key: ValueKey('tag-link-${space.tag}'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => onSpace(space),
+                child: Text(m.group(0)!, style: tagStyle),
+              ),
+            )
+          : TextSpan(text: m.group(0), style: tagStyle),
+    );
+    at = m.end;
+  }
+  if (at < text.length) spans.add(TextSpan(text: text.substring(at)));
+  return TextSpan(style: style, children: spans);
+}
 
 /// '2 d ago', or just 'now'.
 String _ago(String age) => age == 'now' ? 'now' : '$age ago';
@@ -111,13 +213,63 @@ Map<int, Map<String, String>> _seedReactions() => {
   1: {'layla': '😂', 'omar': '😂'},
 };
 
-/// How many friends sent each reaction to your thought [id].
-Map<String, int> _reactionCounts(int id) {
-  final counts = <String, int>{};
-  for (final emoji in (_reactionsTo[id] ?? const {}).values) {
-    counts[emoji] = (counts[emoji] ?? 0) + 1;
+/// Names as a sentence: "omar", "omar and nour", "omar, nour and sara".
+String _namesLine(List<String> names) => names.length < 2
+    ? names.join()
+    : '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
+
+/// Who reacted to your thought [id]: each face wearing what that person
+/// sent. Never a count, and no words put in their mouth.
+class _Reactions extends StatelessWidget {
+  final int id;
+
+  const _Reactions({required this.id});
+
+  @override
+  Widget build(BuildContext context) {
+    final sent = (_reactionsTo[id] ?? const <String, String>{}).entries;
+    if (sent.isEmpty) return const SizedBox.shrink();
+    const face = 28.0;
+    return Wrap(
+      key: ValueKey('reactions-$id'),
+      spacing: 10,
+      runSpacing: 8,
+      children: [
+        for (final MapEntry(key: name, value: emoji) in sent)
+          Tooltip(
+            message: name,
+            triggerMode: TooltipTriggerMode.longPress,
+            child: Semantics(
+              label: '$name sent $emoji',
+              excludeSemantics: true,
+              child: SizedBox(
+                key: ValueKey('reaction-$id-$name'),
+                width: face + 6,
+                height: face + 6,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    _personPhoto(name, face),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        padding: const EdgeInsets.all(1.5),
+                        decoration: const BoxDecoration(
+                          color: _ground,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Text(emoji, style: const TextStyle(fontSize: 12)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
-  return counts;
 }
 
 /// Friends who wrote to you about your thought [id], newest chat first.
@@ -135,10 +287,11 @@ var _lastAudience = _Audience.friends;
 /// People you picked for a thought.
 final Set<String> _picked = {};
 
-String _audienceName(_Audience a) => switch (a) {
-  _Audience.close => 'Close',
-  _Audience.friends => 'Friends',
-  _Audience.picked => 'Picked people',
+/// Whose orbit a thought sits on, named by circle rather than counted.
+String _orbitOf(_Audience a) => switch (a) {
+  _Audience.close => 'your Close’s orbit',
+  _Audience.friends => 'your Friends’ orbit',
+  _Audience.picked => 'the orbit of the people you picked',
 };
 
 int _audienceSize(_Audience a) => switch (a) {
@@ -282,6 +435,15 @@ class _YouPageState extends State<_YouPage> {
   /// Typing / asks who sees the thought.
   bool get _asking => _field.text.endsWith('/');
 
+  /// Typing # asks which of your tags it goes with: what follows the #.
+  String? get _tagging => _tagAtEnd.firstMatch(_field.text)?.group(1)?.toLowerCase();
+
+  void _tagWith(String tag) {
+    HapticFeedback.selectionClick();
+    _field.text = '${_field.text.replaceFirst(_tagAtEnd, '#$tag')} ';
+    _field.selection = TextSelection.collapsed(offset: _field.text.length);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -322,9 +484,8 @@ class _YouPageState extends State<_YouPage> {
     _shareThought(text, _audience, photo: _attached);
     _field.clear();
     setState(() => _attached = null);
-    final n = _audienceSize(_audience);
     _notify(
-      'Shared with ${_audience == _Audience.picked ? '$n you picked' : _audienceName(_audience)} · $n ${n == 1 ? 'person' : 'people'}',
+      'Shared · on ${_orbitOf(_audience)} for 24 h',
     );
   }
 
@@ -348,6 +509,7 @@ class _YouPageState extends State<_YouPage> {
                   reverse: true,
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                   children: [
+                    if (_tagToOffer() case final tag?) _TagOffer(tag: tag),
                     for (var i = 0; i < _yourThoughts.length; i++)
                       _FeedThought(index: i),
                   ],
@@ -449,6 +611,10 @@ class _YouPageState extends State<_YouPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_asking) ...[_commands(), const SizedBox(height: 10)],
+              if (_tagging case final partial?) ...[
+                _tags(partial),
+                const SizedBox(height: 10),
+              ],
               if (_attached case final photo?) ...[
                 Row(
                   children: [
@@ -577,6 +743,76 @@ class _YouPageState extends State<_YouPage> {
     );
   }
 
+  /// The # menu: your own tags, the Spaces first. Nothing here is anyone
+  /// else's: there is no list of everybody's tags.
+  Widget _tags(String partial) {
+    final yours = _yourTags().where((t) => t.startsWith(partial)).toList()
+      ..sort((a, b) {
+        final sa = _spaceTagged(a) == null ? 1 : 0;
+        final sb = _spaceTagged(b) == null ? 1 : 0;
+        return sa.compareTo(sb);
+      });
+    Widget row(String tag, String note, Color color) => InkWell(
+      key: ValueKey('tag-$tag'),
+      borderRadius: BorderRadius.circular(10),
+      onTap: () => _tagWith(tag),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 48),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                '#$tag',
+                style: _mono.copyWith(color: color, fontSize: 14),
+              ),
+            ),
+            Text(note, style: _mono.copyWith(color: color, fontSize: 11)),
+          ],
+        ),
+      ),
+    );
+    return _Glass(
+      tint: 0.06,
+      radius: 16,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Column(
+          key: const ValueKey('tags'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+              child: Text(
+                'your tags · only you see this list',
+                style: _mono.copyWith(color: const Color(0xFF8C968F), fontSize: 11.5),
+              ),
+            ),
+            for (final tag in yours.take(5))
+              if (_spaceTagged(tag) case final space?)
+                row(
+                  tag,
+                  'Space · ${(_spaceRing[space.title] ?? _Ring.friends).label}',
+                  (_spaceRing[space.title] ?? _Ring.friends).color,
+                )
+              else
+                row(tag, 'your tag', const Color(0xFFC7CEC9)),
+            if (partial.isNotEmpty && !yours.contains(partial))
+              row(partial, 'new tag', const Color(0xFF8C968F)),
+            if (partial.isEmpty && yours.isEmpty)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Text(
+                  'type a word: #books, #garden, #mum',
+                  style: _mono.copyWith(color: const Color(0xFF8C968F), fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// The / menu: who sees the thought.
   Widget _commands() {
     Widget row(_Audience a, String command, String who, VoidCallback onTap) =>
@@ -663,6 +899,190 @@ class _YouPageState extends State<_YouPage> {
   }
 }
 
+/// Under your newest thought, once: a tag you keep coming back to could
+/// live in your world. "Not now" means never.
+class _TagOffer extends StatelessWidget {
+  final String tag;
+
+  const _TagOffer({required this.tag});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 14, bottom: 6),
+    child: _Glass(
+      tint: 0.05,
+      radius: 16,
+      child: Padding(
+        key: ValueKey('tag-offer-$tag'),
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '* you keep coming back to #$tag *',
+              style: _mono.copyWith(
+                color: const Color(0xFF8C968F),
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+              ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Put it in your world as a Space? Your #tagged thoughts gather there.',
+              style: TextStyle(color: _ink, fontSize: 14.5, height: 1.35),
+            ),
+            Wrap(
+              children: [
+                TextButton(
+                  key: const ValueKey('tag-offer-yes'),
+                  style: TextButton.styleFrom(foregroundColor: _accent),
+                  onPressed: () => _openSheet(context, _TagSpaceSheet(tag: tag)),
+                  child: Text('put it in my world', style: _mono.copyWith(fontSize: 13)),
+                ),
+                TextButton(
+                  key: const ValueKey('tag-offer-no'),
+                  style: TextButton.styleFrom(foregroundColor: _muted),
+                  onPressed: () {
+                    _notNowTags.add(tag);
+                    _yourTick.value++;
+                  },
+                  child: Text('not now', style: _mono.copyWith(fontSize: 13)),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+/// Name a tag's Space and choose its ring: the people who can open it.
+class _TagSpaceSheet extends StatefulWidget {
+  final String tag;
+
+  const _TagSpaceSheet({required this.tag});
+
+  @override
+  State<_TagSpaceSheet> createState() => _TagSpaceSheetState();
+}
+
+class _TagSpaceSheetState extends State<_TagSpaceSheet> {
+  late final TextEditingController _name = TextEditingController(
+    text: widget.tag[0].toUpperCase() + widget.tag.substring(1),
+  );
+  _Ring _ring = _Ring.friends;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _make() {
+    final name = _name.text.trim();
+    if (name.isEmpty) return;
+    HapticFeedback.mediumImpact();
+    _yourSpaces.add(
+      _Space(
+        name,
+        _SpaceKind.work,
+        Icons.tag,
+        _ring.color,
+        unit: 'thoughts',
+        tag: widget.tag,
+      ),
+    );
+    _spaceRing[name] = _ring;
+    _yourTick.value++;
+    Navigator.of(context).pop();
+    _notify('$name is in your world · on the ${_ring.label} ring');
+  }
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: EdgeInsets.fromLTRB(
+      16,
+      0,
+      16,
+      MediaQuery.viewInsetsOf(context).bottom + MediaQuery.paddingOf(context).bottom + 16,
+    ),
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          '#${widget.tag} → your world',
+          style: _mono.copyWith(color: _ink, fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          key: const ValueKey('tag-space-name'),
+          controller: _name,
+          style: const TextStyle(color: _ink, fontSize: 16),
+          decoration: InputDecoration(
+            labelText: 'Name',
+            labelStyle: const TextStyle(color: _muted),
+            filled: true,
+            fillColor: const Color(0x0DFFFFFF),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          'which ring · who can open it',
+          style: _mono.copyWith(color: const Color(0xFF8C968F), fontSize: 11.5),
+        ),
+        const SizedBox(height: 6),
+        for (final ring in _Ring.values)
+          InkWell(
+            key: ValueKey('tag-space-ring-${ring.name}'),
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => setState(() => _ring = ring),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 48),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: ring == _ring ? ring.color.withValues(alpha: 0.12) : null,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Text('● ', style: _mono.copyWith(color: ring.color, fontSize: 12)),
+                  Expanded(
+                    child: Text(
+                      ring.label,
+                      style: const TextStyle(color: Color(0xFFC7CEC9), fontSize: 14.5),
+                    ),
+                  ),
+                  if (ring == _Ring.fof)
+                    Text(
+                      'they find you by it',
+                      style: _mono.copyWith(color: ring.color, fontSize: 11),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 12),
+        FilledButton(
+          key: const ValueKey('tag-space-make'),
+          onPressed: _make,
+          style: FilledButton.styleFrom(
+            backgroundColor: _accent,
+            foregroundColor: const Color(0xFF03140A),
+            minimumSize: const Size.fromHeight(48),
+          ),
+          child: const Text('Put it in my world'),
+        ),
+      ],
+    ),
+  );
+}
+
 /// One of your thoughts in the feed, and the friends who wrote to you about
 /// it.
 class _FeedThought extends StatelessWidget {
@@ -675,8 +1095,6 @@ class _FeedThought extends StatelessWidget {
     final t = _yourThoughts[index];
     final color = _audienceColor(t.audience);
     final photo = t.thought.photo;
-    final reactions = _reactionCounts(t.id).entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
     final wrote = _wroteAbout(t.id);
     final small = _mono.copyWith(color: _faint, fontSize: 11.5);
     return Padding(
@@ -700,13 +1118,16 @@ class _FeedThought extends StatelessWidget {
           GestureDetector(
             key: ValueKey('your-thought-${t.id}'),
             onTap: () => _openThought(context, 'you', index),
-            child: Text(
-              t.thought.text,
-              style: const TextStyle(
-                color: _ink,
-                fontSize: 16,
-                height: 1.4,
-                fontWeight: FontWeight.w500,
+            child: Text.rich(
+              _taggedSpan(
+                t.thought.text,
+                const TextStyle(
+                  color: _ink,
+                  fontSize: 16,
+                  height: 1.4,
+                  fontWeight: FontWeight.w500,
+                ),
+                onSpace: (space) => _openSpace(context, 'you', space.title),
               ),
             ),
           ),
@@ -717,17 +1138,14 @@ class _FeedThought extends StatelessWidget {
             const SizedBox(height: 8),
             _FeedMedia(id: t.id, media: [_Slide.photo(photo)], edge: color),
           ],
-          if (reactions.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              [for (final e in reactions) '${e.key} ${e.value}'].join('  '),
-              style: _mono.copyWith(color: _muted, fontSize: 12.5),
-            ),
+          if ((_reactionsTo[t.id] ?? const {}).isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _Reactions(id: t.id),
           ],
           if (index == 0) ...[
             const SizedBox(height: 4),
             Text(
-              '* on the orbit for 24 h · ${_audienceSize(t.audience)} people *',
+              '* on ${_orbitOf(t.audience)} for 24 h *',
               style: _mono.copyWith(
                 color: const Color(0xFF8C968F),
                 fontSize: 12,
@@ -735,31 +1153,25 @@ class _FeedThought extends StatelessWidget {
               ),
             ),
           ],
+          // Who wrote, never what: the words live in your chats.
           if (wrote.isNotEmpty) ...[
             const SizedBox(height: 10),
-            Row(
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const Icon(Icons.lock_outline, size: 12, color: Color(0xFF8C968F)),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    'wrote to you · each one is private',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: _mono.copyWith(color: const Color(0xFF8C968F), fontSize: 11.5),
+                Semantics(
+                  label: 'wrote to you',
+                  child: Icon(
+                    Icons.reply,
+                    key: ValueKey('wrote-icon-${t.id}'),
+                    size: 18,
+                    color: const Color(0xFF8C968F),
                   ),
                 ),
+                for (final name in wrote) _WroteFace(id: t.id, name: name),
               ],
-            ),
-            const SizedBox(height: 6),
-            _Glass(
-              edge: color.withValues(alpha: 0.25),
-              child: Column(
-                children: [
-                  for (var i = 0; i < wrote.length; i++)
-                    _WroteRow(id: t.id, name: wrote[i], last: i == wrote.length - 1),
-                ],
-              ),
             ),
           ],
         ],
@@ -1040,84 +1452,49 @@ class _MediaViewerState extends State<_MediaViewer> {
   }
 }
 
-/// A friend who wrote to you about a thought: the newest line of your chat,
-/// and whether there is something new. It opens that chat.
-class _WroteRow extends StatelessWidget {
+/// A friend who wrote to you about a thought: their face, and a dot when
+/// there is something new. It opens your chat with them.
+class _WroteFace extends StatelessWidget {
   final int id;
   final String name;
-  final bool last;
 
-  const _WroteRow({required this.id, required this.name, required this.last});
+  const _WroteFace({required this.id, required this.name});
 
   @override
   Widget build(BuildContext context) {
-    final dm = _dms[name]!;
-    final newest = dm.messages.last;
-    final first = dm.messages.indexWhere(
-      (m) => m.about?.author == 'you' && m.about?.post == id,
-    );
-    final since = dm.messages.length - first;
-    final color = _personColor(name);
-    return InkWell(
-      key: ValueKey('wrote-$id-$name'),
-      onTap: () => _openDm(context, name),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 56),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          border: last
-              ? null
-              : const Border(bottom: BorderSide(color: Color(0x0FE8ECE9))),
-        ),
-        child: Row(
-          children: [
-            _personPhoto(name, 30),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(text: '<@$name ', style: TextStyle(color: color)),
-                        const TextSpan(
-                          text: '→ you',
-                          style: TextStyle(color: Color(0xFF8C968F)),
-                        ),
-                        TextSpan(text: '>', style: TextStyle(color: color)),
-                        TextSpan(
-                          text: '  ${newest.age}',
-                          style: const TextStyle(color: _faint),
-                        ),
-                      ],
-                    ),
-                    style: _mono.copyWith(fontSize: 12),
-                  ),
-                  Text(
-                    newest.mine ? 'you: ${newest.text}' : newest.text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: newest.mine ? _muted : _ink,
-                      fontSize: 15,
+    final unread = (_dms[name]?.unread ?? 0) > 0;
+    return Semantics(
+      button: true,
+      label: '$name wrote to you',
+      excludeSemantics: true,
+      child: GestureDetector(
+        key: ValueKey('wrote-$id-$name'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _openDm(context, name),
+        child: SizedBox(
+          width: 34,
+          height: 34,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              _personPhoto(name, 32),
+              if (unread)
+                Positioned(
+                  right: -1,
+                  top: -1,
+                  child: Container(
+                    key: ValueKey('unread-$name'),
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: _personColor(name),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: _ground, width: 2),
                     ),
                   ),
-                ],
-              ),
-            ),
-            if (dm.unread > 0)
-              Container(
-                key: ValueKey('unread-$name'),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-              )
-            else if (since > 1)
-              Text('$since msgs', style: _mono.copyWith(color: _muted, fontSize: 11)),
-            const SizedBox(width: 4),
-            const Icon(Icons.chevron_right, size: 18, color: Color(0xFF8C968F)),
-          ],
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -1173,15 +1550,16 @@ List<_YouCard> _youCards() => [
     if (space.kind != _SpaceKind.add)
       _YouCard(
         'space-${space.title}',
-        _spaceOpen[space.title] == true ? _Ring.fof : _Ring.friends,
+        _spaceRing[space.title] ?? _Ring.friends,
         (context, _) => _YouCardShell(
           key: ValueKey('you-space-${space.title}'),
-          ring: _spaceOpen[space.title] == true ? _Ring.fof : _Ring.friends,
+          ring: _spaceRing[space.title] ?? _Ring.friends,
           kind: 'Space · ${space.title}',
-          text: space.items.isEmpty
-              ? 'Nothing yet'
-              : '${space.items.first.status} · ${space.items.first.title}',
-          meta: '${space.items.length} ${space.kind == _SpaceKind.books ? 'books' : space.unit}',
+          text: _latestTagged(space.tag) ??
+              (space.kept.isEmpty
+                  ? 'Nothing yet'
+                  : _withoutTags(space.kept.first.text)),
+          meta: space.tag == null ? '' : '#${space.tag}',
           onTap: () => _openSpace(context, 'you', space.title),
         ),
       ),
@@ -1867,8 +2245,12 @@ class _YourThoughtCard extends StatelessWidget {
       kind: t.audience == _Audience.picked
           ? 'Thought · ${_picked.length} picked'
           : 'Thought',
-      text: t.thought.text,
-      meta: '${_ago(t.thought.age)}${index == 0 ? ' · on the orbit now' : ''}',
+      text: _withoutTags(t.thought.text),
+      meta: [
+        _ago(t.thought.age),
+        if (index == 0) 'on the orbit now',
+        for (final tag in _tagsIn(t.thought.text)) '#$tag',
+      ].join(' · '),
       onTap: () => _openThought(context, 'you', index),
       below: viewing ? null : _YourThoughtStats(id: t.id),
     );
@@ -2141,8 +2523,9 @@ class _RingsPainter extends CustomPainter {
   bool shouldRepaint(_RingsPainter old) => true;
 }
 
-/// Under your own thought: reactions as counts, and how many wrote to you.
-/// Never who viewed it, never what they wrote.
+/// Under your own thought: each reaction on its sender's face, and who
+/// wrote to you by name.
+/// Never a count, never who viewed it, never what they wrote.
 class _YourThoughtStats extends StatelessWidget {
   final int id;
 
@@ -2150,35 +2533,36 @@ class _YourThoughtStats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final reactions = _reactionCounts(id).entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+    final reacted = (_reactionsTo[id] ?? const {}).isNotEmpty;
     final wrote = _wroteAbout(id);
-    if (reactions.isEmpty && wrote.isEmpty) return const SizedBox.shrink();
+    if (!reacted && wrote.isEmpty) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 10),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          for (final e in reactions.take(3))
-            Padding(
-              padding: const EdgeInsets.only(right: 10),
-              child: Text(
-                '${e.key} ${e.value}',
-                style: const TextStyle(color: _chatSecondary, fontSize: 13.5),
-              ),
-            ),
-          const Spacer(),
+          if (reacted) _Reactions(id: id),
           if (wrote.isNotEmpty)
             GestureDetector(
               key: ValueKey('wrote-$id'),
               onTap: () => _openSheet(context, _WroteSheet(id: id)),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Text(
-                  '${wrote.length} wrote  ›',
-                  style: const TextStyle(
-                    color: _accent,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+              child: Semantics(
+                label: '${_namesLine(wrote)} wrote to you',
+                excludeSemantics: true,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.reply, size: 18, color: _accent),
+                      const SizedBox(width: 8),
+                      for (final name in wrote)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: _personPhoto(name, 24),
+                        ),
+                      const Icon(Icons.chevron_right, size: 18, color: _accent),
+                    ],
                   ),
                 ),
               ),
@@ -2205,7 +2589,7 @@ class _WroteSheet extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            wrote.length == 1 ? '1 wrote to you' : '${wrote.length} wrote to you',
+            'Wrote to you',
             style: const TextStyle(
               color: _ink,
               fontSize: 18,
@@ -2524,8 +2908,9 @@ const _openToChoices = [
   'career advice',
 ];
 
-/// Which of your Spaces friends of friends see; the rest stay with friends.
-final Map<String, bool> _spaceOpen = {'Books': true, 'Runs': false};
+/// The ring each of your Spaces sits on in your world: who can open it.
+final Map<String, _Ring> _spaceRing = {..._seedSpaceRings};
+const _seedSpaceRings = {'Books': _Ring.fof, 'Runs': _Ring.friends};
 
 /// Whether you carry your findable friends' cards to your own friends, for
 /// whom, and to whom.
@@ -2699,14 +3084,17 @@ class _FofSettingsPageState extends State<_FofSettingsPage> {
                           ),
                           const SizedBox(height: 18),
                           const Text('What they see', style: _soft),
-                          for (final title in _spaceOpen.keys)
-                            _pair(
-                              title,
-                              'Friends of friends',
-                              'Friends only',
-                              first: _spaceOpen[title]!,
-                              on: (v) => _spaceOpen[title] = v,
-                            ),
+                          for (final MapEntry(key: title, value: ring)
+                              in _spaceRing.entries)
+                            if (ring != _Ring.close)
+                              _pair(
+                                title,
+                                'Friends of friends',
+                                'Friends only',
+                                first: ring == _Ring.fof,
+                                on: (v) => _spaceRing[title] =
+                                    v ? _Ring.fof : _Ring.friends,
+                              ),
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 8),
                             child: Row(

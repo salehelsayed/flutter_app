@@ -6,8 +6,13 @@ library;
 import 'package:flutter/material.dart';
 import 'orbit_depth_prototype_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   applyPlaygroundSettings();
+  // The phone build tries the app's old orbit screen as the flat view, with
+  // the new depth orbit behind a swipe (2026-10-20).
+  OrbitDepthTuning.oldFlat = true;
+  await prepareOldOrbitFaces();
   runApp(const OrbitDepthPrototypeApp());
 }
 

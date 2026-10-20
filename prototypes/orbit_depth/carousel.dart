@@ -322,6 +322,9 @@ class _Post {
   /// world); the actions then leave the age out.
   final String? header;
 
+  /// Who a friend's live thought was shared with.
+  final _Audience? sharedWith;
+
   const _Post({
     required this.owner,
     required this.paragraphs,
@@ -331,9 +334,8 @@ class _Post {
     this.space,
     this.sentKey,
     this.header,
+    this.sharedWith,
   });
-
-  int get likes => comments * 2 + 3;
 }
 
 /// [friend]'s live thought: text slides become words, the rest attachments.
@@ -355,6 +357,7 @@ _Post _livePost(_ProtoFriend friend) {
     age: d.age,
     comments: d.comments,
     sentKey: '${friend.name}#0',
+    sharedWith: d.sharedWith,
   );
 }
 
@@ -388,8 +391,11 @@ const _postFill = Color(0xFF0B0D0E);
 /// a tap anywhere on the card, opens the post full screen.
 /// On the dial the thought is the focus: a short one reads large, a longer
 /// one steps down so it still fits.
-double _thoughtFont(String text) {
+double _thoughtFont(String text, {bool alone = false}) {
   if (!OrbitDepthTuning.dial) return 16;
+  // Words with nothing attached are the whole post: they read larger, so a
+  // short one fills its space instead of moving to the middle of it.
+  if (alone) return text.length <= 40 ? 30 : (text.length <= 90 ? 23 : 18);
   if (text.length <= 40) return 25;
   if (text.length <= 90) return 21;
   return 18;
@@ -417,6 +423,10 @@ class _PostCard extends StatelessWidget {
   /// The front friend's card wears the accent outline.
   final bool front;
 
+  /// Press and hold to react, at the finger's position; null where you
+  /// can't react (your own posts).
+  final void Function(Offset at)? onReact;
+
   const _PostCard({
     super.key,
     required this.post,
@@ -427,6 +437,7 @@ class _PostCard extends StatelessWidget {
     required this.onOpen,
     this.onSpace,
     this.front = true,
+    this.onReact,
   });
 
   bool get _universe => OrbitDepthTuning.postCards == OrbitPostCards.universe;
@@ -448,6 +459,9 @@ class _PostCard extends StatelessWidget {
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onOpen,
+          onLongPressStart: onReact == null
+              ? null
+              : (d) => onReact!(d.globalPosition),
           child: ConstrainedBox(
             constraints: BoxConstraints(maxHeight: maxHeight),
             child: Container(
@@ -476,6 +490,13 @@ class _PostCard extends StatelessWidget {
                           shadows: _shadows,
                         ),
                       ),
+                    ),
+                  if (post.sharedWith case final audience? when header == null)
+                    _SharedWith(
+                      owner: post.owner,
+                      audience: audience,
+                      tag: _details[post.owner]?.tag,
+                      u: u,
                     ),
                   // Words and attachments share what the actions leave: the
                   // words show as many whole lines as fit beside the
@@ -556,7 +577,10 @@ class _PostCard extends StatelessWidget {
       color: _chat.textPrimary,
       fontSize:
           (i == 0
-              ? _thoughtFont(paragraphs[0])
+              ? _thoughtFont(
+                  paragraphs[0],
+                  alone: post.attachments.isEmpty && post.space == null,
+                )
               : (OrbitDepthTuning.dial ? 18 : 16)) *
           u,
       fontWeight: i == 0 && OrbitDepthTuning.dial
@@ -597,7 +621,13 @@ class _PostCard extends StatelessWidget {
 
     final children = <Widget>[];
     var room = box.maxHeight - reserve - (long ? moreHeight : 0);
-    var lineBudget = _collapsedLines;
+    // Beside a photo or video the words are its caption: a few lines.
+    var lineBudget =
+        post.attachments.any(
+          (s) => s.kind == _SlideKind.photo || s.kind == _SlideKind.video,
+        )
+        ? _minLines
+        : _collapsedLines;
     var promised = _minLines;
     for (var i = 0; i < paragraphs.length; i++) {
       final (lines, height) = sizes[i];
@@ -708,6 +738,12 @@ class _PostAttachment extends StatelessWidget {
                   gaplessPlayback: true,
                 ),
                 if (slide.kind == _SlideKind.video)
+                  Positioned(
+                    left: 10 * u,
+                    bottom: 10 * u,
+                    child: _Pill(text: _duration(slide.seconds), k: u),
+                  ),
+                if (slide.kind == _SlideKind.video)
                   Center(
                     child: Container(
                       width: 48 * u,
@@ -779,6 +815,7 @@ class _UniverseMediaCard extends StatefulWidget {
   final double k;
   final double alpha;
   final VoidCallback onOpen;
+  final void Function(Offset at) onReact;
 
   const _UniverseMediaCard({
     super.key,
@@ -788,6 +825,7 @@ class _UniverseMediaCard extends StatefulWidget {
     required this.k,
     required this.alpha,
     required this.onOpen,
+    required this.onReact,
   });
 
   @override
@@ -827,7 +865,9 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
       child: Transform.scale(
         scale: _lerp(0.92, 1, t),
         alignment: Alignment.topCenter,
-        child: ConstrainedBox(
+        child: GestureDetector(
+          onLongPressStart: (d) => widget.onReact(d.globalPosition),
+          child: ConstrainedBox(
           constraints: BoxConstraints(maxHeight: widget.maxHeight),
           child: LayoutBuilder(
             builder: (context, box) {
@@ -841,15 +881,24 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
               final wordsHeight = painter.height;
               final cut = painter.didExceedMaxLines;
               painter.dispose();
-              // The cover takes what the words leave.
-              final mediaHeight =
-                  (widget.maxHeight -
-                          15 * u -
-                          wordsHeight -
-                          (cut ? 26 * u : 0) -
-                          12 * u -
-                          8 * u)
-                      .clamp(120 * u, 320 * u);
+              final hasWords = words.trim().isNotEmpty;
+              final voice = _all[_media.first].kind == _SlideKind.voice;
+              // A photo or video takes what the words leave, never taller
+              // than portrait 4:5; a voice note is only as tall as itself.
+              final mediaHeight = voice
+                  ? 84 * u
+                  : (widget.maxHeight -
+                            15 * u -
+                            // The "for their Close" line.
+                            19 * u -
+                            (hasWords ? wordsHeight + 12 * u : 0) -
+                            (cut ? 26 * u : 0) -
+                            8 * u)
+                        .clamp(
+                          120 * u,
+                          math.max(120 * u, math.min(320 * u, box.maxWidth * 1.25)),
+                        )
+                        .toDouble();
               return SingleChildScrollView(
                 physics: const NeverScrollableScrollPhysics(),
                 child: Padding(
@@ -858,6 +907,13 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      _SharedWith(
+                        owner: friend.name,
+                        audience: _detailFor(friend).sharedWith,
+                        tag: _detailFor(friend).tag,
+                        u: u,
+                      ),
+                      if (hasWords) ...[
                       GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTap: widget.onOpen,
@@ -887,12 +943,14 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
                         ),
                       ),
                       SizedBox(height: 12 * u),
+                      ],
                       SizedBox(height: mediaHeight, child: _cover(u)),
                     ],
                   ),
                 ),
               );
             },
+          ),
           ),
         ),
       ),
@@ -940,6 +998,12 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
                     size: 32 * u,
                   ),
                 ),
+              ),
+            if (first.kind == _SlideKind.video)
+              Positioned(
+                left: 10 * u,
+                bottom: 10 * u,
+                child: _Pill(text: _duration(first.seconds), k: u),
               ),
             if (extra > 0)
               Positioned(
@@ -1010,6 +1074,182 @@ class _UniverseMediaCardState extends State<_UniverseMediaCard> {
     }
   }
 }
+
+/// Who a friend shared their thought with, seen from your side, and the
+/// Spaces they keep, as tags you can open. Being in their Close is the
+/// point of the app, so the card says so; their Spaces are how you get to
+/// know what they care about. The thought's own Space comes first.
+class _SharedWith extends StatelessWidget {
+  final String owner;
+  final _Audience audience;
+
+  /// The Space this thought was kept in, if any.
+  final String? tag;
+  final double u;
+
+  const _SharedWith({
+    required this.owner,
+    required this.audience,
+    required this.tag,
+    required this.u,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final spaces = [
+      for (final s in _spacesFor(owner))
+        if (s.tag != null) s,
+    ]..sort((a, b) => (b.tag == tag ? 1 : 0).compareTo(a.tag == tag ? 1 : 0));
+    final style = TextStyle(
+      fontSize: 12.5 * u,
+      fontWeight: FontWeight.w600,
+      letterSpacing: 0.2,
+      shadows: _PostCard._lift,
+    );
+    return Padding(
+      padding: EdgeInsets.only(bottom: 6 * u),
+      child: Wrap(
+        spacing: 10 * u,
+        runSpacing: 2 * u,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            switch (audience) {
+              _Audience.close => 'for their Close',
+              _Audience.friends => 'for their Friends',
+              _Audience.picked => 'for you and a few others',
+            },
+            key: const ValueKey('shared-with'),
+            style: style.copyWith(
+              color: audience == _Audience.close ? _accent : _muted,
+            ),
+          ),
+          for (final s in spaces)
+            Semantics(
+              button: true,
+              label: '$owner\'s ${s.title}',
+              excludeSemantics: true,
+              child: GestureDetector(
+                key: ValueKey('space-tag-$owner-${s.tag}'),
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _openSpace(context, owner, s.title),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(vertical: 4 * u),
+                  child: Text(
+                    '#${s.tag}',
+                    style: _mono.copyWith(
+                      fontSize: 12.5 * u,
+                      color: s.tag == tag ? s.hue : _muted,
+                      shadows: _PostCard._lift,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The quiet reactions: to the author only, never a count.
+const _reactionEmoji = ['❤️', '😍', '😲', '🔥', '😂', '👏'];
+
+/// Press and hold a thought to react: the emoji rise where the finger is.
+/// Picking your current reaction again takes it back. Only [owner] sees it.
+Future<void> _reactAt(
+  BuildContext context,
+  Offset at,
+  String owner,
+  int post,
+) async {
+  HapticFeedback.mediumImpact();
+  final key = '$owner#$post';
+  final current = _myReactions[key];
+  final size = MediaQuery.sizeOf(context);
+  final pad = MediaQuery.paddingOf(context);
+  const width = 6 * 46.0 + 16;
+  final picked = await showGeneralDialog<String>(
+    context: context,
+    barrierDismissible: true,
+    barrierLabel: 'Close reactions',
+    barrierColor: const Color(0x33000000),
+    transitionDuration: const Duration(milliseconds: 140),
+    pageBuilder: (context, _, _) => Stack(
+      children: [
+        Positioned(
+          left: (at.dx - width / 2).clamp(12, size.width - width - 12),
+          top: math.max(pad.top + 8, at.dy - 76),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Container(
+              key: const ValueKey('reaction-tray'),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFF23262E),
+                borderRadius: BorderRadius.circular(30),
+                border: Border.all(color: _chat.border),
+                boxShadow: const [
+                  BoxShadow(color: Color(0x80000000), blurRadius: 30),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final e in _reactionEmoji)
+                    Semantics(
+                      button: true,
+                      selected: e == current,
+                      label: 'React $e',
+                      excludeSemantics: true,
+                      child: GestureDetector(
+                        key: ValueKey('react-$e'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => Navigator.of(context).pop(e),
+                        child: Container(
+                          width: 46,
+                          height: 46,
+                          alignment: Alignment.center,
+                          decoration: e == current
+                              ? const BoxDecoration(
+                                  color: Color(0x331DB954),
+                                  shape: BoxShape.circle,
+                                )
+                              : null,
+                          child: Text(e, style: const TextStyle(fontSize: 26)),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    ),
+    transitionBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: animation,
+      child: ScaleTransition(
+        scale: Tween(begin: 0.9, end: 1.0).animate(animation),
+        child: child,
+      ),
+    ),
+  );
+  if (picked == null) return;
+  HapticFeedback.lightImpact();
+  if (picked == current) {
+    _myReactions.remove(key);
+    _notify('Reaction taken back');
+  } else {
+    _myReactions[key] = picked;
+    _notify('Reacted $picked · only $owner sees it');
+  }
+  _chatTick.value++;
+}
+
+/// A video's length as a clock: 0:18, 1:05.
+String _duration(int seconds) =>
+    '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
 
 class _Pill extends StatelessWidget {
   final String text;
@@ -1396,7 +1636,6 @@ class _ReplyDock extends StatefulWidget {
 }
 
 class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
-  static const _emoji = ['❤️', '😍', '😲', '🔥', '😂', '👏'];
 
   _DockMode _mode = _DockMode.idle;
   final TextEditingController _text = TextEditingController();
@@ -1743,7 +1982,7 @@ class _ReplyDockState extends State<_ReplyDock> with TickerProviderStateMixin {
     child: Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final e in _emoji)
+        for (final e in _reactionEmoji)
           GestureDetector(
             onTap: () => _react(e),
             child: Padding(

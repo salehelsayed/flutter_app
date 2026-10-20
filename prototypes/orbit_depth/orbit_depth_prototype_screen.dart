@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show mapEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
@@ -11,10 +13,24 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background_mirrored.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_ring_painter.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:path_provider/path_provider.dart';
 
 part 'carousel.dart';
 part 'chat.dart';
 part 'circles.dart';
+part 'flatten.dart';
 part 'friends_list.dart';
 part 'photos.dart';
 part 'post_photos.dart';
@@ -47,14 +63,20 @@ class OrbitDepthPrototypeScreen extends StatelessWidget {
     // Its own navigator, so each screen can fly in over the last one, and
     // its own messenger for the short notes that something arrived.
     // System back reaches it too, so the orbit can flatten before leaving.
-    return ScaffoldMessenger(
-      key: _messenger,
-      child: NavigatorPopHandler<Object?>(
-        onPopWithResult: (_) => _navigator.currentState?.maybePop(),
-        child: Navigator(
-          key: _navigator,
-          onGenerateRoute: (_) =>
-              _diveRoute(const _OrbitHome(), animateIn: false),
+    // The app's own orbit widgets (the +N badge) need its strings.
+    return Localizations.override(
+      context: context,
+      locale: const Locale('en'),
+      delegates: AppLocalizations.localizationsDelegates,
+      child: ScaffoldMessenger(
+        key: _messenger,
+        child: NavigatorPopHandler<Object?>(
+          onPopWithResult: (_) => _navigator.currentState?.maybePop(),
+          child: Navigator(
+            key: _navigator,
+            onGenerateRoute: (_) =>
+                _diveRoute(const _OrbitHome(), animateIn: false),
+          ),
         ),
       ),
     );
@@ -67,6 +89,7 @@ final GlobalKey<NavigatorState> _navigator = GlobalKey();
 /// rings, your thoughts and settings. Tests start each case from here.
 @visibleForTesting
 void resetOrbitPrototype() {
+  _flying.value = const {};
   for (final t in _friendTimers) {
     t.cancel();
   }
@@ -109,9 +132,13 @@ void resetOrbitPrototype() {
     ..clear()
     ..addAll(['books', 'running partners']);
   _yourOpenNote = _seedOpenNote;
-  _spaceOpen
+  _spaceRing
     ..clear()
-    ..addAll({'Books': true, 'Runs': false});
+    ..addAll(_seedSpaceRings);
+  _yourSpaces
+    ..clear()
+    ..addAll([_yourBooks, _yourRuns]);
+  _notNowTags.clear();
   _carryCards = true;
   _carryForAll = true;
   _passToCloseOnly = true;
@@ -156,6 +183,10 @@ class _ProtoFriend {
   /// how many they are. 0 for a person.
   final int more;
 
+  /// Whether they have anything to show. In depth someone without keeps
+  /// their seat, drawn as an empty mark, so nobody else ever moves.
+  final bool posts;
+
   const _ProtoFriend(
     this.name,
     this.layer,
@@ -164,6 +195,7 @@ class _ProtoFriend {
     this.thought,
     this.fresh = false,
     this.more = 0,
+    this.posts = true,
   });
 }
 
@@ -256,6 +288,9 @@ class _Rings {
   const _Rings(this.everyone, this.seats);
 
   factory _Rings.build() {
+    // Read from the seed, not _thoughtsOf, which looks friends up in _rings.
+    bool posts((String, _Hue, String?, bool) p) =>
+        p.$3 != null || _olderThoughts.containsKey(p.$1);
     final close = [
       for (final p in _people)
         if (_closeNames.contains(p.$1)) p,
@@ -270,45 +305,69 @@ class _Rings {
       for (final p in _people)
         if (!_closeNames.contains(p.$1) && !unseen(p)) p,
     ];
-    final seated = others.take(_friendSlots).length;
-    final more = others.length - seated;
+    // The Friends ring only shows in depth: people with posts get a seat
+    // first, then the people you talk to most; "+N" holds everyone else.
+    final posting = others.where(posts).take(_friendSlots).toList();
+    final seated = [
+      ...posting,
+      ...others.where((p) => !posting.contains(p)),
+    ].take(_friendSlots).toList();
+    final more = others.length - seated.length;
 
     final everyone = <_ProtoFriend>[];
     final seats = <_ProtoFriend>[];
-    // Angles: -90 is the back of the orbit (top of the screen), 90 the
-    // front. The Friends ring starts half a step round, so faces don't line
-    // up behind each other.
-    void deal(
-      List<(String, _Hue, String?, bool)> list,
+    _ProtoFriend person(
+      (String, _Hue, String?, bool) p,
       int layer,
-      int n,
-      int slots,
+      double angle,
     ) {
-      final offset = layer.isOdd ? 180 / n : 0.0;
-      for (var i = 0; i < list.length; i++) {
-        final (name, hue, thought, fresh) = list[i];
-        final friend = _ProtoFriend(
-          name,
-          layer,
-          -90 + offset + i * 360 / n,
-          hue,
-          thought: thought,
-          fresh: fresh,
-        );
-        everyone.add(friend);
-        if (i < slots) seats.add(friend);
-      }
+      final (name, hue, thought, fresh) = p;
+      return _ProtoFriend(
+        name,
+        layer,
+        angle,
+        hue,
+        thought: thought,
+        fresh: fresh,
+        posts: posts(p),
+      );
     }
 
-    deal(close, 0, close.length, close.length);
-    final friendSeats = seated + (more > 0 ? 1 : 0);
-    deal(others, 1, friendSeats, seated);
+    // Angles: -90 is the back of the orbit (top of the screen), 90 the
+    // front. Seats are dealt here once and never move.
+    for (var i = 0; i < close.length; i++) {
+      final friend = person(close[i], 0, -90 + i * 360 / close.length);
+      everyone.add(friend);
+      seats.add(friend);
+    }
+    // People with posts spread evenly round the Friends ring, so its empty
+    // seats are scattered rather than bunched on one side. The ring starts
+    // half a step round, so faces don't line up behind Close.
+    final n = seated.length + (more > 0 ? 1 : 0);
+    double friendAngle(int slot) => -90 + 180 / n + slot * 360 / n;
+    final slotOf = <(String, _Hue, String?, bool), int>{
+      for (var j = 0; j < posting.length; j++)
+        posting[j]: j * seated.length ~/ posting.length,
+    };
+    final free = [
+      for (var slot = 0; slot < seated.length; slot++)
+        if (!slotOf.containsValue(slot)) slot,
+    ];
+    for (final p in seated.where((p) => !posting.contains(p))) {
+      slotOf[p] = free.removeAt(0);
+    }
+    for (final p in others) {
+      final slot = slotOf[p];
+      final friend = person(p, 1, slot == null ? 0 : friendAngle(slot));
+      everyone.add(friend);
+      if (slot != null) seats.add(friend);
+    }
     if (more > 0) {
       seats.add(
         _ProtoFriend(
           '+$more',
           1,
-          -90 + 180 / friendSeats + seated * 360 / friendSeats,
+          friendAngle(seated.length),
           _grey,
           more: more,
         ),
@@ -359,6 +418,13 @@ class _ThoughtDetail {
   final int comments;
   final String age;
 
+  /// Who they shared it with. You only ever see a thought whose circle you
+  /// are in, so this tells you how close they put you.
+  final _Audience sharedWith;
+
+  /// The tag of the Space it was kept in, if it was; the card links to it.
+  final String? tag;
+
   const _ThoughtDetail({
     this.kind = _ThoughtKind.text,
     this.more,
@@ -366,6 +432,8 @@ class _ThoughtDetail {
     this.photo,
     this.comments = 0,
     this.age = '1 d',
+    this.sharedWith = _Audience.friends,
+    this.tag,
   });
 }
 
@@ -375,41 +443,54 @@ const _details = <String, _ThoughtDetail>{
     photo: 'layla_card',
     comments: 4,
     age: '2 h',
+    sharedWith: _Audience.close,
+    tag: 'hikes',
   ),
   'omar': _ThoughtDetail(
     kind: _ThoughtKind.voice,
     seconds: 14,
     comments: 2,
     age: '35 min',
+    sharedWith: _Audience.close,
   ),
   'tarek': _ThoughtDetail(
     more:
         'putting up shelves this weekend and mine died halfway through the first one.',
     comments: 1,
     age: '1 h',
+    tag: 'workshop',
   ),
   'nour': _ThoughtDetail(
     more: 'I land at 5:40 and can share the fare into the city.',
     comments: 3,
     age: '20 min',
+    sharedWith: _Audience.close,
+    tag: 'travel',
   ),
   'sara': _ThoughtDetail(
     kind: _ThoughtKind.photo,
     photo: 'sara_card',
     comments: 6,
     age: '5 h',
+    tag: 'luna',
   ),
   'maya': _ThoughtDetail(
     kind: _ThoughtKind.voice,
     seconds: 9,
     comments: 5,
     age: '3 h',
+    tag: 'work',
   ),
   'dana': _ThoughtDetail(
     more: 'making mansaf and there is way too much. bring containers.',
     comments: 2,
     age: '4 h',
+    tag: 'cooking',
   ),
+  'ward': _ThoughtDetail(tag: 'garden'),
+  'mira': _ThoughtDetail(tag: 'books'),
+  'lina': _ThoughtDetail(tag: 'football'),
+  'huda': _ThoughtDetail(tag: 'travel'),
 };
 
 /// Friends who never set a photo: they show the app's default ring avatar,
@@ -432,9 +513,7 @@ final Map<String, MemoryImage> _photoCache = {};
 ImageProvider _photo(String key) => _photoCache.putIfAbsent(
   key,
   () => MemoryImage(
-    base64Decode(
-      _photoData[_photoAliases[key] ?? key] ?? _postPhotoData[key]!,
-    ),
+    base64Decode(_photoData[_photoAliases[key] ?? key] ?? _postPhotoData[key]!),
   ),
 );
 
@@ -548,6 +627,11 @@ class OrbitDepthTuning {
   /// next ring waits outside and closes in; the ring you leave draws in to
   /// you and fades.
   static bool dial = false;
+
+  /// The flat orbit is the app's old orbit screen (two dashed rings, the +N
+  /// badge and its arcs) instead of the new flat view; tilting still opens
+  /// the new depth orbit. On in the phone build only (`main.dart`).
+  static bool oldFlat = false;
 
   /// Where the dial rests, as a share of the screen height: at the top with
   /// the card below, or at the bottom with the card above. Dragging the
@@ -710,6 +794,26 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     duration: const Duration(milliseconds: 320),
   );
 
+  /// 1 while the flat orbit's arcs are open: everyone outside Close, laid
+  /// out on arcs above the orbit (the main app's +N badge).
+  late final AnimationController _arcs = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+
+  bool get _arcsOpen =>
+      _arcs.status == AnimationStatus.forward ||
+      _arcs.status == AnimationStatus.completed;
+
+  void _toggleArcs() {
+    HapticFeedback.selectionClick();
+    if (_reduceMotion) {
+      _arcs.value = _arcsOpen ? 0 : 1;
+      return;
+    }
+    _arcsOpen ? _arcs.reverse() : _arcs.forward();
+  }
+
   /// Fingers on the orbit, for the pinch, and their spread when the second
   /// one landed.
   final Map<int, Offset> _fingers = {};
@@ -722,7 +826,6 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   /// A second finger landed during this drag: it was a pinch, so letting go
   /// neither flicks the orbit round nor flies between rings.
   bool _pinched = false;
-
 
   /// Slow idle float; also the per-frame clock for bubble fades.
   late final AnimationController _float = AnimationController(
@@ -761,6 +864,12 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    // The old flat orbit opens with its thought bubbles; a pinch puts them
+    // away, a spread brings them back, both slowly enough to watch.
+    if (OrbitDepthTuning.oldFlat) {
+      _flatZoom.duration = const Duration(milliseconds: 700);
+      _flatZoom.value = 1;
+    }
     _seenTick.addListener(_onSeen);
     _ringTick.addListener(_onRings);
     _sharedTo.addListener(_onShared);
@@ -817,7 +926,38 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     _overview.dispose();
     _flatZoom.dispose();
     _glow.dispose();
+    _arcs.dispose();
     super.dispose();
+  }
+
+  /// With [OrbitDepthTuning.oldFlat], the flat orbit is the app's old orbit
+  /// screen (its two rings, +N badge and arcs, [_OldFlatOrbit]); tilting fades
+  /// it out and the new depth orbit in.
+  Widget _withOldFlat(Widget stage) {
+    if (!OrbitDepthTuning.oldFlat) return stage;
+    final show = 1 - _interval(_tilt.clamp(0.0, 1.0), 0, 0.3);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        IgnorePointer(
+          ignoring: show > 0.5,
+          child: Opacity(opacity: 1 - show, child: stage),
+        ),
+        if (show > 0.01)
+          IgnorePointer(
+            ignoring: show < 0.5,
+            child: Opacity(
+              opacity: show,
+              child: _OldFlatOrbit(
+                bubbles: Curves.easeInOutCubic.transform(_flatZoom.value),
+                onFace: _onFace,
+                onThought: (f) => _openThought(context, f.name, 0),
+                onBubblesOff: () => _flatZoom.reverse(),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   void _onPanStart(DragStartDetails details) {
@@ -827,6 +967,8 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     _panTravel = Offset.zero;
     _v.stop();
     _rot.stop();
+    // Leaving the flat orbit folds its arcs away.
+    if (_arcs.value > 0) _toggleArcs();
   }
 
   void _onFinger(PointerEvent e) {
@@ -939,7 +1081,9 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
   }
 
   double get _seatStep =>
-      2 * math.pi / _friends.where((f) => f.layer == _layer).length;
+      2 *
+      math.pi /
+      math.max(1, _friends.where((f) => f.layer == _layer && f.posts).length);
 
   /// Ends a turn with [spin] in radians per
   /// second: coast a quarter second's worth of the flick (at most half a
@@ -980,7 +1124,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     var best = predicted;
     var bestGap = double.infinity;
     for (final f in _friends) {
-      if (f.layer != layer) continue;
+      if (f.layer != layer || !f.posts) continue;
       final candidate = _rotationFor(f, predicted);
       final gap = (candidate - predicted).abs();
       if (gap < bestGap) {
@@ -1062,7 +1206,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     _ProtoFriend? best;
     var bestGap = double.infinity;
     for (final f in _friends) {
-      if (f.layer != _layer) continue;
+      if (f.layer != _layer || !f.posts) continue;
       var gap =
           (f.angleDeg * math.pi / 180 + _rot.value - math.pi / 2) %
           (2 * math.pi);
@@ -1105,7 +1249,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     final quote = _tilt < 0.5 || OrbitDepthTuning.dial
         ? _freshQuote(friend)
         : null;
-    _openDm(context, friend.name, quote: quote);
+    _openDmFromOrbit(context, friend, quote: quote);
   }
 
   @override
@@ -1123,12 +1267,12 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
               // its rings on the orbit itself.
               if (!OrbitDepthTuning.dial)
                 IgnorePointer(
-                ignoring: _tilt < 0.5,
-                child: Opacity(
-                  opacity: _interval(_tilt, 0.4, 0.9),
-                  child: _RingSwitch(active: _layer, onPick: _goToRing),
+                  ignoring: _tilt < 0.5,
+                  child: Opacity(
+                    opacity: _interval(_tilt, 0.4, 0.9),
+                    child: _RingSwitch(active: _layer, onPick: _goToRing),
+                  ),
                 ),
-              ),
               Align(
                 alignment: AlignmentDirectional.centerStart,
                 child: IconButton(
@@ -1166,63 +1310,72 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                       onPointerUp: _onFinger,
                       onPointerCancel: _onFinger,
                       child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onPanStart: _onPanStart,
-                      onPanUpdate: _onPanUpdate,
-                      onPanEnd: _onPanEnd,
-                      onPanCancel: _onPanCancel,
-                      child: LayoutBuilder(
-                        builder: (context, box) {
-                          _k = math.min(
-                            box.maxWidth / 390,
-                            box.maxHeight / 640,
-                          );
-                          return AnimatedBuilder(
-                            animation: Listenable.merge([
-                              _v,
-                              _rot,
-                              _lean,
-                              _dock,
-                              _float,
-                              _duck,
-                              _overview,
-                              _flatZoom,
-                              _glow,
-                              _chatTick,
-                              _seenTick,
-                            ]),
-                            builder: (context, _) => _OrbitStage(
-                              t: _tilt,
-                              camera: _camera,
-                              rotation: _rot.value,
-                              floatPhase: _reduceMotion
-                                  ? 0
-                                  : _float.value * 2 * math.pi,
-                              duck: _duck.value,
-                              overview: Curves.easeOutCubic.transform(
-                                _overview.value,
+                        behavior: HitTestBehavior.opaque,
+                        onPanStart: _onPanStart,
+                        onPanUpdate: _onPanUpdate,
+                        onPanEnd: _onPanEnd,
+                        onPanCancel: _onPanCancel,
+                        child: LayoutBuilder(
+                          builder: (context, box) {
+                            _k = math.min(
+                              box.maxWidth / 390,
+                              box.maxHeight / 640,
+                            );
+                            return AnimatedBuilder(
+                              animation: Listenable.merge([
+                                _v,
+                                _rot,
+                                _lean,
+                                _dock,
+                                _float,
+                                _duck,
+                                _overview,
+                                _flatZoom,
+                                _glow,
+                                _chatTick,
+                                _seenTick,
+                                _flying,
+                                _arcs,
+                              ]),
+                              builder: (context, _) => _withOldFlat(
+                                _OrbitStage(
+                                  t: _tilt,
+                                  camera: _camera,
+                                  rotation: _rot.value,
+                                  floatPhase: _reduceMotion
+                                      ? 0
+                                      : _float.value * 2 * math.pi,
+                                  duck: _duck.value,
+                                  overview: Curves.easeOutCubic.transform(
+                                    _overview.value,
+                                  ),
+                                  flatZoom: Curves.easeOutCubic.transform(
+                                    _flatZoom.value,
+                                  ),
+                                  glow: _glow.isAnimating
+                                      ? math.sin(_glow.value * math.pi)
+                                      : 0,
+                                  glowLayer: _glowLayer,
+                                  size: box.biggest,
+                                  lean: _lean.value,
+                                  onRing: _goToRing,
+                                  dock: _dock.value,
+                                  arcs: Curves.easeOutCubic.transform(
+                                    _arcs.value,
+                                  ),
+                                  arcsOpen: _arcsOpen,
+                                  onBadge: _toggleArcs,
+                                  onCardTap: (f) =>
+                                      _openThought(context, f.name, 0),
+                                  onFace: _onFace,
+                                  onShare: () => _openComposer(context),
+                                  onHold: (f) => _openFriendMenu(context, f),
+                                ),
                               ),
-                              flatZoom: Curves.easeOutCubic.transform(
-                                _flatZoom.value,
-                              ),
-                              glow: _glow.isAnimating
-                                  ? math.sin(_glow.value * math.pi)
-                                  : 0,
-                              glowLayer: _glowLayer,
-                              size: box.biggest,
-                              lean: _lean.value,
-                              onRing: _goToRing,
-                              dock: _dock.value,
-                              onCardTap: (f) =>
-                                  _openThought(context, f.name, 0),
-                              onFace: _onFace,
-                              onShare: () => _openComposer(context),
-                              onHold: (f) => _openFriendMenu(context, f),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
-                    ),
                     ),
                   ),
                   // Every thought in this ring seen.
@@ -1237,9 +1390,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
                         final caughtUp =
                             _tilt > 0.6 &&
                             (_v.value - _ringAt(layer)).abs() < 40 &&
-                            !_friends.any(
-                              (f) => f.layer == layer && _isNew(f),
-                            );
+                            !_friends.any((f) => f.layer == layer && _isNew(f));
                         return IgnorePointer(
                           child: AnimatedOpacity(
                             opacity: caughtUp ? 1 : 0,
@@ -1328,11 +1479,13 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
     );
     // Back walks down the stops before it leaves: Friends, Close, flat.
     return AnimatedBuilder(
-      animation: _v,
+      animation: Listenable.merge([_v, _arcs]),
       builder: (context, child) => PopScope(
-        canPop: _v.value < 1,
+        canPop: _v.value < 1 && _arcs.value == 0,
         onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) _stepBack();
+          if (didPop) return;
+          // Back folds open arcs first.
+          _arcs.value > 0 ? _toggleArcs() : _stepBack();
         },
         child: child!,
       ),
@@ -1342,7 +1495,7 @@ class _OrbitHomeState extends State<_OrbitHome> with TickerProviderStateMixin {
 }
 
 /// Chats, in the top corner: requests, every conversation and knocks that
-/// wait. Its badge counts unread chats and requests.
+/// wait. A quiet dot says something is waiting; never how much.
 class _ChatsButton extends StatelessWidget {
   const _ChatsButton();
 
@@ -1357,8 +1510,7 @@ class _ChatsButton extends StatelessWidget {
         key: const ValueKey('chats-badge'),
         isLabelVisible: count > 0,
         backgroundColor: _accent,
-        textColor: const Color(0xFF03140A),
-        label: Text('$count'),
+        smallSize: 8,
         child: const Icon(Icons.chat_bubble_outline, color: _ink),
       ),
     );
@@ -1532,6 +1684,47 @@ class _Seat {
   bool get interactive => layer.rel.abs() < 0.35;
 }
 
+/// At most this many arcs open over the flat orbit; "+N" holds the rest.
+const _maxArcs = 3;
+
+/// One face on an arc over the flat orbit.
+class _ArcSeat {
+  final _ProtoFriend friend;
+  final double radius;
+
+  /// Radians from 12 o'clock, clockwise.
+  final double phi;
+  final int order;
+
+  /// When its entrance starts, as a share of the opening.
+  final double delay;
+
+  const _ArcSeat(this.friend, this.radius, this.phi, this.order, this.delay);
+}
+
+/// The flat orbit's overflow: the Friends ring, its arcs and their faces.
+class _ArcPlan {
+  final double outer;
+  final double avatar;
+
+  /// Radius of the highest arc.
+  final double top;
+
+  /// Everyone outside Close.
+  final int friends;
+  final List<OrbitArcRing> rings;
+  final List<_ArcSeat> seats;
+
+  const _ArcPlan({
+    required this.outer,
+    required this.avatar,
+    required this.top,
+    required this.friends,
+    required this.rings,
+    required this.seats,
+  });
+}
+
 class _OrbitStage extends StatelessWidget {
   final double t;
   final double camera;
@@ -1575,6 +1768,12 @@ class _OrbitStage extends StatelessWidget {
   /// A face was held: what you can do with that friend.
   final ValueChanged<_ProtoFriend> onHold;
 
+  /// How far the flat orbit's arcs are open (0 folded, 1 open), whether they
+  /// are opening or open, and the +N badge that toggles them.
+  final double arcs;
+  final bool arcsOpen;
+  final VoidCallback? onBadge;
+
   const _OrbitStage({
     required this.t,
     required this.camera,
@@ -1593,6 +1792,9 @@ class _OrbitStage extends StatelessWidget {
     required this.onFace,
     required this.onShare,
     required this.onHold,
+    this.arcs = 0,
+    this.arcsOpen = false,
+    this.onBadge,
   });
 
   @override
@@ -1605,7 +1807,7 @@ class _OrbitStage extends StatelessWidget {
     // orbit stays visible just under the layer meter.
     // Zoomed out there is no card, so the orbit drops into the space it
     // used, leaving room for a bubble over every friend.
-    final cy =
+    final cyBase =
         size.height *
         (_lerp(
               OrbitDepthTuning.flatOrbitHeight,
@@ -1627,6 +1829,21 @@ class _OrbitStage extends StatelessWidget {
         k *
         _lerp(OrbitDepthTuning.flatRingRadius, OrbitDepthTuning.ringRadius, tc);
 
+    // Flat, the orbit wears the main app's look behind its faces: its dashed
+    // rings, no extra stars, and the +N badge whose arcs hold everyone outside
+    // Close. Tilting hands over to the depth look.
+    final old = 1 - _interval(tc, 0, 0.35);
+    final plan = _arcPlan(k, ringBase);
+    // Open arcs need room above the orbit: it slides down to make it.
+    final room = math.max(
+      0.0,
+      math.min(
+        plan.top + plan.avatar / 2 + 104 * k - cyBase,
+        size.height - 48 * k - plan.outer - cyBase,
+      ),
+    );
+    final cy = cyBase + room * arcs * old;
+
     final layers = <int, _LayerView>{};
     for (var layer = 0; layer < _layerCount; layer++) {
       final rel = layer - camera;
@@ -1647,10 +1864,8 @@ class _OrbitStage extends StatelessWidget {
             ? _lerp(1, _peekAlpha, away) * (rel > 1 ? 0 : 1)
             : 1 - rel.abs().clamp(0.0, 1.0);
         if (opacity <= 0.01) continue;
-        final dialTilt = t.clamp(-0.05, 1.0) *
-            OrbitDepthTuning.tiltDegrees *
-            math.pi /
-            180;
+        final dialTilt =
+            t.clamp(-0.05, 1.0) * OrbitDepthTuning.tiltDegrees * math.pi / 180;
         layers[layer] = _LayerView(
           layer,
           rel,
@@ -1711,6 +1926,8 @@ class _OrbitStage extends StatelessWidget {
         : const <int, double>{};
 
     final seats = <_Seat>[];
+    // Seats of people with nothing to show, kept as marks in depth.
+    final emptySeats = <(Offset, double, double)>[];
     for (var i = 0; i < _friends.length; i++) {
       final f = _friends[i];
       final lv = layers[f.layer];
@@ -1737,10 +1954,7 @@ class _OrbitStage extends StatelessWidget {
       final (projected, near) = OrbitDepthTuning.dial
           ? _dialProject(theta, radius, lv.c, lv.s, lean)
           : (
-              Offset(
-                radius * math.cos(theta),
-                radius * math.sin(theta) * lv.c,
-              ),
+              Offset(radius * math.cos(theta), radius * math.sin(theta) * lv.c),
               _depthScale(d, lv.s),
             );
       final ring = Offset(cx, lv.cy) + projected;
@@ -1750,8 +1964,7 @@ class _OrbitStage extends StatelessWidget {
       final float = math.sin(floatPhase + i * 0.9) * 2.5 * k * tc * lv.scale;
       final lift = OrbitDepthTuning.dial
           ? 0.0
-          : (avatarSize / 2 + OrbitDepthTuning.avatarHover * k * lv.scale) *
-                tc;
+          : (avatarSize / 2 + OrbitDepthTuning.avatarHover * k * lv.scale) * tc;
       final platform = OrbitDepthTuning.platformSize;
       final pedW = _lerp(avatarSize * 0.9, avatarSize * platform, tc);
       final pedH = _lerp(
@@ -1764,6 +1977,14 @@ class _OrbitStage extends StatelessWidget {
         ),
         tc,
       );
+      // Nothing to show: the face fades as the orbit tilts and its seat
+      // stays behind as a mark.
+      if (!f.posts) {
+        final mark =
+            _interval(tc, 0.3, 1) * lv.opacity * (f.layer > 0 ? tc : 1);
+        if (mark > 0.01) emptySeats.add((ring, avatarSize * 0.62, mark));
+        if (tc >= 0.5) continue;
+      }
       seats.add(
         _Seat(
           friend: f,
@@ -1779,6 +2000,7 @@ class _OrbitStage extends StatelessWidget {
               ) *
               lv.opacity *
               (quiet ? 0.72 : 1) *
+              (f.posts ? 1 : 1 - _interval(tc, 0, 0.5)) *
               (OrbitDepthTuning.dial
                   ? _peekShow(lv.rel * tc, d) * (f.layer > 0 ? tc : 1)
                   : 1),
@@ -1870,11 +2092,21 @@ class _OrbitStage extends StatelessWidget {
       );
       final edge = Offset(cx, waiting.cy) + back;
       // Never above the top of the screen: high up, the orbit runs into it.
-      final top = math.max(
-        2 * k,
-        edge.dy -
-            OrbitDepthTuning.avatarSize * k * waiting.scale * near * 0.68 / 2 -
-            26 * k,
+      // Flat, it names the dashed Friends ring.
+      final top = _lerp(
+        math.max(
+          2 * k,
+          edge.dy -
+              OrbitDepthTuning.avatarSize *
+                  k *
+                  waiting.scale *
+                  near *
+                  0.68 /
+                  2 -
+              26 * k,
+        ),
+        cy - plan.outer - 30 * k,
+        old,
       );
       peekTop = top;
       final layer = waiting.layer;
@@ -1882,14 +2114,16 @@ class _OrbitStage extends StatelessWidget {
           .where((f) => f.layer == layer)
           .fold<int>(0, (n, f) => n + (f.more > 0 ? f.more : 1));
       final fresh = _friends.any((f) => f.layer == layer && _isNew(f));
-      if (show > 0.01) {
+      // Open arcs cover the label; the badge folds them again.
+      final labelShow = show * (1 - arcs * old);
+      if (labelShow > 0.01) {
         peekLabel = Positioned(
           left: 0,
           right: 0,
           top: top,
           child: Center(
             child: Opacity(
-              opacity: show,
+              opacity: labelShow,
               child: Semantics(
                 button: true,
                 label: '${_ringNames[layer]}, $people people',
@@ -1897,7 +2131,7 @@ class _OrbitStage extends StatelessWidget {
                 child: GestureDetector(
                   key: ValueKey('peek-ring-$layer'),
                   behavior: HitTestBehavior.opaque,
-                  onTap: show > 0.6 ? () => onRing?.call(layer) : null,
+                  onTap: labelShow > 0.6 ? () => onRing?.call(layer) : null,
                   child: Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: 12 * k,
@@ -1991,6 +2225,61 @@ class _OrbitStage extends StatelessWidget {
       ),
     ];
 
+    if (old > 0.01 && home != null) {
+      final centre = Offset(cx, home.cy);
+      children.add(
+        Positioned.fill(
+          child: IgnorePointer(
+            child: Opacity(
+              opacity: old * home.opacity.clamp(0.0, 1.0),
+              child: CustomPaint(
+                key: const ValueKey('orbit-old-rings'),
+                painter: OrbitalRingPainter(
+                  center: centre,
+                  ring1Radius: ringBase,
+                  ring2Radius: plan.outer,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // Always in the list, so the arcs appearing never shifts the faces
+      // after it.
+      {
+        children.add(
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Opacity(
+                opacity: old * arcs,
+                child: CustomPaint(
+                  key: arcs > 0.01 ? const ValueKey('orbit-arcs') : null,
+                  painter: OrbitalRingPainter(
+                    center: centre,
+                    ring1Radius: 0,
+                    ring2Radius: 0,
+                    arcs: arcs > 0.01 ? plan.rings : const [],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    if (emptySeats.isNotEmpty) {
+      children.add(
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              key: const ValueKey('empty-seats'),
+              painter: _EmptySeatsPainter(emptySeats),
+            ),
+          ),
+        ),
+      );
+    }
     children.addAll(underFaces);
 
     var youPlaced = home == null && !youOnDial;
@@ -2067,25 +2356,110 @@ class _OrbitStage extends StatelessWidget {
             child: Opacity(
               opacity: identical(seat, spotlight) ? 1 : 1 - dim,
               child: seat.friend.more > 0
-                ? _MoreAvatar(
-                    key: const ValueKey('avatar-more'),
-                    seat: seat,
-                    highlight: identical(seat, spotlight) ? highlight : 0,
-                    onTap: () => onFace(seat.friend),
-                  )
-                : _FriendAvatar(
-                    key: ValueKey('avatar-${seat.friend.name}'),
-                    seat: seat,
-                    highlight: identical(seat, spotlight) ? highlight : 0,
-                    onTap: () => onFace(seat.friend),
-                    onLongPress: () => onHold(seat.friend),
-                  ),
+                  ? _MoreAvatar(
+                      key: const ValueKey('avatar-more'),
+                      seat: seat,
+                      highlight: identical(seat, spotlight) ? highlight : 0,
+                      onTap: () => onFace(seat.friend),
+                    )
+                  : _FriendAvatar(
+                      key: ValueKey('avatar-${seat.friend.name}'),
+                      seat: seat,
+                      highlight: identical(seat, spotlight) ? highlight : 0,
+                      onTap: () => onFace(seat.friend),
+                      onLongPress: () => onHold(seat.friend),
+                    ),
             ),
           ),
         ),
       );
     }
     if (!youPlaced) placeYou();
+
+    // Flat: the +N badge on the Friends ring, at 11 o'clock as in the app, and
+    // the faces on its arcs once it is tapped.
+    if (old > 0.01 && home != null && plan.seats.isNotEmpty) {
+      final centre = Offset(cx, home.cy);
+      for (final arc in plan.seats) {
+        final o =
+            old * _interval(arcs, arc.delay, math.min(1.0, arc.delay + 0.5));
+        if (o <= 0.01) continue;
+        final point =
+            centre +
+            Offset(
+              arc.radius * math.sin(arc.phi),
+              -arc.radius * math.cos(arc.phi),
+            );
+        final f = arc.friend;
+        final quiet = f.more == 0 && !_isNew(f);
+        final seat = _Seat(
+          friend: f,
+          index: 1000 + arc.order,
+          layer: home,
+          ringPoint: point,
+          avatarCenter: point,
+          size: plan.avatar,
+          opacity: o * (quiet ? 0.72 : 1),
+          depth: 1,
+          pedestal: Size.zero,
+        );
+        children.add(
+          _positionedCircle(
+            center: point,
+            size: plan.avatar,
+            child: IgnorePointer(
+              ignoring: o < 0.5 || !arcsOpen,
+              child: Transform.scale(
+                scale: 0.6 + 0.4 * o / old,
+                child: f.more > 0
+                    ? _MoreAvatar(
+                        key: const ValueKey('arc-more'),
+                        seat: seat,
+                        highlight: 0,
+                        onTap: () => onFace(f),
+                      )
+                    : _FriendAvatar(
+                        key: ValueKey('arc-avatar-${f.name}'),
+                        seat: seat,
+                        highlight: 0,
+                        onTap: () => onFace(f),
+                        onLongPress: () => onHold(f),
+                      ),
+              ),
+            ),
+          ),
+        );
+      }
+      const angle = 245 * math.pi / 180;
+      final at =
+          centre +
+          Offset(plan.outer * math.cos(angle), plan.outer * math.sin(angle));
+      children.add(
+        Positioned(
+          // Keyed, so the arcs coming and going never rebuild the badge (and
+          // replay its entrance).
+          key: const ValueKey('orbit-overflow-badge-slot'),
+          left: at.dx - 22,
+          top: at.dy - 22,
+          width: 44,
+          height: 44,
+          child: IgnorePointer(
+            ignoring: old < 0.5,
+            child: Opacity(
+              opacity: old,
+              child: Center(
+                child: OverflowBadge(
+                  key: const ValueKey('orbit-overflow-badge'),
+                  count: plan.friends,
+                  expanded: arcsOpen,
+                  onTap: onBadge,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     // The beam from the front friend to their card.
     final beamSeat = OrbitDepthTuning.dial ? null : spotlight;
@@ -2150,6 +2524,73 @@ class _OrbitStage extends StatelessWidget {
     return Stack(clipBehavior: Clip.none, children: children);
   }
 
+  /// The flat orbit's overflow, laid out like the main app's
+  /// `orbit_arc_layout`: a dashed Friends ring just outside Close, then arcs
+  /// above it, each centred at 12 o'clock and pinched to fit the screen. Full
+  /// arcs fill in order; the last one keeps its final seat for "+N" when
+  /// people remain.
+  _ArcPlan _arcPlan(double k, double ringBase) {
+    final friends = [
+      for (final f in _everyone)
+        if (f.layer > 0) f,
+    ];
+    final gap = 46 * k;
+    final outer = ringBase + gap;
+    final avatar = 34 * k;
+    final half = size.width / 2 - 22 * k;
+    final rings = <OrbitArcRing>[];
+    final seats = <_ArcSeat>[];
+    var next = 0;
+    var top = outer;
+    for (var a = 0; a < _maxArcs && next < friends.length; a++) {
+      final r = outer + gap * (a + 1);
+      final phi = math.min(1.25, math.asin(math.min(1.0, half / r)));
+      final cap = math.max(4, (2 * phi * r / (avatar + 10 * k)).floor());
+      final left = friends.length - next;
+      final more = a == _maxArcs - 1 && left > cap;
+      final m = math.min(cap, left);
+      final pitch = 2 * phi / (cap - 1);
+      for (var j = 0; j < m; j++) {
+        final angle = m == cap ? -phi + j * pitch : (j - (m - 1) / 2) * pitch;
+        final f = more && j == m - 1
+            ? _ProtoFriend(
+                '+${left - (m - 1)}',
+                1,
+                0,
+                _grey,
+                more: left - (m - 1),
+              )
+            : friends[next + j];
+        seats.add(
+          _ArcSeat(
+            f,
+            r,
+            angle,
+            seats.length,
+            (a * 0.12 + j * 0.012).clamp(0, 0.45),
+          ),
+        );
+      }
+      next += m;
+      rings.add(
+        OrbitArcRing(
+          radius: r,
+          phiMax: m == cap ? phi : (m - 1) / 2 * pitch + pitch / 2,
+          arcIndex: a,
+        ),
+      );
+      top = r;
+    }
+    return _ArcPlan(
+      outer: outer,
+      avatar: avatar,
+      top: top,
+      friends: friends.length,
+      rings: rings,
+      seats: seats,
+    );
+  }
+
   /// How far (radians) each friend on the flat orbit slides along the ring so
   /// that no one else's thought bubble covers their face: a few degrees at a
   /// time, never more than [_maxShift], and never into a neighbour.
@@ -2168,15 +2609,19 @@ class _OrbitStage extends StatelessWidget {
     ];
     if (ids.isEmpty) return const {};
     final avatar =
-        _lerp(OrbitDepthTuning.flatAvatarSize, OrbitDepthTuning.avatarSize, tc) *
+        _lerp(
+          OrbitDepthTuning.flatAvatarSize,
+          OrbitDepthTuning.avatarSize,
+          tc,
+        ) *
         k;
     final base = {
-      for (final i in ids)
-        i: _friends[i].angleDeg * math.pi / 180 + rotation,
+      for (final i in ids) i: _friends[i].angleDeg * math.pi / 180 + rotation,
     };
     final shift = {for (final i in ids) i: 0.0};
     // Two faces may not come closer than this along the ring.
-    final minGap = 2 * math.asin(((avatar + 6 * k) / (2 * ringBase)).clamp(0, 1));
+    final minGap =
+        2 * math.asin(((avatar + 6 * k) / (2 * ringBase)).clamp(0, 1));
 
     Offset at(double theta) => Offset(
       cx + ringBase * math.cos(theta),
@@ -2216,8 +2661,8 @@ class _OrbitStage extends StatelessWidget {
           if (next.abs() > _maxShift) break;
           final crowded = ids.any((o) {
             if (o == j) return false;
-            var gap = (base[j]! + next - base[o]! - shift[o]!).abs() %
-                (2 * math.pi);
+            var gap =
+                (base[j]! + next - base[o]! - shift[o]!).abs() % (2 * math.pi);
             if (gap > math.pi) gap = 2 * math.pi - gap;
             return gap < minGap;
           });
@@ -2338,7 +2783,10 @@ class _OrbitStage extends StatelessWidget {
         ? (1 - _interval(tc, 0.05, 0.45)) * flatZoom
         : 0.0;
     final bubbleAlpha = OrbitDepthTuning.showBubbles
-        ? math.min(1.0, flatBubbles + (depthBubbles ? appear : appear * overview))
+        ? math.min(
+            1.0,
+            flatBubbles + (depthBubbles ? appear : appear * overview),
+          )
         : 0.0;
     // Faces only on the flat orbit until pinched: a dot marks a new thought.
     final flatDots = (1 - _interval(tc, 0.05, 0.45)) * (1 - flatZoom);
@@ -2589,6 +3037,11 @@ class _FriendAvatar extends StatelessWidget {
     required this.onLongPress,
   });
 
+  /// Gone while a stand-in flies between here and an open chat's strip.
+  double get _opacity => _flying.value.contains(seat.friend.name)
+      ? 0
+      : seat.opacity.clamp(0.0, 1.0);
+
   String get _label {
     final f = seat.friend;
     return [f.name, if (f.thought != null) f.thought!].join(', ');
@@ -2608,7 +3061,7 @@ class _FriendAvatar extends StatelessWidget {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Opacity(
-          opacity: seat.opacity.clamp(0.0, 1.0),
+          opacity: _opacity,
           child: Transform.scale(
             scale: 1 + OrbitDepthTuning.frontFriendLift * highlight,
             alignment: Alignment.bottomCenter,
@@ -2671,7 +3124,7 @@ extension on _FriendAvatar {
         onTap: onTap,
         onLongPress: onLongPress,
         child: Opacity(
-          opacity: seat.opacity.clamp(0.0, 1.0),
+          opacity: _opacity,
           child: Transform.scale(
             scale: 1 + OrbitDepthTuning.frontFriendLift * highlight,
             alignment: Alignment.bottomCenter,
@@ -3365,7 +3818,9 @@ class _PostStackState extends State<_PostStack>
     // the orbit turns.
     final name = widget.friend.name;
     if (expand >= 0.5 && (i > 0 || _textLed(widget.friend))) {
-      final post = i == 0 ? _livePost(widget.friend) : _pastPost(name, _posts[i]);
+      final post = i == 0
+          ? _livePost(widget.friend)
+          : _pastPost(name, _posts[i]);
       final space = post.space;
       // The "more from" hint only needs its room when there is more.
       final hint = _posts.length - 1 - i > 0 ? 48 * widget.k : 0.0;
@@ -3377,6 +3832,7 @@ class _PostStackState extends State<_PostStack>
         k: widget.k,
         alpha: widget.alpha,
         onOpen: () => _openThought(context, name, i),
+        onReact: (at) => _reactAt(context, at, name, i),
         onSpace: space == null ? null : () => _openSpace(context, name, space),
       );
     }
@@ -3393,6 +3849,7 @@ class _PostStackState extends State<_PostStack>
         k: widget.k,
         alpha: widget.alpha,
         onOpen: () => _openThought(context, name, 0),
+        onReact: (at) => _reactAt(context, at, name, 0),
       );
     }
     if (i == 0 && expand >= 0.5) {
@@ -3440,8 +3897,7 @@ class _PostStackState extends State<_PostStack>
           // Edges of the posts underneath; they step up as the top one
           // leaves. Without a card to hide behind they would show through
           // the words, so the universe look leaves them out.
-          final peeks =
-              OrbitDepthTuning.postCards == OrbitPostCards.framed;
+          final peeks = OrbitDepthTuning.postCards == OrbitPostCards.framed;
           for (var j = 2; j >= 1; j--) {
             if (!peeks || _index + j >= _posts.length || open <= 0) continue;
             final depth = j - t;
@@ -3526,9 +3982,7 @@ class _PostStackState extends State<_PostStack>
                   child: Opacity(
                     opacity: open,
                     child: Text(
-                      remaining == 1
-                          ? '1 more from ${widget.friend.name} · swipe up'
-                          : '$remaining more from ${widget.friend.name} · swipe up',
+                      'more from ${widget.friend.name} · swipe up',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: _muted, fontSize: 12 * k),
                     ),
@@ -3544,6 +3998,39 @@ class _PostStackState extends State<_PostStack>
 
 /// A beam of light from the front friend's platform down to their card, so
 /// the card reads as projected out of them, towards you.
+/// Where someone with nothing to show sits in depth: a dashed ring holding
+/// their place, so nobody else moves to fill it.
+class _EmptySeatsPainter extends CustomPainter {
+  final List<(Offset, double, double)> seats;
+
+  const _EmptySeatsPainter(this.seats);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const dashes = 12;
+    for (final (centre, diameter, opacity) in seats) {
+      if (opacity <= 0.01) continue;
+      final paint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4
+        ..color = _muted.withValues(alpha: 0.5 * opacity);
+      final box = Rect.fromCircle(center: centre, radius: diameter / 2);
+      for (var i = 0; i < dashes; i++) {
+        canvas.drawArc(
+          box,
+          i * 2 * math.pi / dashes,
+          math.pi / dashes,
+          false,
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_EmptySeatsPainter old) => true;
+}
+
 class _BeamPainter extends CustomPainter {
   final Rect from;
   final Rect to;
@@ -3831,10 +4318,10 @@ class _DepthPainter extends CustomPainter {
         _dialRing(canvas, lv);
       } else {
         _oval(
-        canvas,
-        Offset(cx, lv.cy),
-        ringBase * lv.scale,
-        const Color(0xFF2E3B35).withValues(alpha: lv.opacity),
+          canvas,
+          Offset(cx, lv.cy),
+          ringBase * lv.scale,
+          const Color(0xFF2E3B35).withValues(alpha: lv.opacity),
           dashLength: 6 * k * lv.scale,
           layerSquash: lv.c,
         );
@@ -3937,6 +4424,8 @@ class _DepthPainter extends CustomPainter {
         ..color = _ink.withValues(
           alpha:
               _lerp(0.16, _lerp(0.05, 0.3, front), t) *
+              // Flat, the app's dashed rings stand in for this one.
+              _interval(t, 0, 0.35) *
               lv.opacity *
               (1 - dim) *
               _peekShow(lv.rel * t, depth),
@@ -3959,16 +4448,19 @@ class _DepthPainter extends CustomPainter {
       final distance = star.spread * reach * (0.3 / (z + 0.3));
       final angle =
           star.angle +
-          rotation *
-              (OrbitDepthTuning.dial ? 0.03 + 0.3 * (1 - star.z) : 0.12);
+          rotation * (OrbitDepthTuning.dial ? 0.03 + 0.3 * (1 - star.z) : 0.12);
       final position =
           center + Offset(math.cos(angle), math.sin(angle)) * distance;
       final fadeIn = (z < 0.12 ? z / 0.12 : 1.0);
       final twinkle = 0.75 + 0.25 * math.sin(floatPhase * 2 + star.angle * 5);
-      final alpha = ((1 - z) * fadeIn * twinkle * (0.25 + 0.75 * t)).clamp(
-        0.0,
-        1.0,
-      );
+      final alpha =
+          ((1 - z) *
+                  fadeIn *
+                  twinkle *
+                  (0.25 + 0.75 * t) *
+                  // Flat shows the app's own sky only.
+                  _interval(t, 0, 0.35))
+              .clamp(0.0, 1.0);
       paint.color = const Color(0xFF9AA59F).withValues(alpha: alpha * 0.8);
       canvas.drawCircle(position, (0.6 + (1 - z) * 1.4) * k, paint);
     }
@@ -4069,4 +4561,612 @@ class _DepthPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_DepthPainter old) => true;
+}
+
+/// How many friends the old flat orbit seats: enough for both rings and the
+/// +N arcs.
+const _oldFlatFriends = 30;
+
+/// The app's old orbit screen ([InnerCircleInteractiveSurface]) with the
+/// prototype's people: Close first, then Friends, [_oldFlatFriends] in all.
+///
+/// With [bubbles] at 1 (the default), every friend on the rings with a
+/// thought has a bubble over their face, and the faces swim: a spring pulls
+/// each one to its seat while faces and bubbles push each other aside, so
+/// nothing is covered. The orbit is drawn here for that, from the app's own
+/// pieces ([OrbitalRingPainter], [OrbitalAvatar], [OverflowBadge]) on the
+/// seats the app's widget lays out underneath. A pinch takes [bubbles] to 0:
+/// the bubbles fade, the faces glide home, and the app's widget takes over,
+/// with its long-press controls and +N arcs.
+class _OldFlatOrbit extends StatefulWidget {
+  final double bubbles;
+  final ValueChanged<_ProtoFriend?> onFace;
+  final ValueChanged<_ProtoFriend> onThought;
+  final VoidCallback onBubblesOff;
+
+  const _OldFlatOrbit({
+    required this.bubbles,
+    required this.onFace,
+    required this.onThought,
+    required this.onBubblesOff,
+  });
+
+  static String _peer(String name) => 'proto-$name';
+
+  @override
+  State<_OldFlatOrbit> createState() => _OldFlatOrbitState();
+}
+
+/// Seats on the app's two rings: 5 inside, 8 outside.
+const _oldRingSeats = 13;
+
+class _OldFlatOrbitState extends State<_OldFlatOrbit>
+    with SingleTickerProviderStateMixin {
+  /// Where the app's widget seats each face (by its index in the list) and
+  /// its +N badge, in this widget's coordinates, read every frame.
+  Map<int, Rect> _faces = const {};
+  Rect? _badge;
+
+  /// The swim: each face's position and velocity, by index.
+  final Map<int, Offset> _pos = {};
+  final Map<int, Offset> _vel = {};
+  Duration? _last;
+  double _clock = 0;
+
+  late final Ticker _ticker = createTicker(_tick);
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker.start();
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  List<_ProtoFriend> get _people => _everyone.take(_oldFlatFriends).toList();
+
+  void _tick(Duration now) {
+    final dt = _last == null
+        ? 1 / 60
+        : ((now - _last!).inMicroseconds / 1e6).clamp(0.0, 1 / 30);
+    _last = now;
+    _clock += dt;
+    _readFaces();
+    if (widget.bubbles > 0.001 && _faces.isNotEmpty) {
+      _swim(dt);
+      setState(() {});
+    } else if (_pos.isNotEmpty) {
+      _pos.clear();
+      _vel.clear();
+    }
+  }
+
+  void _readFaces() {
+    final me = context.findRenderObject();
+    if (me is! RenderBox || !me.hasSize) return;
+    final found = <int, Rect>{};
+    Rect? badge;
+    void visit(Element e) {
+      final key = e.widget.key;
+      if (key is ValueKey<String>) {
+        final box = e.renderObject;
+        final isNode = key.value.startsWith('orbit-node-');
+        final isBadge = key.value == 'orbit-overflow-badge-seat';
+        if ((isNode || isBadge) &&
+            box is RenderBox &&
+            box.hasSize &&
+            box.attached) {
+          final rect = box.localToGlobal(Offset.zero, ancestor: me) & box.size;
+          if (isBadge) {
+            badge = rect;
+          } else {
+            final index = int.tryParse(key.value.substring(11));
+            if (index != null) found[index] = rect;
+          }
+          return;
+        }
+      }
+      e.visitChildren(visit);
+    }
+
+    context.visitChildElements(visit);
+    if (!mapEquals(found, _faces) || badge != _badge) {
+      setState(() {
+        _faces = found;
+        _badge = badge;
+      });
+    }
+  }
+
+  Offset get _centre {
+    final ring = [
+      for (final e in _faces.entries)
+        if (e.key < _oldRingSeats) e.value.center,
+    ];
+    return ring.isEmpty
+        ? Offset.zero
+        : ring.reduce((a, b) => a + b) / ring.length.toDouble();
+  }
+
+  /// How far the orbit opens while the bubbles are out.
+  static const _open = 1.1;
+
+  double _size(int index) =>
+      (index < 5 ? kOrbitRing1AvatarSize : kOrbitRing2AvatarSize) *
+      OrbitGeometryPrefs.maxAvatarScale;
+
+  Offset _seat(int index, double scale) =>
+      _centre + (_faces[index]!.center - _centre) * scale;
+
+  bool _hasBubble(int index) =>
+      index < _people.length && _people[index].thought != null;
+
+  final Map<String, Size> _noteSizes = {};
+
+  /// The note sits on the top of the face, like an Instagram note: the tail's
+  /// small dot just touches the face.
+  Rect _bubbleOver(int index, Offset face, double size, Size screen) {
+    final note = _noteSizes.putIfAbsent(
+      _people[index].name,
+      () => _NoteBubble.measure(_people[index].thought ?? ''),
+    );
+    final w = note.width;
+    final h = note.height + _NoteBubble.tail;
+    final left = (face.dx - w / 2).clamp(6.0, screen.width - w - 6);
+    return Rect.fromLTWH(left, face.dy - size / 2 - h + 6, w, h);
+  }
+
+  void _swim(double dt) {
+    final screen = MediaQuery.sizeOf(context);
+    final seats = [
+      for (final i in _faces.keys)
+        if (i < _oldRingSeats) i,
+    ];
+    for (final i in seats) {
+      _pos.putIfAbsent(i, () => _seat(i, 1));
+      _vel.putIfAbsent(i, () => Offset.zero);
+    }
+    final force = {for (final i in seats) i: Offset.zero};
+    final centre = _centre;
+    for (final i in seats) {
+      // Home, with a slow drift of its own.
+      final drift = Offset(
+        math.sin(_clock * 0.55 + i * 1.7) * 4,
+        math.cos(_clock * 0.45 + i * 2.3) * 4,
+      );
+      force[i] = force[i]! + (_seat(i, _open) + drift - _pos[i]!) * 14;
+      // Away from you in the middle.
+      final fromYou = _pos[i]! - centre;
+      final keep = 46 + _size(i) / 2;
+      if (fromYou.distance < keep && fromYou.distance > 0.1) {
+        force[i] =
+            force[i]! +
+            fromYou / fromYou.distance * (keep - fromYou.distance) * 90;
+      }
+    }
+    void push(int i, Offset by) => force[i] = force[i]! + by;
+    for (final a in seats) {
+      for (final b in seats) {
+        if (b <= a) continue;
+        // Faces keep apart.
+        final d = _pos[a]! - _pos[b]!;
+        final min = (_size(a) + _size(b)) / 2 + 8;
+        if (d.distance < min && d.distance > 0.1) {
+          final n = d / d.distance * (min - d.distance) * 80;
+          push(a, n);
+          push(b, -n);
+        }
+      }
+    }
+    for (final owner in seats.where(_hasBubble)) {
+      final bubble = _bubbleOver(
+        owner,
+        _pos[owner]!,
+        _size(owner),
+        screen,
+      ).inflate(4);
+      for (final other in seats) {
+        if (other == owner) continue;
+        // A bubble and someone else's face push apart.
+        final p = _pos[other]!;
+        final near = Offset(
+          p.dx.clamp(bubble.left, bubble.right),
+          p.dy.clamp(bubble.top, bubble.bottom),
+        );
+        final d = p - near;
+        final r = _size(other) / 2;
+        if (d.distance < r) {
+          final n = d.distance > 0.1
+              ? d / d.distance
+              : (p - bubble.center) / math.max(1, (p - bubble.center).distance);
+          push(other, n * (r - d.distance) * 70);
+          push(owner, -n * (r - d.distance) * 35);
+        }
+        // Two bubbles push apart.
+        if (other > owner && _hasBubble(other)) {
+          final theirs = _bubbleOver(other, _pos[other]!, _size(other), screen);
+          final overlap = bubble.intersect(theirs);
+          if (overlap.width > 0 && overlap.height > 0) {
+            final away = theirs.center - bubble.center;
+            final n = away.distance > 0.1
+                ? away / away.distance
+                : const Offset(1, 0);
+            final amount = math.min(overlap.width, overlap.height) * 60;
+            push(other, n * amount);
+            push(owner, -n * amount);
+          }
+        }
+      }
+      // Bubbles stay off you and on the screen.
+      final you = Rect.fromCircle(center: centre, radius: 40);
+      final own = _bubbleOver(owner, _pos[owner]!, _size(owner), screen);
+      final overYou = own.intersect(you);
+      if (overYou.width > 0 && overYou.height > 0) {
+        final away = own.center - centre;
+        push(
+          owner,
+          away /
+              math.max(1, away.distance) *
+              60 *
+              math.min(overYou.width, overYou.height),
+        );
+      }
+      if (own.top < 96) push(owner, Offset(0, (96 - own.top) * 40));
+    }
+    for (final i in seats) {
+      final v = (_vel[i]! + force[i]! * dt) * math.exp(-5 * dt);
+      _vel[i] = v;
+      _pos[i] = _pos[i]! + v * dt;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final people = _people;
+    final byPeer = {for (final f in people) _OldFlatOrbit._peer(f.name): f};
+    final items = <OrbitItem>[
+      for (var i = 0; i < people.length; i++)
+        OrbitFriendItem(
+          OrbitFriend(
+            contact: ContactModel(
+              peerId: _OldFlatOrbit._peer(people[i].name),
+              publicKey: 'pk-${people[i].name}',
+              rendezvous: '',
+              username: _title(people[i].name),
+              signature: '',
+              scannedAt: '2026-10-20T00:00:00Z',
+            ),
+            messageCount: people.length - i,
+            unreadCount: _isNew(people[i]) ? 1 : 0,
+          ),
+        ),
+    ];
+    final b = widget.bubbles;
+    // Below 0.15 the app's own widget is back; above it, the swim.
+    final app = ((0.15 - b) / 0.15).clamp(0.0, 1.0);
+    final swim = (b / 0.15).clamp(0.0, 1.0);
+
+    final children = <Widget>[
+      IgnorePointer(
+        ignoring: b > 0.1,
+        child: Opacity(
+          opacity: app,
+          child: InnerCircleInteractiveSurface(
+            userPeerId: _OldFlatOrbit._peer('you'),
+            userAvatarBytes: _youBytes,
+            items: items,
+            onFriendTap: (f) => widget.onFace(byPeer[f.contact.peerId]),
+            onGroupTap: (_) {},
+            onSelfAvatarTap: () => widget.onFace(null),
+            secureKeyStore: _largestGeometry,
+          ),
+        ),
+      ),
+    ];
+
+    final seats = [
+      for (final i in _faces.keys)
+        if (i < _oldRingSeats && i < people.length) i,
+    ];
+    if (swim > 0.01 && seats.isNotEmpty) {
+      final centre = _centre;
+      final scale = 1 + (_open - 1) * b;
+      double radius(bool inner) {
+        final ds = [
+          for (final i in seats)
+            if ((i < 5) == inner) (_faces[i]!.center - centre).distance,
+        ];
+        return ds.isEmpty ? 0 : ds.reduce((x, y) => x + y) / ds.length * scale;
+      }
+
+      final screen = MediaQuery.sizeOf(context);
+      final layer = <Widget>[
+        Positioned.fill(
+          child: IgnorePointer(
+            child: CustomPaint(
+              painter: OrbitalRingPainter(
+                center: centre,
+                ring1Radius: radius(true),
+                ring2Radius: radius(false),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: centre.dx - 30,
+          top: centre.dy - 30,
+          width: 60,
+          height: 60,
+          child: GestureDetector(
+            onTap: () => widget.onFace(null),
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: _accent.withValues(alpha: 0.8),
+                  width: 2,
+                ),
+                image: _youBytes == null
+                    ? null
+                    : DecorationImage(
+                        image: MemoryImage(_youBytes!),
+                        fit: BoxFit.cover,
+                      ),
+              ),
+            ),
+          ),
+        ),
+      ];
+      final bubbles = <Widget>[];
+      for (final i in seats) {
+        final f = people[i];
+        final size = _size(i);
+        final at = Offset.lerp(_seat(i, scale), _pos[i] ?? _seat(i, scale), b)!;
+        layer.add(
+          Positioned(
+            key: ValueKey('swim-face-${f.name}'),
+            left: at.dx - size / 2,
+            top: at.dy - size / 2,
+            width: size,
+            height: size,
+            child: OrbitalAvatar(
+              peerId: _OldFlatOrbit._peer(f.name),
+              size: size,
+              globalIndex: i,
+              borderWidth: i < 5 ? 1.5 : 1.0,
+              borderColor: BackgroundReadableColors.dark.border.withValues(
+                alpha: i < 5 ? 0.20 : 0.14,
+              ),
+              animateEntrance: false,
+              unreadCount: _isNew(f) ? 1 : 0,
+              onTap: () => widget.onFace(f),
+            ),
+          ),
+        );
+        if (_hasBubble(i)) {
+          bubbles.add(
+            Positioned.fromRect(
+              key: ValueKey('old-bubble-${f.name}'),
+              rect: _bubbleOver(i, at, size, screen),
+              child: Opacity(
+                opacity: _interval(b, 0.35, 1),
+                child: _NoteBubble(friend: f, onTap: () => widget.onThought(f)),
+              ),
+            ),
+          );
+        }
+      }
+      final badge = _badge;
+      if (badge != null) {
+        final at = centre + (badge.center - centre) * scale;
+        layer.add(
+          Positioned(
+            left: at.dx - 22,
+            top: at.dy - 22,
+            width: 44,
+            height: 44,
+            child: Center(
+              child: OverflowBadge(
+                count: math.max(0, people.length - _oldRingSeats),
+                // Opening the arcs belongs to the app's own orbit: put the
+                // bubbles away first.
+                onTap: widget.onBubblesOff,
+              ),
+            ),
+          ),
+        );
+      }
+      children.add(
+        IgnorePointer(
+          ignoring: b < 0.5,
+          child: Opacity(
+            opacity: swim,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [...layer, ...bubbles],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Stack(fit: StackFit.expand, children: children);
+  }
+}
+
+/// A friend's thought over their face on the old orbit, drawn like an
+/// Instagram note: a small dark-grey bubble that hugs its text, white text
+/// centred in two lines at most, and a thought tail of two dots pointing down
+/// at the face. Unseen thoughts read in a slightly heavier weight; the face's
+/// own unread ring already marks them. Tapping it opens the thought.
+class _NoteBubble extends StatelessWidget {
+  final _ProtoFriend friend;
+  final VoidCallback onTap;
+
+  const _NoteBubble({required this.friend, required this.onTap});
+
+  static const _fill = Color(0xFF262626);
+  static const _text = Color(0xFFF5F5F5);
+  static const _maxWidth = 96.0;
+  static const _minWidth = 40.0;
+  static const _padH = 9.0;
+  static const _padV = 6.0;
+
+  /// Room under the bubble for the tail's two dots.
+  static const tail = 11.0;
+
+  static const _style = TextStyle(
+    color: _text,
+    fontSize: 11.5,
+    height: 1.22,
+    letterSpacing: -0.1,
+    fontWeight: FontWeight.w400,
+  );
+
+  /// The bubble's size (without the tail) for [text]: as wide as the text
+  /// needs, up to two lines.
+  static Size measure(String text) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: _style),
+      textAlign: TextAlign.center,
+      textDirection: TextDirection.ltr,
+      maxLines: 2,
+      ellipsis: '…',
+    )..layout(maxWidth: _maxWidth - 2 * _padH);
+    final size = Size(
+      (painter.width + 2 * _padH).clamp(_minWidth, _maxWidth),
+      painter.height + 2 * _padV,
+    );
+    painter.dispose();
+    return size;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fresh = _isNew(friend);
+    return Semantics(
+      button: true,
+      label: '${_title(friend.name)}: ${friend.thought}',
+      excludeSemantics: true,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: _padH,
+                vertical: _padV,
+              ),
+              decoration: BoxDecoration(
+                color: _fill,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x59000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                friend.thought ?? '',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: fresh
+                    ? _style.copyWith(fontWeight: FontWeight.w600)
+                    : _style,
+              ),
+            ),
+            // The thought tail: a dot under the bubble and a smaller one
+            // nearer the face, a little left of centre.
+            SizedBox(
+              height: tail,
+              width: double.infinity,
+              child: CustomPaint(painter: _NoteTail()),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NoteTail extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = _NoteBubble._fill;
+    final x = size.width / 2 - 6;
+    canvas.drawCircle(Offset(x, 2.5), 3.6, paint);
+    canvas.drawCircle(Offset(x - 4, 8.5), 2, paint);
+  }
+
+  @override
+  bool shouldRepaint(_NoteTail old) => false;
+}
+
+/// The old orbit opens at the largest avatars and ring spacing its long-press
+/// controls allow (2026-10-20), instead of the app's 1.0 defaults. The
+/// controls still work and save here for the session.
+final _largestGeometry = _MemoryKeyStore({
+  OrbitGeometryPrefs.storageKey: OrbitGeometryPrefs.defaults
+      .copyWith(
+        avatarScale: OrbitGeometryPrefs.maxAvatarScale,
+        spacingScale: OrbitGeometryPrefs.maxSpacingScale,
+      )
+      .toStorageString(),
+});
+
+class _MemoryKeyStore implements SecureKeyStore {
+  final Map<String, String> _values;
+
+  _MemoryKeyStore(this._values);
+
+  @override
+  Future<String?> read(String key) async => _values[key];
+
+  @override
+  Future<void> write(String key, String value) async => _values[key] = value;
+
+  @override
+  Future<void> delete(String key) async => _values.remove(key);
+
+  @override
+  Future<bool> containsKey(String key) async => _values.containsKey(key);
+}
+
+String _title(String name) =>
+    name.isEmpty ? name : name[0].toUpperCase() + name.substring(1);
+
+Uint8List? get _youBytes {
+  final data = _photoData[_photoAliases['you'] ?? 'you'];
+  return data == null ? null : base64Decode(data);
+}
+
+/// Writes every person's photo where the app's [UserAvatar] looks for a
+/// contact's picture, in a folder of the prototype's own, so the old flat
+/// orbit shows faces. Device only; tests keep the generated avatars.
+Future<void> prepareOldOrbitFaces() async {
+  try {
+    final base = await getTemporaryDirectory();
+    final root = '${base.path}/orbit_proto_faces';
+    final avatars = Directory('$root/media/avatars');
+    await avatars.create(recursive: true);
+    for (final p in _people) {
+      final data = _photoData[_photoAliases[p.$1] ?? p.$1];
+      if (data == null) continue;
+      await File(
+        '${avatars.path}/${_OldFlatOrbit._peer(p.$1)}.jpg',
+      ).writeAsBytes(base64Decode(data));
+    }
+    UserAvatar.setDocumentsDir(root);
+  } catch (_) {
+    // Without the files the old orbit shows generated avatars.
+  }
 }

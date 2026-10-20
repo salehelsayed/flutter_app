@@ -125,48 +125,72 @@ void main() {
   /// From the flat orbit to Close, the way the hint under it does.
   Future<void> tilt(WidgetTester tester) => swipeUp(tester);
 
-  Future<void> openChats(WidgetTester tester) =>
-      tap(tester, key('open-chats'));
+  Future<void> openChats(WidgetTester tester) => tap(tester, key('open-chats'));
 
-  testWidgets('opens flat; tapping a face opens your chat, the thought quoted', (
+  testWidgets(
+    'opens flat; tapping a face opens your chat, the thought quoted',
+    (tester) async {
+      await pumpPrototype(tester);
+      await settle(tester);
+      // The flat orbit is Close alone; Friends waits in depth.
+      expect(key('avatar-omar'), findsOneWidget);
+      expect(key('avatar-maya'), findsNothing);
+      expect(key('avatar-more'), findsNothing);
+      expect(key('card-omar'), findsNothing);
+      expect(find.byType(NavigationBar), findsNothing);
+      // New thoughts are dots; Friends waits on a faint ring outside.
+      expect(key('thought-dot-omar'), findsOneWidget);
+      expect(key('peek-ring-1'), findsOneWidget);
+      // No branches on the orbit.
+      expect(find.textContaining('via omar'), findsNothing);
+      // Sideways does not turn the flat orbit.
+      final before = tester.getCenter(key('avatar-omar'));
+      await tester.timedDragFrom(
+        const Offset(300, 420),
+        const Offset(-200, 0),
+        const Duration(milliseconds: 400),
+      );
+      await settle(tester);
+      expect(tester.getCenter(key('avatar-omar')), before);
+
+      await tap(tester, key('avatar-omar'));
+      expect(key('dm-omar'), findsOneWidget);
+      expect(key('quote-chip'), findsOneWidget);
+      expect(field('Reply to omar…'), findsOneWidget);
+      await tester.enterText(field('Reply to omar…'), 'good luck!!');
+      await tester.tap(find.byTooltip('Send'));
+      await settle(tester);
+      expect(key('quote-chip'), findsNothing);
+      expect(key('quote-omar0'), findsOneWidget);
+      expect(field('Message omar…'), findsOneWidget);
+      // Answering it means you saw it.
+      await back(tester);
+      expect(key('thought-dot-omar'), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets('flat: the +N badge opens everyone outside Close on arcs', (
     tester,
   ) async {
     await pumpPrototype(tester);
     await settle(tester);
-    // The flat orbit is Close alone; Friends waits in depth.
-    expect(key('avatar-omar'), findsOneWidget);
-    expect(key('avatar-maya'), findsNothing);
-    expect(key('avatar-more'), findsNothing);
-    expect(key('card-omar'), findsNothing);
-    expect(find.byType(NavigationBar), findsNothing);
-    // New thoughts are dots; Friends waits on a faint ring outside.
-    expect(key('thought-dot-omar'), findsOneWidget);
-    expect(key('peek-ring-1'), findsOneWidget);
-    // No branches on the orbit.
-    expect(find.textContaining('via omar'), findsNothing);
-    // Sideways does not turn the flat orbit.
-    final before = tester.getCenter(key('avatar-omar'));
-    await tester.timedDragFrom(
-      const Offset(300, 420),
-      const Offset(-200, 0),
-      const Duration(milliseconds: 400),
-    );
-    await settle(tester);
-    expect(tester.getCenter(key('avatar-omar')), before);
+    final badge = find.byKey(const ValueKey('orbit-overflow-badge'));
+    expect(badge, findsOneWidget);
+    expect(find.byKey(const ValueKey('orbit-old-rings')), findsOneWidget);
+    expect(find.byKey(const ValueKey('arc-avatar-maya')), findsNothing);
 
-    await tap(tester, key('avatar-omar'));
-    expect(key('dm-omar'), findsOneWidget);
-    expect(key('quote-chip'), findsOneWidget);
-    expect(field('Reply to omar…'), findsOneWidget);
-    await tester.enterText(field('Reply to omar…'), 'good luck!!');
-    await tester.tap(find.byTooltip('Send'));
+    await tester.tap(badge);
     await settle(tester);
-    expect(key('quote-chip'), findsNothing);
-    expect(key('quote-omar0'), findsOneWidget);
-    expect(field('Message omar…'), findsOneWidget);
-    // Answering it means you saw it.
-    await back(tester);
-    expect(key('thought-dot-omar'), findsNothing);
+    expect(find.byKey(const ValueKey('orbit-arcs')), findsOneWidget);
+    expect(find.byKey(const ValueKey('arc-avatar-maya')), findsOneWidget);
+    // More friends than the arcs hold: the last seat opens everyone.
+    expect(find.byKey(const ValueKey('arc-more')), findsOneWidget);
+
+    await tester.tap(badge);
+    await settle(tester);
+    expect(find.byKey(const ValueKey('arc-avatar-maya')), findsNothing);
+    expect(find.byKey(const ValueKey('orbit-arcs')), findsNothing);
     await finish(tester);
   });
 
@@ -274,6 +298,122 @@ void main() {
     expect(key('friend-row-maya'), findsNothing);
     await tap(tester, key('friend-row-huda'));
     expect(key('dm-huda'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('in depth a face without posts leaves an empty seat', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    // Flat, all of Close, posts or not.
+    expect(key('avatar-dina'), findsOneWidget);
+    expect(key('empty-seats'), findsNothing);
+    await tilt(tester);
+    expect(key('avatar-dina'), findsNothing);
+    expect(key('empty-seats'), findsOneWidget);
+    for (final name in ['omar', 'tarek', 'nour', 'layla', 'sara']) {
+      expect(key('avatar-$name'), findsOneWidget);
+    }
+    await swipeUp(tester);
+    for (final name in [
+      'maya',
+      'dana',
+      'khaled',
+      'ward',
+      'lina',
+      'mira',
+      'huda',
+    ]) {
+      expect(key('avatar-$name'), findsOneWidget);
+    }
+    expect(key('avatar-yousef'), findsNothing);
+    expect(key('avatar-karim'), findsNothing);
+    // Back to flat, Dina is home again.
+    await swipeDown(tester);
+    await swipeDown(tester);
+    expect(key('avatar-dina'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('words alone read larger; a voice note sits under its words; '
+      'a short thought opens as a quote', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tilt(tester);
+    final omarWords = find.descendant(
+      of: key('universe-media-card-omar'),
+      matching: find.textContaining('exam at 9'),
+    );
+    final voice = find.descendant(
+      of: key('universe-media-card-omar'),
+      matching: find.text('voice note'),
+    );
+    expect(
+      tester.getTopLeft(voice).dy - tester.getBottomLeft(omarWords).dy,
+      lessThan(60),
+    );
+    final withVoice = tester.widget<Text>(omarWords).style!.fontSize!;
+
+    await swipeUp(tester);
+    await tap(tester, key('avatar-khaled'));
+    final alone = find.descendant(
+      of: key('text-post-khaled'),
+      matching: find.text('lost my keys. again.'),
+    );
+    expect(tester.widget<Text>(alone).style!.fontSize!, greaterThan(withVoice));
+
+    await tap(tester, key('text-post-khaled'));
+    expect(key('quote-khaled-0'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('no counts: a card says who it was for; your thought says '
+      'each reaction on its sender\'s face', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tilt(tester);
+    expect(
+      find.descendant(
+        of: key('universe-media-card-omar'),
+        matching: find.text('for their Close'),
+      ),
+      findsOneWidget,
+    );
+    await swipeDown(tester);
+    await tap(tester, key('you-avatar'));
+    await tester.scrollUntilVisible(
+      key('reactions-1'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    for (final name in ['layla', 'omar']) {
+      expect(
+        find.descendant(of: key('reaction-1-$name'), matching: find.text('😂')),
+        findsOneWidget,
+      );
+    }
+    expect(find.textContaining('😂 2'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('hold a thought to react; hold again to take it back', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tilt(tester);
+    await tester.longPress(key('universe-media-card-omar'));
+    await settle(tester);
+    expect(key('reaction-tray'), findsOneWidget);
+    await tap(tester, key('react-😍'));
+    expect(key('reaction-tray'), findsNothing);
+    expect(find.text('You reacted 😍'), findsOneWidget);
+
+    await tester.longPress(key('universe-media-card-omar'));
+    await settle(tester);
+    await tap(tester, key('react-😍'));
+    expect(find.text('You reacted 😍'), findsNothing);
     await finish(tester);
   });
 
@@ -400,12 +540,14 @@ void main() {
     );
     // A topic is required.
     expect(
-      tester.widget<FilledButton>(
-        find.descendant(
-          of: key('send-knock'),
-          matching: find.byType(FilledButton),
-        ),
-      ).onPressed,
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: key('send-knock'),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
       isNull,
     );
     await tap(tester, key('topic-design feedback'));
@@ -435,7 +577,10 @@ void main() {
     await wait(tester, 5);
     expect(key('waiting-hisam'), findsNothing);
     expect(
-      find.descendant(of: key('chat-row-hisam'), matching: find.text('via omar')),
+      find.descendant(
+        of: key('chat-row-hisam'),
+        matching: find.text('via omar'),
+      ),
       findsOneWidget,
     );
     await tap(tester, key('chat-row-hisam'));
@@ -456,7 +601,11 @@ void main() {
     final world = find
         .descendant(of: key('world-hisam'), matching: find.byType(Scrollable))
         .first;
-    await tester.scrollUntilVisible(key('locked-spaces'), 250, scrollable: world);
+    await tester.scrollUntilVisible(
+      key('locked-spaces'),
+      250,
+      scrollable: world,
+    );
     expect(find.text('Design work'), findsOneWidget);
     expect(
       find.text('2 more spaces stay with hisam’s friends'),
@@ -493,9 +642,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('a friend holding three asks can’t take another', (
-    tester,
-  ) async {
+  testWidgets('a friend holding three asks can’t take another', (tester) async {
     await pumpPrototype(tester);
     await settle(tester);
     await tap(tester, key('open-reach'));
@@ -507,12 +654,14 @@ void main() {
       findsOneWidget,
     );
     expect(
-      tester.widget<FilledButton>(
-        find.descendant(
-          of: key('send-intro-ask'),
-          matching: find.byType(FilledButton),
-        ),
-      ).onPressed,
+      tester
+          .widget<FilledButton>(
+            find.descendant(
+              of: key('send-intro-ask'),
+              matching: find.byType(FilledButton),
+            ),
+          )
+          .onPressed,
       isNull,
     );
     await finish(tester);
@@ -544,7 +693,9 @@ void main() {
   ) async {
     await pumpPrototype(tester);
     await settle(tester);
-    expect(chatsBadge('4'), findsOneWidget);
+    // Something waits: a quiet dot, never how much.
+    expect(tester.widget<Badge>(key('chats-badge')).isLabelVisible, isTrue);
+    expect(chatsBadge('4'), findsNothing);
     await openChats(tester);
     expect(find.text('3 requests'), findsOneWidget);
     expect(key('request-yazan'), findsNothing);
@@ -554,10 +705,7 @@ void main() {
       find.text('maya introduced you: “my old manager, the best mentor I had”'),
       findsOneWidget,
     );
-    expect(
-      find.text('zein asks for an introduction to sara'),
-      findsOneWidget,
-    );
+    expect(find.text('zein asks for an introduction to sara'), findsOneWidget);
 
     await tap(tester, key('say-hi-yazan'));
     expect(key('dm-yazan'), findsOneWidget);
@@ -593,8 +741,9 @@ void main() {
     expect(key('your-thought-100'), findsOneWidget);
     expect(find.text('[close] >'), findsWidgets);
     await wait(tester, 8);
-    // Only you see what nour wrote; the row opens your chat with nour.
+    // Nour's face says she wrote; her words wait in your chat, not here.
     expect(key('wrote-100-nour'), findsOneWidget);
+    expect(find.text('love this. tell me more?'), findsNothing);
     expect(
       find.descendant(of: key('wrote-100-nour'), matching: key('unread-nour')),
       findsOneWidget,
@@ -602,6 +751,96 @@ void main() {
     await tap(tester, key('wrote-100-nour'));
     expect(find.text('Your thought'), findsWidgets);
     expect(find.text('love this. tell me more?'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a # keeps a thought with its tag; a tag you come back to '
+      'can become a Space on a ring', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tap(tester, key('share-thought'));
+    expect(key('tag-offer-walks'), findsNothing);
+
+    await tester.enterText(key('you-field'), 'the old harbour path #wa');
+    await tester.pump();
+    expect(key('tags'), findsOneWidget);
+    await tap(tester, key('tag-walks'));
+    expect(key('tags'), findsNothing);
+    await tap(tester, key('you-share'));
+
+    // Twice now: the offer, once.
+    expect(key('tag-offer-walks'), findsOneWidget);
+    await tap(tester, key('tag-offer-yes'));
+    await tap(tester, key('tag-space-ring-close'));
+    await tap(tester, key('tag-space-make'));
+    expect(key('tag-offer-walks'), findsNothing);
+
+    await tester.enterText(key('you-field'), '#wa');
+    await tester.pump();
+    expect(
+      find.descendant(of: key('tags'), matching: find.text('Space · Close')),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
+
+  testWidgets('a Space tag opens its shelf: moments under quiet time '
+      'dividers, no ratings', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tap(tester, key('you-avatar'));
+    await tap(tester, key('tag-link-books'));
+    expect(key('space-Books'), findsOneWidget);
+    expect(key('shelf-when-this week'), findsOneWidget);
+    expect(key('shelf-thought-1'), findsOneWidget);
+    expect(key('shelf-when-August'), findsOneWidget);
+    // Every entry is something you wrote, not a filled-in book record.
+    expect(
+      find.text(
+        'finished The Pragmatic Programmer by Hunt & Thomas. '
+        'should have read this years ago',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('a friend\'s card names the Spaces they keep; a tag opens '
+      'that shelf', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tilt(tester);
+    await tap(tester, key('space-tag-omar-books'));
+    expect(key('space-Books'), findsOneWidget);
+    await back(tester);
+
+    await swipeUp(tester);
+    expect(key('space-tag-maya-work'), findsOneWidget);
+    await tap(tester, key('space-tag-maya-work'));
+    expect(key('space-Work'), findsOneWidget);
+    expect(
+      find.text('new job starts monday. nervous in the good way'),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
+
+  testWidgets('not now means never: the offer does not come back', (
+    tester,
+  ) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    await tap(tester, key('share-thought'));
+    for (final text in ['harbour again #walks', 'and again #walks']) {
+      await tester.enterText(key('you-field'), text);
+      await tester.pump();
+      await tap(tester, key('you-share'));
+      if (find.byKey(const ValueKey('tag-offer-walks')).evaluate().isNotEmpty) {
+        await tap(tester, key('tag-offer-no'));
+      }
+    }
+    expect(key('tag-offer-walks'), findsNothing);
     await finish(tester);
   });
 
@@ -645,7 +884,10 @@ void main() {
       carrying,
       200,
       scrollable: find
-          .descendant(of: key('fof-settings'), matching: find.byType(Scrollable))
+          .descendant(
+            of: key('fof-settings'),
+            matching: find.byType(Scrollable),
+          )
           .first,
     );
     expect(carrying, findsOneWidget);
@@ -662,39 +904,40 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('your page: swipe up the rings to go out, then view as a friend', (
-    tester,
-  ) async {
-    await pumpPrototype(tester);
-    await settle(tester);
-    await tap(tester, key('you-avatar'));
-    await tap(tester, key('you-world'));
-    expect(key('your-thought-1'), findsOneWidget);
-    expect(key('your-thought-0'), findsNothing);
-    await tester.drag(key('you-rings'), const Offset(0, -120));
-    await settle(tester);
-    expect(key('your-thought-0'), findsOneWidget);
-    expect(key('you-space-Runs'), findsOneWidget);
-    await tester.drag(key('you-rings'), const Offset(0, -120));
-    await settle(tester);
-    expect(key('you-space-Books'), findsOneWidget);
-    expect(key('you-note'), findsOneWidget);
-    await tester.drag(key('you-rings'), const Offset(0, 120));
-    await settle(tester);
-    expect(key('you-space-Runs'), findsOneWidget);
+  testWidgets(
+    'your page: swipe up the rings to go out, then view as a friend',
+    (tester) async {
+      await pumpPrototype(tester);
+      await settle(tester);
+      await tap(tester, key('you-avatar'));
+      await tap(tester, key('you-world'));
+      expect(key('your-thought-1'), findsOneWidget);
+      expect(key('your-thought-0'), findsNothing);
+      await tester.drag(key('you-rings'), const Offset(0, -120));
+      await settle(tester);
+      expect(key('your-thought-0'), findsOneWidget);
+      expect(key('you-space-Runs'), findsOneWidget);
+      await tester.drag(key('you-rings'), const Offset(0, -120));
+      await settle(tester);
+      expect(key('you-space-Books'), findsOneWidget);
+      expect(key('you-note'), findsOneWidget);
+      await tester.drag(key('you-rings'), const Offset(0, 120));
+      await settle(tester);
+      expect(key('you-space-Runs'), findsOneWidget);
 
-    await tap(tester, key('view-as'));
-    await tap(tester, key('view-as-friends'));
-    expect(find.text('Viewing as a friend · sees 5 of 6'), findsOneWidget);
-    expect(key('your-thought-1'), findsNothing);
-    expect(key('you-add'), findsNothing);
-    // Reactions and who wrote stay yours.
-    expect(key('wrote-0'), findsNothing);
-    await tap(tester, key('as-me'));
-    expect(key('viewing'), findsNothing);
-    expect(key('you-space-Runs'), findsOneWidget);
-    await finish(tester);
-  });
+      await tap(tester, key('view-as'));
+      await tap(tester, key('view-as-friends'));
+      expect(find.text('Viewing as a friend · sees 5 of 6'), findsOneWidget);
+      expect(key('your-thought-1'), findsNothing);
+      expect(key('you-add'), findsNothing);
+      // Reactions and who wrote stay yours.
+      expect(key('wrote-0'), findsNothing);
+      await tap(tester, key('as-me'));
+      expect(key('viewing'), findsNothing);
+      expect(key('you-space-Runs'), findsOneWidget);
+      await finish(tester);
+    },
+  );
 
   testWidgets('your page: / picks who sees a thought; a photo goes with it', (
     tester,
@@ -704,7 +947,8 @@ void main() {
     await tap(tester, key('you-avatar'));
     // Friends who wrote about your run, each a private row.
     expect(key('wrote-0-tarek'), findsOneWidget);
-    expect(find.text('wrote to you · each one is private'), findsWidgets);
+    expect(key('wrote-icon-0'), findsOneWidget);
+    expect(find.text('wrote to you · in your chats'), findsNothing);
     await tester.enterText(key('you-field'), 'first swim of the year /');
     await tester.pump();
     expect(key('commands'), findsOneWidget);
@@ -719,102 +963,109 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('spreading fingers on the tilted orbit shows every thought over its friend', (
-    tester,
-  ) async {
-    await pumpPrototype(tester);
-    await settle(tester);
-    await swipeUp(tester);
-    expect(key('card-omar'), findsOneWidget);
-    expect(key('new-thought-nour'), findsNothing);
+  testWidgets(
+    'spreading fingers on the tilted orbit shows every thought over its friend',
+    (tester) async {
+      await pumpPrototype(tester);
+      await settle(tester);
+      await swipeUp(tester);
+      expect(key('card-omar'), findsOneWidget);
+      expect(key('new-thought-nour'), findsNothing);
 
-    Future<void> pinch(double from, double to, {bool collapse = false}) async {
-      const centre = Offset(195, 260);
-      final a = await tester.startGesture(centre - Offset(from, 0));
-      final b = await tester.startGesture(centre + Offset(from, 0));
-      for (var i = 1; i <= 6; i++) {
-        final d = from + (to - from) * i / 6;
-        await a.moveTo(centre - Offset(d, 0));
-        await b.moveTo(centre + Offset(d, 0));
+      Future<void> pinch(
+        double from,
+        double to, {
+        bool collapse = false,
+      }) async {
+        const centre = Offset(195, 260);
+        final a = await tester.startGesture(centre - Offset(from, 0));
+        final b = await tester.startGesture(centre + Offset(from, 0));
+        for (var i = 1; i <= 6; i++) {
+          final d = from + (to - from) * i / 6;
+          await a.moveTo(centre - Offset(d, 0));
+          await b.moveTo(centre + Offset(d, 0));
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        // iOS can report both touches at one spot as they lift.
+        if (collapse) {
+          await tester.pump(const Duration(milliseconds: 120));
+          await a.moveTo(centre);
+          await b.moveTo(centre);
+        }
+        // One finger lifts first, and the other drifts before it follows.
+        await a.up();
+        await b.moveBy(const Offset(-90, 0));
         await tester.pump(const Duration(milliseconds: 16));
+        await b.up();
+        await settle(tester);
       }
-      // iOS can report both touches at one spot as they lift.
-      if (collapse) {
+
+      await pinch(50, 120);
+      expect(key('card-omar'), findsNothing);
+      expect(key('new-thought-nour'), findsOneWidget);
+      await pinch(120, 50, collapse: true);
+      expect(key('card-omar'), findsOneWidget);
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'the flat orbit shows faces; spreading fingers brings every bubble',
+    (tester) async {
+      await pumpPrototype(tester);
+      await settle(tester);
+      expect(key('new-thought-nour'), findsNothing);
+      expect(key('thought-dot-nour'), findsOneWidget);
+
+      Future<void> pinch(double from, double to) async {
+        const centre = Offset(195, 320);
+        final a = await tester.startGesture(centre - Offset(from, 10));
+        await tester.pump(const Duration(milliseconds: 80));
+        await a.moveBy(const Offset(6, 4));
+        final b = await tester.startGesture(centre + Offset(from, 10));
+        for (var i = 1; i <= 8; i++) {
+          final d = from + (to - from) * i / 8;
+          await a.moveTo(centre - Offset(d, 4));
+          await b.moveTo(centre + Offset(d, 4));
+          await tester.pump(const Duration(milliseconds: 16));
+        }
         await tester.pump(const Duration(milliseconds: 120));
         await a.moveTo(centre);
         await b.moveTo(centre);
-      }
-      // One finger lifts first, and the other drifts before it follows.
-      await a.up();
-      await b.moveBy(const Offset(-90, 0));
-      await tester.pump(const Duration(milliseconds: 16));
-      await b.up();
-      await settle(tester);
-    }
-
-    await pinch(50, 120);
-    expect(key('card-omar'), findsNothing);
-    expect(key('new-thought-nour'), findsOneWidget);
-    await pinch(120, 50, collapse: true);
-    expect(key('card-omar'), findsOneWidget);
-    await finish(tester);
-  });
-
-  testWidgets('the flat orbit shows faces; spreading fingers brings every bubble', (
-    tester,
-  ) async {
-    await pumpPrototype(tester);
-    await settle(tester);
-    expect(key('new-thought-nour'), findsNothing);
-    expect(key('thought-dot-nour'), findsOneWidget);
-
-    Future<void> pinch(double from, double to) async {
-      const centre = Offset(195, 320);
-      final a = await tester.startGesture(centre - Offset(from, 10));
-      await tester.pump(const Duration(milliseconds: 80));
-      await a.moveBy(const Offset(6, 4));
-      final b = await tester.startGesture(centre + Offset(from, 10));
-      for (var i = 1; i <= 8; i++) {
-        final d = from + (to - from) * i / 8;
-        await a.moveTo(centre - Offset(d, 4));
-        await b.moveTo(centre + Offset(d, 4));
+        await a.up();
+        await b.moveBy(const Offset(-90, 0));
         await tester.pump(const Duration(milliseconds: 16));
+        await b.up();
+        await settle(tester);
       }
-      await tester.pump(const Duration(milliseconds: 120));
-      await a.moveTo(centre);
-      await b.moveTo(centre);
-      await a.up();
-      await b.moveBy(const Offset(-90, 0));
-      await tester.pump(const Duration(milliseconds: 16));
-      await b.up();
+
+      await pinch(50, 130);
+      expect(key('new-thought-nour'), findsOneWidget);
+      expect(key('thought-dot-nour'), findsNothing);
+      // Still flat: no reply dock.
+      expect(field('Reply to omar…'), findsNothing);
+      await pinch(130, 50);
+      expect(key('new-thought-nour'), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'your page: photos and videos open full screen; voice plays here',
+    (tester) async {
+      await pumpPrototype(tester);
       await settle(tester);
-    }
-
-    await pinch(50, 130);
-    expect(key('new-thought-nour'), findsOneWidget);
-    expect(key('thought-dot-nour'), findsNothing);
-    // Still flat: no reply dock.
-    expect(field('Reply to omar…'), findsNothing);
-    await pinch(130, 50);
-    expect(key('new-thought-nour'), findsNothing);
-    await finish(tester);
-  });
-
-  testWidgets('your page: photos and videos open full screen; voice plays here', (
-    tester,
-  ) async {
-    await pumpPrototype(tester);
-    await settle(tester);
-    await tap(tester, key('you-avatar'));
-    expect(key('voice-1'), findsOneWidget);
-    await tap(tester, key('media-0-1'));
-    expect(key('media-viewer'), findsOneWidget);
-    expect(find.text('2 / 3'), findsOneWidget);
-    await tester.tap(find.byTooltip('Close'));
-    await settle(tester);
-    expect(key('media-viewer'), findsNothing);
-    await finish(tester);
-  });
+      await tap(tester, key('you-avatar'));
+      expect(key('voice-1'), findsOneWidget);
+      await tap(tester, key('media-0-1'));
+      expect(key('media-viewer'), findsOneWidget);
+      expect(find.text('2 / 3'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close'));
+      await settle(tester);
+      expect(key('media-viewer'), findsNothing);
+      await finish(tester);
+    },
+  );
 
   testWidgets('Reduce Motion keeps the flat orbit and tilts without motion', (
     tester,
@@ -825,6 +1076,62 @@ void main() {
     await tester.dragFrom(const Offset(195, 600), const Offset(0, -300));
     await tester.pump();
     expect(key('card-omar'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a face opens its chat under a row of Close; the row switches '
+      'the chat and holds still; back sends the faces home', (tester) async {
+    await pumpPrototype(tester);
+    await settle(tester);
+    final onOrbit = tester.getCenter(key('avatar-tarek'));
+
+    await tester.tap(key('avatar-omar'));
+    for (var i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(key('strip-ghost-tarek'), findsOneWidget);
+    expect(tester.getCenter(key('strip-ghost-tarek')), isNot(onOrbit));
+
+    await settle(tester);
+    expect(key('strip-ghost-tarek'), findsNothing);
+    expect(key('dm-omar'), findsOneWidget);
+    for (final name in ['omar', 'tarek', 'nour', 'layla', 'sara', 'dina']) {
+      expect(key('strip-face-$name'), findsOneWidget);
+    }
+    final omarAt = tester.getCenter(key('strip-face-omar'));
+    final tarekAt = tester.getCenter(key('strip-face-tarek'));
+    expect(omarAt.dx, lessThan(tarekAt.dx));
+
+    await tap(tester, key('strip-face-tarek'));
+    expect(key('dm-tarek'), findsOneWidget);
+    expect(key('dm-omar'), findsNothing);
+    expect(field('Reply to tarek…'), findsOneWidget);
+    expect(tester.getCenter(key('strip-face-omar')), omarAt);
+    expect(tester.getCenter(key('strip-face-tarek')), tarekAt);
+
+    await back(tester);
+    expect(key('chat-strip'), findsNothing);
+    expect(tester.getCenter(key('avatar-tarek')), onOrbit);
+    final face = tester.widget<Opacity>(
+      find
+          .descendant(of: key('avatar-tarek'), matching: find.byType(Opacity))
+          .first,
+    );
+    expect(face.opacity, greaterThan(0));
+    await finish(tester);
+  });
+
+  testWidgets('with Reduce Motion the chat and its row arrive at once', (
+    tester,
+  ) async {
+    await pumpPrototype(tester, disableAnimations: true);
+    await settle(tester);
+    await tester.tap(key('avatar-omar'));
+    await tester.pump();
+    await tester.pump();
+    expect(key('dm-omar'), findsOneWidget);
+    expect(key('strip-face-tarek'), findsOneWidget);
+    expect(key('strip-ghost-tarek'), findsNothing);
     await finish(tester);
   });
 }

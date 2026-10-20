@@ -6,24 +6,15 @@ part of 'orbit_depth_prototype_screen.dart';
 
 enum _SpaceKind { books, movies, work, add }
 
-class _SpaceItem {
-  final String title;
-  final String byline;
-  final Color color;
-  final int rating;
-  final String status;
-  final String note;
-  final int comments;
+/// A thought kept in a Space by its #tag. A thought leaves the orbit after a
+/// day and your Thoughts after 30 days; tagged into a Space, it stays.
+class _KeptThought {
+  final String text;
 
-  const _SpaceItem(
-    this.title,
-    this.byline,
-    this.color, {
-    required this.rating,
-    required this.status,
-    required this.note,
-    required this.comments,
-  });
+  /// The quiet divider it sits under on the shelf: "this week", "August".
+  final String when;
+
+  const _KeptThought(this.text, {required this.when});
 }
 
 class _Space {
@@ -31,18 +22,24 @@ class _Space {
   final _SpaceKind kind;
   final IconData icon;
   final Color hue;
-  final List<_SpaceItem> items;
+  /// What it keeps, newest first.
+  final List<_KeptThought> kept;
 
   /// What a work Space counts: projects, runs, hikes.
   final String unit;
+
+  /// For your own Spaces: the #tag whose thoughts it keeps. A Space is a tag
+  /// you chose to put in your world.
+  final String? tag;
 
   const _Space(
     this.title,
     this.kind,
     this.icon,
     this.hue, {
-    this.items = const [],
+    this.kept = const [],
     this.unit = 'entries',
+    this.tag,
   });
 }
 
@@ -51,60 +48,31 @@ const _laylaBooks = _Space(
   _SpaceKind.books,
   Icons.menu_book_outlined,
   Color(0xFFE6B566),
-  items: [
-    _SpaceItem(
-      'The Alchemist',
-      'Paulo Coelho',
-      Color(0xFF8A3B2E),
-      rating: 0,
-      status: 'Reading now',
-      note: 'a third in. slow start but it is growing on me',
-      comments: 4,
+  tag: 'books',
+  kept: [
+    _KeptThought(
+      'reading The Alchemist by Paulo Coelho. a third in. slow start but it is growing on me #books',
+      when: 'this week',
     ),
-    _SpaceItem(
-      'Men Without Women',
-      'Haruki Murakami',
-      Color(0xFF2E4A6B),
-      rating: 4,
-      status: 'Finished in September',
-      note: 'the last story stayed with me for days',
-      comments: 6,
+    _KeptThought(
+      'finished Men Without Women by Haruki Murakami. the last story stayed with me for days #books',
+      when: 'September',
     ),
-    _SpaceItem(
-      'Season of Migration to the North',
-      'Tayeb Salih',
-      Color(0xFF3F5B3A),
-      rating: 5,
-      status: 'Finished in August',
-      note: 'everyone should read this once. slowly.',
-      comments: 12,
+    _KeptThought(
+      'finished Season of Migration to the North by Tayeb Salih. everyone should read this once. slowly. #books',
+      when: 'August',
     ),
-    _SpaceItem(
-      'Atomic Habits',
-      'James Clear',
-      Color(0xFFC9B79C),
-      rating: 3,
-      status: 'Finished in July',
-      note: 'useful, could have been half the length',
-      comments: 9,
+    _KeptThought(
+      'finished Atomic Habits by James Clear. useful, could have been half the length #books',
+      when: 'July',
     ),
-    _SpaceItem(
-      'The Midnight Library',
-      'Matt Haig',
-      Color(0xFF1F2B4D),
-      rating: 4,
-      status: 'Finished in June',
-      note: 'read it in two nights',
-      comments: 3,
+    _KeptThought(
+      'finished The Midnight Library by Matt Haig. read it in two nights #books',
+      when: 'June',
     ),
-    _SpaceItem(
-      'Sapiens',
-      'Yuval Noah Harari',
-      Color(0xFF9C3D3D),
-      rating: 4,
-      status: 'Finished in May',
-      note: 'changed how I think about money',
-      comments: 5,
+    _KeptThought(
+      'finished Sapiens by Yuval Noah Harari. changed how I think about money #books',
+      when: 'May',
     ),
   ],
 );
@@ -114,51 +82,27 @@ const _laylaMovies = _Space(
   _SpaceKind.movies,
   Icons.movie_outlined,
   Color(0xFF8FB3E8),
-  items: [
-    _SpaceItem(
-      'Past Lives',
-      '2023',
-      Color(0xFF3A4E6B),
-      rating: 5,
-      status: 'Watched last night',
-      note: 'quiet and devastating. bring tissues',
-      comments: 7,
+  tag: 'movies',
+  kept: [
+    _KeptThought(
+      'watched Past Lives last night. quiet and devastating. bring tissues #movies',
+      when: 'this week',
     ),
-    _SpaceItem(
-      'Perfect Days',
-      '2023',
-      Color(0xFF4F6B5A),
-      rating: 5,
-      status: 'Watched in September',
-      note: 'I want to live like the main character',
-      comments: 3,
+    _KeptThought(
+      'watched Perfect Days. I want to live like the main character #movies',
+      when: 'September',
     ),
-    _SpaceItem(
-      'Capernaum',
-      '2018',
-      Color(0xFF7A5A3A),
-      rating: 5,
-      status: 'Watched in August',
-      note: 'hard to watch, impossible to forget',
-      comments: 9,
+    _KeptThought(
+      'watched Capernaum. hard to watch, impossible to forget #movies',
+      when: 'August',
     ),
-    _SpaceItem(
-      'Dune: Part Two',
-      '2024',
-      Color(0xFFB07A3C),
-      rating: 4,
-      status: 'Watched in March',
-      note: 'the sound in the cinema!',
-      comments: 11,
+    _KeptThought(
+      'watched Dune: Part Two. the sound in the cinema! #movies',
+      when: 'March',
     ),
-    _SpaceItem(
-      'Oppenheimer',
-      '2023',
-      Color(0xFF3B3B3B),
-      rating: 3,
-      status: 'Watched in July',
-      note: 'too long for me',
-      comments: 4,
+    _KeptThought(
+      'watched Oppenheimer. too long for me #movies',
+      when: 'July',
     ),
   ],
 );
@@ -168,33 +112,19 @@ const _omarBooks = _Space(
   _SpaceKind.books,
   Icons.menu_book_outlined,
   Color(0xFFE6B566),
-  items: [
-    _SpaceItem(
-      'Deep Work',
-      'Cal Newport',
-      Color(0xFF263238),
-      rating: 0,
-      status: 'Reading now',
-      note: 'phone in the other room. it actually works',
-      comments: 2,
+  tag: 'books',
+  kept: [
+    _KeptThought(
+      'reading Deep Work by Cal Newport. phone in the other room. it actually works #books',
+      when: 'this week',
     ),
-    _SpaceItem(
-      'The Prophet',
-      'Kahlil Gibran',
-      Color(0xFF6B4E2E),
-      rating: 5,
-      status: 'Finished in August',
-      note: 'reread it every year',
-      comments: 6,
+    _KeptThought(
+      'finished The Prophet by Kahlil Gibran. reread it every year #books',
+      when: 'August',
     ),
-    _SpaceItem(
-      "Can't Hurt Me",
-      'David Goggins',
-      Color(0xFF1C1C1C),
-      rating: 4,
-      status: 'Finished in June',
-      note: 'why I started the plank thing',
-      comments: 4,
+    _KeptThought(
+      "finished Can't Hurt Me by David Goggins. why I started the plank thing #books",
+      when: 'June',
     ),
   ],
 );
@@ -204,33 +134,19 @@ const _nourMovies = _Space(
   _SpaceKind.movies,
   Icons.movie_outlined,
   Color(0xFF8FB3E8),
-  items: [
-    _SpaceItem(
-      'Wadjda',
-      '2012',
-      Color(0xFF2F6B5E),
-      rating: 5,
-      status: 'Watched on Sunday',
-      note: 'the bicycle scene got me',
-      comments: 5,
+  tag: 'movies',
+  kept: [
+    _KeptThought(
+      'watched Wadjda on Sunday. the bicycle scene got me #movies',
+      when: 'this week',
     ),
-    _SpaceItem(
-      'Inside Out 2',
-      '2024',
-      Color(0xFF6B3F8A),
-      rating: 4,
-      status: 'Watched in July',
-      note: 'anxiety is too real',
-      comments: 8,
+    _KeptThought(
+      'watched Inside Out 2. anxiety is too real #movies',
+      when: 'July',
     ),
-    _SpaceItem(
-      'Barbie',
-      '2023',
-      Color(0xFFC75B8E),
-      rating: 3,
-      status: 'Watched last summer',
-      note: 'fun, the songs are stuck in my head',
-      comments: 3,
+    _KeptThought(
+      'watched Barbie. fun, the songs are stuck in my head #movies',
+      when: 'last summer',
     ),
   ],
 );
@@ -240,24 +156,11 @@ const _yourBooks = _Space(
   _SpaceKind.books,
   Icons.menu_book_outlined,
   Color(0xFFE6B566),
-  items: [
-    _SpaceItem(
-      'Thinking, Fast and Slow',
-      'Daniel Kahneman',
-      Color(0xFF2E3A4F),
-      rating: 0,
-      status: 'Reading now',
-      note: 'chapter 12. my brain hurts in a good way',
-      comments: 3,
-    ),
-    _SpaceItem(
-      'The Pragmatic Programmer',
-      'Hunt & Thomas',
-      Color(0xFF5A3A2E),
-      rating: 4,
-      status: 'Finished in August',
-      note: 'should have read this years ago',
-      comments: 2,
+  tag: 'books',
+  kept: [
+    _KeptThought(
+      'finished The Pragmatic Programmer by Hunt & Thomas. should have read this years ago #books',
+      when: 'August',
     ),
   ],
 );
@@ -268,24 +171,15 @@ const _yourRuns = _Space(
   Icons.directions_run,
   Color(0xFF1DB954),
   unit: 'runs',
-  items: [
-    _SpaceItem(
-      '5k along the corniche',
-      'Wednesday · 28:55',
-      Color(0xFF1F3B4D),
-      rating: 0,
-      status: 'New best',
-      note: 'slowly getting there',
-      comments: 6,
+  tag: 'runs',
+  kept: [
+    _KeptThought(
+      'first 10k without stopping. legs gone, head clear #runs',
+      when: 'May',
     ),
-    _SpaceItem(
-      '5k, first try',
-      'Monday · 29:40',
-      Color(0xFF3F5B3A),
-      rating: 0,
-      status: 'Done',
-      note: 'walked twice. not again',
-      comments: 4,
+    _KeptThought(
+      '5k, first try, done. walked twice. not again #runs',
+      when: 'earlier',
     ),
   ],
 );
@@ -297,12 +191,231 @@ const _newSpace = _Space(
   Color(0xFF9AA59F),
 );
 
+const _laylaHikes = _Space(
+  'Hikes',
+  _SpaceKind.work,
+  Icons.terrain_outlined,
+  Color(0xFF7FB8A0),
+  tag: 'hikes',
+  kept: [
+    _KeptThought(
+      'weekend up north. still can\'t feel my legs, worth every step #hikes',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'wadi mujib with the girls. waist deep in the river for an hour #hikes',
+      when: 'September',
+    ),
+    _KeptThought(
+      'first sunrise hike. the thermos was the best idea anyone ever had #hikes',
+      when: 'June',
+    ),
+  ],
+);
+
+const _nourTravel = _Space(
+  'Travel',
+  _SpaceKind.work,
+  Icons.flight_takeoff,
+  Color(0xFFC7A6F0),
+  tag: 'travel',
+  kept: [
+    _KeptThought(
+      'airport at 6. lisbon for four days, finally #travel',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'istanbul in the rain. ate my weight in simit #travel',
+      when: 'August',
+    ),
+    _KeptThought(
+      'the night train to aswan. would do it again tomorrow #travel',
+      when: 'March',
+    ),
+  ],
+);
+
+const _tarekWorkshop = _Space(
+  'Workshop',
+  _SpaceKind.work,
+  Icons.handyman_outlined,
+  Color(0xFF7FD1F0),
+  tag: 'workshop',
+  kept: [
+    _KeptThought(
+      'shelves for the hallway, take two. the drill gave up halfway #workshop',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'a stool for my niece. wobbles a bit, she loves it anyway #workshop',
+      when: 'September',
+    ),
+    _KeptThought(
+      'sanded the old door back to the wood. it was green underneath #workshop',
+      when: 'July',
+    ),
+  ],
+);
+
+const _saraLuna = _Space(
+  'Luna',
+  _SpaceKind.work,
+  Icons.pets_outlined,
+  Color(0xFFF5B07A),
+  tag: 'luna',
+  kept: [
+    _KeptThought(
+      'we adopted her! meet luna. she already owns the sofa #luna',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'luna met the sea today. she does not trust waves #luna',
+      when: 'this week',
+    ),
+  ],
+);
+
+const _mayaWork = _Space(
+  'Work',
+  _SpaceKind.work,
+  Icons.work_outline,
+  Color(0xFFF5B07A),
+  tag: 'work',
+  kept: [
+    _KeptThought(
+      'new job starts monday. nervous in the good way #work',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'last day at the studio. they made me a cake shaped like a deadline #work',
+      when: 'September',
+    ),
+    _KeptThought(
+      'portfolio finally done. forty drafts, one page #work',
+      when: 'August',
+    ),
+  ],
+);
+
+const _danaCooking = _Space(
+  'Cooking',
+  _SpaceKind.work,
+  Icons.restaurant_outlined,
+  Color(0xFFF2A6C8),
+  tag: 'cooking',
+  kept: [
+    _KeptThought(
+      'cooking for 10 tonight. mansaf, too much as always #cooking',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'my grandmother\'s maqluba, first time flipping it without disaster #cooking',
+      when: 'September',
+    ),
+    _KeptThought(
+      'sourdough attempt four. it is alive and it is angry #cooking',
+      when: 'July',
+    ),
+  ],
+);
+
+const _wardGarden = _Space(
+  'Garden',
+  _SpaceKind.work,
+  Icons.local_florist_outlined,
+  Color(0xFFA3E07F),
+  tag: 'garden',
+  kept: [
+    _KeptThought(
+      'garden finally bloomed. three years for this #garden',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'planted the jasmine by the window, for mornings #garden',
+      when: 'May',
+    ),
+    _KeptThought(
+      'lost the tomatoes to the heat. trying again next spring #garden',
+      when: 'last summer',
+    ),
+  ],
+);
+
+const _miraBooks = _Space(
+  'Books',
+  _SpaceKind.work,
+  Icons.menu_book_outlined,
+  Color(0xFFE6B566),
+  tag: 'books',
+  kept: [
+    _KeptThought(
+      'finally finished the book. Pachinko by Min Jin Lee. I miss them already #books',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'reading three books at once again. no regrets #books',
+      when: 'September',
+    ),
+    _KeptThought(
+      'A Thousand Splendid Suns on the bus. had to stop, people were staring #books',
+      when: 'June',
+    ),
+  ],
+);
+
+const _linaFootball = _Space(
+  'Football',
+  _SpaceKind.work,
+  Icons.sports_soccer,
+  Color(0xFFF2A6C8),
+  tag: 'football',
+  kept: [
+    _KeptThought(
+      'anyone watching the match? I need someone to shout with #football',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'five a side on thursday. scored once, fell twice #football',
+      when: 'September',
+    ),
+  ],
+);
+
+const _hudaTravel = _Space(
+  'Travel',
+  _SpaceKind.work,
+  Icons.flight_takeoff,
+  Color(0xFFFF9E9E),
+  tag: 'travel',
+  kept: [
+    _KeptThought(
+      'back in town next week. bringing dates from medina #travel',
+      when: 'this week',
+    ),
+    _KeptThought(
+      'a month in kuala lumpur. the rain at four every day, like a clock #travel',
+      when: 'August',
+    ),
+  ],
+);
+
 const _spacesByOwner = <String, List<_Space>>{
-  'layla': [_laylaBooks, _laylaMovies],
+  'layla': [_laylaBooks, _laylaMovies, _laylaHikes],
   'omar': [_omarBooks],
-  'nour': [_nourMovies],
-  'you': [_yourBooks, _yourRuns, _newSpace],
+  'nour': [_nourMovies, _nourTravel],
+  'tarek': [_tarekWorkshop],
+  'sara': [_saraLuna],
+  'maya': [_mayaWork],
+  'dana': [_danaCooking],
+  'ward': [_wardGarden],
+  'mira': [_miraBooks],
+  'lina': [_linaFootball],
+  'huda': [_hudaTravel],
 };
+
+/// Your Spaces: the tags you put in your world. They grow while the
+/// prototype runs.
+final List<_Space> _yourSpaces = [_yourBooks, _yourRuns];
 
 /// A thought someone shared. The newest one is the one on the orbit right
 /// now; older ones stay in their world. [space] links a thought that was
@@ -400,8 +513,9 @@ List<_PastThought> _thoughtsOf(String owner) {
 
 /// A person's Spaces: yours, a friend's, or the ones a friend of a friend
 /// opened to friends of friends.
-List<_Space> _spacesFor(String owner) =>
-    _spacesByOwner[owner] ?? _fofSpaces[owner] ?? const [];
+List<_Space> _spacesFor(String owner) => owner == 'you'
+    ? [..._yourSpaces, _newSpace]
+    : _spacesByOwner[owner] ?? _fofSpaces[owner] ?? const [];
 
 void _openSpace(BuildContext context, String owner, String title) {
   for (final space in _spacesFor(owner)) {
@@ -414,15 +528,6 @@ void _openSpace(BuildContext context, String owner, String title) {
     }
   }
 }
-
-/// Friends who comment on items, cycled to fill each thread.
-const _commenters = [
-  ('sara', 'adding this to my list'),
-  ('omar', 'the ending though!'),
-  ('nour', 'can I borrow it after you?'),
-  ('tarek', 'not my thing but your notes make me want to try'),
-  ('layla', 'agree with every word'),
-];
 
 /// A person's picture: their photo, or the app's default ring avatar.
 Widget _personPhoto(String owner, double size) {
@@ -528,12 +633,9 @@ class _SpaceCard extends StatelessWidget {
     required this.onDive,
   });
 
-  String get _subtitle => switch (space.kind) {
-    _SpaceKind.books => 'Reading list · ${space.items.length} books',
-    _SpaceKind.movies => 'Watched · ${space.items.length} movies',
-    _SpaceKind.work => '${space.items.length} ${space.unit}',
-    _SpaceKind.add => 'Start something your friends can follow',
-  };
+  String get _subtitle => space.kind == _SpaceKind.add
+      ? 'Start something your friends can follow'
+      : '#${space.tag}';
 
   @override
   Widget build(BuildContext context) {
@@ -583,35 +685,19 @@ class _SpaceCard extends StatelessWidget {
       case _SpaceKind.books:
       case _SpaceKind.movies:
       case _SpaceKind.work:
-        final latest = space.items.first;
+        final latest = space.kept.firstOrNull;
+        if (latest == null) return const [];
         return [
-          Row(
-            children: [
-              for (final item in space.items.take(4))
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: _Cover(
-                    item: item,
-                    kind: space.kind,
-                    width: 40,
-                    height: 58,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 12),
           Text(
-            space.kind == _SpaceKind.books
-                ? '${latest.status}: ${latest.title}'
-                : '${latest.status}: ${latest.title}',
-            style: const TextStyle(color: _ink, fontSize: 14),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '“${latest.note}”',
-            maxLines: 2,
+            _withoutTags(latest.text),
+            maxLines: 3,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: _chatSecondary, fontSize: 13),
+            style: const TextStyle(color: _ink, fontSize: 14.5, height: 1.4),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            latest.when,
+            style: _mono.copyWith(color: _faint, fontSize: 11.5),
           ),
         ];
       case _SpaceKind.add:
@@ -626,170 +712,6 @@ class _SpaceCard extends StatelessWidget {
   }
 }
 
-
-/// A book or movie cover, set in type like a real edition.
-class _Cover extends StatelessWidget {
-  final _SpaceItem item;
-  final _SpaceKind kind;
-  final double width;
-  final double height;
-
-  const _Cover({
-    required this.item,
-    required this.kind,
-    required this.width,
-    required this.height,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final movie = kind == _SpaceKind.movies;
-    final light = item.color.computeLuminance() > 0.35;
-    final ink = light ? const Color(0xFF2A2420) : const Color(0xFFF5EFE3);
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(width * 0.06),
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: movie
-              ? [item.color, Color.lerp(item.color, Colors.black, 0.75)!]
-              : [
-                  Color.lerp(item.color, Colors.white, 0.06)!,
-                  Color.lerp(item.color, Colors.black, 0.12)!,
-                ],
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x80000000),
-            blurRadius: 8,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      padding: EdgeInsets.all(width * 0.09),
-      child: Column(
-        mainAxisAlignment: movie
-            ? MainAxisAlignment.end
-            : MainAxisAlignment.spaceBetween,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          if (!movie) Container(height: 0.6, color: ink.withValues(alpha: 0.4)),
-          Text(
-            item.title,
-            textAlign: TextAlign.center,
-            maxLines: 4,
-            overflow: TextOverflow.clip,
-            style: TextStyle(
-              color: ink,
-              fontFamily: 'Georgia',
-              fontFamilyFallback: const ['Times New Roman', 'serif'],
-              fontSize: width * (movie ? 0.15 : 0.13),
-              fontWeight: movie ? FontWeight.w700 : FontWeight.w500,
-              height: 1.1,
-            ),
-          ),
-          SizedBox(height: movie ? width * 0.05 : 0),
-          Text(
-            item.byline.toUpperCase(),
-            textAlign: TextAlign.center,
-            maxLines: 1,
-            overflow: TextOverflow.clip,
-            style: TextStyle(
-              color: ink.withValues(alpha: 0.75),
-              fontSize: width * 0.065,
-              letterSpacing: width * 0.006,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ItemCard extends StatelessWidget {
-  final String owner;
-  final _SpaceItem item;
-  final _SpaceKind kind;
-  final VoidCallback onOpen;
-
-  const _ItemCard({
-    required this.owner,
-    required this.item,
-    required this.kind,
-    required this.onOpen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return _CardShell(
-      onTap: onOpen,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            item.title,
-            style: const TextStyle(
-              color: _ink,
-              fontFamily: 'Georgia',
-              fontFamilyFallback: ['Times New Roman', 'serif'],
-              fontSize: 19,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            item.byline,
-            style: const TextStyle(color: _muted, fontSize: 13),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              _StatusChip(text: item.status),
-              const SizedBox(width: 10),
-              if (item.rating > 0) _Stars(rating: item.rating),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _personPhoto(owner, 26),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '“${item.note}”',
-                  style: const TextStyle(
-                    color: Color(0xFFDDE3DF),
-                    fontSize: 14,
-                    height: 1.35,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              const Icon(Icons.chat_bubble_outline, size: 15, color: _muted),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '${item.comments} comments',
-                  style: const TextStyle(color: _muted, fontSize: 12.5),
-                ),
-              ),
-              _AccentButton(label: 'Open', onTap: onOpen),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Small shared pieces.
@@ -850,66 +772,9 @@ class _AccentButton extends StatelessWidget {
   }
 }
 
-class _StatusChip extends StatelessWidget {
-  final String text;
-
-  const _StatusChip({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    final now = text.startsWith('Reading') || text.startsWith('Watched last');
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: now ? const Color(0xFF12301F) : _chat.surfaceSubtle,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: now ? const Color(0xFF5BE38A) : _muted,
-          fontSize: 11.5,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _Stars extends StatelessWidget {
-  final int rating;
-
-  const _Stars({required this.rating});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < 5; i++)
-          Icon(
-            i < rating ? Icons.star_rounded : Icons.star_outline_rounded,
-            size: 15,
-            color: i < rating
-                ? const Color(0xFFE6B566)
-                : const Color(0xFF3A4741),
-          ),
-      ],
-    );
-  }
-}
-
-void _openItemSheet(
-  BuildContext context,
-  String owner,
-  _SpaceItem item,
-  _SpaceKind kind,
-) {
+void _openKeptSheet(BuildContext context, String owner, _KeptThought kept) {
   HapticFeedback.selectionClick();
-  final thread = [
-    for (var i = 0; i < math.min(item.comments, 4); i++)
-      _commenters[(item.title.length + i) % _commenters.length],
-  ].where((c) => c.$1 != owner).toList();
+  final page = context;
   showModalBottomSheet<void>(
     context: context,
     backgroundColor: _sheet,
@@ -927,112 +792,72 @@ void _openItemSheet(
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _Cover(item: item, kind: kind, width: 78, height: 112),
-                  const SizedBox(width: 16),
+                  _personPhoto(owner, 30),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item.title,
-                          style: const TextStyle(
-                            color: _ink,
-                            fontFamily: 'Georgia',
-                            fontFamilyFallback: ['Times New Roman', 'serif'],
-                            fontSize: 20,
-                            fontWeight: FontWeight.w600,
+                        Text.rich(
+                          _taggedSpan(
+                            kept.text,
+                            const TextStyle(
+                              color: _ink,
+                              fontSize: 16,
+                              height: 1.45,
+                            ),
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 8),
                         Text(
-                          item.byline,
-                          style: const TextStyle(color: _muted, fontSize: 13),
+                          kept.when,
+                          style: _mono.copyWith(color: _faint, fontSize: 11.5),
                         ),
-                        const SizedBox(height: 10),
-                        _StatusChip(text: item.status),
-                        if (item.rating > 0) ...[
-                          const SizedBox(height: 8),
-                          _Stars(rating: item.rating),
-                        ],
                       ],
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _personPhoto(owner, 30),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      '“${item.note}”',
-                      style: const TextStyle(
-                        color: _ink,
-                        fontSize: 15,
-                        height: 1.4,
-                      ),
+              // A Space is kept, not performed: no comments under it, only
+              // a word to its owner that stays between the two of you.
+              if (owner != 'you') ...[
+                const SizedBox(height: 20),
+                GestureDetector(
+                  key: ValueKey('space-write-$owner'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _openDm(page, owner);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 13,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Text(
-                '${item.comments} comments',
-                style: const TextStyle(
-                  color: _muted,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.6,
-                ),
-              ),
-              const SizedBox(height: 10),
-              for (final (name, text) in thread)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _personPhoto(name, 28),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: '$name  ',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              TextSpan(text: text),
-                            ],
-                          ),
-                          style: const TextStyle(
-                            color: Color(0xFFDDE3DF),
-                            fontSize: 14,
-                            height: 1.35,
+                    decoration: BoxDecoration(
+                      color: _chat.surfaceSubtle,
+                      borderRadius: BorderRadius.circular(23),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.lock_outline, size: 14, color: _accent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Write to $owner about this · only they see it',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFFC7CEC9),
+                              fontSize: 14,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              const SizedBox(height: 6),
-              TextField(
-                style: const TextStyle(color: _ink),
-                decoration: InputDecoration(
-                  hintText: 'Say something about ${item.title}',
-                  hintStyle: const TextStyle(color: Color(0xFF78837C)),
-                  filled: true,
-                  fillColor: _chat.surfaceSubtle,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(23),
-                    borderSide: const BorderSide(color: Color(0xFF1C2420)),
-                  ),
-                ),
-              ),
+              ],
             ],
           ),
         ),

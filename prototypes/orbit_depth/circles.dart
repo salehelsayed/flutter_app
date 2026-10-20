@@ -199,34 +199,20 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.brush_outlined,
       Color(0xFF7FB8E8),
+      tag: 'design',
       unit: 'projects',
-      items: [
-        _SpaceItem(
-          'Wayfinding for the old souq',
-          'Signage · 2026',
-          Color(0xFF1F3B4D),
-          rating: 0,
-          status: 'Shipped in May',
-          note: 'every sign hand drawn first, then cut in brass',
-          comments: 9,
+      kept: [
+        _KeptThought(
+          'shipped Wayfinding for the old souq. every sign hand drawn first, then cut in brass #design',
+          when: 'May',
         ),
-        _SpaceItem(
-          'A calmer banking app',
-          'App design · 2025',
-          Color(0xFF3B2F4D),
-          rating: 0,
-          status: 'Case study',
-          note: 'took out 40% of the screens. nobody missed them',
-          comments: 5,
+        _KeptThought(
+          'A calmer banking app. took out 40% of the screens. nobody missed them #design',
+          when: 'earlier',
         ),
-        _SpaceItem(
-          'Bookshop identity',
-          'Branding · 2025',
-          Color(0xFFD9C7A3),
-          rating: 0,
-          status: 'In progress',
-          note: 'looking for honest eyes on the logo',
-          comments: 3,
+        _KeptThought(
+          'working on Bookshop identity. looking for honest eyes on the logo #design',
+          when: 'this week',
         ),
       ],
     ),
@@ -237,25 +223,16 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.terrain_outlined,
       Color(0xFF1DB954),
+      tag: 'hikes',
       unit: 'hikes',
-      items: [
-        _SpaceItem(
-          'Jebel Akhdar',
-          'September · 8 km',
-          Color(0xFF3F5B3A),
-          rating: 0,
-          status: 'Done',
-          note: 'the terraces at sunrise. worth the 4am start',
-          comments: 6,
+      kept: [
+        _KeptThought(
+          'Jebel Akhdar, done. the terraces at sunrise. worth the 4am start #hikes',
+          when: 'earlier',
         ),
-        _SpaceItem(
-          'Wadi Ghul',
-          'August · 12 km',
-          Color(0xFF6B4E2E),
-          rating: 0,
-          status: 'Done',
-          note: 'the rim walk. bring twice the water you think',
-          comments: 3,
+        _KeptThought(
+          'Wadi Ghul, done. the rim walk. bring twice the water you think #hikes',
+          when: 'earlier',
         ),
       ],
     ),
@@ -266,25 +243,16 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.handyman_outlined,
       Color(0xFFE6B566),
+      tag: 'workshop',
       unit: 'projects',
-      items: [
-        _SpaceItem(
-          'Walnut bookshelf',
-          'Joinery · 2026',
-          Color(0xFF5A3A2E),
-          rating: 0,
-          status: 'Finished in June',
-          note: 'no screws, only dovetails',
-          comments: 4,
+      kept: [
+        _KeptThought(
+          'finished Walnut bookshelf. no screws, only dovetails #workshop',
+          when: 'June',
         ),
-        _SpaceItem(
-          'Kids’ step stool',
-          'Pine · 2025',
-          Color(0xFFD9C7A3),
-          rating: 0,
-          status: 'Gave it away',
-          note: 'built it twice, the first one wobbled',
-          comments: 2,
+        _KeptThought(
+          'Kids’ step stool. gave it away. built it twice, the first one wobbled #workshop',
+          when: 'earlier',
         ),
       ],
     ),
@@ -295,15 +263,11 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.books,
       Icons.menu_book_outlined,
       Color(0xFFE6B566),
-      items: [
-        _SpaceItem(
-          'Noise',
-          'Kahneman, Sibony, Sunstein',
-          Color(0xFF2E3A4F),
-          rating: 0,
-          status: 'Reading now',
-          note: 'looking for someone to argue chapter 5 with',
-          comments: 1,
+      tag: 'reading',
+      kept: [
+        _KeptThought(
+          'reading Noise by Kahneman, Sibony, Sunstein. looking for someone to argue chapter 5 with #reading',
+          when: 'this week',
         ),
       ],
     ),
@@ -314,16 +278,12 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.directions_run,
       Color(0xFF1DB954),
+      tag: 'runs',
       unit: 'runs',
-      items: [
-        _SpaceItem(
-          'Corniche loop',
-          'Oct 4 · 9 runners · 6 km',
-          Color(0xFF1F3B4D),
-          rating: 0,
-          status: 'Done',
-          note: 'new people every week. all paces welcome',
-          comments: 6,
+      kept: [
+        _KeptThought(
+          'Corniche loop, done. new people every week. all paces welcome #runs',
+          when: 'earlier',
         ),
       ],
     ),
@@ -334,16 +294,12 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.pets_outlined,
       Color(0xFFF2A65A),
+      tag: 'dogwalks',
       unit: 'walks',
-      items: [
-        _SpaceItem(
-          'Park at the end of 7th',
-          'Sundays · 9am',
-          Color(0xFF3F5B3A),
-          rating: 0,
-          status: 'Every week',
-          note: 'there is a fenced bit for the small ones',
-          comments: 2,
+      kept: [
+        _KeptThought(
+          'Park at the end of 7th, every week. there is a fenced bit for the small ones #dogwalks',
+          when: 'this week',
         ),
       ],
     ),
@@ -354,16 +310,12 @@ const _fofSpaces = <String, List<_Space>>{
       _SpaceKind.work,
       Icons.edit_note,
       Color(0xFFFF9E9E),
+      tag: 'managing',
       unit: 'notes',
-      items: [
-        _SpaceItem(
-          'Your first 30 days',
-          'Note · 2026',
-          Color(0xFF4D2E2E),
-          rating: 0,
-          status: 'Pinned',
-          note: 'listen more than you change anything',
-          comments: 11,
+      kept: [
+        _KeptThought(
+          'Your first 30 days. listen more than you change anything #managing',
+          when: 'earlier',
         ),
       ],
     ),

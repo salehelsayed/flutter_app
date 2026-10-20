@@ -478,6 +478,16 @@ if [ "${CLAUDE_DOCKER_REBUILD:-0}" = "1" ] || ! docker image inspect "${IMAGE_NA
     "${REPO_ROOT}/docker/claude-code"
 fi
 
+# In a git worktree, .git is a file that points into the main repository's
+# .git directory by its Mac path. Mount that directory at the same path so
+# git works inside the container.
+if [ -f "${REPO_ROOT}/.git" ]; then
+  GIT_COMMON_DIR="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  if [ -n "${GIT_COMMON_DIR}" ] && [ -d "${GIT_COMMON_DIR}" ]; then
+    DOCKER_RUN_ARGS+=(-v "${GIT_COMMON_DIR}:${GIT_COMMON_DIR}")
+  fi
+fi
+
 start_host_bridge
 
 DOCKER_RUN_ARGS+=(
