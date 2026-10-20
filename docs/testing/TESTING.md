@@ -7602,6 +7602,14 @@ visible and cannot become an ordinary first-attempt PASS.
   Answer, bidirectional RTP, controls, cleanup/restoration and the separately
   bound known-Opus Pion oracle. This source/debug campaign does not establish
   physical audible sound, deployed-service behavior or signed distribution.
+  If the adapter stops before its typed report with `could not reserve an
+  isolated coturn port set`, inspect host socket ownership before retrying.
+  Docker readiness alone does not prove port availability. In the retained
+  [Step 1 port probe](../../.codex-test-logs/plan407-step1/audio-port-allocator-owner-source-trace.json),
+  the shared `netsimd` service held 3,055 UDP sockets, including 815 in the
+  fixture's sampled relay range. Setup stopped before any container, app build
+  or device action; this is an environment blocker, not a passing audio proof.
+  Do not stop shared services or foreign containers as campaign cleanup.
   The KX regression additions reuse these existing suites and profiles: twenty
   call-profile rows share the same APK and local backend through
   `--include-regressions`, five contact-delete rows use
