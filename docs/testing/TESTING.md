@@ -2765,6 +2765,14 @@ fingerprints remain unchanged. Focused verification and the preserved initial
 failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+The canonical full planner still performs its global inventory census with
+`--only`. A scoped native row can pass while the overall report stays BLOCKED
+by unrelated inventory gaps. Verify those gaps against the explicit checkpoint
+before continuing a scoped run, retain the original preview and global verdict,
+and report the selected row separately. Plan 407's
+`.codex-test-logs/plan407-step1/validation-report.json` retains this distinction
+for the nine passing Posts scenarios and the unchanged global inventory gaps.
+
 The protected `gate benchmark-sim` partitions those same 17 scenarios into
 `A,B,BR,C,D,E,F,G,I,J,K,L,M,N,R` on the pinned `android-physical` role and `GP,H`
 on the pinned `ios-simulator-a` role (`devices.ios_simulator`). Both roles are
@@ -2877,6 +2885,26 @@ is `N/A (target unavailable by project policy)` after successful live discovery;
 unknown discovery, absent configuration/credentials, or an unavailable supplied
 target remains precisely blocked. Missing fixtures are runtime prerequisites,
 separate from inventory completeness.
+
+Provider inputs can exist only in the main checkout's ignored files. Locate it
+with `git worktree list --porcelain` before treating credentials as missing from
+a linked worktree, then reference the existing owner-only files in private
+configuration. A missing local Firebase client also does not prove the test app
+is unregistered: read-only Firebase Management app-list/config requests recovered
+the existing `com.mknoon.sims.notifications` client, with package/project matches.
+The redacted discovery receipts and hashes are in
+`.codex-test-logs/plan407-step1/provider-setup-provenance/`. These establish setup
+availability, not notification delivery.
+
+The Android group-media row accepts `full_suite.relay_addresses`; it does not
+require the local fixture. The central builder embeds `MKNOON_RELAY_ADDRESSES`
+and includes that define in the build cache identity. Changing a runtime
+environment variable cannot redirect an already compiled APK: rebuild and
+attest the artifact for the chosen relay. Use the exact `/dns/` defaults from
+`p2p_bridge_client.dart` when testing the app's hardcoded AWS relay; a historical
+manifest's `/dns4/` addresses name the same relay but are different compile
+inputs. The executable contract and cache-key trace is retained in
+`.codex-test-logs/plan407-step1/group-media-aws-supported-config-source-trace.json`.
 
 Physical iOS group-notification scenarios require a physical Android sender
 and physical iPhone recipient. Their group staging manifest uses `provider=apns`
