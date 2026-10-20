@@ -40,6 +40,10 @@ const (
 	productionAudioCallTurnTransport      = "udp"
 	productionAudioCallCoturnLockSchema   = "mknoon.call_audio_oracle.coturn_lock.v1"
 	productionAudioCallRelayPortCount     = 24
+	// Below the macOS ephemeral range (49152+), separate from the native
+	// mixed-policy (40000-40100) and TURN-path (41000-41060) probe fixtures.
+	productionAudioCallRelayPortMin = 40200
+	productionAudioCallRelayPortMax = 40999
 )
 
 type productionAudioCallCoturnLock struct {
@@ -398,6 +402,15 @@ func (fixture *productionAudioCallDeviceFixture) startCoturn(
 	if err := ensureProductionAudioCallCoturnImage(fixture.dockerExecutable, immutableImage, lock); err != nil {
 		return "", "", err
 	}
+	// Image preparation can take time. Recheck the selected block immediately
+	// before publication; Docker needs these temporary bindings released.
+	closers, err := bindProductionAudioCallPortSet(listenPort, relayMinPort, relayMaxPort)
+	if err != nil {
+		return "", "", productionAudioCallPortConflict(err)
+	}
+	for _, closer := range closers {
+		_ = closer.Close()
+	}
 	nameToken := make([]byte, 8)
 	if _, err := io.ReadFull(rand.Reader, nameToken); err != nil {
 		return "", "", fmt.Errorf("create coturn container identity: %w", err)
@@ -559,19 +572,22 @@ func verifyProductionAudioCallCoturnContainerImage(
 }
 
 func reserveProductionAudioCallPortSet() (int, int, int, error) {
+	var lastBindError error
 	for attempt := 0; attempt < 128; attempt++ {
 		seed := make([]byte, 4)
 		if _, err := io.ReadFull(rand.Reader, seed); err != nil {
 			return 0, 0, 0, err
 		}
 		listenPort := 36000 + int(seed[0])<<4 + int(seed[1]&0x0f)
-		relayMinPort := 50000 + (int(seed[2])<<4+int(seed[3]&0x0f))%14000
+		relayMinPort := productionAudioCallRelayPortMin +
+			(int(seed[2])<<4+int(seed[3]&0x0f))%(productionAudioCallRelayPortMax-productionAudioCallRelayPortMin-productionAudioCallRelayPortCount+2)
 		relayMaxPort := relayMinPort + productionAudioCallRelayPortCount - 1
-		if relayMaxPort > 65535 || listenPort >= relayMinPort && listenPort <= relayMaxPort {
+		if listenPort >= relayMinPort && listenPort <= relayMaxPort {
 			continue
 		}
 		closers, err := bindProductionAudioCallPortSet(listenPort, relayMinPort, relayMaxPort)
 		if err != nil {
+			lastBindError = err
 			continue
 		}
 		for _, closer := range closers {
@@ -579,7 +595,52 @@ func reserveProductionAudioCallPortSet() (int, int, int, error) {
 		}
 		return listenPort, relayMinPort, relayMaxPort, nil
 	}
-	return 0, 0, 0, errors.New("could not reserve an isolated coturn port set")
+	return 0, 0, 0, fmt.Errorf("could not reserve coturn listener and contiguous %d-port UDP block in %d-%d: %w",
+		productionAudioCallRelayPortCount, productionAudioCallRelayPortMin, productionAudioCallRelayPortMax,
+		productionAudioCallPortConflict(lastBindError))
+}
+
+// Restrict diagnostics to process name/PID, never process arguments or config.
+// Run only after selection fails, or the final selected block becomes occupied.
+func productionAudioCallPortConflict(err error) error {
+	var bindError *net.OpError
+	if !errors.As(err, &bindError) || bindError.Addr == nil {
+		return fmt.Errorf("coturn port preflight failed: %w", err)
+	}
+	_, port, splitError := net.SplitHostPort(bindError.Addr.String())
+	if splitError != nil {
+		return fmt.Errorf("coturn port preflight failed: %w", err)
+	}
+	protocol := "UDP"
+	if strings.HasPrefix(bindError.Net, "tcp") {
+		protocol = "TCP"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	output, lookupError := exec.CommandContext(ctx, "lsof", "-nP", "-a", "-i"+protocol+":"+port, "-Fpcn").Output()
+	owners := make([]string, 0)
+	pid, command := "", ""
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "p") {
+			pid = strings.TrimPrefix(line, "p")
+			command = ""
+		} else if strings.HasPrefix(line, "c") {
+			command = strings.TrimPrefix(line, "c")
+		} else if strings.HasPrefix(line, "n") && pid != "" && command != "" {
+			// -i also matches remote destination ports. Only name processes
+			// actually bound to this local port, without publishing addresses.
+			local := strings.SplitN(strings.TrimPrefix(line, "n"), "->", 2)[0]
+			if strings.HasSuffix(local, ":"+port) {
+				owners = append(owners, command+" (PID "+pid+")")
+			}
+		}
+	}
+	if len(owners) == 0 {
+		return fmt.Errorf("coturn port preflight failed for %s port %s; holder unavailable (lsof lookup failed=%t); inspect with lsof -nP -i%s:%s: %w",
+			protocol, port, lookupError != nil, protocol, port, err)
+	}
+	return fmt.Errorf("coturn port preflight failed for %s port %s; holder: %s: %w",
+		protocol, port, strings.Join(owners, ", "), err)
 }
 
 func bindProductionAudioCallPortSet(listenPort, relayMinPort, relayMaxPort int) ([]io.Closer, error) {

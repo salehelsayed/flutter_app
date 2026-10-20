@@ -1213,6 +1213,35 @@
       ],
       "inspected": true
     },
+    "production-audio-port-contract": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-run",
+        "^TestProductionAudioCallPort",
+        "-count=1",
+        "-timeout=60s",
+        "-v",
+        "."
+      ],
+      "cwd": "go-relay-server",
+      "paths": [
+        "go-relay-server/production_audio_call_ports_contract_test.go"
+      ],
+      "success_marker": "--- PASS: TestProductionAudioCallPortSet_RechecksAfterImagePreparationBeforeDockerRun",
+      "boundary": "Local audio fixture reserves 24 contiguous UDP ports below the ephemeral range, propagates selected config bounds, reports occupied-port holders and releases temporary bindings before Docker publication",
+      "limitations": "Host socket and fake-Docker/lsof contracts; no Docker daemon, emulator, audible media, production TURN or signed-device proof.",
+      "timeout_seconds": 180,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-relay-server/production_audio_call_device_fixture_test.go",
+        "tool/call_audio_oracle/coturn.lock.json"
+      ]
+    },
     "production-audio-harness-contract": {
       "kind": "flutter",
       "paths": [
@@ -6430,6 +6459,18 @@
         "device-audio"
       ],
       "why": "Call regressions reuse the authenticated audio fixture and preserve actual callback/current-call, native notification/keyguard/permission observations and cleanup; host contracts do not certify a device run."
+    },
+    {
+      "id": "production-audio-port-fixture",
+      "patterns": [
+        "go-relay-server/production_audio_call_device_fixture_test.go",
+        "go-relay-server/production_audio_call_ports_contract_test.go"
+      ],
+      "checks": [
+        "production-audio-port-contract",
+        "production-audio-harness-contract"
+      ],
+      "why": "Fixture relay allocation and publication must preserve below-ephemeral contiguous blocks, occupied-owner diagnostics and existing audio adapter contracts"
     }
   ],
   "documentation_only": [
@@ -9229,6 +9270,36 @@
         "docker-ws/alltests_go_test.sh",
         "scripts/run_original_go_send_wrapper.py"
       ]
+    },
+    {
+      "id": "full.production-audio-port-contract",
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-tags=integration",
+        "-run",
+        "^TestProductionAudioCallPort",
+        "-count=1",
+        "-timeout=60s",
+        "-v",
+        "."
+      ],
+      "cwd": "go-relay-server",
+      "paths": [
+        "go-relay-server/production_audio_call_ports_contract_test.go"
+      ],
+      "success_marker": "--- PASS: TestProductionAudioCallPortSet_RechecksAfterImagePreparationBeforeDockerRun",
+      "boundary": "Local audio fixture reserves 24 contiguous UDP ports below the ephemeral range, propagates selected config bounds, reports occupied-port holders and releases temporary bindings before Docker publication",
+      "limitations": "Host socket and fake-Docker/lsof contracts; no Docker daemon, emulator, audible media, production TURN or signed-device proof.",
+      "timeout_seconds": 180,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-relay-server/production_audio_call_device_fixture_test.go",
+        "tool/call_audio_oracle/coturn.lock.json"
+      ]
     }
   ],
   "full_inventory": {
@@ -10745,6 +10816,13 @@
           "integration_test/maestro/production_catalog_remove_charlie.yaml"
         ],
         "reason": "Additive PL-010 production rejection proof; original multi-party selectors, absence window and terminal oracle remain unchanged."
+      },
+      {
+        "owner": "full.production-audio-port-contract",
+        "patterns": [
+          "go-relay-server/production_audio_call_ports_contract_test.go"
+        ],
+        "reason": "The integration-tagged host-only selector includes every port-contract test in this file; no Docker/device fixture is selected"
       }
     ],
     "catalogs": [

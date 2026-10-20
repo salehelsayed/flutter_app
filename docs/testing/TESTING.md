@@ -3943,6 +3943,19 @@ visible and cannot become an ordinary first-attempt PASS.
   prepared tools are removed in suite teardown; preparation is not a scenario
   pass. The repaired fixture completed with its Go process at 6.75 seconds in
   `source045-focused-green.log`; the two full focused files passed 137 cases.
+  The shared-host diagnosis in Kayan m-408cbc28 identified wildcard `netsimd`
+  UDP sockets fragmenting the ephemeral range, leaving too few contiguous blocks
+  for the fixture's 24 relay ports. This is range fragmentation, not exhaustion
+  of all local ports. The local audio fixture uses relay pool 40200–40999,
+  below macOS's 49152+ ephemeral range and separate from the mixed-policy
+  40000–40100 and TURN-path 41000–41060 probes. The selected block feeds both
+  generated coturn config and Docker UDP publication. After image preparation,
+  preflight rebinds the listener and whole relay block, releases its temporary
+  bindings, and fails before Docker startup if occupied. Diagnostics report
+  protocol, port and the local holder's process name/PID via bounded `lsof -Fpcn`;
+  unavailable owner lookup is reported explicitly with an inspection command.
+  Inspect the holder rather than restarting another owner's emulator/netsimd.
+  This fixture policy does not change the deployed relay's coturn range.
 - **Bounded journal publication:** `recordTerminal` may return after its 200 ms
   caller-impact budget while atomic persistence continues. Tests asserting the
   published JSON must observe the existing atomic-writer completion seam before
