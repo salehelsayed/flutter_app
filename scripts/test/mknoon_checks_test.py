@@ -1155,6 +1155,18 @@ class CaptureBudgetTest(unittest.TestCase):
         checks._LAUNCH_CONTEXT.capture_failure = None
         return checks.launch([sys.executable, '-c', script], self.root, 8)
 
+    def test_default_stream_budget_retains_verbose_suite_completion(self):
+        payload_bytes = 9 * 1024 * 1024
+        marker = b'\nVERBOSE_SUITE_COMPLETED\n'
+        budget = checks.CaptureBudget()
+        out, code, timed_out, _ = self.run_script(
+            f"import os;os.write(1,b'x'*{payload_bytes});os.write(1,{marker!r})",
+            budget)
+        self.assertEqual((code, timed_out), (0, False))
+        self.assertTrue(out.endswith(marker.decode()))
+        self.assertEqual(out.count('x'), payload_bytes)
+        self.assertEqual(budget.used, payload_bytes + len(marker))
+
     def test_stdout_and_stderr_have_independent_bounds(self):
         budget = checks.CaptureBudget(stream_limit=64, run_limit=128)
         out, code, timed_out, _ = self.run_script("import os;os.write(1,b'a'*48);os.write(2,b'b'*48)", budget)

@@ -8174,7 +8174,8 @@ any additional screenshots or diagnostic artifacts before sharing them.
 
 Native SIMS execution and `mknoon_checks` stream private raw output while
 children run, with independent stdout/stderr limits and a shared 256 MiB capture
-budget per executor/wrapper invocation. The default stream limit is 8 MiB.
+budget per executor/wrapper invocation. Native SIMS defaults to 8 MiB per
+stream; the wrapper defaults to 16 MiB.
 SIMS declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
 stream for `host.dart.all` and 32 MiB for `native.ios.runner_tests`. Complete
 retained runs measured 19,848,816 and 15,953,210 bytes respectively; the former
@@ -8188,6 +8189,16 @@ first capacity stop, measurements and causal tests are retained under
 `.codex-test-logs/F10-host-fixes-20261018/`. Native
 capture closes stdin, drains pipes with deadlines, and reaps its own child after
 TERM/KILL; the wrapper retains its process-group timeout/cancellation handling.
+The Plan 407 wrapper run stopped `affected-groups` at exactly 8,388,608 stdout
+bytes without an assertion error. At 16 MiB, its complete 13,732,803-byte stream
+retained all 3,290 passing cases. A 9 MiB completion fixture reproduces the old
+limit failure and passes at 16 MiB; existing stream-overflow and shared-run-budget
+tests still pass. Evidence is retained under
+`.codex-test-logs/plan407-step1/capture-*.log` and `host-wrapper-run-004/` there.
+Workflow checks timed out during competing builds, then all 307 cases passed in
+162.452 seconds after those builds drained, with the original 360-second outer
+and 90-second child deadlines. Preserve the first failures and wait for competing
+build owners to finish before a fresh invocation; do not change assertion deadlines.
 The Android payload campaign keeps complete live logcat history on disk up to
 its 256 MiB campaign budget, with 8 MiB decoded cursor windows and stderr. It
 uses synchronous chunk writes, avoiding the measured IOSink.flush/listener
