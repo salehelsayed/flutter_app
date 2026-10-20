@@ -1,6 +1,7 @@
 package com.mknoon.app.call
 
 import android.Manifest
+import android.app.Notification
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
@@ -12,6 +13,7 @@ import android.os.Build
 import android.os.Looper
 import android.os.PowerManager
 import android.os.Handler
+import android.os.SystemClock
 import android.telecom.DisconnectCause
 import androidx.core.content.ContextCompat
 import androidx.core.telecom.CallAttributesCompat
@@ -169,6 +171,18 @@ private object AndroidMknoonCallLifecycleDiagnosticSink : MknoonCallLifecycleDia
             formatMknoonCallLifecycleDiagnostic(diagnostic),
         )
     }
+}
+
+internal fun emitMknoonCallNotificationDiagnostic(event: String, error: Throwable? = null) {
+    val detail = error?.let {
+        val message = it.message?.replace('\r', ' ')?.replace('\n', ' ')?.take(1024) ?: "<none>"
+        " exception_class=${it.javaClass.name} message=$message"
+    } ?: ""
+    android.util.Log.println(
+        if (error == null) android.util.Log.INFO else android.util.Log.ERROR,
+        "MKNOON_CALL_NOTIFY",
+        event + detail,
+    )
 }
 
 /** Process singleton shared by FCM, notification actions, service, and Flutter. */
@@ -701,6 +715,17 @@ internal class MknoonCallRuntime private constructor(context: Context) {
             presentation = controller::presentation,
         )
 
+        private val notificationHandoverHandler = Handler(Looper.getMainLooper())
+        private var notificationGeneration = 0L
+        private var foregroundNotificationId: Int? = null
+        private var notificationOwnerDestroyed = false
+
+        private fun invalidateNotificationHandover(reason: String) {
+            emitMknoonCallNotificationDiagnostic("generation=$notificationGeneration invalidated reason=$reason")
+            notificationGeneration += 1
+            notificationHandoverHandler.removeCallbacksAndMessages(null)
+        }
+
         override fun isActiveLifecycle(nativeCallId: UUID): Boolean =
             controller.activeNativeCallId() == nativeCallId
 
@@ -718,6 +743,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
         }
 
         override fun startAdmission(nativeCallId: UUID) {
+            invalidateNotificationHandover("admission")
             val notification = notifications.createAdmission(nativeCallId)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 service.startForeground(
@@ -731,9 +757,11 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                     notification,
                 )
             }
+            foregroundNotificationId = MknoonCallNotificationFactory.NOTIFICATION_ID
         }
 
         override fun startRinging(nativeCallId: UUID) {
+            invalidateNotificationHandover("ringing")
             val notification = notifications.createIncoming(
                 nativeCallId = nativeCallId,
             )
@@ -749,6 +777,7 @@ internal class MknoonCallRuntime private constructor(context: Context) {
                     notification,
                 )
             }
+            foregroundNotificationId = MknoonCallNotificationFactory.NOTIFICATION_ID
             val ringtoneResult = coordinateIncomingRingtoneStart(
                 nativeCallId = nativeCallId,
                 snapshot = controller::snapshot,
@@ -761,24 +790,9 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         override fun startActive(nativeCallId: UUID) {
             stopIncomingRingtone(nativeCallId, "active")
-            val notification = notifications.createOngoing(nativeCallId)
             applyMknoonCallForegroundAudio(
                 startForeground = {
-                    handOverToOngoingCallNotification(
-                        startForeground = { id ->
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                service.startForeground(
-                                    id,
-                                    notification,
-                                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-                                )
-                            } else {
-                                service.startForeground(id, notification)
-                            }
-                        },
-                        cancel = ::cancelCallNotification,
-                    )
+                    beginOngoingNotificationHandover(nativeCallId, withMicrophone = true)
                 },
                 reportApplied = { applied ->
                     android.util.Log.i(
@@ -806,28 +820,74 @@ internal class MknoonCallRuntime private constructor(context: Context) {
 
         override fun startInactive(nativeCallId: UUID) {
             stopIncomingRingtone(nativeCallId, "inactive")
-            val notification = notifications.createOngoing(nativeCallId)
-            handOverToOngoingCallNotification(
-                startForeground = { id ->
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                        service.startForeground(
-                            id,
-                            notification,
-                            ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL,
-                        )
-                    } else {
-                        service.startForeground(id, notification)
-                    }
-                },
-                cancel = ::cancelCallNotification,
-            )
+            beginOngoingNotificationHandover(nativeCallId, withMicrophone = false)
         }
 
-        private fun cancelCallNotification(id: Int) {
-            service.getSystemService(NotificationManager::class.java)?.cancel(id)
+        private fun beginOngoingNotificationHandover(nativeCallId: UUID, withMicrophone: Boolean) {
+            invalidateNotificationHandover("new_handover")
+            val generation = notificationGeneration
+            emitMknoonCallNotificationDiagnostic("generation=$generation prepare_begin with_microphone=$withMicrophone")
+            try {
+                val publicationToken = UUID.randomUUID()
+                val notification = notifications.createOngoing(nativeCallId, publicationToken)
+                val foregroundNotification = notifications.createOngoing(nativeCallId)
+                val manager = service.getSystemService(NotificationManager::class.java)
+                emitMknoonCallNotificationDiagnostic(
+                    "generation=$generation payload_prepared " +
+                        "publication_style=${notification.extras.getString(Notification.EXTRA_TEMPLATE) ?: "standard"} " +
+                        "publication_flags=${notification.flags} fsi=${notification.fullScreenIntent != null} " +
+                        "foreground_style=${foregroundNotification.extras.getString(Notification.EXTRA_TEMPLATE) ?: "standard"} " +
+                        "manager_available=${manager != null}",
+                )
+                val initialApplied = handOverToOngoingCallNotification(
+                    foregroundNotificationId = foregroundNotificationId ?: MknoonCallNotificationFactory.NOTIFICATION_ID,
+                    startForeground = { id ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            val types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
+                                (if (withMicrophone) ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE else 0)
+                            service.startForeground(id, foregroundNotification, types)
+                        } else {
+                            service.startForeground(id, foregroundNotification)
+                        }
+                        foregroundNotificationId = id
+                    },
+                    cancel = { id -> manager?.cancel(id) },
+                    postOngoing = { androidPlatform.postOngoingNotification(nativeCallId, notification) },
+                    isOngoingAccepted = {
+                        manager?.activeNotifications?.any {
+                            notifications.isOngoingPublication(it, nativeCallId, publicationToken)
+                        } == true
+                    },
+                    withCurrent = { operation ->
+                        controller.withForegroundNotificationOwner(nativeCallId) {
+                            if (notificationOwnerDestroyed || generation != notificationGeneration) false
+                            else { operation(); true }
+                        }
+                    },
+                    scheduleCheck = { delayMs, check ->
+                        notificationHandoverHandler.postDelayed({ check() }, delayMs)
+                    },
+                    nowMs = SystemClock::elapsedRealtime,
+                    diagnostic = { event, error ->
+                        emitMknoonCallNotificationDiagnostic("generation=$generation $event", error)
+                    },
+                )
+                check(initialApplied) { "call notification ownership changed" }
+            } catch (error: Throwable) {
+                emitMknoonCallNotificationDiagnostic("generation=$generation handover_failed", error)
+                throw error
+            }
+        }
+
+        override fun onServiceDestroyed() {
+            notificationOwnerDestroyed = true
+            invalidateNotificationHandover("service_destroyed")
+            foregroundNotificationId = null
         }
 
         override fun stop(nativeCallId: UUID) {
+            invalidateNotificationHandover("stop")
+            foregroundNotificationId = null
             stopIncomingRingtone(nativeCallId, "stop")
             service.stopForeground(Service.STOP_FOREGROUND_REMOVE)
             service.stopSelf()
@@ -855,6 +915,7 @@ private class AndroidMknoonCallPlatform(
     private val callsManager = CallsManager(applicationContext)
     private val notificationManager =
         applicationContext.getSystemService(NotificationManager::class.java)
+    private var ongoingNotificationOwner: UUID? = null
     private val notificationFactory = MknoonCallNotificationFactory(
         applicationContext,
         presentation = { nativeCallId -> controller().presentation(nativeCallId) },
@@ -1080,8 +1141,19 @@ private class AndroidMknoonCallPlatform(
         }
     }
 
+    // Publication and terminal cleanup run under the controller lifecycle lock.
+    fun postOngoingNotification(nativeCallId: UUID, notification: Notification) {
+        ongoingNotificationOwner = nativeCallId
+        notificationManager.notify(MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID, notification)
+    }
+
     override fun cancelNotification(nativeCallId: UUID) {
         notificationManager.cancel(MknoonCallNotificationFactory.NOTIFICATION_ID)
+        // The request can still be queued before Android exposes its record.
+        if (ongoingNotificationOwner == nativeCallId) {
+            notificationManager.cancel(MknoonCallNotificationFactory.ONGOING_NOTIFICATION_ID)
+            ongoingNotificationOwner = null
+        }
     }
 
     override fun stopForeground(nativeCallId: UUID) {
