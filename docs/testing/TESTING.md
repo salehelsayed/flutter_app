@@ -140,6 +140,15 @@ Do not claim runtime-input equivalence from source hashes alone. The
 [group replay preservation receipts](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-replay-transport/ios-config-input-restoration.json)
 record this boundary without logging configuration contents.
 
+The host CV-14 wake-token freshness gate also reads ignored build inputs: the
+iOS device and simulator GoMknoon binaries, the macOS GoMknoon mirror, and
+`android/app/libs/GoMknoon.aar`. A fresh worktree must restore the exact declared
+artifacts with separate hash receipts before running this gate. Missing files
+do not establish stale symbols. A Plan 407 clean-checkout run failed because
+all four inputs were absent; their existing receipt-matched copies passed the
+exact binary-symbol check. Input restoration and the first failure are retained
+under `.codex-test-logs/plan407-step1/post-reboot-midnight-fixture-fix/`.
+
 ## Daily commands
 
 Run from the repository root. `BASE_REF` must name the verified intended
@@ -8251,6 +8260,17 @@ Workflow checks timed out during competing builds, then all 307 cases passed in
 162.452 seconds after those builds drained, with the original 360-second outer
 and 90-second child deadlines. Preserve the first failures and wait for competing
 build owners to finish before a fresh invocation; do not change assertion deadlines.
+
+The group conversation test for a single separator must use two timestamps on
+one fixed calendar day. Its former `DateTime.now()` and ten-minutes-earlier
+fixture straddled midnight during a Plan 407 retry: 3,289 group cases passed and
+this case correctly rendered two separators. The fixture now uses midday on
+2 January 2020 and checks its exact historical label; the adjacent test retains
+Today/Yesterday coverage. Preserve that first failure and the unchanged-source
+provenance under `.codex-test-logs/plan407-step1/post-reboot-midnight-fixture-fix/`.
+The corrected focused case and the full 3,290-case `affected-groups` lane passed
+without weakening assertions or changing time limits or production code.
+
 The Android payload campaign keeps complete live logcat history on disk up to
 its 256 MiB campaign budget, with 8 MiB decoded cursor windows and stderr. It
 uses synchronous chunk writes, avoiding the measured IOSink.flush/listener

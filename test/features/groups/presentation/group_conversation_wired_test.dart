@@ -4626,16 +4626,17 @@ void main() {
         final group = makeChatGroup();
         await groupRepo.saveGroup(group);
 
-        final now = DateTime.now();
+        // Keep both timestamps on one calendar day, including midnight runs.
+        final sameDay = DateTime(2020, 1, 2, 12);
         await msgRepo.saveMessage(
           makeMessage(
             id: 'm-1',
-            text: 'First today',
-            timestamp: now.subtract(const Duration(minutes: 10)),
+            text: 'First message',
+            timestamp: sameDay.subtract(const Duration(minutes: 10)),
           ),
         );
         await msgRepo.saveMessage(
-          makeMessage(id: 'm-2', text: 'Second today', timestamp: now),
+          makeMessage(id: 'm-2', text: 'Second message', timestamp: sameDay),
         );
 
         await tester.pumpWidget(buildWidget(group: group));
@@ -4645,9 +4646,9 @@ void main() {
             .widgetList<DateSeparator>(find.byType(DateSeparator))
             .toList();
         expect(separators, hasLength(1));
-        expect(separators.single.label, 'Today');
-        expect(find.text('First today'), findsOneWidget);
-        expect(find.text('Second today'), findsOneWidget);
+        expect(separators.single.label, 'Thu 2. Jan 2020');
+        expect(find.text('First message'), findsOneWidget);
+        expect(find.text('Second message'), findsOneWidget);
       },
     );
 
