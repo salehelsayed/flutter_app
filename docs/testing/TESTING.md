@@ -2291,6 +2291,46 @@ Focused causal failures and verified host results are retained under
 `.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
 native cryptography proofs.
 
+The contact-request shell integration tests mount the real `FeedWired` and its
+retained embedded `OrbitWired` with production SQL repositories and signed input.
+Their case-scoped `KNOWN GAP` groups retain three separate failing obligations:
+releasing presentation suppression must retry an already-subscribed shell;
+one broadcast must open one dialog across both retained screens; and distinct
+burst requests must queue behind the current dialog. Storage preservation,
+consent/reciprocal convergence, replay deduplication and repair overflow/retry
+remain enabled independently. The scanner tests similarly retain separate
+malformed/future timestamp rejection gaps while expired and fresh controls run.
+`testWidgets.skip` accepts only a boolean; place a descriptive skip reason on a
+one-case `group`, and prove its intended failure with `--run-skipped`.
+Evidence: `test/features/contact_request/presentation/screens/pending_request_shell_test.dart`,
+`test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart` and
+the green and explicit run-skipped logs under `.codex-test-logs/astra-it4/`.
+
+Direct notification lifecycle widgets use the real SQL read projector and
+`FlutterNotificationService`, with native notification publication and registry
+storage faked. Keep widget builds, navigator actions and SQLite callbacks in the
+same real async zone; await peer-specific read completion before asserting SQL
+counts or card cancellation. Advancing only fake-zone frames can strand the
+repository's serialized futures. The shared real-database fixture permits an
+optional no-isolate factory/read projector and preserves both on file reopen.
+Ordinary nonlinked input requires `dbApplyIncomingOrdinaryTextMutation`; wiring
+only its `WithAuthority` sibling does not supply that capability. The three
+cases in `test/features/conversation/presentation/screens/direct_notification_policy_lifecycle_test.dart`
+pass in `.codex-test-logs/astra-it4/DC-023-final.log`. These prove Dart routing,
+read/suppression policy, replay durability and generic private previews; native
+shade behavior, channel blocking and settings on a signed app remain separate.
+
+Muted call host integration must enter connected state through the real engine's
+structural readiness observation and canonical coordinator, rather than directly
+dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally
+excludes local audio enablement, RTP counters and audio energy. Missing DTLS or
+remote receiver attachment is a structural negative; missing RTP alone is not.
+`test/features/call/integration/muted_call_connection_decisions_test.dart` exercises
+two production Dart call graphs and SQL histories through native/WebRTC/transport
+fakes (`.codex-test-logs/astra-it4/VC-012-final.log`, four passing cases).
+Actual bidirectional RTP, microphone privacy and acoustic behavior remain device
+obligations; simulated native snapshots cannot certify them.
+
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
 created three ignored wrapper files; the next build therefore had a different

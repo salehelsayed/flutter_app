@@ -40,17 +40,23 @@ class MediaRepositoryRealDbFixture {
     this.repo,
     this.messageRepo,
     this.secureKeyStore,
-    this.databasePath,
-  );
+    this.databasePath, {
+    this.databaseFactoryOverride,
+    this.projectConversationRead,
+  });
 
   final Database db;
   final MediaAttachmentRepositoryImpl repo;
   final MessageRepositoryImpl messageRepo;
   final RecordingSecureKeyStore secureKeyStore;
   final String databasePath;
+  final DatabaseFactory? databaseFactoryOverride;
+  final Future<int> Function(String peerId)? projectConversationRead;
 
   static Future<MediaRepositoryRealDbFixture> create({
     String databasePath = inMemoryDatabasePath,
+    DatabaseFactory? databaseFactoryOverride,
+    Future<int> Function(String peerId)? projectConversationRead,
     RecordingSecureKeyStore? secureKeyStore,
     Future<void> Function(Map<String, Object?> row)?
     dbSaveMediaAttachmentOverride,
@@ -91,18 +97,20 @@ class MediaRepositoryRealDbFixture {
     Future<void> Function()? beforePrivateDeletionCustodyInsert,
   }) async {
     sqfliteFfiInit();
-    final db = await databaseFactoryFfi.openDatabase(
-      databasePath,
-      options: OpenDatabaseOptions(
-        version: currentIdentityDatabaseVersion,
-        onCreate: runProductionOnCreate,
-        onUpgrade: runProductionOnUpgrade,
-      ),
-    );
+    final db = await (databaseFactoryOverride ?? databaseFactoryFfi)
+        .openDatabase(
+          databasePath,
+          options: OpenDatabaseOptions(
+            version: currentIdentityDatabaseVersion,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          ),
+        );
     final effectiveSecureKeyStore = secureKeyStore ?? RecordingSecureKeyStore();
     late final MediaAttachmentRepositoryImpl repo;
     final messageRepo = _buildMessageRepository(
       db,
+      projectConversationRead: projectConversationRead,
       loadOutgoingOrdinaryMedia: (messageId) => repo.getAttachmentsForMessage(
         messageId,
         owner: MediaOwnerLane.direct,
@@ -1059,6 +1067,8 @@ class MediaRepositoryRealDbFixture {
       messageRepo,
       effectiveSecureKeyStore,
       databasePath,
+      databaseFactoryOverride: databaseFactoryOverride,
+      projectConversationRead: projectConversationRead,
     );
   }
 
@@ -1071,7 +1081,12 @@ class MediaRepositoryRealDbFixture {
       throw StateError('A file-backed database path is required for reopen');
     }
     await dispose();
-    return create(databasePath: databasePath, secureKeyStore: secureKeyStore);
+    return create(
+      databasePath: databasePath,
+      secureKeyStore: secureKeyStore,
+      databaseFactoryOverride: databaseFactoryOverride,
+      projectConversationRead: projectConversationRead,
+    );
   }
 
   /// Inserts a live direct parent row into `messages`.
@@ -1140,11 +1155,20 @@ class MediaRepositoryRealDbFixture {
 
 MessageRepositoryImpl _buildMessageRepository(
   Database db, {
+  Future<int> Function(String peerId)? projectConversationRead,
   required Future<List<MediaAttachment>> Function(String messageId)
   loadOutgoingOrdinaryMedia,
   Future<void> Function()? beforePrivateDeletionCustodyInsert,
 }) {
   return MessageRepositoryImpl(
+    projectConversationRead: projectConversationRead,
+    dbApplyIncomingOrdinaryTextMutation:
+        ({required incomingRow, required kind}) =>
+            dbApplyIncomingOrdinaryTextMutation(
+              db,
+              incomingRow: incomingRow,
+              kind: kind,
+            ),
     dbInsertMessage: (row) => dbInsertMessage(db, row),
     dbLoadMessagesForContact: (contactPeerId) =>
         dbLoadMessagesForContact(db, contactPeerId),
