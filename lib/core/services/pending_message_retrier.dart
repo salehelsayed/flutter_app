@@ -336,7 +336,9 @@ class PendingMessageRetrier {
     // The group coordinator owns/coalesces incoming transfers independently.
     // A held download must not block the next short outgoing restored flush.
     final retryGroupDownloads = retryIncompleteGroupDownloadsFn;
-    if (retryGroupDownloads != null) {
+    if (retryGroupDownloads != null &&
+        _isGroupRecoveryEnabled() &&
+        _isGroupRecoveryReady(p2pService.currentState)) {
       unawaited(() async {
         try {
           await retryGroupDownloads();

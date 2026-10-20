@@ -3771,20 +3771,25 @@ visible and cannot become an ordinary first-attempt PASS.
   or `connection closed ... transport error` does not establish that the relay
   lost the blob. Go can surface premature stream closure as `download incomplete:
   wrote N/size, err=EOF` or `read response: EOF`; the shared upload/download
-  transport classifier recognizes these forms. The default relay list is two
+  transport classifier recognizes these forms. Offline/reconnecting native
+  attempts can end in `all 1 relays failed, last error: connection failed`:
+  the multi-address fallback hides an earlier `all dials failed` / `dial backoff`
+  or `no good addresses`. These errors, `network is unreachable`, and startup's
+  `node not started` are transport failures too. The default relay list is two
   addresses of one peer, and Go can issue two server requests within one Dart
   download attempt. The legacy receiver formerly persisted `failed` after its
   first transient failure, rendering unavailable without autonomous backoff.
   Transport failures now preserve the nontransport counter and persist `pending`
   during a three-attempt burst with 1s/2s delays, then `retry_waiting`. The next
-  tap, app resume or connectivity trigger can start another bounded burst.
+  tap, app resume, OS restore or relay-ready event can start another bounded burst.
   Older `failed` rows retain their original bounded counter.
 
   Existing primary app-level recovery uses a paged direct-owner query across all
   media types, even without a mounted chat, and reuses the normal policy and UI
   stream. A restore edge during active work is coalesced into a follow-up pass
   after that work finishes. OS-restored flush starts the existing group download
-  coordinator after releasing its short outgoing-flush guard, so a held incoming
+  coordinator only when the existing group feature/readiness predicates allow
+  it, after releasing its short outgoing-flush guard, so a held incoming
   transfer cannot swallow a fresh zero-age outgoing restore pass. Async group
   errors remain isolated; the permanent overlap regression preserves two outgoing
   passes before the held receive completes. Parent lifecycle, private-media policy,
@@ -3795,14 +3800,24 @@ visible and cannot become an ordinary first-attempt PASS.
   a localized tap-to-retry prompt after transport backoff, confirmed unavailable
   only for absence or lost local copies, and a distinct cannot-open message for
   integrity/decode failures. EN/DE/AR widget cases assert the approved exact copy.
+  Listener publications include `pending` → `downloading` → completion; publication
+  counts are not transfer counts. Tests assert one native command per attachment
+  and hold a transfer to prove text appears before completion. The stall simulator
+  uses the existing persistent owner-enforcing fake: three watchdog timeouts retain
+  actual partial bytes, `retry_waiting`, and a zero nontransport counter.
 
   [The camera/caption regression](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart)
   uses a real multi-megabyte EXIF-oriented JPEG, actual legacy upload/send,
   online receive or real inbox staging/replay, current SQLite migrations and
   repositories, durable files, exact byte hash, grid decode/open gate, full
   recipient frame and persisted caption. Its native compressor callback is a
-  prepared-image stub and its bridge crypto is XOR; it does not certify iOS
-  camera/compression, Go AES-GCM, a live relay/circuit or a signed build. The
+  prepared-image stub and its bridge crypto is XOR. Its closed-chat recovery case
+  mirrors the native errors from the first four interrupted/reconnecting attempts,
+  exhausts two bounded transport bursts without consuming the generic budget,
+  then emits relay readiness and completes on attempt seven without a tap or
+  mounted chat. It retains a real encrypted prefix until successful commit.
+  These host fixtures do not certify iOS camera/compression, Go AES-GCM,
+  a live relay/circuit or a signed build. The
   first causal baseline fails on `pending` versus `failed`; online/offline
   image controls pass. Explicit mixed-multi-relay aggregate-not-found retry
   remains a case-scoped KNOWN GAP because Go reports only its final error;

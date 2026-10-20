@@ -53,7 +53,7 @@ void main() {
   group('PendingMessageRetrier', () {
     for (final failFirst in [false, true]) {
       test(
-        'OS network restore retries group downloads without a ready node, failure=$failFirst',
+        'OS restore defers group downloads until ready and then retries, failure=$failFirst',
         () {
           fakeAsync((async) {
             final restored = StreamController<void>.broadcast();
@@ -86,13 +86,28 @@ void main() {
             retrier.start();
             restored.add(null);
             async.flushMicrotasks();
+            async.elapse(const Duration(milliseconds: 11));
+            async.flushMicrotasks();
+            expect(downloads, 0);
+            expect(unacked, 1);
+            p2pService.emitState(
+              const NodeState(
+                isStarted: true,
+                circuitAddresses: ['/p2p-circuit/relay'],
+                relayState: 'online',
+                sendCapabilityReady: true,
+                inboxCapabilityReady: true,
+              ),
+            );
+            restored.add(null);
+            async.flushMicrotasks();
             expect(downloads, 0);
             async.elapse(const Duration(milliseconds: 11));
             async.flushMicrotasks();
             expect(downloads, 1);
             expect(
               unacked,
-              1,
+              2,
               reason:
                   'incoming media cannot prevent the outgoing restored flush',
             );
@@ -110,7 +125,7 @@ void main() {
               2,
               reason: 'a failed pass releases its guard for the next edge',
             );
-            expect(unacked, 2);
+            expect(unacked, 3);
             retrier.dispose();
             unawaited(restored.close());
             async.flushMicrotasks();
@@ -1511,6 +1526,9 @@ void main() {
           var drainCalled = false;
           var retryFailedGroupMessagesCalled = false;
           var retryFailedMessagesCalled = false;
+          var incomingDownloads = 0;
+          var outgoingPasses = 0;
+          final restored = StreamController<void>.broadcast();
 
           retrier = PendingMessageRetrier(
             p2pService: p2pService,
@@ -1518,6 +1536,8 @@ void main() {
             identityRepo: identityRepo,
             contactRepo: contactRepo,
             bridge: bridge,
+            networkRestoredSignal: restored.stream,
+            networkRestoredDebounce: Duration.zero,
             retryDebounce: Duration.zero,
             rejoinGroupTopicsFn: () async {
               rejoinCalled = true;
@@ -1533,7 +1553,14 @@ void main() {
               retryFailedMessagesCalled = true;
               return 0;
             },
-            retryUnackedMessagesOverride: () async => 0,
+            retryUnackedMessagesOverride: () async {
+              outgoingPasses++;
+              return 0;
+            },
+            retryIncompleteGroupDownloadsFn: () async {
+              incomingDownloads++;
+              return 0;
+            },
           );
           retrier.start();
 
@@ -1555,6 +1582,16 @@ void main() {
           expect(drainCalled, isFalse);
           expect(retryFailedGroupMessagesCalled, isFalse);
           expect(retryFailedMessagesCalled, isTrue);
+          expect(outgoingPasses, 1);
+          restored.add(null);
+          async.flushMicrotasks();
+          async.elapse(Duration.zero);
+          async.flushMicrotasks();
+          expect(incomingDownloads, 0);
+          expect(outgoingPasses, 2);
+          retrier.dispose();
+          unawaited(restored.close());
+          async.flushMicrotasks();
         });
       },
     );
@@ -1905,6 +1942,7 @@ void main() {
           final restored = StreamController<void>.broadcast();
           final heldDownload = Completer<int>();
           var outgoingPasses = 0;
+          var incomingPasses = 0;
           retrier = PendingMessageRetrier(
             p2pService: p2pService,
             bridge: bridge,
@@ -1917,17 +1955,31 @@ void main() {
               outgoingPasses++;
               return 0;
             },
-            retryIncompleteGroupDownloadsFn: () => heldDownload.future,
+            retryIncompleteGroupDownloadsFn: () {
+              incomingPasses++;
+              return heldDownload.future;
+            },
           );
           try {
+            p2pService.emitState(
+              const NodeState(
+                isStarted: true,
+                circuitAddresses: ['/p2p-circuit/relay'],
+                relayState: 'online',
+                sendCapabilityReady: true,
+                inboxCapabilityReady: true,
+              ),
+            );
             retrier.start();
             restored.add(null);
             clock.flushMicrotasks();
             clock.elapse(const Duration(milliseconds: 11));
             clock.flushMicrotasks();
             expect(outgoingPasses, 1);
+            expect(incomingPasses, 1);
             // A fresh reconnect must flush text even while the previous
-            // incoming transfer is still unsettled and the node is offline.
+            // incoming transfer is unsettled and the node has gone offline.
+            p2pService.emitState(NodeState.stopped);
             restored.add(null);
             clock.flushMicrotasks();
             clock.elapse(const Duration(milliseconds: 11));
@@ -1939,6 +1991,7 @@ void main() {
                   'an incoming group transfer must not swallow a later '
                   'OS-restored outgoing flush',
             );
+            expect(incomingPasses, 1);
           } finally {
             heldDownload.complete(0);
             clock.flushMicrotasks();

@@ -306,6 +306,146 @@ void main() {
     await h.expectFullImage(tester, done);
   });
 
+  testWidgets(
+    'closed chat offline burst and reconnecting restore recover on later relay readiness without a tap',
+    (tester) async {
+      final h = (await tester.runAsync(
+        () => _Journey.open(cameraJpeg, preparedJpeg),
+      ))!;
+      addTearDown(() => tester.runAsync(h.close));
+      final done = await tester.runAsync(() async {
+        final states = <String>[];
+        final publication = h.listener.incomingMessageStream.listen(
+          (message) => states.addAll(
+            message.media.map((attachment) => attachment.downloadStatus),
+          ),
+        );
+        final p2p = FakeP2PService();
+        final restored = StreamController<void>.broadcast();
+        final passes = <Future<int>>[];
+        final recoveryErrors = <Object>[];
+        var recoveryTriggers = 0;
+        final retrier = PendingMessageRetrier(
+          p2pService: p2p,
+          bridge: h.receiver,
+          messageRepo: h.bob.messageRepo,
+          identityRepo: FakeIdentityRepository(),
+          contactRepo: buildWidgetContactRepository(h.bob.db),
+          networkRestoredSignal: restored.stream,
+          networkRestoredDebounce: const Duration(milliseconds: 20),
+          retryDebounce: const Duration(milliseconds: 20),
+          periodicRetryInterval: const Duration(hours: 1),
+          groupContinuitySweepInterval: const Duration(hours: 1),
+          retryFailedMessagesOverride: () async => 0,
+          retryUnackedMessagesOverride: () async => 0,
+          drainDirectMediaBlobCustodyFn: () async {
+            recoveryTriggers++;
+            // Match the production primary hook: its existing listener owns
+            // the incoming pass without holding the outgoing short flush.
+            final pass = h.listener.retryIncompleteMediaDownloads().catchError((
+              Object error,
+            ) {
+              recoveryErrors.add(error);
+              return 0;
+            });
+            passes.add(pass);
+            unawaited(pass);
+            return 0;
+          },
+        );
+        try {
+          h.receiver.preservePartialOnFailure = true;
+          // Exact native errors from device attempts 1-3: the multi-address
+          // fallback hides dial backoff behind its final connection failure.
+          h.receiver.transportErrors.addAll([
+            'all 1 relays failed, last error: download request: read response: read length: write udp4 <ip>-><ip>: sendmsg: network is unreachable',
+            'all 1 relays failed, last error: connection failed',
+            'all 1 relays failed, last error: connection failed',
+          ]);
+          final offline = await h.deliver(offline: false);
+          expect(offline.downloadStatus, kMediaDownloadStatusRetryWaiting);
+          expect(offline.downloadRetryCount ?? 0, 0);
+          expect(h.receiver.downloadAttempts, hasLength(3));
+          expect(
+            await File(h.receiver.failedPartPath!).readAsBytes(),
+            h.sender.relayStore.ciphertextByBlobId[offline.id]!.take(4096),
+          );
+
+          // Attempt 4 mirrors the early OS-restored device attempt while the
+          // relay is connecting; two bounded follow-ups still cannot connect.
+          h.receiver.transportErrors.addAll(
+            List.filled(
+              3,
+              'all 1 relays failed, last error: connection failed',
+            ),
+          );
+          final earlyRestore = h.listener.incomingMessageStream.firstWhere(
+            (message) =>
+                message.id == h.messageId &&
+                h.receiver.downloadAttempts.length >= 6 &&
+                message.media.single.downloadStatus ==
+                    kMediaDownloadStatusRetryWaiting,
+          );
+          retrier.start();
+          p2p.emitState(
+            const NodeState(isStarted: true, relayState: 'connecting'),
+          );
+          restored.add(null);
+          final retained = await earlyRestore.timeout(
+            const Duration(seconds: 30),
+          );
+          expect(retained.media.single.downloadRetryCount ?? 0, 0);
+          expect(h.receiver.downloadAttempts, hasLength(6));
+          expect(p2p.currentState.relayState, 'connecting');
+          expect(h.sender.relayStore.blobIds, contains(offline.id));
+
+          final received = h.listener.incomingMessageStream.firstWhere(
+            (message) =>
+                message.id == h.messageId &&
+                message.media.single.downloadStatus == kMediaDownloadStatusDone,
+          );
+          p2p.emitState(
+            const NodeState(
+              isStarted: true,
+              circuitAddresses: ['/p2p-circuit/relay'],
+              relayState: 'online',
+              sendCapabilityReady: true,
+              inboxCapabilityReady: true,
+            ),
+          );
+          final recovered = await received.timeout(const Duration(seconds: 30));
+          expect(recoveryTriggers, 2);
+          expect(h.receiver.downloadAttempts, hasLength(7));
+          expect(recoveryErrors, isEmpty);
+          expect(
+            states,
+            isNot(
+              contains(
+                anyOf(
+                  kMediaDownloadStatusFailed,
+                  kMediaDownloadStatusDownloadFailed,
+                  kMediaDownloadStatusUnavailable,
+                  kMediaDownloadStatusIntegrityFailed,
+                ),
+              ),
+            ),
+          );
+          return recovered.media.single;
+        } finally {
+          retrier.dispose();
+          await restored.close();
+          p2p.dispose();
+          await Future.wait(passes).timeout(const Duration(seconds: 30));
+          await publication.cancel();
+        }
+      });
+      if (done == null) {
+        return;
+      }
+      await h.expectFullImage(tester, done);
+    },
+  );
+
   for (final error in [
     'download failed: not found',
     'download failed: not authorized',
@@ -1056,6 +1196,8 @@ class _ReceiverBridge extends EncryptedMediaTestBridge {
   String? nextDownloadError;
   final transportErrors = <String>[];
   final downloadAttempts = <DateTime>[];
+  bool preservePartialOnFailure = false;
+  String? failedPartPath;
   Completer<void>? successGate;
   Completer<void>? lastFailureGate;
   final lastFailureEntered = Completer<void>();
@@ -1068,6 +1210,15 @@ class _ReceiverBridge extends EncryptedMediaTestBridge {
       if (transportErrors.isNotEmpty) {
         final error = transportErrors.removeAt(0);
         commandLog.add('media:download');
+        if (preservePartialOnFailure) {
+          failedPartPath = payload['outputPath'] as String;
+          final partial = File(failedPartPath!);
+          await partial.parent.create(recursive: true);
+          await partial.writeAsBytes(
+            relayStore.ciphertextByBlobId[payload['id']]!.take(4096).toList(),
+            flush: true,
+          );
+        }
         if (transportErrors.isEmpty && lastFailureGate != null) {
           if (!lastFailureEntered.isCompleted) lastFailureEntered.complete();
           await lastFailureGate!.future;

@@ -7,6 +7,7 @@ abstract final class TransientTransportError {
       'relay unavailable',
       'stateless reset',
       'connection closed',
+      'connection failed',
       'connection refused',
       'connection reset',
       'stream reset',
@@ -25,10 +26,14 @@ abstract final class TransientTransportError {
       'no route to host',
       'connect to relay',
       'failed to dial',
+      'all dials failed',
+      'dial backoff',
+      'no good addresses',
       'dial ',
       'open stream',
       'protocol stream',
       'no existing connection',
+      'node not started',
       'context canceled',
     ].any(text.contains);
   }

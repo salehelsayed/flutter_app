@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -10,9 +11,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../domain/repositories/fake_media_attachment_repository.dart';
 
 /// Simulates the new transfer policy end-to-end in fast test time:
 /// a slow-but-moving transfer (progress events keep arriving) survives a
@@ -33,9 +34,7 @@ class _SlowWritingBridge extends Bridge {
   final List<int> bytes = const [1, 2, 3];
   bool writeFile = true;
 
-  _SlowWritingBridge({
-    required this.delay,
-  });
+  _SlowWritingBridge({required this.delay});
 
   @override
   bool get isInitialized => true;
@@ -67,6 +66,8 @@ class _SlowWritingBridge extends Bridge {
 }
 
 class _HangingBridge extends Bridge {
+  int downloadCallCount = 0;
+  String? outputPath;
   @override
   bool get isInitialized => true;
   @override
@@ -78,56 +79,18 @@ class _HangingBridge extends Bridge {
   @override
   void dispose() {}
   @override
-  Future<String> send(String message) => Completer<String>().future;
-}
-
-class _RecorderRepo implements MediaAttachmentRepository {
-  final List<(String, String)> downloadStatusUpdates = [];
-  final List<(String, String)> localPathUpdates = [];
-
-  @override
-  Future<void> saveAttachment(
-    MediaAttachment attachment, {
-    required MediaOwnerLane owner,
-  }) async {}
-  @override
-  Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => const [];
-  @override
-  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds, {
-    required MediaOwnerLane owner,
-  }) async => const {};
-  @override
-  Future<void> updateLocalPath(String id, String localPath) async {
-    localPathUpdates.add((id, localPath));
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] == 'media:download') {
+      downloadCallCount++;
+      outputPath =
+          (request['payload'] as Map<String, dynamic>)['outputPath'] as String;
+      final file = File(outputPath!);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(const [1], flush: true);
+    }
+    return Completer<String>().future;
   }
-
-  @override
-  Future<void> updateDownloadStatus(String id, String downloadStatus) async {
-    downloadStatusUpdates.add((id, downloadStatus));
-  }
-
-  @override
-  Future<int> deleteAttachmentsForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => 0;
-  @override
-  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
-  @override
-  Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => 0;
-  @override
-  Future<List<MediaAttachment>> getPendingDownloads() async => const [];
-  @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments({
-    required MediaOwnerLane owner,
-  }) async => const [];
 }
 
 class _TempMediaFileManager extends MediaFileManager {
@@ -148,13 +111,14 @@ class _TempMediaFileManager extends MediaFileManager {
 
 void main() {
   late Directory tempDir;
-  late _RecorderRepo repo;
+  late FakeMediaAttachmentRepository repo;
   late _TempMediaFileManager fileManager;
   late InMemoryMessageRepository messageRepo;
   final flowEvents = <Map<String, dynamic>>[];
 
   const attachment = MediaAttachment(
     id: 'blob-slow-sim-001',
+    ownerLane: MediaOwnerLane.direct,
     messageId: 'msg-sim-001',
     mime: 'image/jpeg',
     size: 3,
@@ -165,7 +129,7 @@ void main() {
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp('slow_transfer_sim_');
-    repo = _RecorderRepo();
+    repo = FakeMediaAttachmentRepository();
     fileManager = _TempMediaFileManager(tempDir.path);
     messageRepo = InMemoryMessageRepository();
     const now = '2026-06-12T10:00:00.000Z';
@@ -209,6 +173,7 @@ void main() {
       });
     });
 
+    await repo.saveAttachment(attachment, owner: MediaOwnerLane.direct);
     MediaAttachment? slowResult;
     try {
       slowResult = await downloadMedia(
@@ -234,12 +199,15 @@ void main() {
     expect(slowResult!.downloadStatus, 'done');
 
     // --- genuinely stalled: typed watchdog code + preserved artifact ---
+    final stalledAttachment = attachment.copyWith(id: 'blob-stalled-001');
+    await repo.saveAttachment(stalledAttachment, owner: MediaOwnerLane.direct);
+    final stalledBridge = _HangingBridge();
     final stalledResult = await downloadMedia(
       owner: MediaOwnerLane.direct,
-      bridge: _HangingBridge(),
+      bridge: stalledBridge,
       mediaAttachmentRepo: repo,
       mediaFileManager: fileManager,
-      attachment: attachment.copyWith(id: 'blob-stalled-001'),
+      attachment: stalledAttachment,
       contactPeerId: 'contact-sim',
       messageRepo: messageRepo,
       transferStallTimeout: const Duration(milliseconds: 120),
@@ -247,14 +215,32 @@ void main() {
     );
 
     expect(stalledResult, isNull);
-    expect(repo.downloadStatusUpdates.last, ('blob-stalled-001', 'failed'));
+    expect(stalledBridge.downloadCallCount, 3);
+    final persisted = await repo.getAttachmentById(stalledAttachment.id);
+    expect(persisted!.downloadStatus, kMediaDownloadStatusRetryWaiting);
+    expect(persisted.downloadRetryCount, 0);
+    expect(await File(stalledBridge.outputPath!).readAsBytes(), [1]);
 
-    final watchdogEvent = flowEvents.firstWhere(
-      (event) => event['event'] == 'MEDIA_TRANSFER_WATCHDOG_TIMEOUT',
+    final watchdogEvents = flowEvents
+        .where((event) => event['event'] == 'MEDIA_TRANSFER_WATCHDOG_TIMEOUT')
+        .toList();
+    expect(watchdogEvents, hasLength(3));
+    for (final event in watchdogEvents) {
+      final details = event['details'] as Map<String, dynamic>;
+      expect(details['reason'], 'stalled_no_progress');
+      expect(details['operation'], 'media:download');
+    }
+    expect(
+      flowEvents
+          .where(
+            (event) =>
+                event['event'] == 'MEDIA_DOWNLOAD_TRANSPORT_RETRY_SCHEDULED',
+          )
+          .map(
+            (event) => (event['details'] as Map<String, dynamic>)['delayMs'],
+          ),
+      [1000, 2000],
     );
-    final details = watchdogEvent['details'] as Map<String, dynamic>;
-    expect(details['reason'], 'stalled_no_progress');
-    expect(details['operation'], 'media:download');
 
     expect(
       flowEvents.any(
