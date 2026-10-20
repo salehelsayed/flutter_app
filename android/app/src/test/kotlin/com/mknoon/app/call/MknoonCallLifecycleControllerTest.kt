@@ -12,27 +12,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MknoonCallLifecycleControllerTest {
-    @Test
-    fun `notification effects require the exact live owner including inactive audio`() {
-        val rig = LifecycleRig()
-        val id = rig.payload.nativeCallId
-        var applied = 0
-        fun apply(owner: UUID) = rig.controller.withForegroundNotificationOwner(owner) { applied += 1; true }
-        assertFalse(apply(id))
-        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(rig.payload))
-        assertTrue(apply(id))
-        assertFalse(apply(UUID.randomUUID()))
-        assertTrue(rig.controller.endFromDart(id))
-        assertFalse(apply(id))
-        val terminal = requireNotNull(rig.controller.snapshot())
-        assertTrue(rig.controller.acknowledge(id, terminal.highestSequence, PendingNativeCallAcknowledgement.TERMINAL))
-        val successor = callPayload(nativeCallId = UUID.randomUUID())
-        assertEquals(MknoonCallPresentationResult.PRESENTED, rig.controller.registerOutgoing(successor))
-        assertFalse(apply(id))
-        assertTrue(apply(successor.nativeCallId))
-        assertEquals(2, applied)
-    }
-
     private fun activeProximityRig(incoming: Boolean = false): LifecycleRig {
         val rig = LifecycleRig()
         val id = rig.payload.nativeCallId

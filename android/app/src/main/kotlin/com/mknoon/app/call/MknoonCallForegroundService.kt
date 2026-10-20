@@ -32,8 +32,6 @@ internal interface MknoonCallForegroundRuntime {
 
     fun onStartFailure(nativeCallId: UUID) = Unit
 
-    fun onServiceDestroyed() = Unit
-
     fun onAdmissionEvent(nativeCallId: UUID, event: MknoonCallAdmissionEvent) = Unit
 }
 
@@ -100,10 +98,6 @@ internal class MknoonCallForegroundService(
         }
     }
 
-    private val ownedRuntime = lazy(LazyThreadSafetyMode.NONE) {
-        runtime ?: MknoonCallRuntime.get(this).foregroundRuntime(this)
-    }
-
     private var activeCallId: UUID? = null
     private var mode: MknoonCallForegroundMode? = null
     private var admissionOwnerId: UUID? = null
@@ -124,7 +118,9 @@ internal class MknoonCallForegroundService(
                 ?: return rejectStart(startId)
             runCatching { UUID.fromString(rawOwner) }.getOrNull() ?: return rejectStart(startId)
         } else null
-        val target by ownedRuntime
+        val target by lazy(LazyThreadSafetyMode.NONE) {
+            runtime ?: MknoonCallRuntime.get(this).foregroundRuntime(this)
+        }
 
         when (action) {
             ACTION_START_ADMISSION -> {
@@ -502,7 +498,7 @@ internal class MknoonCallForegroundService(
             if (activeCallId == nativeCallId && mode == MknoonCallForegroundMode.ADMISSION &&
                 admissionOwnerId == ownerId
             ) {
-                val target = ownedRuntime.value
+                val target = runtime ?: MknoonCallRuntime.get(this).foregroundRuntime(this)
                 stopOwnedForeground(target, nativeCallId, startId,
                     MknoonCallAdmissionEvent.TIMEOUT_APPLIED, MknoonCallAdmissionEvent.TIMEOUT_FAILED)
                 stopSelfResult(startId)
@@ -521,7 +517,6 @@ internal class MknoonCallForegroundService(
     override fun onDestroy() {
         activeCallId?.let { settlements.retire(it, admissionOwnerId) }
         admissionTimeout.removeCallbacksAndMessages(null)
-        if (ownedRuntime.isInitialized()) ownedRuntime.value.onServiceDestroyed()
         super.onDestroy()
     }
 

@@ -6569,55 +6569,6 @@ visible and cannot become an ordinary first-attempt PASS.
   second cold attempt omitted rejected live trees, so its exact surface remains
   unobserved despite the independently reproduced host gate mismatch. Retain
   these limitations in the [beta findings](audio-call-beta-findings.md).
-  Android foreground notification handover must retain the current foreground
-  ID until the exact call's fresh ongoing505 publication is visible through
-  the app notification API. Android cancels the old foreground ID inside
-  `startForeground(newId)`, so delaying only the explicit504 cancel cannot
-  establish this ordering. The bounded helper updates the current ID/audio
-  type first, prepublishes505, then polls for at most one second using a
-  monotonic clock. A per-publication marker rejects an older same-call record;
-  current-call/terminal and service-generation guards fence the final505 switch
-  and504 cancel against successors, newer mode requests and service destruction.
-  Failed publication/query/scheduling or timeout retains504 and the call/audio
-  owner. Terminal cleanup must also remove this call's prepublished505 when
-  promotion is still deferred or has timed out. The Android platform records
-  the requested native call ID before notify505, under the existing controller
-  lifecycle lock. Cleanup cancels that owned request even before Android exposes
-  its record, preserving a successor's request and clearing ownership only after
-  cancellation returns successfully. Both active and inactive modes use this
-  path. The deterministic JVM
-  deferred-acceptance counterexample failed on the original code (504 absent
-  before505 acceptance); the focused helper, notification-factory, controller
-  and service classes then passed128 tests with no failures or skips. The
-  existing native call/activity/worker/network preservation selectors also
-  passed616 JVM tests (including those128), with no failures or skips. Exact
-  commands, baseline failure XML and candidate XML are retained in
-  [the host receipt directory](../../.codex-test-logs/patch11-notification-handover-20261019/).
-  The v2 visible-record cleanup regression reproduces orphan505 on v1;
-  its before/after-promotion and successor-preservation cases pass with v2.
-  The unchanged independent review probe also passes when each method runs in
-  a fresh JVM: Robolectric replaces Application services between cases while
-  the process runtime singleton retains its first NotificationManager. The
-  permanent regression constructs the real runtime per test Application. The
-  v2 native preservation selectors passed619 tests, with no failures or skips.
-  Retain initial failures, the causal fixture diagnosis and corrected RED/GREEN
-  XML in [the v2 host receipts](../../.codex-test-logs/patch11-v2-cleanup-20261020/).
-  V2 still misses a notify505 request whose app record is not yet registered;
-  querying activeNotifications cannot establish absence of that queued request.
-  The permanent deferred-record shadow reproduces this remaining branch. With
-  real request tracking wired but v2 cleanup unchanged, both it and the review
-  probe fail only the late-card assertion; all four controls pass. V3's owner
-  comparison makes all six pass. The review probe's publication callback uses
-  the real Android publication method; its shadow, timing and assertions stay
-  unchanged. V3's native preservation selectors pass620 tests, with no
-  failures or skips. Retain the RED source scaffold and RED/GREEN XML in
-  [the v3 host receipts](../../.codex-test-logs/patch11-v3-cleanup-20261020/).
-  App-active notification records can include enqueued/snoozed records; the
-  pending-record counterexample explicitly permits an accepted505 with no
-  drawn SystemUI frame. This proves app-visible OS acceptance/order only,
-  not continuous rendered notification visibility, actual notification
-  controls/audio or a rebuilt/signed Android candidate. The existing kx0003
-  device oracle remains unchanged and was not run for this patch.
   Cleanup timing must distinguish a late admission placeholder from retained
   ringing/audio. A new FCM wake163ms after native cleanup created admission_v1;
   its worker finished in925ms, but the unchanged foreground service has a30s
