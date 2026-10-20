@@ -19,6 +19,18 @@ import org.robolectric.annotation.LooperMode
 @LooperMode(LooperMode.Mode.PAUSED)
 class MknoonCallForegroundServiceTest {
     @Test
+    fun `destroy closes only the initialized service notification owner`() {
+        val runtime = RecordingForegroundRuntime()
+        val service = MknoonCallForegroundService(runtime)
+        val callId = UUID.fromString(CALL_ID)
+        service.onStartCommand(serviceIntent(MknoonCallForegroundService.ACTION_START_RINGING, callId), 0, 1)
+        assertEquals(listOf(callId), runtime.ringingStarts)
+        service.onDestroy()
+        assertEquals(1, runtime.destroyCalls)
+        assertTrue(runtime.stops.isEmpty())
+    }
+
+    @Test
     fun `known terminal wake at cleanup deadline applies foreground then releases without waiting for worker`() {
         val callId = UUID.fromString(CALL_ID)
         val runtime = RecordingForegroundRuntime().also {
@@ -622,6 +634,8 @@ class MknoonCallForegroundServiceTest {
 }
 
 private class RecordingForegroundRuntime : MknoonCallForegroundRuntime {
+    var destroyCalls = 0
+    override fun onServiceDestroyed() { destroyCalls += 1 }
     val foregroundOperations = mutableListOf<String>()
     val admissionStarts = mutableListOf<UUID>()
     val ringingStarts = mutableListOf<UUID>()

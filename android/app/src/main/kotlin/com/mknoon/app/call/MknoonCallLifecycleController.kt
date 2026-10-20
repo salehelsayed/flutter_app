@@ -1365,6 +1365,13 @@ internal class MknoonCallLifecycleController(
         audioStateLocked()
     }
 
+    /** Fence bounded notification effects against terminal/successor admission. */
+    internal fun withForegroundNotificationOwner(nativeCallId: UUID,
+        action: () -> Boolean): Boolean = synchronized(lock) {
+        if (cleanupState != null || activeNativeCallId() != nativeCallId ||
+            hasTerminalLifecycleLocked(nativeCallId)) false else action()
+    }
+
     /** Bounded observation under the exact adopted audio owner, without store I/O. */
     internal fun <T> withActiveAudioOwner(
         nativeCallId: UUID,

@@ -28,6 +28,26 @@ import org.robolectric.shadows.ShadowNotificationManager
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
 class MknoonCallNotificationFactoryTest {
+    @Test
+    @Config(sdk = [28, 33])
+    fun `ongoing acceptance binds owned id tag call and fresh request marker`() {
+        val callId = UUID.fromString(CALL_ID)
+        val token = UUID.randomUUID()
+        val manager = context.getSystemService(NotificationManager::class.java)
+        manager.notify(505, factory.createOngoing(callId, token))
+        fun current() = manager.activeNotifications.single { it.id == 505 && it.tag == null }
+        assertTrue(factory.isOngoingPublication(current(), callId, token))
+        assertFalse(factory.isOngoingPublication(current(), UUID.randomUUID(), token))
+        assertFalse(factory.isOngoingPublication(current(), callId, UUID.randomUUID()))
+        manager.notify(504, factory.createOngoing(callId, token))
+        assertFalse(factory.isOngoingPublication(manager.activeNotifications.single { it.id == 504 }, callId, token))
+        manager.notify("other", 505, factory.createOngoing(callId, token))
+        assertFalse(factory.isOngoingPublication(manager.activeNotifications.single { it.tag == "other" }, callId, token))
+        // An older posted/snoozed record for the same call is insufficient.
+        manager.notify(505, factory.createOngoing(callId))
+        assertFalse(factory.isOngoingPublication(current(), callId, token))
+    }
+
     private lateinit var context: Context
     private lateinit var pendingIntents: RecordingCallPendingIntentFactory
     private lateinit var factory: MknoonCallNotificationFactory

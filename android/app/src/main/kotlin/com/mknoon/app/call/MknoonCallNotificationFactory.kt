@@ -3,6 +3,8 @@ package com.mknoon.app.call
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.os.Bundle
+import android.service.notification.StatusBarNotification
 import android.app.PendingIntent
 import android.app.Person
 import android.content.Context
@@ -100,6 +102,7 @@ internal class MknoonCallNotificationFactory(
         const val ONGOING_CHANNEL_ID = "mknoon_calls_ongoing_v1"
         const val NOTIFICATION_ID = 504
         const val ONGOING_NOTIFICATION_ID = 505
+        private const val ONGOING_PUBLICATION_TOKEN = "mknoon.call.ongoing.publication"
     }
 
     private val applicationContext = context.applicationContext
@@ -175,11 +178,15 @@ internal class MknoonCallNotificationFactory(
             applicationContext.getSystemService(NotificationManager::class.java)
                 .canUseFullScreenIntent()
 
-    fun createOngoing(nativeCallId: UUID): Notification {
+    fun createOngoing(nativeCallId: UUID, publicationToken: UUID? = null): Notification {
         ensureOngoingChannel()
         val callerName = callerName(nativeCallId)
         val end = pendingIntents.action(nativeCallId, MknoonCallActionReceiver.ACTION_END)
         val builder = builder(ONGOING_CHANNEL_ID)
+            .addExtras(Bundle().apply {
+                putString(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID, nativeCallId.toString())
+                publicationToken?.let { putString(ONGOING_PUBLICATION_TOKEN, it.toString()) }
+            })
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(callerName)
             .setContentText(applicationContext.getString(R.string.call_notification_ongoing))
@@ -205,6 +212,16 @@ internal class MknoonCallNotificationFactory(
         }
         return builder.build()
     }
+
+    /** Exact app-visible request identity; enqueued records are not a drawn-frame ack. */
+    fun isOngoingPublication(record: StatusBarNotification, nativeCallId: UUID,
+        publicationToken: UUID): Boolean =
+        record.packageName == applicationContext.packageName && record.tag == null &&
+            record.id == ONGOING_NOTIFICATION_ID && record.isOngoing &&
+            record.notification.category == Notification.CATEGORY_CALL &&
+            record.notification.extras?.getString(MknoonCallActionReceiver.EXTRA_NATIVE_CALL_ID) ==
+                nativeCallId.toString() &&
+            record.notification.extras?.getString(ONGOING_PUBLICATION_TOKEN) == publicationToken.toString()
 
     private fun builder(channelId: String = CHANNEL_ID): Notification.Builder =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
