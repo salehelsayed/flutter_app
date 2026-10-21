@@ -91,6 +91,8 @@ void main() {
             '-only-testing:RunnerUITests/FixtureTests/testProof',
             '-resultBundlePath',
             '${root.absolute.path}/result.xcresult',
+            '-collect-test-diagnostics',
+            'never',
           ],
           environment: environment,
         ),
@@ -602,6 +604,10 @@ void main() {
         ),
       );
       expect(xctest.arguments, isNot(contains('build-for-testing')));
+      expect(
+        xctest.arguments.sublist(xctest.arguments.length - 2),
+        <String>['-collect-test-diagnostics', 'never'],
+      );
       expect(xctest.environment['SIMS_CHILD_BUILDS_FORBIDDEN'], '1');
       expect(
         (artifact['xctest']! as Map)['local_network_permission'],

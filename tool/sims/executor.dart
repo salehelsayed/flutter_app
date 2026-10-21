@@ -727,7 +727,9 @@ if [ "\$#" -eq 1 ] && [ "\$1" = "-version" ]; then
 fi
 xcode_allowed=0
 if [ "\${SIMS_CHILD_BUILDS_FORBIDDEN-}" = "1" ] &&
-   [ "\$#" -eq 10 ] &&
+   { [ "\$#" -eq 10 ] ||
+     { [ "\$#" -eq 12 ] && [ "\${11}" = "-collect-test-diagnostics" ] &&
+       [ "\${12}" = "never" ]; }; } &&
    [ "\$1" = "test-without-building" ] &&
    [ "\$2" = "-xctestrun" ] &&
    [ "\$4" = "-destination" ] &&

@@ -932,7 +932,8 @@ printf 'SIMS_RESULT_JSON={"status":"PASS","assertionsAttempted":1,"artifactPrese
               '-destination platform=iOS,id=physical-device '
               '-parallel-testing-enabled NO '
               '-only-testing:RunnerUITests/FixtureTests/testProof '
-              '-resultBundlePath $resultBundle; '
+              '-resultBundlePath $resultBundle '
+              '-collect-test-diagnostics never; '
               'printf \'SIMS_RESULT_JSON={"status":"PASS",'
               '"assertionsAttempted":1,"artifactPresent":false,'
               '"printOnly":false}\\n\'',
