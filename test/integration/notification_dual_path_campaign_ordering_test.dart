@@ -44,6 +44,7 @@ final class _Fixture {
   Future<void> Function()? beforeCleanup;
   Map<String, Object?> prepared = {..._prepared};
   Map<String, Object?> complete = _complete;
+  bool acceptCustody = false;
   Object? cancelError;
   Object? cleanupError;
 
@@ -100,8 +101,17 @@ final class _Fixture {
         },
         recordCleanupFailure: cleanupFailures.add,
         elapsed: () => elapsed,
+        acceptLiveNotAckedCustody: acceptCustody,
       );
 }
+
+Map<String, Object?> get _liveNotAcked => {
+  'schema': 'mknoon.notification-dual-path.v1',
+  'status': 'failed',
+  'success': false,
+  ..._request,
+  'errorCode': 'live_not_acked',
+};
 
 void main() {
   test('diagnostic projection counts malformed FLOW without retaining it', () {
@@ -263,6 +273,61 @@ void main() {
         'cleanup',
       ]),
     );
+  });
+
+  test(
+    'backgrounded receiver: live_not_acked after custody is accepted as custody delivery',
+    () async {
+      final f = _Fixture()
+        ..acceptCustody = true
+        ..complete = _liveNotAcked;
+      final proof = await f.run();
+      expect(proof.custodyOnly, isTrue);
+      expect(proof.completed['acked'], isFalse);
+      expect(proof.completed['transport'], 'inbox');
+      expect(proof.completed['wireSha256'], _prepared['wireSha256']);
+      expect(f.calls, [
+        'stage',
+        'prepared',
+        'provider',
+        'pin',
+        'live',
+        'complete',
+        'corroborate',
+        'cleanup',
+      ]);
+    },
+  );
+
+  test('live_not_acked stays a failure when custody is not accepted', () async {
+    final f = _Fixture()..complete = _liveNotAcked;
+    await expectLater(f.run(), throwsFormatException);
+    expect(f.calls, isNot(contains('corroborate')));
+  });
+
+  test('custody delivery still requires relay corroboration', () async {
+    final failure = StateError('relay corroboration unavailable');
+    final f = _Fixture()
+      ..acceptCustody = true
+      ..complete = _liveNotAcked
+      ..corroboration = () async => throw failure;
+    await expectLater(f.run(), throwsA(same(failure)));
+  });
+
+  test('only an exact live_not_acked retirement is custody delivery', () async {
+    for (final receipt in <Map<String, Object?>>[
+      {..._liveNotAcked, 'errorCode': 'deadline'},
+      {..._liveNotAcked, 'errorCode': 'custody_not_fresh'},
+      {..._liveNotAcked, 'cleanupErrorCode': 'control_cleanup_failed'},
+      {..._liveNotAcked, 'nonce': 'other'},
+      {..._liveNotAcked, 'success': true},
+    ]) {
+      final f = _Fixture()
+        ..acceptCustody = true
+        ..complete = receipt;
+      await expectLater(f.run(), throwsFormatException, reason: '$receipt');
+      expect(f.calls, isNot(contains('corroborate')));
+    }
   });
 
   test('invalid live completion cannot reach provider corroboration', () async {

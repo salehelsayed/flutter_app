@@ -1320,8 +1320,19 @@ final class _AndroidNotificationCampaign {
     // silent pass.
     String? dualPathLog;
     final observation = _lastDualPathHostObservation!;
+    // Owner decision 2026-10-21: a backgrounded receiver may be outside the OS
+    // network window, so the live copy can go unacknowledged. Delivery then
+    // rests on the stored relay custody plus the push wake, which the
+    // pre-release receiver proof already bound to this exact ciphertext. There
+    // is no released live arrival to wait for; exactly-once is proven below.
+    final custodyOnly = dualSend.custodyOnly;
+    if (custodyOnly) {
+      observation.mark('custody_push_wake_delivery');
+    }
     observation.mark('dual_arrival_observation_started');
-    final deadline = DateTime.now().add(const Duration(minutes: 2));
+    final deadline = DateTime.now().add(
+      custodyOnly ? Duration.zero : const Duration(minutes: 2),
+    );
     while (DateTime.now().isBefore(deadline)) {
       final window = await _logcatSince(logcatCursor);
       observation.nominalWindow = androidNotificationDualPathWindowDiagnostic(
@@ -1353,7 +1364,7 @@ final class _AndroidNotificationCampaign {
       }
       await Future<void>.delayed(const Duration(seconds: 2));
     }
-    if (dualPathLog == null) {
+    if (dualPathLog == null && !custodyOnly) {
       observation.mark('dual_arrival_observation_failed');
       final detail = await _retainDualPathFailure(
         observation,
@@ -1396,7 +1407,16 @@ final class _AndroidNotificationCampaign {
     // zero in the snapshot). The predicate is unchanged — only the window it
     // reads is now allowed to catch up.
     String? losingSuppression;
-    final suppressionDeadline = DateTime.now().add(const Duration(minutes: 1));
+    final suppressionDeadline = DateTime.now().add(
+      custodyOnly ? Duration.zero : const Duration(minutes: 1),
+    );
+    if (custodyOnly) {
+      // Only one delivery path reached the receiver, so a typed stand-down is
+      // recorded when present but cannot be required.
+      losingSuppression = androidNotificationLosingPathSuppression(
+        await _logcatSince(logcatCursor),
+      );
+    }
     while (DateTime.now().isBefore(suppressionDeadline)) {
       losingSuppression = androidNotificationLosingPathSuppression(
         await _logcatSince(logcatCursor),
@@ -1404,7 +1424,7 @@ final class _AndroidNotificationCampaign {
       if (losingSuppression != null) break;
       await Future<void>.delayed(const Duration(seconds: 2));
     }
-    if (losingSuppression == null) {
+    if (losingSuppression == null && !custodyOnly) {
       throw _Failure(
         'B13 recorded no typed suppression from the losing delivery path; the '
         'single card cannot be attributed to the dedupe seam.',
@@ -1427,6 +1447,36 @@ final class _AndroidNotificationCampaign {
       );
     }
 
+    int? custodyStoredCount;
+    if (custodyOnly) {
+      // The decrypted card proves the woken receiver opened the custody copy.
+      // Bringing it forward runs ingestion; the message must be stored exactly
+      // once and stay that way.
+      await _launch(emulator);
+      await _waitFor(
+        'B13 custody copy stored after the push wake',
+        const Duration(minutes: 1),
+        () async =>
+            androidNotificationStoredCountForMessage(
+              await _logcatSince(logcatCursor),
+              messageId: sent.messageId,
+            ) >=
+            1,
+      );
+      await Future<void>.delayed(const Duration(seconds: 5));
+      custodyStoredCount = androidNotificationStoredCountForMessage(
+        await _logcatSince(logcatCursor),
+        messageId: sent.messageId,
+      );
+      if (custodyStoredCount != 1) {
+        throw _Failure(
+          'B13 custody delivery stored the message $custodyStoredCount times; '
+          'exactly once was required.',
+          assertionsAttempted: _assertionsAttempted,
+        );
+      }
+    }
+
     return androidNotificationScenarioArtifact(
       testCase: 'TC-B13',
       scenario: 'tc_b13_dual_path_single_alert',
@@ -1445,8 +1495,11 @@ final class _AndroidNotificationCampaign {
         'relaySuccessRowHasRecipientBinding': false,
         'sameEncryptedWireSha256': dualSend.prepared['wireSha256'],
         'sameCiphertextSha256': dualSend.prepared['ciphertextSha256'],
+        'deliveryMode': custodyOnly ? 'custody_push_wake' : 'live_acked',
         'liveDispatchAcknowledged': dualSend.completed['acked'],
-        'releasedNotifyCapableLiveArrival': true,
+        'releasedNotifyCapableLiveArrival': !custodyOnly,
+        if (custodyOnly) 'liveFailureCode': 'live_not_acked',
+        if (custodyOnly) 'custodyStoredCount': custodyStoredCount,
         'livePathAttemptEvent': androidNotificationLivePathAttemptEvent,
         'fcmPathAttemptEvent': androidNotificationFcmPathAttemptEvent,
         'losingPathSuppression': losingSuppression,
@@ -2987,6 +3040,7 @@ final class _AndroidNotificationCampaign {
     required String status,
     required Duration timeout,
     bool terminalOnly = false,
+    bool allowLiveNotAcked = false,
   }) async {
     final raw = await _waitForValue<String>(
       'exact dual-path sender $status',
@@ -3018,6 +3072,14 @@ final class _AndroidNotificationCampaign {
       );
     }
     if (!terminalOnly && value['status'] == 'failed') {
+      if (allowLiveNotAcked && value['errorCode'] == 'live_not_acked') {
+        // The coordinator decides whether this is an accepted custody-only
+        // retirement; keep the typed code for the diagnostic projection.
+        _lastDualPathHostObservation?.senderFailure = <String, Object?>{
+          'errorCode': 'live_not_acked',
+        };
+        return value;
+      }
       _lastDualPathHostObservation?.senderFailure = <String, Object?>{
         'errorCode': safeAndroidNotificationDualPathFailureCode(
           value['errorCode'],
@@ -3150,6 +3212,7 @@ final class _AndroidNotificationCampaign {
             request,
             status: 'complete',
             timeout: remaining,
+            allowLiveNotAcked: true,
           );
           observation.mark('live_completion_observed');
           return result;
@@ -3216,8 +3279,13 @@ final class _AndroidNotificationCampaign {
             _removeAppFile(physical, notificationDualPathReleaseFileName),
         recordCleanupFailure: (_) =>
             _dualPathCleanupFailures.add('dual-path-sender-retirement'),
+        acceptLiveNotAckedCustody: true,
       );
-      observation.mark('sender_proof_completed');
+      observation.mark(
+        proof.custodyOnly
+            ? 'sender_proof_completed_custody_only'
+            : 'sender_proof_completed',
+      );
       return proof;
     } on Object {
       observation.mark('sender_proof_failed');

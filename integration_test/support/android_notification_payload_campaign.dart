@@ -37,11 +37,67 @@ final class AndroidNotificationDualPathSendProof {
     required this.prepared,
     required this.completed,
     required this.liveCursor,
+    this.custodyOnly = false,
   });
 
   final Map<String, Object?> prepared;
   final Map<String, Object?> completed;
   final String liveCursor;
+
+  /// True when the released live copy was not acknowledged and delivery rests
+  /// on the already-stored relay custody plus the observed push wake.
+  final bool custodyOnly;
+}
+
+/// A backgrounded or cached Android receiver can be outside the OS network
+/// window when the released live copy is sent (the APP_BACKGROUND firewall
+/// for cached apps). The sender then retires with exactly `live_not_acked`,
+/// after relay custody was stored and the receiver's push wake was observed.
+/// Owner decision 2026-10-21: that custody plus push-wake delivery is
+/// accepted. Any other failure, a cleanup error, or a changed binding is not.
+bool androidNotificationDualPathLiveNotAckedRetirement({
+  required Map<String, Object?> prepared,
+  required Map<String, Object?> receipt,
+}) {
+  const keys = <String>{
+    'schema',
+    'status',
+    'success',
+    'stepId',
+    'runId',
+    'nonce',
+    'targetPeerId',
+    'errorCode',
+  };
+  return receipt.keys.toSet().length == keys.length &&
+      receipt.keys.toSet().containsAll(keys) &&
+      receipt['schema'] == notificationDualPathSenderSchema &&
+      receipt['status'] == 'failed' &&
+      receipt['success'] == false &&
+      receipt['errorCode'] == 'live_not_acked' &&
+      <String>[
+        'stepId',
+        'runId',
+        'nonce',
+        'targetPeerId',
+      ].every((key) => receipt[key] == prepared[key]);
+}
+
+/// Number of authoritative chat stores for [messageId] in [logcat]. Custody
+/// delivery must store the message exactly once.
+int androidNotificationStoredCountForMessage(
+  String logcat, {
+  required String messageId,
+}) {
+  if (messageId.isEmpty) return 0;
+  final prefix = safeNotificationIdPrefix(messageId);
+  return androidNotificationFlowRecords(logcat)
+      .where(
+        (record) =>
+            record.event == 'CHAT_MSG_RECEIVE_STORED' &&
+            record.details['id'] == prefix,
+      )
+      .length;
 }
 
 Map<String, Object?> validateAndroidNotificationDualPathPrepared({
@@ -128,6 +184,7 @@ coordinateAndroidNotificationDualPathSend({
   required Future<void> Function() cleanup,
   required void Function(Object error) recordCleanupFailure,
   Duration Function()? elapsed,
+  bool acceptLiveNotAckedCustody = false,
 }) async {
   final stopwatch = Stopwatch()..start();
   final readElapsed = elapsed ?? () => stopwatch.elapsed;
@@ -171,10 +228,25 @@ coordinateAndroidNotificationDualPathSend({
     remaining();
     final complete = await completed(remaining());
     remaining();
-    final validatedComplete = validateAndroidNotificationDualPathComplete(
-      prepared: binding,
-      receipt: complete,
-    );
+    // [beforeLiveRelease] pins the receiver in the background, so custody is
+    // only ever accepted for a backgrounded receiver.
+    final custodyOnly =
+        acceptLiveNotAckedCustody &&
+        androidNotificationDualPathLiveNotAckedRetirement(
+          prepared: binding,
+          receipt: complete,
+        );
+    final validatedComplete = custodyOnly
+        ? Map<String, Object?>.unmodifiable(<String, Object?>{
+            ...binding,
+            'status': 'custody_only',
+            'transport': 'inbox',
+            'acked': false,
+          })
+        : validateAndroidNotificationDualPathComplete(
+            prepared: binding,
+            receipt: complete,
+          );
     // Receiver proof already authorizes release. Slow relay journal reads
     // must not let background inbox recovery win before that live send.
     // Corroboration still gates success within the original sender budget.
@@ -184,6 +256,7 @@ coordinateAndroidNotificationDualPathSend({
       prepared: binding,
       completed: validatedComplete,
       liveCursor: cursor,
+      custodyOnly: custodyOnly,
     );
   } catch (error, stack) {
     firstError = error;

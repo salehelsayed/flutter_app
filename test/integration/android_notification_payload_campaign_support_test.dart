@@ -1840,4 +1840,25 @@ Ranking Config:
       isNull,
     );
   });
+
+  test('custody delivery counts exact-prefix chat stores only', () {
+    String flow(String event, String id) =>
+        '[FLOW] ${jsonEncode(<String, Object?>{'event': event, 'details': <String, Object?>{'id': id, 'transport': 'inbox'}})}';
+    const messageId = '0123abcd-0000-4000-8000-000000000001';
+    final once = [
+      flow('CHAT_MSG_RECEIVE_STORED', '0123abcd'),
+      flow('CHAT_MSG_RECEIVE_DUPLICATE', '0123abcd'),
+      flow('CHAT_MSG_RECEIVE_STORED', 'ffffffff'),
+    ].join('\n');
+    expect(
+      androidNotificationStoredCountForMessage(once, messageId: messageId),
+      1,
+    );
+    final twice = '$once\n${flow('CHAT_MSG_RECEIVE_STORED', '0123abcd')}';
+    expect(
+      androidNotificationStoredCountForMessage(twice, messageId: messageId),
+      2,
+    );
+    expect(androidNotificationStoredCountForMessage(once, messageId: ''), 0);
+  });
 }
