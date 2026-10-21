@@ -6438,7 +6438,11 @@ visible and cannot become an ordinary first-attempt PASS.
   The [focused host evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/host-evidence/)
   retains the failing inactive-state reproduction, 177 passing focused checks
   and eight passing placement sentinels for the approved fix. The original
-  device failure returned `canceled`; a device rerun remains separate proof.
+  device failure returned `canceled`. The [device rerun](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/device-green-runner-summary.md)
+  passed all five KX8 assertions: three snapshots returned `microphoneDenied`
+  and the explanation was visible. Its 27 base call assertions and five KX29
+  route assertions also passed. Earlier full-suite rows and this focused rerun
+  retain their separate source/artifact scopes; this is not one fresh full-21 run.
   Provider wake acceptance establishes custody only. Caller **Ringing** and
   ringback require authenticated remote ringing; a recipient may answer while
   the caller still shows Connecting. The earlier focused affected-calls receipt
@@ -7766,7 +7770,15 @@ visible and cannot become an ordinary first-attempt PASS.
   `android.e2e.production`, update row `kx0028` uses `ios.simulator.app`, and
   `kx0031` is a host process-guard check. The four iOS physical proposals stay
   registered BLOCKED for physical-state preservation. Host validation and a
-  registered command do not certify any new device scenario. Contact rollback
+  registered command do not certify any new device scenario.
+  In the available physical-Android/emulator pair, KX29 alone uses the physical
+  phone as caller because the emulator reports only a speaker route. The
+  evidence records the actual caller/callee kinds and requires its explicit
+  `physicalCaller` validator flag; the regression criteria reserve this topology
+  for KX29.
+  The retained KX29 device proof observes both earpiece and speaker, selects
+  speaker, then releases it back to the earpiece; Bluetooth and wired routes
+  remain unavailable in that run. Contact rollback
   uses an owned SQLite abort trigger. Android exposes the contact-delete
   dialog title and body as one accessibility label separated by a newline;
   both contact dialog flows therefore assert the exact merged ARB title/body,
