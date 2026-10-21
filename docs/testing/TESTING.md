@@ -3767,6 +3767,26 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **Settings, consent, group creation and update recovery boundaries:** recovery
+  phrase visibility is page-owned but its modal sheet must also rebuild when
+  inactive/hidden/paused conceals it. Clipboard success must follow the awaited
+  platform write; platform failures keep copy retryable and show localized
+  feedback. Host success fixtures must explicitly provide a clipboard handler.
+  Avatar normalizer output must decode before replacing a canonical file;
+  nonempty bytes are insufficient, and decoders can throw on malformed input.
+  Success fixtures use real square images without dropping byte/path/version
+  assertions. Simulated profile recipients need separate documents directories
+  and actual failed-download request markers for replay, matching separate apps.
+  Contact-request display strips bidi controls without altering signed bytes
+  and bounds long names so both consent actions remain reachable. Group creation
+  rejects empty or invalid selected identities and blocked contacts before any
+  write or warming; valid legacy contacts missing ML-KEM retain the existing
+  explicit invite-degradation path. A thrown store launcher keeps the required
+  update overlay blocking and exposes localized retry feedback. Introduction
+  Close has a localized spoken name in EN/DE/AR. Focused host evidence is in
+  `.codex-test-logs/groupA-fixes/`; it does not certify native clipboard/store
+  behavior, device lifecycle screenshots, or screen-reader execution.
+
 - **Ordinary direct-media transport interruption:** a QUIC `stateless reset`
   or `connection closed ... transport error` does not establish that the relay
   lost the blob. Go can surface premature stream closure as `download incomplete:
