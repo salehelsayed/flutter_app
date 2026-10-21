@@ -98,6 +98,9 @@ class FriendPickerScreen extends StatelessWidget {
                   onPressed: isSending ? null : onClose,
                   icon: Icon(
                     Icons.close,
+                    semanticLabel: MaterialLocalizations.of(
+                      context,
+                    ).closeButtonTooltip,
                     size: 20,
                     color: isSending
                         ? readableColors.disabledForeground

@@ -95,9 +95,10 @@ Widget _buildSubject({
   required IdentityRepository identityRepo,
   required P2PService p2pService,
   ValueChanged<List<IntroductionModel>>? onIntroductionsSent,
+  Locale locale = const Locale('en'),
 }) {
   return MaterialApp(
-    locale: const Locale('en'),
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
@@ -248,12 +249,10 @@ void main() {
     },
   );
 
-  group(
-    'KNOWN GAP',
-    () {
-      testWidgets('ACCESS-002 introduction Close exposes a spoken name', (
-        tester,
-      ) async {
+  for (final language in ['en', 'de', 'ar']) {
+    testWidgets(
+      'ACCESS-002 introduction Close exposes a spoken name: $language',
+      (tester) async {
         final semantics = tester.ensureSemantics();
         final repo = InMemoryContactRepository();
         final recipient = _contact('peer-B', 'Lina');
@@ -266,6 +265,7 @@ void main() {
         try {
           await tester.pumpWidget(
             _buildSubject(
+              locale: Locale(language),
               recipient: recipient,
               contactRepo: repo,
               introRepo: InMemoryIntroductionRepository(),
@@ -277,17 +277,15 @@ void main() {
           final close = find.widgetWithIcon(IconButton, Icons.close);
           expect(
             tester.getSemantics(close).getSemanticsData().label.trim(),
-            isNotEmpty,
-            reason: 'An icon-only Close control needs a spoken name',
+            MaterialLocalizations.of(tester.element(close)).closeButtonTooltip,
+            reason: 'Close must expose the localized spoken name',
           );
         } finally {
           semantics.dispose();
         }
-      });
-    },
-    skip:
-        'KNOWN GAP: friend_picker_screen.dart:97 provides an icon-only Close button without a spoken name. Run with --run-skipped for the desired accessibility failure.',
-  );
+      },
+    );
+  }
 
   testWidgets(
     'filters recipient, self, blocked, and archived contacts while keeping eligible friends selectable',
