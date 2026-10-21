@@ -7759,9 +7759,16 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged candidate source identity. These exact selected commands ran in a
   private checkout without the broad native-build lease; they do not turn the
   canceled aggregate wrapper run into a pass. Their [source-bound receipts](../../.codex-test-logs/plan407-three-fixes/retained-host-evidence/independent-affected-contracts/results.redacted.json)
-  retain that scope. The original failed run is retained; the focused native
-  KX0006 rerun and
-  complete audio suite still need proof. Evidence:
+  retain that scope. The focused original KX0006 subsequently passed on the
+  permitted Pixel 7/Pixel 8 emulator pair, with all five original assertions,
+  the existing artifact validator, and exact terminal network/app restoration.
+  The [source-bound native receipt](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/kx0006-permitted-emulators/owner.redacted.json)
+  records exit zero and no timeout; the accompanying central-build receipt
+  records one actual build. This closes the callback-resume fixture finding.
+  The evidence covers this emulator pair. Complete audio-suite and normal SIMS
+  aggregate acceptance remain separate.
+  The first endpoint-readiness failure and original failed scenario are retained.
+  Evidence:
   `.codex-test-logs/plan407-three-fixes/kx6-resume-fix/`.
   Quiet-call proof requires owned native channel/priority state and complete SystemUI
   heads-up-manager samples; observed publication order uses the always-on
