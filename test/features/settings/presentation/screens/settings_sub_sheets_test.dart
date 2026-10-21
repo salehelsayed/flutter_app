@@ -107,38 +107,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  group(
-    'KNOWN GAP',
-    () {
-      testWidgets(
-        'SETTINGS-004 recovery phrase conceals on background and stays hidden on return',
-        (tester) async {
-          await pumpWired(tester);
-          await openSheet(tester, 'settings-row-recovery');
-          await tester.tap(find.text('Tap to reveal'));
-          await tester.pump();
-          expect(find.text('abandon'), findsOneWidget);
-          for (final state in const [
-            AppLifecycleState.inactive,
-            AppLifecycleState.hidden,
-            AppLifecycleState.paused,
-          ]) {
-            tester.binding.handleAppLifecycleStateChanged(state);
-          }
-          await tester.pump();
-          expect(find.text('Tap to reveal'), findsOneWidget);
-          tester.binding.handleAppLifecycleStateChanged(
-            AppLifecycleState.resumed,
-          );
-          await tester.pump(const Duration(milliseconds: 100));
-          expect(find.text('Tap to reveal'), findsOneWidget);
-          expect(find.text('Hide'), findsNothing);
-        },
-      );
-    },
-    skip:
-        'KNOWN GAP: settings_wired.dart:217 reveal state has no background concealment. Run with --run-skipped for the desired privacy failure.',
-  );
+  group('KNOWN GAP', () {
+    testWidgets(
+      'SETTINGS-004 recovery phrase conceals on background and stays hidden on return',
+      (tester) async {
+        await pumpWired(tester);
+        await openSheet(tester, 'settings-row-recovery');
+        await tester.tap(find.text('Tap to reveal'));
+        await tester.pump();
+        expect(find.text('abandon'), findsOneWidget);
+        for (final state in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pump();
+        expect(find.text('Tap to reveal'), findsOneWidget);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Tap to reveal'), findsOneWidget);
+        expect(find.text('Hide'), findsNothing);
+      },
+    );
+  });
 
   testWidgets('SETTINGS-004 navigating away resets reveal for the next sheet', (
     tester,

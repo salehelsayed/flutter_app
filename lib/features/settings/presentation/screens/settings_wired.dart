@@ -121,7 +121,8 @@ class SettingsWired extends StatefulWidget {
   State<SettingsWired> createState() => _SettingsWiredState();
 }
 
-class _SettingsWiredState extends State<SettingsWired> {
+class _SettingsWiredState extends State<SettingsWired>
+    with WidgetsBindingObserver {
   IdentityModel? _identity;
   bool _isMnemonicRevealed = false;
   bool _isPeerIdCopied = false;
@@ -161,6 +162,7 @@ class _SettingsWiredState extends State<SettingsWired> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     emitFlowEvent(layer: 'FL', event: 'SETTINGS_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadBackgroundPreference();
@@ -168,6 +170,16 @@ class _SettingsWiredState extends State<SettingsWired> {
     _loadVideoQualityPreference();
     _loadMediaDownloadPreferences();
     _loadPostsPrivacySettings();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      _onHideMnemonic();
+      _recoverySheetTick?.call();
+    }
   }
 
   Future<void> _loadIdentity() async {
@@ -906,6 +918,7 @@ class _SettingsWiredState extends State<SettingsWired> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _peerIdCopyTimer?.cancel();
     _mnemonicCopyTimer?.cancel();
     super.dispose();
