@@ -3875,6 +3875,14 @@ visible and cannot become an ordinary first-attempt PASS.
   resource stops and focused GREEN receipts are retained in
   `.codex-test-logs/batch2-voice-fix-20261021/`.
 
+  A profile listener's delayed second attempt is a continuation of its retained
+  request, not a new desired version. The real listener/use-case race test lets
+  v3 commit during v2's existing five-second retry delay and proves the old
+  continuation neither fetches again nor recreates its marker or overwrites
+  v3. The existing durable marker supplies that guard; no new retry owner is
+  needed. The full profile use-case, listener and integration files preserve
+  their existing behavior after the guard is applied.
+
   Focused Batch 2 receipts and causal REDs are retained in
   `.codex-test-logs/batch2-20261021/`, including first-attempt obsolete UI
   expectations before alignment with the silent-retry requirement. Focused

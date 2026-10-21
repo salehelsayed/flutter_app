@@ -192,6 +192,99 @@ void main() {
 
   group('downloadProfilePicture', () {
     test(
+      'profile listener delayed retry cannot supersede a newer committed version',
+      () async {
+        const peerId = '12D3KooWOwnerPeerId123456';
+        contactRepo.contactResult = _makeContact();
+        bridge.nextResponse = {'ok': false, 'errorMessage': 'err=EOF'};
+        final messages = StreamController<ChatMessage>.broadcast();
+        addTearDown(messages.close);
+        final firstInterrupted = Completer<void>();
+        final oldContinuationFinished = Completer<void>();
+        final persistedContacts = contactRepo;
+        var oldAttempts = 0;
+        final listener = ProfileUpdateListener(
+          profileUpdateStream: messages.stream,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          downloadProfilePictureFn:
+              ({
+                required bridge,
+                required contactRepo,
+                required ownerPeerId,
+                required avatarVersion,
+                bool retryPendingRequest = false,
+              }) async {
+                final oldAttempt = avatarVersion == 'v2' ? ++oldAttempts : 0;
+                final updated = await downloadProfilePicture(
+                  bridge: bridge,
+                  contactRepo: contactRepo,
+                  ownerPeerId: ownerPeerId,
+                  avatarVersion: avatarVersion,
+                  retryPendingRequest: retryPendingRequest,
+                  avatarNormalizer: avatarNormalizer,
+                );
+                if (updated != null) {
+                  // Match the production repository's persisted readback.
+                  persistedContacts.contactResult = updated;
+                }
+                if (oldAttempt == 1) firstInterrupted.complete();
+                if (oldAttempt == 2) oldContinuationFinished.complete();
+                return updated;
+              },
+        );
+        addTearDown(listener.dispose);
+        listener.start();
+        await listener.retryNow();
+
+        ChatMessage update(String version) => ChatMessage(
+          from: peerId,
+          to: 'self',
+          content: jsonEncode({
+            'type': 'profile_update',
+            'version': '1',
+            'payload': {'peerId': peerId, 'avatarVersion': version},
+          }),
+          timestamp: '2026-10-21T10:00:00Z',
+          isIncoming: true,
+        );
+
+        messages.add(update('v2'));
+        await firstInterrupted.future.timeout(const Duration(seconds: 3));
+        bridge.nextResponse = {'ok': true};
+        final newest = listener.contactUpdatedStream
+            .firstWhere((contact) => contact.avatarVersion == 'v3')
+            .timeout(const Duration(seconds: 3));
+        messages.add(update('v3'));
+        expect((await newest).avatarVersion, 'v3');
+        expect(bridge.downloadCount, 2);
+
+        // Let the original listener's default five-second retry continue.
+        // Hold an erroneous native fetch so its recreated durable marker is
+        // observable before successful completion would clear it again.
+        bridge.downloadStarted = Completer<void>();
+        bridge.releaseDownload = Completer<void>();
+        final request = File(
+          '${tempDir.path}/media/avatars/$peerId.retry_waiting',
+        );
+        await Future.any([
+          oldContinuationFinished.future,
+          bridge.downloadStarted!.future,
+        ]).timeout(const Duration(seconds: 8));
+        final recreatedOldRequest = request.existsSync();
+        bridge.releaseDownload!.complete();
+        await oldContinuationFinished.future.timeout(
+          const Duration(seconds: 3),
+        );
+
+        expect(bridge.downloadCount, 2, reason: 'a stale retry cannot fetch');
+        expect(recreatedOldRequest, isFalse);
+        expect(contactRepo.lastAdded!.avatarVersion, 'v3');
+        expect(request.existsSync(), isFalse);
+      },
+    );
+
+    test(
       'a restarted profile owner recovers a mid-transfer interruption without another profile event',
       () async {
         const peerId = '12D3KooWOwnerPeerId123456';

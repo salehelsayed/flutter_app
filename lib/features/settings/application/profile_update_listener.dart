@@ -204,6 +204,7 @@ class ProfileUpdateListener {
         contactRepo: contactRepo,
         ownerPeerId: peerId,
         avatarVersion: avatarVersion,
+        retryPendingRequest: attempt > 1,
       );
       if (updated != null) {
         return updated;
