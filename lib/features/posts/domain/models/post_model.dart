@@ -28,6 +28,9 @@ class PostModel {
   final double? nearbySenderAccuracyM;
   final String? nearbyDistanceLabel;
   final bool isIncoming;
+
+  /// Read state projected from `post_feed_state`, not a column in `posts`.
+  final bool isRead;
   final bool isFocused;
   final String deliveryStatus;
   final String? passedByPeerId;
@@ -64,6 +67,7 @@ class PostModel {
     this.nearbySenderAccuracyM,
     this.nearbyDistanceLabel,
     this.isIncoming = true,
+    this.isRead = false,
     this.isFocused = false,
     this.deliveryStatus = 'available',
     this.passedByPeerId,
@@ -103,6 +107,7 @@ class PostModel {
           ?.toDouble(),
       nearbyDistanceLabel: map['nearby_distance_label'] as String?,
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
+      isRead: (map['is_read'] as int? ?? 0) == 1,
       isFocused: (map['is_focused'] as int? ?? 0) == 1,
       deliveryStatus:
           map['delivery_status'] as String? ??
@@ -169,6 +174,7 @@ class PostModel {
     double? nearbySenderAccuracyM,
     String? nearbyDistanceLabel,
     bool? isIncoming,
+    bool? isRead,
     bool? isFocused,
     String? deliveryStatus,
     String? passedByPeerId,
@@ -208,6 +214,7 @@ class PostModel {
           nearbySenderAccuracyM ?? this.nearbySenderAccuracyM,
       nearbyDistanceLabel: nearbyDistanceLabel ?? this.nearbyDistanceLabel,
       isIncoming: isIncoming ?? this.isIncoming,
+      isRead: isRead ?? this.isRead,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,
       passedByPeerId: passedByPeerId ?? this.passedByPeerId,

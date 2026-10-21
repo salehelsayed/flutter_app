@@ -123,6 +123,11 @@ import 'package:flutter_app/features/feed/data/feed_cleared_repository.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
+import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
@@ -140,6 +145,7 @@ class OrbitWired extends StatefulWidget {
   final ContactRequestListener contactRequestListener;
   final MessageRepository messageRepo;
   final PostRepository? postRepository;
+  final DateTime Function()? thoughtNowProvider;
   final MediaAttachmentRepository mediaAttachmentRepo;
 
   /// 409: newest terminal call per contact. Null keeps Orbit message-only,
@@ -236,6 +242,7 @@ class OrbitWired extends StatefulWidget {
     required this.contactRequestListener,
     required this.messageRepo,
     this.postRepository,
+    this.thoughtNowProvider,
     required this.mediaAttachmentRepo,
     this.callActivitySource,
     required this.chatMessageListener,
@@ -342,6 +349,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   late final CurvedAnimation _collapseAnimation;
   late final CurvedAnimation _searchDockAnimation;
   late final CurvedAnimation _searchTriggerAnimation;
+
+  StreamSubscription<String>? _thoughtSubscription;
+  final _thoughtEligibilityChanges = StreamController<void>.broadcast();
+  Map<String, OrbitThoughtNote> _thoughtsByPeerId = const {};
+  int _thoughtLoadRevision = 0;
+  bool _thoughtCardOpen = false;
+  PendingPostTargetStore? _queuedThoughtStore;
+  Object? _queuedThoughtTarget;
 
   StreamSubscription<ConversationMessage>? _chatSubscription;
   StreamSubscription<ContactModel>? _contactUpdateSubscription;
@@ -584,6 +599,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       curve: Curves.ease,
     );
 
+    _bindThoughtChanges();
+    widget.pendingPostTargetStore?.addListener(_onPendingThoughtTargetChanged);
     _loadIdentity();
     _loadQualityPreference();
     _loadVideoQualityPreference();
@@ -611,6 +628,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   @override
   void didUpdateWidget(covariant OrbitWired oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.postRepository != widget.postRepository ||
+        oldWidget.contactRepo != widget.contactRepo ||
+        oldWidget.thoughtNowProvider != widget.thoughtNowProvider) {
+      _bindThoughtChanges();
+      unawaited(_reloadThoughts());
+    }
+    if (oldWidget.pendingPostTargetStore != widget.pendingPostTargetStore) {
+      oldWidget.pendingPostTargetStore?.removeListener(
+        _onPendingThoughtTargetChanged,
+      );
+      widget.pendingPostTargetStore?.addListener(
+        _onPendingThoughtTargetChanged,
+      );
+      _onPendingThoughtTargetChanged();
+    }
     if (oldWidget.onEmbeddedExit != widget.onEmbeddedExit ||
         oldWidget.onEmbeddedExitActionChanged !=
             widget.onEmbeddedExitActionChanged ||
@@ -694,6 +726,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       // lock: reset must NOT short-circuit the dirty replay (cat.22).
       _resetToInnerCircleView();
       _replayDirtyOrbitWork();
+      unawaited(_reloadThoughts());
     }
     _wasOrbitActive = isActive;
     setState(() {});
@@ -853,6 +886,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _identity = identity;
       _avatarBytes = avatarBytes;
       _publishAllProjections();
+      unawaited(_reloadThoughts());
       // Now that identity is loaded, load introductions
       _loadIntroductions();
     } catch (e) {
@@ -862,6 +896,182 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         details: {'error': e.toString()},
       );
     }
+  }
+
+  void _bindThoughtChanges() {
+    _thoughtSubscription?.cancel();
+    _thoughtSubscription = widget.postRepository?.postChanges.listen(
+      (_) => unawaited(_reloadThoughts()),
+      onError: (Object error) => _reportThoughtFailure(error),
+    );
+  }
+
+  LoadOrbitThoughtsUseCase _thoughtQuery(PostRepository repository) =>
+      LoadOrbitThoughtsUseCase(
+        postRepo: repository,
+        contactRepo: widget.contactRepo,
+        nowProvider: widget.thoughtNowProvider,
+      );
+
+  Future<void> _reloadThoughts() async {
+    if (!mounted) return;
+    final revision = ++_thoughtLoadRevision;
+    final repository = widget.postRepository;
+    final identity = _identity;
+    if (repository == null || identity == null) {
+      if (mounted && _thoughtsByPeerId.isNotEmpty) {
+        setState(() => _thoughtsByPeerId = const {});
+      }
+      return;
+    }
+    try {
+      final thoughts = await _thoughtQuery(
+        repository,
+      ).execute(localPeerId: identity.peerId);
+      if (!mounted || revision != _thoughtLoadRevision) return;
+      setState(() {
+        _thoughtsByPeerId = {
+          for (final post in thoughts)
+            post.authorPeerId: OrbitThoughtNote(
+              postId: post.id,
+              text: post.text,
+              isRead: post.isRead,
+              expiresAt: DateTime.parse(post.expiresAt),
+            ),
+        };
+      });
+      _onPendingThoughtTargetChanged();
+    } catch (error) {
+      if (mounted && revision == _thoughtLoadRevision) {
+        _reportThoughtFailure(error);
+      }
+    }
+  }
+
+  void _notifyThoughtEligibilityChanged() {
+    if (!_thoughtEligibilityChanges.isClosed) {
+      _thoughtEligibilityChanges.add(null);
+    }
+    if (widget.postRepository != null) unawaited(_reloadThoughts());
+  }
+
+  void _onPendingThoughtTargetChanged() {
+    final store = widget.pendingPostTargetStore;
+    final target = store?.target;
+    if (target != null) {
+      unawaited(_openThought(target.postId, notificationStore: store));
+    }
+  }
+
+  Future<void> _openThought(
+    String postId, {
+    PendingPostTargetStore? notificationStore,
+  }) async {
+    final repository = widget.postRepository;
+    final identity = _identity;
+    if (!mounted || repository == null || identity == null) return;
+    if (_thoughtCardOpen) {
+      if (notificationStore?.target != null) {
+        _queuedThoughtStore = notificationStore;
+        _queuedThoughtTarget = notificationStore!.target;
+      }
+      return;
+    }
+    _thoughtCardOpen = true;
+    final attemptedTarget = notificationStore?.target;
+    final lookupRevision = _thoughtLoadRevision;
+    var opened = false;
+    bool targetIsCurrent() =>
+        notificationStore == null ||
+        (identical(notificationStore, widget.pendingPostTargetStore) &&
+            notificationStore.target?.postId == postId);
+    try {
+      final requested = await repository.getPost(postId);
+      if (!mounted || !targetIsCurrent() || requested == null) return;
+      final query = _thoughtQuery(repository);
+      final thoughts = await query.execute(localPeerId: identity.peerId);
+      PostModel? current;
+      for (final thought in thoughts) {
+        if (thought.authorPeerId == requested.authorPeerId) {
+          current = thought;
+          break;
+        }
+      }
+      if (!mounted || !targetIsCurrent()) return;
+      if (current == null) {
+        notificationStore?.clear();
+        return;
+      }
+      final contact = await widget.contactRepo.getContact(current.authorPeerId);
+      if (!mounted || !targetIsCurrent()) return;
+      if (contact == null || contact.isBlocked || contact.isArchived) {
+        notificationStore?.clear();
+        return;
+      }
+      final now = (widget.thoughtNowProvider ?? DateTime.now)().toUtc();
+      if (!DateTime.parse(current.expiresAt).isAfter(now)) {
+        notificationStore?.clear();
+        unawaited(_reloadThoughts());
+        return;
+      }
+      notificationStore?.clear();
+      opened = true;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ThoughtCardScreen(
+            initialPost: current!,
+            authorName: contact.username,
+            postRepo: repository,
+            loadOrbitThoughts: query,
+            localPeerId: identity.peerId,
+            nowProvider: widget.thoughtNowProvider,
+            eligibilityChanges: _thoughtEligibilityChanges.stream,
+            downloadMedia: (attachment) => downloadPostMedia(
+              bridge: widget.bridge,
+              postRepo: repository,
+              mediaFileManager: widget.mediaFileManager,
+              attachment: attachment,
+            ),
+            onMessage: () {
+              if (mounted) unawaited(_openConversationForContact(contact));
+            },
+          ),
+        ),
+      );
+    } catch (error) {
+      if (mounted) _reportThoughtFailure(error);
+    } finally {
+      _thoughtCardOpen = false;
+      final queuedStore = _queuedThoughtStore;
+      final queuedTarget = _queuedThoughtTarget;
+      _queuedThoughtStore = null;
+      _queuedThoughtTarget = null;
+      if (mounted && opened) unawaited(_reloadThoughts());
+      // Replay a replacement tap even when the prior lookup found nothing.
+      // A repeated notification for the same missing target must not poll.
+      if (mounted &&
+          queuedStore != null &&
+          queuedTarget != null &&
+          identical(queuedStore, widget.pendingPostTargetStore) &&
+          identical(queuedStore.target, queuedTarget) &&
+          (!identical(queuedTarget, attemptedTarget) ||
+              _thoughtLoadRevision > lookupRevision)) {
+        unawaited(
+          _openThought(
+            queuedStore.target!.postId,
+            notificationStore: queuedStore,
+          ),
+        );
+      }
+    }
+  }
+
+  void _reportThoughtFailure(Object error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ORBIT_THOUGHT_LOAD_FAILED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
   }
 
   /// 412: a terminal call must refresh the ring.
@@ -1462,6 +1672,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _markContactChanged(String peerId) {
+    _notifyThoughtEligibilityChanged();
     _changedContactPeerIds.add(peerId);
   }
 
@@ -2449,6 +2660,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _contactUpdateSubscription = widget.chatMessageListener.contactUpdatedStream
         .listen(
           (contact) {
+            _notifyThoughtEligibilityChanged();
             if (!_isOrbitActive) {
               _dirtyFriendPeerIds.add(contact.peerId);
               return;
@@ -3117,6 +3329,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _thoughtSubscription?.cancel();
+    widget.pendingPostTargetStore?.removeListener(
+      _onPendingThoughtTargetChanged,
+    );
+    _thoughtEligibilityChanges.close();
     _chatSubscription?.cancel();
     _callActivitySubscription?.cancel();
     // 202: drop any pending coalesced refresh so its timer never fires after
@@ -3181,6 +3398,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       searchTriggerAnimation: _searchTriggerAnimation,
       onClose: _onClose,
       onFriendTap: _onFriendTap,
+      thoughtsByPeerId: _thoughtsByPeerId,
+      onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onThoughtsExpired: () => unawaited(_reloadThoughts()),
+      thoughtNowProvider: widget.thoughtNowProvider,
       onFriendAvatarTap: _onFriendAvatarTap,
       onSearchOpen: _onSearchOpen,
       onSearchClose: _onSearchClose,

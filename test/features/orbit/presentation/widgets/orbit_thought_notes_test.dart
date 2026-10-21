@@ -1,0 +1,363 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/inner_circle_interactive_surface.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_note_bubble.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_avatar.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+OrbitFriend _friend(int index) => OrbitFriend(
+  contact: ContactModel(
+    peerId: 'friend-$index',
+    username: 'Friend $index',
+    publicKey: 'pk-$index',
+    rendezvous: '',
+    signature: '',
+    scannedAt: '2026-10-21T00:00:00Z',
+  ),
+  messageCount: 0,
+  unreadCount: 0,
+);
+
+void main() {
+  final start = DateTime.utc(2026, 10, 21, 12);
+  OrbitThoughtNote note(
+    String id, {
+    String text = 'A thought',
+    bool read = false,
+    Duration lifetime = const Duration(hours: 1),
+  }) => OrbitThoughtNote(
+    postId: id,
+    text: text,
+    isRead: read,
+    expiresAt: start.add(lifetime),
+  );
+  final friends = [for (var i = 0; i < 14; i++) _friend(i)];
+  final items = friends.map<OrbitItem>(OrbitFriendItem.new).toList();
+
+  Widget wrap(Widget child, {bool reduceMotion = true}) => MaterialApp(
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(extensions: [BackgroundReadableColors.dark]),
+    home: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(disableAnimations: reduceMotion),
+        child: Scaffold(body: child),
+      ),
+    ),
+  );
+
+  testWidgets(
+    'only eligible ring friends receive notes, with separate note/chat taps',
+    (tester) async {
+      final openedThoughts = <String>[];
+      final openedChats = <String>[];
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'self',
+            items: items,
+            nowProvider: () => start,
+            thoughtsByPeerId: {
+              'friend-0': note('live'),
+              'friend-13': note('arc'),
+              'friend-1': note('expired', lifetime: Duration.zero),
+            },
+            onThoughtTap: openedThoughts.add,
+            onFriendTap: (friend) => openedChats.add(friend.peerId),
+          ),
+        ),
+      );
+      expect(find.byType(OrbitThoughtNoteBubble), findsOneWidget);
+      await tester.tap(find.byType(OrbitThoughtNoteBubble));
+      expect(openedThoughts, ['live']);
+      expect(openedChats, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+      await tester.tap(find.byKey(const ValueKey('orbit-node-2')));
+      expect(openedChats, ['friend-0', 'friend-2']);
+      expect(
+        tester
+            .widgetList<OrbitalAvatar>(find.byType(OrbitalAvatar))
+            .every((avatar) => avatar.unreadCount == 0),
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
+
+  testWidgets(
+    'bubble width/ellipsis and only heavier text distinguish unseen',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(OrbitThoughtNoteBubble(note: note('short', text: 'Hi'))),
+      );
+      final shortWidth = tester
+          .getSize(find.byType(OrbitThoughtNoteBubble))
+          .width;
+      expect(shortWidth, 40);
+      expect(
+        tester.widget<Text>(find.text('Hi')).style!.fontWeight,
+        FontWeight.w600,
+      );
+      final long = List.filled(100, 'long thought').join(' ');
+      await tester.pumpWidget(
+        wrap(
+          OrbitThoughtNoteBubble(note: note('long', text: long, read: true)),
+        ),
+      );
+      final text = tester.widget<Text>(find.text(long));
+      expect(tester.getSize(find.byType(OrbitThoughtNoteBubble)).width, 96);
+      expect(text.maxLines, 2);
+      expect(text.overflow, TextOverflow.ellipsis);
+      expect(text.style!.fontWeight, FontWeight.w400);
+      expect(text.style!.fontSize, 11.5);
+      expect(text.style!.height, 1.22);
+    },
+  );
+
+  testWidgets(
+    'deadline removes note without store/sweep changes and reloads host',
+    (tester) async {
+      var now = start;
+      var reloads = 0;
+      final unchangedNotes = {
+        'friend-0': note('expires', lifetime: const Duration(seconds: 1)),
+      };
+      await tester.pumpWidget(
+        wrap(
+          InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            items: items.take(2).toList(),
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            thoughtsByPeerId: unchangedNotes,
+            nowProvider: () => now,
+            onThoughtsExpired: () => reloads++,
+          ),
+        ),
+      );
+      expect(find.byType(OrbitThoughtNoteBubble), findsOneWidget);
+      now = start.add(const Duration(seconds: 1));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      expect(
+        unchangedNotes,
+        hasLength(1),
+        reason: 'sweep never removed the row',
+      );
+      expect(reloads, 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'badge first hides notes, then expands arcs; pinch/spread are session choices',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            onSelfAvatarTap: () {},
+            items: items,
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            thoughtsByPeerId: {'friend-0': note('live')},
+            nowProvider: () => start,
+          ),
+        ),
+      );
+      OrbitalVisualization viz() =>
+          tester.widget(find.byType(OrbitalVisualization));
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      expect(viz().overflowExpanded, isFalse);
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(viz().overflowExpanded, isTrue);
+      final rect = tester.getRect(
+        find.byKey(const ValueKey('orbit-thought-pinch-surface')),
+      );
+      final center = rect.center;
+      final left = await tester.startGesture(
+        center - const Offset(30, 0),
+        pointer: 1,
+      );
+      final right = await tester.startGesture(
+        center + const Offset(30, 0),
+        pointer: 2,
+      );
+      await left.moveBy(const Offset(-25, 0));
+      await right.moveBy(const Offset(25, 0));
+      await tester.pump();
+      await left.up();
+      await right.up();
+      expect(find.byType(OrbitThoughtNoteBubble), findsOneWidget);
+      expect(viz().overflowExpanded, isFalse);
+      final a = await tester.startGesture(
+        center - const Offset(50, 0),
+        pointer: 3,
+      );
+      final b = await tester.startGesture(
+        center + const Offset(50, 0),
+        pointer: 4,
+      );
+      await a.moveBy(const Offset(25, 0));
+      await b.moveBy(const Offset(-25, 0));
+      await tester.pump();
+      await a.up();
+      await b.up();
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      expect(viz().thoughtVisibility, 0);
+      final layout = computeOrbitLayout(
+        memberCount: items.length,
+        geometry: viz().geometry,
+      );
+      final self = tester.getCenter(
+        find.byKey(const ValueKey('orbit-center-self-avatar')),
+      );
+      for (final seat in layout.seats.where(
+        (seat) => seat.kind != OrbitSeatKind.arc,
+      )) {
+        expect(
+          (tester.getCenter(find.byKey(ValueKey('orbit-node-${seat.index}'))) -
+                  self -
+                  Offset(seat.dx, seat.dy))
+              .distance,
+          lessThan(0.01),
+        );
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
+
+  testWidgets(
+    'size controls are blocked while notes are out and work after hiding',
+    (tester) async {
+      await tester.pumpWidget(
+        wrap(
+          InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            items: items.take(2).toList(),
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            thoughtsByPeerId: {'friend-0': note('live')},
+            nowProvider: () => start,
+          ),
+        ),
+      );
+      final background = find.byKey(
+        const ValueKey('orbit-inner-circle-background'),
+      );
+      final empty = tester.getRect(background).topLeft + const Offset(12, 12);
+      await tester.longPressAt(empty);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
+      final center = tester.getCenter(
+        find.byKey(const ValueKey('orbit-thought-pinch-surface')),
+      );
+      final a = await tester.startGesture(
+        center - const Offset(50, 0),
+        pointer: 1,
+      );
+      final b = await tester.startGesture(
+        center + const Offset(50, 0),
+        pointer: 2,
+      );
+      await a.moveBy(const Offset(25, 0));
+      await b.moveBy(const Offset(-25, 0));
+      await a.up();
+      await b.up();
+      await tester.pump();
+      await tester.longPressAt(empty);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('a press held across expiry cannot open a stale thought', (
+    tester,
+  ) async {
+    var now = start;
+    final opened = <String>[];
+    await tester.pumpWidget(
+      wrap(
+        OrbitalVisualization(
+          userPeerId: 'self',
+          items: items.take(1).toList(),
+          thoughtsByPeerId: {
+            'friend-0': note('held', lifetime: const Duration(seconds: 1)),
+          },
+          nowProvider: () => now,
+          onThoughtTap: opened.add,
+        ),
+      ),
+    );
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byType(OrbitThoughtNoteBubble)),
+    );
+    now = start.add(const Duration(seconds: 1));
+    await gesture.up();
+    expect(opened, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'thought arrival during size editing keeps notes hidden and preserves the edit',
+    (tester) async {
+      Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
+        InnerCircleInteractiveSurface(
+          userPeerId: 'self',
+          items: items.take(2).toList(),
+          onFriendTap: (_) {},
+          onGroupTap: (_) {},
+          thoughtsByPeerId: thoughts,
+          nowProvider: () => start,
+        ),
+      );
+      OrbitalVisualization viz() =>
+          tester.widget(find.byType(OrbitalVisualization));
+      await tester.pumpWidget(scene(const {}));
+      final background = find.byKey(
+        const ValueKey('orbit-inner-circle-background'),
+      );
+      await tester.longPressAt(
+        tester.getRect(background).topLeft + const Offset(12, 12),
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-handle-avatarScale')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
+      await tester.pump();
+      final editedGeometry = viz().geometry;
+      expect(editedGeometry.avatarScale, closeTo(1.2, 1e-9));
+
+      await tester.pumpWidget(scene({'friend-0': note('arrived-during-edit')}));
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('orbit-edit-step-decrease')),
+        findsOneWidget,
+      );
+      expect(viz().geometry, editedGeometry);
+      expect(viz().thoughtVisibility, 0);
+
+      // The same armed control remains usable; arrival did not end or reset it.
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
+      await tester.pump();
+      expect(viz().geometry.avatarScale, closeTo(1.0, 1e-9));
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+}

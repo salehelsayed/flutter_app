@@ -26,16 +26,17 @@ void main() {
     test(
       'local notification tap stores a pending target before opening Posts',
       () async {
+        harness.appShellController.switchTo(AppShellTab.feed);
         await routeNotificationPayload(
           payload: 'post:post-local',
           onRouteTarget: harness.handleRouteTarget,
         );
 
         expect(harness.pendingTargetStore.target?.postId, 'post-local');
-        // 214: still on the orbit resting default — no navigation before the
-        // post arrives (the forced feed switch happens only at reveal).
+        // Plan 407: reveal the orbit immediately, without a loading status.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
-        expect(harness.revealPostsSurfaceCalls, 0);
+        expect(harness.revealPostsSurfaceCalls, 1);
+        expect(harness.pendingTargetStore.statusMessage, isNull);
         expect(harness.drainOfflineInboxCalls, 1);
       },
     );
@@ -50,9 +51,9 @@ void main() {
 
         expect(harness.pendingTargetStore.target?.postId, 'post-local');
         expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-        // 214: no navigation before the post arrives (orbit resting default).
+        // Plan 407: missing thoughts reveal the orbit immediately.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
-        expect(harness.revealPostsSurfaceCalls, 0);
+        expect(harness.revealPostsSurfaceCalls, 1);
         expect(harness.drainOfflineInboxCalls, 1);
       },
     );
@@ -70,7 +71,7 @@ void main() {
         );
 
         expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
-        // 214: no navigation before the post arrives (orbit resting default).
+        // Plan 407: missing thoughts reveal the orbit immediately.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
         expect(harness.drainOfflineInboxCalls, 1);
       },
@@ -91,7 +92,7 @@ void main() {
 
         expect(harness.pendingTargetStore.target?.postId, 'post-opened-app');
         expect(harness.pendingTargetStore.target?.commentId, 'comment-1');
-        // 214: no navigation before the post arrives (orbit resting default).
+        // Plan 407: missing thoughts reveal the orbit immediately.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
         expect(harness.drainOfflineInboxCalls, 1);
       },
@@ -115,7 +116,7 @@ void main() {
           harness.pendingTargetStore.target?.postId,
           'post-initial-remote',
         );
-        // 214: no navigation before the post arrives (orbit resting default).
+        // Plan 407: missing thoughts reveal the orbit immediately.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
         expect(harness.drainOfflineInboxCalls, 1);
       },
@@ -130,7 +131,7 @@ void main() {
         );
 
         expect(harness.pendingTargetStore.target?.postId, 'post-initial-local');
-        // 214: no navigation before the post arrives (orbit resting default).
+        // Plan 407: missing thoughts reveal the orbit immediately.
         expect(harness.appShellController.activeTab, AppShellTab.orbit);
         expect(harness.drainOfflineInboxCalls, 1);
       },
@@ -147,32 +148,64 @@ void main() {
         await harness.postRepository.savePost(_post(id: 'post-observed'));
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(harness.appShellController.activeTab, AppShellTab.feed);
+        expect(harness.appShellController.activeTab, AppShellTab.orbit);
         expect(harness.revealPostsSurfaceCalls, 1);
         expect(harness.pendingTargetStore.statusMessage, isNull);
       },
     );
 
-    test('timeout opens Posts with the approved fallback message', () async {
-      final timeoutHarness = _CoordinatorHarness(
-        waitBudget: const Duration(milliseconds: 20),
-        expiryBudget: const Duration(milliseconds: 120),
-      );
-      addTearDown(timeoutHarness.dispose);
+    test(
+      'missing thought stays on the orbit without a fallback message',
+      () async {
+        final timeoutHarness = _CoordinatorHarness(
+          waitBudget: const Duration(milliseconds: 20),
+          expiryBudget: const Duration(milliseconds: 120),
+        );
+        addTearDown(timeoutHarness.dispose);
 
-      await routeNotificationPayload(
-        payload: 'post:post-timeout',
-        onRouteTarget: timeoutHarness.handleRouteTarget,
-      );
+        await routeNotificationPayload(
+          payload: 'post:post-timeout',
+          onRouteTarget: timeoutHarness.handleRouteTarget,
+        );
 
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(
-        timeoutHarness.pendingTargetStore.statusMessage,
-        PostNotificationOpenCoordinator.loadingFallbackMessage,
+        expect(timeoutHarness.pendingTargetStore.statusMessage, isNull);
+        expect(timeoutHarness.appShellController.activeTab, AppShellTab.orbit);
+        expect(timeoutHarness.revealPostsSurfaceCalls, 1);
+      },
+    );
+
+    test('a late inbox copy keeps the already revealed orbit', () async {
+      final late = _CoordinatorHarness(
+        waitBudget: const Duration(milliseconds: 10),
+        expiryBudget: const Duration(milliseconds: 200),
       );
-      expect(timeoutHarness.appShellController.activeTab, AppShellTab.feed);
-      expect(timeoutHarness.revealPostsSurfaceCalls, 1);
+      addTearDown(late.dispose);
+      late.appShellController.switchTo(AppShellTab.feed);
+      await late.handleRouteTarget(
+        NotificationRouteTarget.post('late-thought'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+      expect(late.appShellController.activeTab, AppShellTab.orbit);
+      expect(late.pendingTargetStore.statusMessage, isNull);
+      await late.postRepository.savePost(_post(id: 'late-thought'));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(late.pendingTargetStore.target?.postId, 'late-thought');
+      expect(late.pendingTargetStore.statusMessage, isNull);
+      expect(late.revealPostsSurfaceCalls, 1);
+    });
+
+    test('an expired thought opens the orbit without a card target', () async {
+      harness.appShellController.switchTo(AppShellTab.feed);
+      await harness.postRepository.savePost(
+        _post(id: 'expired').copyWith(expiresAt: '2026-03-15T11:59:59.999Z'),
+      );
+      await harness.handleRouteTarget(NotificationRouteTarget.post('expired'));
+      expect(harness.appShellController.activeTab, AppShellTab.orbit);
+      expect(harness.revealPostsSurfaceCalls, 1);
+      expect(harness.pendingTargetStore.target, isNull);
+      expect(harness.pendingTargetStore.statusMessage, isNull);
     });
 
     test(
@@ -267,6 +300,6 @@ PostModel _post({required String id}) {
     audience: PostAudience.allFriends(),
     createdAt: '2026-03-15T10:15:30.000Z',
     visibleAt: '2026-03-15T10:15:30.000Z',
-    expiresAt: '2026-03-18T10:15:30.000Z',
+    expiresAt: '2026-03-16T10:15:30.000Z',
   );
 }

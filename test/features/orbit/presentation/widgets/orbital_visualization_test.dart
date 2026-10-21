@@ -504,7 +504,7 @@ void main() {
     );
 
     testWidgets(
-      'TC-194-06: indicator renders on ring-1 (38px) and ring-2 (30px) nodes '
+      'TC-194-06: indicator renders on ring-1 (53.2px) and ring-2 (42px) nodes '
       'scaled to the node diameter',
       (tester) async {
         final friends = List.generate(
@@ -523,7 +523,7 @@ void main() {
             .widgetList<UnreadOrbitIndicator>(find.byType(UnreadOrbitIndicator))
             .map((w) => w.diameter)
             .toSet();
-        expect(diameters, {38.0, 30.0});
+        expect(diameters, unorderedEquals([38 * 1.4, 30 * 1.4]));
       },
     );
 

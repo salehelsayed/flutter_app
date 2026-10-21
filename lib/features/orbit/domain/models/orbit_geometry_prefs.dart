@@ -13,13 +13,7 @@
 library;
 
 /// The five sculpt knobs, each with its own range, coarse step and default.
-enum OrbitKnob {
-  avatarScale,
-  spacingScale,
-  arcWrap,
-  maxPerArc,
-  orbitGap,
-}
+enum OrbitKnob { avatarScale, spacingScale, arcWrap, maxPerArc, orbitGap }
 
 class OrbitGeometryPrefs {
   final double avatarScale;
@@ -57,11 +51,11 @@ class OrbitGeometryPrefs {
   static const double maxOrbitGap = 2.5;
   static const double orbitGapStep = 0.1;
 
-  /// The shipped baseline — geometry byte-identical to pre-198 production
-  /// (INV-6). Also the Reset target.
+  /// Spacious defaults for thought notes. Existing saved geometry still decodes
+  /// unchanged; Reset returns to these largest supported avatar/ring values.
   static const OrbitGeometryPrefs defaults = OrbitGeometryPrefs(
-    avatarScale: 1.0,
-    spacingScale: 1.0,
+    avatarScale: maxAvatarScale,
+    spacingScale: maxSpacingScale,
     arcWrap: 1.0,
     maxPerArc: 9,
     orbitGap: 1.0,
@@ -76,14 +70,13 @@ class OrbitGeometryPrefs {
     double? arcWrap,
     int? maxPerArc,
     double? orbitGap,
-  }) =>
-      OrbitGeometryPrefs(
-        avatarScale: avatarScale ?? this.avatarScale,
-        spacingScale: spacingScale ?? this.spacingScale,
-        arcWrap: arcWrap ?? this.arcWrap,
-        maxPerArc: maxPerArc ?? this.maxPerArc,
-        orbitGap: orbitGap ?? this.orbitGap,
-      );
+  }) => OrbitGeometryPrefs(
+    avatarScale: avatarScale ?? this.avatarScale,
+    spacingScale: spacingScale ?? this.spacingScale,
+    arcWrap: arcWrap ?? this.arcWrap,
+    maxPerArc: maxPerArc ?? this.maxPerArc,
+    orbitGap: orbitGap ?? this.orbitGap,
+  );
 
   /// Arity-5 pipe codec. Mirrors [toStorageString] exactly.
   String toStorageString() =>
@@ -115,37 +108,42 @@ class OrbitGeometryPrefs {
 
   /// The current value of [knob] (drives the edit value bubble).
   num valueOf(OrbitKnob knob) => switch (knob) {
-        OrbitKnob.avatarScale => avatarScale,
-        OrbitKnob.spacingScale => spacingScale,
-        OrbitKnob.arcWrap => arcWrap,
-        OrbitKnob.maxPerArc => maxPerArc,
-        OrbitKnob.orbitGap => orbitGap,
-      };
+    OrbitKnob.avatarScale => avatarScale,
+    OrbitKnob.spacingScale => spacingScale,
+    OrbitKnob.arcWrap => arcWrap,
+    OrbitKnob.maxPerArc => maxPerArc,
+    OrbitKnob.orbitGap => orbitGap,
+  };
 
   /// Steps [knob] by [steps] coarse increments, saturating at its bounds
   /// (never throws). Only the addressed knob changes.
   OrbitGeometryPrefs stepped(OrbitKnob knob, int steps) => switch (knob) {
-        OrbitKnob.avatarScale => copyWith(
-            avatarScale: (avatarScale + steps * avatarScaleStep)
-                .clamp(minAvatarScale, maxAvatarScale)
-                .toDouble()),
-        OrbitKnob.spacingScale => copyWith(
-            spacingScale: (spacingScale + steps * spacingScaleStep)
-                .clamp(minSpacingScale, maxSpacingScale)
-                .toDouble()),
-        OrbitKnob.arcWrap => copyWith(
-            arcWrap: (arcWrap + steps * arcWrapStep)
-                .clamp(minArcWrap, maxArcWrap)
-                .toDouble()),
-        OrbitKnob.maxPerArc => copyWith(
-            maxPerArc: (maxPerArc + steps * maxPerArcStep)
-                .clamp(minMaxPerArc, maxMaxPerArc)
-                .toInt()),
-        OrbitKnob.orbitGap => copyWith(
-            orbitGap: (orbitGap + steps * orbitGapStep)
-                .clamp(minOrbitGap, maxOrbitGap)
-                .toDouble()),
-      };
+    OrbitKnob.avatarScale => copyWith(
+      avatarScale: (avatarScale + steps * avatarScaleStep)
+          .clamp(minAvatarScale, maxAvatarScale)
+          .toDouble(),
+    ),
+    OrbitKnob.spacingScale => copyWith(
+      spacingScale: (spacingScale + steps * spacingScaleStep)
+          .clamp(minSpacingScale, maxSpacingScale)
+          .toDouble(),
+    ),
+    OrbitKnob.arcWrap => copyWith(
+      arcWrap: (arcWrap + steps * arcWrapStep)
+          .clamp(minArcWrap, maxArcWrap)
+          .toDouble(),
+    ),
+    OrbitKnob.maxPerArc => copyWith(
+      maxPerArc: (maxPerArc + steps * maxPerArcStep)
+          .clamp(minMaxPerArc, maxMaxPerArc)
+          .toInt(),
+    ),
+    OrbitKnob.orbitGap => copyWith(
+      orbitGap: (orbitGap + steps * orbitGapStep)
+          .clamp(minOrbitGap, maxOrbitGap)
+          .toDouble(),
+    ),
+  };
 
   @override
   bool operator ==(Object other) =>

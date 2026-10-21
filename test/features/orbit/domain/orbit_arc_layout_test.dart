@@ -291,12 +291,15 @@ void main() {
     // Ring radii + avatar sizes scale with sp / av (INV-6 default parity lives
     // in the widget suite; this locks the pure inputs it depends on).
     test('ring radii scale with sp; avatar sizes match ring/arc species', () {
-      final d = computeOrbitLayout(memberCount: 14, geometry: _g());
-      expect(d.ring1Radius, closeTo(62, 1e-9));
-      expect(d.ring2Radius, closeTo(108, 1e-9));
-      expect(d.seats[0].avatarSize, closeTo(38, 1e-9)); // ring1 species
-      expect(d.seats[5].avatarSize, closeTo(30, 1e-9)); // ring2 species
-      expect(d.seats[13].avatarSize, closeTo(34, 1e-9)); // arc species
+      final d = computeOrbitLayout(
+        memberCount: 14,
+        geometry: OrbitGeometryPrefs.defaults,
+      );
+      expect(d.ring1Radius, closeTo(93, 1e-9));
+      expect(d.ring2Radius, closeTo(162, 1e-9));
+      expect(d.seats[0].avatarSize, closeTo(53.2, 1e-9)); // ring1 species
+      expect(d.seats[5].avatarSize, closeTo(42, 1e-9)); // ring2 species
+      expect(d.seats[13].avatarSize, closeTo(47.6, 1e-9)); // arc species
 
       final scaled = computeOrbitLayout(memberCount: 14, geometry: _g(sp: 1.5));
       expect(scaled.ring1Radius, closeTo(93, 1e-9));

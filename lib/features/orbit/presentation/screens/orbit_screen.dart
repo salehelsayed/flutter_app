@@ -20,6 +20,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_view_mode.dart';
@@ -308,6 +309,10 @@ class OrbitScreen extends StatefulWidget {
   /// 206 — non-null when the host wires the Inner-Circle center self-avatar to
   /// open Settings. Threaded down to [InnerCircleInteractiveSurface].
   final VoidCallback? onSelfAvatarTap;
+  final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final ValueChanged<String>? onThoughtTap;
+  final VoidCallback? onThoughtsExpired;
+  final DateTime Function()? thoughtNowProvider;
 
   /// Non-null when the host wires the bottom-left settings button. Null ⇒ no
   /// button (bare-`OrbitScreen` pumps stay unaffected).
@@ -383,6 +388,10 @@ class OrbitScreen extends StatefulWidget {
     this.onInnerCircleEditSessionChanged,
     this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.thoughtsByPeerId = const {},
+    this.onThoughtTap,
+    this.onThoughtsExpired,
+    this.thoughtNowProvider,
     this.onOpenSettings,
     this.onOpenCalls,
     this.p2pService,
@@ -489,6 +498,10 @@ class _OrbitScreenState extends State<OrbitScreen> {
     secureKeyStore: widget.secureKeyStore,
     innerCircleResetListenable: widget.innerCircleResetListenable,
     onSelfAvatarTap: widget.onSelfAvatarTap,
+    thoughtsByPeerId: widget.thoughtsByPeerId,
+    onThoughtTap: widget.onThoughtTap,
+    onThoughtsExpired: widget.onThoughtsExpired,
+    thoughtNowProvider: widget.thoughtNowProvider,
     onOpenSettings: widget.onOpenSettings,
     onOpenCalls: widget.onOpenCalls,
     p2pService: widget.p2pService,
@@ -557,6 +570,10 @@ class _OrbitScreenView extends StatelessWidget {
   final SecureKeyStore? secureKeyStore;
   final Listenable? innerCircleResetListenable;
   final VoidCallback? onSelfAvatarTap;
+  final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final ValueChanged<String>? onThoughtTap;
+  final VoidCallback? onThoughtsExpired;
+  final DateTime Function()? thoughtNowProvider;
   final VoidCallback? onOpenSettings;
   final VoidCallback? onOpenCalls;
 
@@ -638,6 +655,10 @@ class _OrbitScreenView extends StatelessWidget {
     required this.secureKeyStore,
     required this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.thoughtsByPeerId = const {},
+    this.onThoughtTap,
+    this.onThoughtsExpired,
+    this.thoughtNowProvider,
     this.onOpenSettings,
     this.onOpenCalls,
     this.p2pService,
@@ -1115,6 +1136,10 @@ class _OrbitScreenView extends StatelessWidget {
           findOpenSignal: _showsPersistentNav ? ringsFindSignal : null,
           onFindSessionActiveChanged: onRingsFindOpenChanged,
           onSelfAvatarTap: onSelfAvatarTap,
+          thoughtsByPeerId: thoughtsByPeerId,
+          onThoughtTap: onThoughtTap,
+          onThoughtsExpired: onThoughtsExpired,
+          nowProvider: thoughtNowProvider,
           bottomClearance: _innerCircleBottomClearance(context),
         );
       },

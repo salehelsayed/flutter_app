@@ -381,13 +381,13 @@ void main() {
       await tester.tap(handleF(OrbitKnob.avatarScale));
       await tester.pump();
       expect(bubbleF(), findsOneWidget);
-      expect(find.text('1.0×'), findsOneWidget);
+      expect(find.text('1.4×'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('orbit-edit-step-increase')),
         findsOneWidget,
       );
 
-      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
       await tester.pump();
       expect(find.text('1.2×'), findsOneWidget);
       // saturate at 1.4 without throwing.
@@ -407,12 +407,12 @@ void main() {
       await longPressBg(tester);
       await tester.tap(handleF(OrbitKnob.avatarScale));
       await tester.pump();
-      expect(find.text('1.0×'), findsOneWidget);
+      expect(find.text('1.4×'), findsOneWidget);
 
-      // Drag up increases avatarScale (-dy/90); a big drag saturates at 1.4.
-      await tester.drag(handleF(OrbitKnob.avatarScale), const Offset(0, -80));
+      // Drag down decreases avatarScale from the new maximum default.
+      await tester.drag(handleF(OrbitKnob.avatarScale), const Offset(0, 80));
       await tester.pump();
-      expect(find.text('1.0×'), findsNothing);
+      expect(find.text('1.4×'), findsNothing);
       await settle(tester);
     });
 
@@ -424,7 +424,7 @@ void main() {
       await longPressBg(tester);
       await tester.tap(handleF(OrbitKnob.avatarScale));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
       await tester.pump();
       expect(find.text('1.2×'), findsOneWidget);
 
@@ -432,7 +432,7 @@ void main() {
       await tester.pump();
       // still editing (banner present), value back to default.
       expect(bannerF(), findsOneWidget);
-      expect(find.text('1.0×'), findsOneWidget);
+      expect(find.text('1.4×'), findsOneWidget);
       await settle(tester);
     });
 
@@ -506,7 +506,7 @@ void main() {
       await longPressBg(tester);
       await tester.tap(handleF(OrbitKnob.avatarScale));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
       await tester.pump();
       expect(find.text('1.2×'), findsOneWidget);
       await settle(tester);
@@ -563,7 +563,7 @@ void main() {
       await longPressBg(tester);
       await tester.tap(handleF(OrbitKnob.avatarScale));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-increase')));
+      await tester.tap(find.byKey(const ValueKey('orbit-edit-step-decrease')));
       await tester.pump();
       expect(spy.writes, 1);
       await settle(tester);
@@ -791,7 +791,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
         await gDrag.moveBy(const Offset(0, -20)); // consume the touch slop
         await tester.pump();
-        await gDrag.moveBy(const Offset(0, -60)); // deep past the 0.7 clamp
+        await gDrag.moveBy(const Offset(0, -100)); // deep past the 0.7 clamp
         await tester.pump(); // the single frame under test — no lag allowed
         expect(find.text('0.7×'), findsOneWidget);
         final gNew = g0.copyWith(spacingScale: 0.7);
@@ -1212,7 +1212,7 @@ void main() {
           lessThanOrEqualTo(12),
           reason: 'bubble hugs the disc (gap ≤12px)',
         );
-        expect(find.text('1.0×'), findsOneWidget);
+        expect(find.text('1.4×'), findsOneWidget);
         final text = tester.widget<Text>(
           find.descendant(of: bubbleF(), matching: find.byType(Text)),
         );
@@ -1251,7 +1251,7 @@ void main() {
         await g.moveBy(const Offset(0, -25));
         await tester.pump(); // mid-drag frame
         expect(
-          find.text('1.0×'),
+          find.text('1.5×'),
           findsNothing,
           reason: 'value updates live mid-drag, not on drag-end',
         );
@@ -1329,6 +1329,14 @@ void main() {
         await longPressBg(tester);
         await tester.tap(handleF(OrbitKnob.avatarScale));
         await tester.pump();
+        // Start below the new 1.4 default so the growth assertion still proves
+        // a same-frame change rather than a no-op at the maximum.
+        for (var i = 0; i < 2; i++) {
+          await tester.tap(
+            find.byKey(const ValueKey('orbit-edit-step-decrease')),
+          );
+          await tester.pump();
+        }
         expect(
           tester
               .getSize(
@@ -1711,6 +1719,16 @@ void main() {
         return v;
       }
 
+      // Preserve the explicit 1.0-vs-1.5 causal comparison despite the new
+      // larger default: lower only spacing before the first identical drag.
+      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
+      for (var i = 0; i < 5; i++) {
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-edit-step-decrease')),
+        );
+        await tester.pump();
+      }
+      expect(find.text('1.0×'), findsOneWidget);
       final ogAtSp1 = await dragOgAndRead();
       await tester.tap(find.byKey(const ValueKey('orbit-edit-reset')));
       await tester.pump();
@@ -2135,7 +2153,7 @@ void main() {
         );
         await tester.pump(const Duration(milliseconds: 20));
         for (var i = 0; i < 6; i++) {
-          await gesture.moveBy(const Offset(0, 8));
+          await gesture.moveBy(const Offset(0, -8));
           await tester.pump();
           final drift = (tester.getCenter(centreAvatarF()).dy - userBefore.dy)
               .abs();
@@ -2152,7 +2170,7 @@ void main() {
           lessThan(8),
         );
         expect(
-          find.text('1.0×'),
+          find.text('1.5×'),
           findsNothing,
           reason: 'spacing actually changed during the drag',
         );

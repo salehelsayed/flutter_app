@@ -9,6 +9,9 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
+import 'orbit_thought_note_bubble.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/orbital_quiet_visuals.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -35,6 +38,16 @@ class OrbitalVisualization extends StatelessWidget {
   final List<OrbitItem> items;
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<OrbitGroup>? onGroupTap;
+
+  final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final ValueChanged<String>? onThoughtTap;
+  final DateTime Function()? nowProvider;
+
+  /// Session motion is owned by InnerCircleInteractiveSurface. Bare renderers
+  /// can omit it and receive a deterministic, already-resolved note layout.
+  final OrbitThoughtSwim? thoughtSwim;
+  final double thoughtVisibility;
+  final double thoughtClock;
 
   /// 206 — when non-null, the center self-avatar becomes the Settings entry:
   /// an idle tap fires [onSelfAvatarTap], a long-press fires
@@ -89,6 +102,12 @@ class OrbitalVisualization extends StatelessWidget {
     required this.items,
     this.onFriendTap,
     this.onGroupTap,
+    this.thoughtsByPeerId = const {},
+    this.onThoughtTap,
+    this.nowProvider,
+    this.thoughtSwim,
+    this.thoughtVisibility = 1,
+    this.thoughtClock = 0,
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
     this.geometry = OrbitGeometryPrefs.defaults,
@@ -216,6 +235,59 @@ class OrbitalVisualization extends StatelessWidget {
       mirrored: mirrored,
     );
 
+    final now = (nowProvider ?? DateTime.now)();
+    final notes = <int, OrbitThoughtNote>{};
+    for (final seat in layout.seats) {
+      if (seat.kind == OrbitSeatKind.arc) continue;
+      final item = items[seat.index];
+      if (item is! OrbitFriendItem) continue;
+      final note = thoughtsByPeerId[item.friend.peerId];
+      if (note != null && note.expiresAt.isAfter(now)) notes[seat.index] = note;
+    }
+    final reveal = notes.isEmpty
+        ? 0.0
+        : thoughtVisibility.clamp(0.0, 1.0).toDouble();
+    final noteSizes = {
+      for (final entry in notes.entries)
+        entry.key: OrbitThoughtNoteBubble.measure(context, entry.value),
+    };
+    final noteCanvasWidth = constraints.maxWidth.isFinite
+        ? math.max(_size, constraints.maxWidth)
+        : _size;
+    final resolved = reveal == 0
+        ? const <int, Offset>{}
+        : (thoughtSwim ?? OrbitThoughtSwim()).resolve(
+            seats: layout.seats,
+            noteSizes: noteSizes,
+            availableWidth: noteCanvasWidth,
+            seconds: thoughtClock,
+            motionEnabled: motionEnabled && thoughtSwim != null,
+          );
+    final positions = <int, Offset>{
+      for (final seat in layout.seats)
+        seat.index: Offset.lerp(
+          Offset(seat.dx, seat.dy),
+          resolved[seat.index] ?? Offset(seat.dx, seat.dy),
+          reveal,
+        )!,
+    };
+    var noteTopOverhang = 0.0;
+    var noteBottomOverhang = 0.0;
+    if (reveal > 0) {
+      for (final seat in layout.seats.where(
+        (s) => s.kind != OrbitSeatKind.arc,
+      )) {
+        final position = positions[seat.index]!;
+        final faceBottom = position.dy + math.max(seat.avatarSize, 48) / 2;
+        noteBottomOverhang = math.max(noteBottomOverhang, faceBottom - _center);
+        final size = noteSizes[seat.index];
+        final top = size == null
+            ? position.dy - math.max(seat.avatarSize, 48) / 2
+            : orbitThoughtNoteRect(position, seat.avatarSize, size).top;
+        noteTopOverhang = math.max(noteTopOverhang, -_center - top);
+      }
+    }
+
     final relationshipArcs = <OrbitRelationshipArc>[];
     final showRelationshipArcs =
         treatment == OrbitVisualTreatment.orbitalQuiet ||
@@ -241,14 +313,36 @@ class OrbitalVisualization extends StatelessWidget {
     // When expanded the arcs poke above the box; the circle slides down by the
     // overhang so the topmost arc clears the top margin (the host scroll view
     // compensates so it stays visually planted — Slice SCROLL).
-    final overhang = overflowExpanded
+    final ringSeats = layout.seats.where((s) => s.kind != OrbitSeatKind.arc);
+    final ringTopOverhang = ringSeats.fold<double>(
+      0,
+      (value, seat) => math.max(
+        value,
+        -_center - seat.dy + math.max(seat.avatarSize, 48) / 2,
+      ),
+    );
+    final ringBottomOverhang = ringSeats.fold<double>(
+      0,
+      (value, seat) => math.max(
+        value,
+        seat.dy + math.max(seat.avatarSize, 48) / 2 - _center,
+      ),
+    );
+    final ringSideOverhang = ringSeats.fold<double>(
+      0,
+      (value, seat) => math.max(
+        value,
+        seat.dx.abs() + math.max(seat.avatarSize, 48) / 2 - _center,
+      ),
+    );
+    final arcOverhang = overflowExpanded
         ? orbitArcOverhang(
             memberCount: items.length,
             geometry: geometry,
             centerY: _center,
           )
         : 0.0;
-    final bottomOverhang = overflowExpanded
+    final arcBottomOverhang = overflowExpanded
         ? orbitArcBottomOverhang(
             memberCount: items.length,
             geometry: geometry,
@@ -257,16 +351,26 @@ class OrbitalVisualization extends StatelessWidget {
         : 0.0;
     final sideOverhang = overflowExpanded
         ? orbitArcSideOverhang(memberCount: items.length, geometry: geometry)
-        : 0.0;
+        : ringSideOverhang;
     final appliedSideOverhang = constraints.maxWidth.isFinite
         ? math.min(
             sideOverhang,
             math.max(0.0, (constraints.maxWidth - _size) / 2),
           )
         : sideOverhang;
-    final boxWidth = _size + appliedSideOverhang * 2;
+    final overhang = math.max(
+      math.max(arcOverhang, ringTopOverhang),
+      noteTopOverhang,
+    );
+    final bottomOverhang = math.max(
+      math.max(arcBottomOverhang, ringBottomOverhang),
+      noteBottomOverhang,
+    );
+    final boxWidth = reveal > 0
+        ? noteCanvasWidth
+        : _size + appliedSideOverhang * 2;
     final boxHeight = _size + overhang + bottomOverhang;
-    final cx = _center + appliedSideOverhang;
+    final cx = boxWidth / 2;
     final cy = _center + overhang;
 
     // Painter arc rings (one per occupied arc) when expanded.
@@ -301,8 +405,8 @@ class OrbitalVisualization extends StatelessWidget {
             child: CustomPaint(
               painter: OrbitalRingPainter(
                 center: Offset(cx, cy),
-                ring1Radius: layout.ring1Radius,
-                ring2Radius: layout.ring2Radius,
+                ring1Radius: layout.ring1Radius * (1 + 0.1 * reveal),
+                ring2Radius: layout.ring2Radius * (1 + 0.1 * reveal),
                 arcs: arcRings,
                 ring1Color: readableColors.ring1,
                 ring2Color: readableColors.ring2,
@@ -394,8 +498,8 @@ class OrbitalVisualization extends StatelessWidget {
           // insertion / arc reveal cannot re-slot it (positional matching would
           // otherwise re-inflate every following node → entrance replay "blink").
           key: ValueKey('orbit-node-${seat.index}'),
-          left: cx + seat.dx - tapTargetSize / 2,
-          top: cy + seat.dy - tapTargetSize / 2,
+          left: cx + positions[seat.index]!.dx - tapTargetSize / 2,
+          top: cy + positions[seat.index]!.dy - tapTargetSize / 2,
           // Keyed so tests can read THIS dim (OrbitalAvatar has its own inner
           // entrance Opacity) — INV-5 asserts go through it.
           child: Opacity(
@@ -445,7 +549,16 @@ class OrbitalVisualization extends StatelessWidget {
         ),
       );
       if (labelsVisible) {
-        children.add(_buildLabel(item, seat, cx, cy, readableColors));
+        children.add(
+          _buildLabel(
+            item,
+            seat,
+            cx,
+            cy,
+            readableColors,
+            positions[seat.index]!,
+          ),
+        );
       }
     }
 
@@ -460,8 +573,8 @@ class OrbitalVisualization extends StatelessWidget {
           // insertions before it (label toggle, arc expand/collapse) never
           // re-inflate it (which replayed its 1.5s entrance / blanked it).
           key: const ValueKey('orbit-overflow-badge-seat'),
-          left: cx + badge.dx - badgeHalf,
-          top: cy + badge.dy - badgeHalf,
+          left: cx + badge.dx * (1 + 0.1 * reveal) - badgeHalf,
+          top: cy + badge.dy * (1 + 0.1 * reveal) - badgeHalf,
           child: OverflowBadge(
             count: badge.overflowCount,
             expanded: overflowExpanded,
@@ -469,6 +582,49 @@ class OrbitalVisualization extends StatelessWidget {
           ),
         ),
       );
+    }
+
+    // Notes are painted above the faces, with separate taps. They never add
+    // an unread ring/dot or change the existing avatar's chat callback.
+    if (reveal > 0) {
+      for (final entry in notes.entries) {
+        final seat = layout.seats.firstWhere((s) => s.index == entry.key);
+        final rect = orbitThoughtNoteRect(
+          positions[entry.key]!,
+          seat.avatarSize,
+          noteSizes[entry.key]!,
+        ).shift(Offset(cx, cy));
+        final note = entry.value;
+        children.add(
+          Positioned(
+            key: ValueKey('orbit-thought-note-${entry.key}'),
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            child: IgnorePointer(
+              ignoring: reveal < 0.5,
+              child: Opacity(
+                opacity: reveal * _dimFor(entry.key),
+                child: OrbitThoughtNoteBubble(
+                  note: note,
+                  onTap: onThoughtTap == null
+                      ? null
+                      : () {
+                          // A finger held across the deadline cannot open an expired
+                          // card even before the timer's rebuild reaches this frame.
+                          if (note.expiresAt.isAfter(
+                            (nowProvider ?? DateTime.now)(),
+                          )) {
+                            onThoughtTap!(note.postId);
+                          }
+                        },
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     }
 
     return Column(
@@ -600,6 +756,7 @@ class OrbitalVisualization extends StatelessWidget {
     double cx,
     double cy,
     BackgroundReadableColors readableColors,
+    Offset position,
   ) {
     const labelWidth = 72.0;
     final stagger = seat.staggerParity * 12.0;
@@ -607,8 +764,8 @@ class OrbitalVisualization extends StatelessWidget {
       // 201: label slot key pairs with its node's key so the interleaved
       // node/label pairs reconcile by key, not by list position.
       key: ValueKey('orbit-label-${seat.index}'),
-      left: cx + seat.dx - labelWidth / 2,
-      top: cy + seat.dy + seat.avatarSize / 2 + 2 + stagger,
+      left: cx + position.dx - labelWidth / 2,
+      top: cy + position.dy + seat.avatarSize / 2 + 2 + stagger,
       width: labelWidth,
       child: IgnorePointer(
         child: Text(

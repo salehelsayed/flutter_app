@@ -358,22 +358,23 @@ void main() {
     });
 
     // TC-198-62
-    testWidgets('knobs=1.0, ≤13 items: geometry identical to HEAD (no badge)', (
-      tester,
-    ) async {
-      await tester.pumpWidget(expandable(_friends(13)));
-      await settle(tester);
-      expect(find.byType(OverflowBadge), findsNothing);
-      // Ring 1 node at 62px, ring 2 node at 108px — the pre-198 consts.
-      expect(
-        nodeOffset(tester, 'Open chat with friend0').distance,
-        closeTo(62, 1.0),
-      );
-      expect(
-        nodeOffset(tester, 'Open chat with friend5').distance,
-        closeTo(108, 1.0),
-      );
-    });
+    testWidgets(
+      'default sizes, ≤13 items: larger geometry retains exact seats (no badge)',
+      (tester) async {
+        await tester.pumpWidget(expandable(_friends(13)));
+        await settle(tester);
+        expect(find.byType(OverflowBadge), findsNothing);
+        // Default spacing is 1.5; the existing seat math is unchanged.
+        expect(
+          nodeOffset(tester, 'Open chat with friend0').distance,
+          closeTo(62 * 1.5, 1.0),
+        );
+        expect(
+          nodeOffset(tester, 'Open chat with friend5').distance,
+          closeTo(108 * 1.5, 1.0),
+        );
+      },
+    );
 
     // TC-198-53 per-node render half
     testWidgets('labelsVisible renders a name under every node', (

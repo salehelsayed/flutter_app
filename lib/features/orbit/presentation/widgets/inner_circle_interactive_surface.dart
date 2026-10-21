@@ -13,6 +13,8 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_thought_layout.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_arc_layout.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_edit_handle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -40,6 +42,10 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   final List<OrbitItem> items;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<OrbitGroup> onGroupTap;
+  final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final ValueChanged<String>? onThoughtTap;
+  final VoidCallback? onThoughtsExpired;
+  final DateTime Function()? nowProvider;
 
   /// 206 — non-null when the host wires the center self-avatar to open Settings.
   /// The surface gates it on modal state (edit/find) before invoking the host.
@@ -85,6 +91,10 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     required this.items,
     required this.onFriendTap,
     required this.onGroupTap,
+    this.thoughtsByPeerId = const {},
+    this.onThoughtTap,
+    this.onThoughtsExpired,
+    this.nowProvider,
     this.onSelfAvatarTap,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
@@ -123,7 +133,8 @@ class _CanvasMeasurement {
 }
 
 class _InnerCircleInteractiveSurfaceState
-    extends State<InnerCircleInteractiveSurface> {
+    extends State<InnerCircleInteractiveSurface>
+    with TickerProviderStateMixin {
   final ScrollController _scroll = ScrollController();
   final TextEditingController _findController = TextEditingController();
   final FocusNode _findFocus = FocusNode();
@@ -153,6 +164,125 @@ class _InnerCircleInteractiveSurfaceState
 
   bool _findOpen = false;
 
+  bool _thoughtsVisible = true;
+  bool _thoughtMotionEnabled = true;
+  final OrbitThoughtSwim _thoughtSwim = OrbitThoughtSwim();
+  late final AnimationController _thoughtReveal = AnimationController(
+    vsync: this,
+    value: 1,
+    duration: const Duration(milliseconds: 700),
+  );
+  late final AnimationController _thoughtClock = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 40),
+  );
+  late final Listenable _thoughtAnimation = Listenable.merge([
+    _thoughtReveal,
+    _thoughtClock,
+  ]);
+  Timer? _thoughtExpiryTimer;
+  final Map<int, Offset> _thoughtPointers = {};
+  double? _thoughtPinchDistance;
+
+  DateTime get _now => (widget.nowProvider ?? DateTime.now)();
+
+  Iterable<OrbitThoughtNote> get _liveRingThoughts sync* {
+    final now = _now;
+    for (final item in widget.items.take(kOrbitRing1Count + kOrbitRing2Count)) {
+      if (item is! OrbitFriendItem) continue;
+      final note = widget.thoughtsByPeerId[item.friend.peerId];
+      if (note != null && note.expiresAt.isAfter(now)) yield note;
+    }
+  }
+
+  bool get _notesOut => _thoughtsVisible && _liveRingThoughts.isNotEmpty;
+
+  void _onThoughtRevealStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed &&
+        status != AnimationStatus.dismissed)
+      return;
+    // Motion rebuilds only the visualization; refresh the saved canvas box when
+    // it settles so a later size-control session seats its handles correctly.
+    _canvasMeasurement = null;
+    _scheduleCanvasMeasure();
+    if (status == AnimationStatus.dismissed) _thoughtSwim.clear();
+  }
+
+  void _syncThoughtClock() {
+    if (_notesOut && _thoughtMotionEnabled) {
+      if (!_thoughtClock.isAnimating) _thoughtClock.repeat();
+    } else {
+      _thoughtClock.stop();
+    }
+  }
+
+  void _armThoughtExpiry() {
+    _thoughtExpiryTimer?.cancel();
+    _thoughtExpiryTimer = null;
+    if (!_thoughtsVisible) return;
+    DateTime? earliest;
+    for (final note in _liveRingThoughts) {
+      if (earliest == null || note.expiresAt.isBefore(earliest)) {
+        earliest = note.expiresAt;
+      }
+    }
+    if (earliest == null) return;
+    _thoughtExpiryTimer = Timer(earliest.difference(_now), () {
+      if (!mounted) return;
+      // Rebuild/filter at the deadline even if the store's sweep failed. The
+      // host reload is additional cleanup, not a prerequisite for removal.
+      setState(() {});
+      _syncThoughtClock();
+      _armThoughtExpiry();
+      widget.onThoughtsExpired?.call();
+    });
+  }
+
+  void _setThoughtsVisible(bool visible) {
+    if (_thoughtsVisible == visible) return;
+    setState(() {
+      _thoughtsVisible = visible;
+      if (visible) {
+        _overflowExpanded = false;
+        if (_editing) _setEditing(false);
+      }
+    });
+    if (_thoughtMotionEnabled) {
+      _thoughtReveal.animateTo(visible ? 1 : 0, curve: Curves.easeInOutCubic);
+    } else {
+      _thoughtReveal.value = visible ? 1 : 0;
+    }
+    _syncThoughtClock();
+    _armThoughtExpiry();
+  }
+
+  void _thoughtPointerDown(PointerDownEvent event) {
+    _thoughtPointers[event.pointer] = event.localPosition;
+    if (_thoughtPointers.length == 2) {
+      final points = _thoughtPointers.values.toList();
+      _thoughtPinchDistance = (points[0] - points[1]).distance;
+    }
+  }
+
+  void _thoughtPointerMove(PointerMoveEvent event) {
+    if (!_thoughtPointers.containsKey(event.pointer)) return;
+    _thoughtPointers[event.pointer] = event.localPosition;
+    final start = _thoughtPinchDistance;
+    if (_thoughtPointers.length != 2 || start == null || start < 1) return;
+    final points = _thoughtPointers.values.toList();
+    final ratio = (points[0] - points[1]).distance / start;
+    if (ratio < 0.88) {
+      _setThoughtsVisible(false);
+    } else if (ratio > 1.12) {
+      _setThoughtsVisible(true);
+    }
+  }
+
+  void _thoughtPointerUp(PointerEvent event) {
+    _thoughtPointers.remove(event.pointer);
+    _thoughtPinchDistance = null;
+  }
+
   // Only av/sp affect the always-visible rings; the other three only make sense
   // once the arcs are revealed (TC-198-26).
   static const _collapsedKnobs = [
@@ -167,6 +297,8 @@ class _InnerCircleInteractiveSurfaceState
     widget.resetSignal?.addListener(_onResetSignal);
     widget.findOpenSignal?.addListener(_onFindOpenSignal);
     _restoreGeometry();
+    _thoughtReveal.addStatusListener(_onThoughtRevealStatus);
+    _armThoughtExpiry();
   }
 
   @override
@@ -180,11 +312,26 @@ class _InnerCircleInteractiveSurfaceState
       oldWidget.findOpenSignal?.removeListener(_onFindOpenSignal);
       widget.findOpenSignal?.addListener(_onFindOpenSignal);
     }
+    // A first thought can arrive during a size-control session that began
+    // with no notes. Preserve that session/geometry and keep notes put away;
+    // letting them appear would overlap the still-active sculpt controls.
+    if (_editing && _notesOut) {
+      _thoughtsVisible = false;
+      _thoughtReveal.value = 0;
+    }
+    _armThoughtExpiry();
+    _syncThoughtClock();
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final mq = MediaQuery.maybeOf(context);
+    _thoughtMotionEnabled =
+        !(mq?.disableAnimations ?? false) &&
+        !(mq?.accessibleNavigation ?? false);
+    if (!_thoughtMotionEnabled) _thoughtReveal.value = _thoughtsVisible ? 1 : 0;
+    _syncThoughtClock();
     // Fonts / locale / text scale can move the canvas without a constraints
     // change — re-measure to stay seated.
     _scheduleCanvasMeasure();
@@ -195,6 +342,9 @@ class _InnerCircleInteractiveSurfaceState
     widget.resetSignal?.removeListener(_onResetSignal);
     widget.findOpenSignal?.removeListener(_onFindOpenSignal);
     _dimFlashTimer?.cancel();
+    _thoughtExpiryTimer?.cancel();
+    _thoughtClock.dispose();
+    _thoughtReveal.dispose();
     _scroll.dispose();
     _findController.dispose();
     _findFocus.dispose();
@@ -275,10 +425,27 @@ class _InnerCircleInteractiveSurfaceState
           geometry: g,
           centerY: kOrbitCanvasCenter,
         )
-      : 0.0;
+      : computeOrbitLayout(memberCount: widget.items.length, geometry: g).seats
+            .where((s) => s.kind != OrbitSeatKind.arc)
+            .fold<double>(
+              0,
+              (value, seat) => math.max(
+                value,
+                -kOrbitCanvasCenter -
+                    seat.dy +
+                    math.max(seat.avatarSize, 48) / 2,
+              ),
+            );
 
-  Object _measureSignature(BoxConstraints constraints) =>
-      (constraints, widget.items.length, _overflowExpanded, _geometry);
+  Object _measureSignature(BoxConstraints constraints) => (
+    constraints,
+    widget.items.length,
+    _overflowExpanded,
+    _geometry,
+    _thoughtsVisible,
+    _notesOut,
+    widget.thoughtsByPeerId,
+  );
 
   void _scheduleCanvasMeasure() {
     if (_measureScheduled) return;
@@ -341,7 +508,10 @@ class _InnerCircleInteractiveSurfaceState
 
   // ---- gesture handlers on the empty background ----
   void _enterEdit() {
-    if (_editing) return;
+    if (_editing ||
+        _notesOut ||
+        (_thoughtReveal.isAnimating && _liveRingThoughts.isNotEmpty))
+      return;
     HapticFeedback.mediumImpact();
     setState(() => _setEditing(true));
   }
@@ -399,17 +569,23 @@ class _InnerCircleInteractiveSurfaceState
     if (!_editing) _enterEdit();
   }
 
-  void _onBadgeTap() => setState(() {
-    _overflowExpanded = !_overflowExpanded;
-    if (!_overflowExpanded) {
-      // Collapsing removes cv/pr/og — disarm if one of them was armed,
-      // and settle a live drag whose handle just unmounted (TC-198F-26).
-      if (_armed != null && !_collapsedKnobs.contains(_armed)) {
-        _armed = null;
-        _settleInterruptedDrag();
-      }
+  void _onBadgeTap() {
+    if (_notesOut) {
+      _setThoughtsVisible(false);
+      return;
     }
-  });
+    setState(() {
+      _overflowExpanded = !_overflowExpanded;
+      if (!_overflowExpanded) {
+        // Collapsing removes cv/pr/og — disarm if one of them was armed,
+        // and settle a live drag whose handle just unmounted (TC-198F-26).
+        if (_armed != null && !_collapsedKnobs.contains(_armed)) {
+          _armed = null;
+          _settleInterruptedDrag();
+        }
+      }
+    });
+  }
 
   // ---- knob mutation with write-through ----
   void _persist(OrbitGeometryPrefs next) {
@@ -673,31 +849,58 @@ class _InnerCircleInteractiveSurfaceState
                           children: [
                             // 205 item 4: fixed centering spacer (see build()).
                             SizedBox(height: centerTopInset),
-                            OrbitalVisualization(
-                              userPeerId: widget.userPeerId,
-                              userAvatarBytes: widget.userAvatarBytes,
-                              items: widget.items,
-                              onFriendTap: _onNodeFriendTap,
-                              onGroupTap: _onNodeGroupTap,
-                              // 206 null-preserving: no host callback ⇒ no
-                              // center detector mounts (INV-206-1 / TC-194-26).
-                              onSelfAvatarTap: widget.onSelfAvatarTap == null
-                                  ? null
-                                  : _onSelfAvatarTap,
-                              onSelfAvatarLongPress:
-                                  widget.onSelfAvatarTap == null
-                                  ? null
-                                  : _onSelfAvatarLongPress,
-                              geometry: _geometry,
-                              overflowExpanded: _overflowExpanded,
-                              onBadgeTap: _onBadgeTap,
-                              labelsVisible: _labelsVisible,
-                              editDim:
-                                  _editing && !_draggingHandle && !_dimFlash,
-                              editEmphasis: _editing,
-                              litIndices: find.litIndices,
-                              findActive: find.active,
-                              canvasKey: _canvasKey,
+                            Listener(
+                              key: const ValueKey(
+                                'orbit-thought-pinch-surface',
+                              ),
+                              behavior: HitTestBehavior.translucent,
+                              onPointerDown: _thoughtPointerDown,
+                              onPointerMove: _thoughtPointerMove,
+                              onPointerUp: _thoughtPointerUp,
+                              onPointerCancel: _thoughtPointerUp,
+                              child: AnimatedBuilder(
+                                animation: _thoughtAnimation,
+                                builder: (context, _) => OrbitalVisualization(
+                                  userPeerId: widget.userPeerId,
+                                  userAvatarBytes: widget.userAvatarBytes,
+                                  items: widget.items,
+                                  thoughtsByPeerId: widget.thoughtsByPeerId,
+                                  onThoughtTap: widget.onThoughtTap,
+                                  nowProvider: widget.nowProvider,
+                                  thoughtSwim: _thoughtSwim,
+                                  thoughtVisibility: _thoughtReveal.value,
+                                  thoughtClock:
+                                      (_thoughtClock
+                                              .lastElapsedDuration
+                                              ?.inMicroseconds ??
+                                          0) /
+                                      1000000,
+                                  onFriendTap: _onNodeFriendTap,
+                                  onGroupTap: _onNodeGroupTap,
+                                  // 206 null-preserving: no host callback ⇒ no
+                                  // center detector mounts (INV-206-1 / TC-194-26).
+                                  onSelfAvatarTap:
+                                      widget.onSelfAvatarTap == null
+                                      ? null
+                                      : _onSelfAvatarTap,
+                                  onSelfAvatarLongPress:
+                                      widget.onSelfAvatarTap == null
+                                      ? null
+                                      : _onSelfAvatarLongPress,
+                                  geometry: _geometry,
+                                  overflowExpanded: _overflowExpanded,
+                                  onBadgeTap: _onBadgeTap,
+                                  labelsVisible: _labelsVisible,
+                                  editDim:
+                                      _editing &&
+                                      !_draggingHandle &&
+                                      !_dimFlash,
+                                  editEmphasis: _editing,
+                                  litIndices: find.litIndices,
+                                  findActive: find.active,
+                                  canvasKey: _canvasKey,
+                                ),
+                              ),
                             ),
                             if (widget.items.isEmpty)
                               Padding(

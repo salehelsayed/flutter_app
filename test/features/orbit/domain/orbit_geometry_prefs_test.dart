@@ -18,41 +18,64 @@ void main() {
 
     // TC-198-34
     test('defaults on null / empty / wrong-arity / unparseable', () {
-      expect(OrbitGeometryPrefs.fromStorageString(null),
-          OrbitGeometryPrefs.defaults);
-      expect(OrbitGeometryPrefs.fromStorageString(''),
-          OrbitGeometryPrefs.defaults);
+      expect(
+        OrbitGeometryPrefs.fromStorageString(null),
+        OrbitGeometryPrefs.defaults,
+      );
+      expect(
+        OrbitGeometryPrefs.fromStorageString(''),
+        OrbitGeometryPrefs.defaults,
+      );
       // arity 4 (an orbit3-shaped string) must NOT parse into the arity-5 model.
-      expect(OrbitGeometryPrefs.fromStorageString('1.0|1.0|1.0|7'),
-          OrbitGeometryPrefs.defaults);
-      expect(OrbitGeometryPrefs.fromStorageString('1.0|1.0|1.0|7|1.0|extra'),
-          OrbitGeometryPrefs.defaults);
-      expect(OrbitGeometryPrefs.fromStorageString('a|b|c|d|e'),
-          OrbitGeometryPrefs.defaults);
+      expect(
+        OrbitGeometryPrefs.fromStorageString('1.0|1.0|1.0|7'),
+        OrbitGeometryPrefs.defaults,
+      );
+      expect(
+        OrbitGeometryPrefs.fromStorageString('1.0|1.0|1.0|7|1.0|extra'),
+        OrbitGeometryPrefs.defaults,
+      );
+      expect(
+        OrbitGeometryPrefs.fromStorageString('a|b|c|d|e'),
+        OrbitGeometryPrefs.defaults,
+      );
+    });
+
+    test('saved 1.0 sizes remain 1.0 after the new default ships', () {
+      final saved = OrbitGeometryPrefs.fromStorageString('1.0|1.0|1.0|9|1.0');
+      expect(saved.avatarScale, 1.0);
+      expect(saved.spacingScale, 1.0);
+      expect(saved.toStorageString(), '1.0|1.0|1.0|9|1.0');
     });
 
     // TC-198-35
     test('per-field clamp on decode (av 9.0→1.4, pr 99→9, mins saturate)', () {
       final hi = OrbitGeometryPrefs.fromStorageString('9.0|9.0|9.0|99|9.0');
       expect(hi.avatarScale, closeTo(OrbitGeometryPrefs.maxAvatarScale, 1e-9));
-      expect(hi.spacingScale, closeTo(OrbitGeometryPrefs.maxSpacingScale, 1e-9));
+      expect(
+        hi.spacingScale,
+        closeTo(OrbitGeometryPrefs.maxSpacingScale, 1e-9),
+      );
       expect(hi.arcWrap, closeTo(OrbitGeometryPrefs.maxArcWrap, 1e-9));
       expect(hi.maxPerArc, OrbitGeometryPrefs.maxMaxPerArc);
       expect(hi.orbitGap, closeTo(OrbitGeometryPrefs.maxOrbitGap, 1e-9));
 
       final lo = OrbitGeometryPrefs.fromStorageString('0.1|0.1|0.1|1|0.1');
       expect(lo.avatarScale, closeTo(OrbitGeometryPrefs.minAvatarScale, 1e-9));
-      expect(lo.spacingScale, closeTo(OrbitGeometryPrefs.minSpacingScale, 1e-9));
+      expect(
+        lo.spacingScale,
+        closeTo(OrbitGeometryPrefs.minSpacingScale, 1e-9),
+      );
       expect(lo.arcWrap, closeTo(OrbitGeometryPrefs.minArcWrap, 1e-9));
       expect(lo.maxPerArc, OrbitGeometryPrefs.minMaxPerArc);
       expect(lo.orbitGap, closeTo(OrbitGeometryPrefs.minOrbitGap, 1e-9));
     });
 
     // TC-198-21 math (defaults + coarse steps are the documented consts)
-    test('defaults are 1.0/1.0/1.0/9/1.0 with the documented coarse steps', () {
+    test('defaults are 1.4/1.5/1.0/9/1.0 with the documented coarse steps', () {
       const d = OrbitGeometryPrefs.defaults;
-      expect(d.avatarScale, 1.0);
-      expect(d.spacingScale, 1.0);
+      expect(d.avatarScale, 1.4);
+      expect(d.spacingScale, 1.5);
       expect(d.arcWrap, 1.0);
       expect(d.maxPerArc, 9);
       expect(d.orbitGap, 1.0);
@@ -67,13 +90,23 @@ void main() {
     // TC-198-21 math — step-and-clamp saturates at both bounds, never throws.
     test('stepped() moves by the coarse step and saturates at bounds', () {
       const d = OrbitGeometryPrefs.defaults;
-      expect(d.stepped(OrbitKnob.avatarScale, 1).avatarScale, closeTo(1.2, 1e-9));
-      expect(d.stepped(OrbitKnob.avatarScale, -1).avatarScale, closeTo(0.8, 1e-9));
+      expect(
+        d.stepped(OrbitKnob.avatarScale, 1).avatarScale,
+        closeTo(1.4, 1e-9),
+      );
+      expect(
+        d.stepped(OrbitKnob.avatarScale, -1).avatarScale,
+        closeTo(1.2, 1e-9),
+      );
       // Overshoot saturates, does not throw.
-      expect(d.stepped(OrbitKnob.avatarScale, 100).avatarScale,
-          closeTo(OrbitGeometryPrefs.maxAvatarScale, 1e-9));
-      expect(d.stepped(OrbitKnob.avatarScale, -100).avatarScale,
-          closeTo(OrbitGeometryPrefs.minAvatarScale, 1e-9));
+      expect(
+        d.stepped(OrbitKnob.avatarScale, 100).avatarScale,
+        closeTo(OrbitGeometryPrefs.maxAvatarScale, 1e-9),
+      );
+      expect(
+        d.stepped(OrbitKnob.avatarScale, -100).avatarScale,
+        closeTo(OrbitGeometryPrefs.minAvatarScale, 1e-9),
+      );
       // Int knob saturates at 9 / 4.
       expect(d.stepped(OrbitKnob.maxPerArc, 1).maxPerArc, 9);
       expect(d.stepped(OrbitKnob.maxPerArc, -100).maxPerArc, 4);

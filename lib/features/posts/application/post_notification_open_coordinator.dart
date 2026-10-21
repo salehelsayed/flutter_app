@@ -8,8 +8,6 @@ import 'package:flutter_app/features/posts/domain/models/post_route_target.dart'
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class PostNotificationOpenCoordinator {
-  static const String loadingFallbackMessage = 'Finishing catch-up...';
-
   final PendingPostTargetStore pendingTargetStore;
   final PostRepository postRepository;
   final AppShellController appShellController;
@@ -54,6 +52,9 @@ class PostNotificationOpenCoordinator {
     );
     _revealedPostId = null;
     _armTimers(postId);
+    // A missing or deleted thought still opens the orbit immediately. Keep
+    // the target briefly so a copy arriving from the inbox can open its card.
+    _revealPosts(postId);
 
     unawaited(drainOfflineInbox());
     await _openPostsSurfaceWhenObserved();
@@ -84,7 +85,6 @@ class PostNotificationOpenCoordinator {
       if (target == null || target.postId != postId) {
         return;
       }
-      pendingTargetStore.showStatus(loadingFallbackMessage);
       _revealPosts(postId);
     });
     _expiryTimer = Timer(expiryBudget, () {
@@ -110,6 +110,9 @@ class PostNotificationOpenCoordinator {
     }
 
     final post = await postRepository.getPost(target.postId);
+    if (!identical(pendingTargetStore.target, target)) {
+      return;
+    }
     if (post == null) {
       return;
     }
@@ -129,8 +132,8 @@ class PostNotificationOpenCoordinator {
       return;
     }
     _revealedPostId = postId;
-    // Posts tab hidden for TestFlight — navigate to feed instead.
-    appShellController.switchTo(AppShellTab.feed);
+    // Plan 407: thoughts live on the existing Orbit pane.
+    appShellController.switchTo(AppShellTab.orbit);
     revealPostsSurface();
   }
 }

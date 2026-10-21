@@ -73,9 +73,16 @@ import 'package:flutter_app/features/orbit/presentation/widgets/swipe_action_but
 import 'package:flutter_app/features/groups/presentation/widgets/pending_group_invite_card.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_note_bubble.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
+import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -88,6 +95,7 @@ import '../../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_pending_group_invite_repository.dart';
 import '../../../../shared/helpers/durable_group_exit_surface_harness.dart';
@@ -308,6 +316,9 @@ void main() {
     InMemoryMessageRepository? messageRepository,
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
+    PostRepository? postRepository,
+    PendingPostTargetStore? pendingPostTargetStore,
+    DateTime Function()? thoughtNowProvider,
     bool wrapInNavigator = false,
     String? initialFilterTab,
     AppShellController? appShellController,
@@ -387,6 +398,9 @@ void main() {
       introductionListener: introductionListener,
       appShellController: appShellController,
       postsPrivacySettingsRepository: postsPrivacySettingsRepository,
+      postRepository: postRepository,
+      pendingPostTargetStore: pendingPostTargetStore,
+      thoughtNowProvider: thoughtNowProvider,
       feedUnreadCountListenable: feedUnreadCountListenable,
       onEmbeddedExit: onEmbeddedExit,
       onRowActionOpenChanged: onRowActionOpenChanged,
@@ -524,6 +538,310 @@ void main() {
       expect(identical(orbit.feedClearedRepository, clearedRepo), isTrue);
     },
   );
+
+  group('Plan 407 thought integration', () {
+    final thoughtNow = DateTime.utc(2026, 10, 21, 12);
+
+    PostModel thought(
+      String id, {
+      String text = 'Private thought',
+      Duration age = const Duration(hours: 1),
+      DateTime? expiresAt,
+    }) {
+      final createdAt = thoughtNow.subtract(age).toIso8601String();
+      return PostModel(
+        id: id,
+        eventId: 'event-$id',
+        senderPeerId: testContact.peerId,
+        authorPeerId: testContact.peerId,
+        authorUsername: 'Old author name',
+        text: text,
+        audience: PostAudience.allFriends(),
+        createdAt: createdAt,
+        visibleAt: createdAt,
+        expiresAt: (expiresAt ?? thoughtNow.add(const Duration(hours: 23)))
+            .toIso8601String(),
+      );
+    }
+
+    Future<void> finishThoughtCase(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      // The ordinary conversation owner also has an existing fire-and-forget
+      // profile-download retry; let it observe disposal before test teardown.
+      await tester.pump(const Duration(seconds: 6));
+    }
+
+    testWidgets(
+      'latest note opens current-name card, marks read, and Message and face open ordinary empty chat',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final currentContact = testContact.copyWith(username: 'Bob Now');
+        contactRepo.seed([currentContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(
+          thought(
+            'old-thought',
+            text: 'Older private thought',
+            age: const Duration(hours: 2),
+          ),
+        );
+        await posts.savePost(
+          thought('latest-thought', text: 'Latest private thought'),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final note = tester.widget<OrbitThoughtNoteBubble>(
+          find.byType(OrbitThoughtNoteBubble),
+        );
+        expect(note.note.postId, 'latest-thought');
+        expect(note.note.isRead, isFalse);
+        expect(find.text('Older private thought'), findsNothing);
+
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-thought-tap-latest-thought')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final card = tester.widget<ThoughtCardScreen>(
+          find.byType(ThoughtCardScreen),
+        );
+        expect(card.authorName, 'Bob Now');
+        expect(card.initialPost.id, 'latest-thought');
+        expect(
+          find.text('Latest private thought', findRichText: true),
+          findsOneWidget,
+        );
+        expect(posts.focusedIds, ['latest-thought']);
+        expect((await posts.getPost('latest-thought'))!.isRead, isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('thought-message')));
+        await pumpOrbitFrames(tester, count: 8);
+        final messageChat = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(messageChat.contact.peerId, currentContact.peerId);
+        expect(messageChat.initialText, isNull);
+        expect(
+          find.byType(ThoughtCardScreen, skipOffstage: false),
+          findsNothing,
+        );
+
+        Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+        await pumpOrbitFrames(tester, count: 8);
+        expect(
+          tester
+              .widget<OrbitThoughtNoteBubble>(
+                find.byType(OrbitThoughtNoteBubble),
+              )
+              .note
+              .isRead,
+          isTrue,
+        );
+        await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+        await pumpOrbitFrames(tester, count: 8);
+        final faceChat = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(faceChat.contact.peerId, currentContact.peerId);
+        expect(faceChat.initialText, isNull);
+        expect(
+          find.byType(ThoughtCardScreen, skipOffstage: false),
+          findsNothing,
+        );
+        expect(posts.focusedIds, ['latest-thought']);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'preexisting pending target opens its card after mount and consumes the store',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        final pending = PendingPostTargetStore()
+          ..setTarget(const PostRouteTarget(postId: 'preexisting-thought'));
+        addTearDown(posts.dispose);
+        addTearDown(pending.dispose);
+        await posts.savePost(thought('preexisting-thought'));
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            pendingPostTargetStore: pending,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(
+          tester
+              .widget<ThoughtCardScreen>(find.byType(ThoughtCardScreen))
+              .initialPost
+              .id,
+          'preexisting-thought',
+        );
+        expect(pending.target, isNull);
+        expect(pending.statusMessage, isNull);
+        expect(posts.focusedIds, ['preexisting-thought']);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'a replacement target opens after the held prior lookup returns missing without another event',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _HeldOrbitThoughtLookupRepository('thought-a');
+        final pending = PendingPostTargetStore();
+        addTearDown(posts.dispose);
+        addTearDown(pending.dispose);
+        addTearDown(() {
+          if (!posts.heldLookup.isCompleted) posts.heldLookup.complete(null);
+        });
+        await posts.savePost(
+          thought('thought-b', text: 'Replacement thought B'),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            pendingPostTargetStore: pending,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+
+        pending.setTarget(const PostRouteTarget(postId: 'thought-a'));
+        await pumpOrbitFrames(tester, count: 1);
+        expect(posts.lookedUpPostIds, contains('thought-a'));
+        pending.setTarget(const PostRouteTarget(postId: 'thought-b'));
+        await pumpOrbitFrames(tester, count: 1);
+        expect(posts.lookedUpPostIds, isNot(contains('thought-b')));
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+
+        // No post save, contact event, tab change or target write follows this
+        // release. The exact replacement queue must advance B itself.
+        posts.heldLookup.complete(null);
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(posts.lookedUpPostIds, contains('thought-b'));
+        expect(
+          tester
+              .widget<ThoughtCardScreen>(find.byType(ThoughtCardScreen))
+              .initialPost
+              .id,
+          'thought-b',
+        );
+        expect(pending.target, isNull);
+        expect(pending.statusMessage, isNull);
+        expect(
+          flowEvents.where(
+            (event) => event['event'] == 'ORBIT_THOUGHT_LOAD_FAILED',
+          ),
+          isEmpty,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    for (final deleted in [false, true]) {
+      testWidgets(
+        '${deleted ? 'deleted' : 'missing'} target leaves Orbit with no card, status or error',
+        (tester) async {
+          setLargeTestSurface(tester);
+          identityRepo.seed(testIdentity);
+          contactRepo.seed([testContact]);
+          final posts = _OrbitThoughtPostRepository();
+          final pending = PendingPostTargetStore();
+          addTearDown(posts.dispose);
+          addTearDown(pending.dispose);
+          if (deleted) {
+            await posts.savePost(thought('gone-thought'));
+            await posts.deletePostCascade('gone-thought');
+          }
+          pending.setTarget(const PostRouteTarget(postId: 'gone-thought'));
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              pendingPostTargetStore: pending,
+              thoughtNowProvider: () => thoughtNow,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 8);
+
+          expect(find.byType(OrbitWired), findsOneWidget);
+          expect(find.byType(ThoughtCardScreen), findsNothing);
+          expect(posts.focusedIds, isEmpty);
+          expect(pending.statusMessage, isNull);
+          expect(find.textContaining('Finishing catch-up'), findsNothing);
+          expect(find.byType(SnackBar), findsNothing);
+          expect(
+            flowEvents.where(
+              (event) => event['event'] == 'ORBIT_THOUGHT_LOAD_FAILED',
+            ),
+            isEmpty,
+          );
+          await finishThoughtCase(tester);
+        },
+      );
+    }
+
+    testWidgets(
+      'open card and note expire on their own while the database row remains unswept',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        var now = thoughtNow;
+        final posts = _OrbitThoughtPostRepository();
+        final pending = PendingPostTargetStore()
+          ..setTarget(const PostRouteTarget(postId: 'expires-unswept'));
+        addTearDown(posts.dispose);
+        addTearDown(pending.dispose);
+        await posts.savePost(
+          thought(
+            'expires-unswept',
+            age: const Duration(hours: 23, minutes: 59, seconds: 55),
+            expiresAt: thoughtNow.add(const Duration(seconds: 5)),
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            pendingPostTargetStore: pending,
+            thoughtNowProvider: () => now,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+
+        now = thoughtNow.add(const Duration(seconds: 5));
+        await tester.pump(const Duration(seconds: 5));
+        await pumpOrbitFrames(tester, count: 4);
+
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(
+          find.byType(ThoughtCardScreen, skipOffstage: false),
+          findsNothing,
+        );
+        expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+        expect(await posts.getPost('expires-unswept'), isNotNull);
+        expect(pending.statusMessage, isNull);
+        await finishThoughtCase(tester);
+      },
+    );
+  });
 
   group('OrbitWired', () {
     GroupInviteMembershipFreshnessProof makeInviteFreshnessProof({
@@ -9871,6 +10189,35 @@ class _FaultingMembersGroupRepository extends InMemoryGroupRepository {
       throw StateError('member read failed');
     }
     return super.getMembers(groupId);
+  }
+}
+
+/// Native read-state parity scoped to the Plan 407 integration cases.
+class _OrbitThoughtPostRepository extends InMemoryPostRepository {
+  final focusedIds = <String>[];
+
+  @override
+  Future<void> markFocused(String postId) async {
+    focusedIds.add(postId);
+    await super.markFocused(postId);
+    // The native helper marks both posts.is_focused and feed-state.is_read.
+    // Mirror that existing contract only for these feature integration cases.
+    final post = await super.getPost(postId);
+    if (post != null) await savePost(post.copyWith(isRead: true));
+  }
+}
+
+class _HeldOrbitThoughtLookupRepository extends _OrbitThoughtPostRepository {
+  final String heldPostId;
+  final heldLookup = Completer<PostModel?>();
+  final lookedUpPostIds = <String>[];
+
+  _HeldOrbitThoughtLookupRepository(this.heldPostId);
+
+  @override
+  Future<PostModel?> getPost(String postId) {
+    lookedUpPostIds.add(postId);
+    return postId == heldPostId ? heldLookup.future : super.getPost(postId);
   }
 }
 
