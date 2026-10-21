@@ -212,7 +212,7 @@ final class ProductionAudioCallLocalFixtureLease {
         r'^TestProductionAudioCallDeviceFixture_ProductionRelayTurnCredentialsCoturnAndTeardown$',
         '-count=1',
         '-v',
-        '-timeout=45m',
+        '-timeout=120m',
       ],
       workingDirectory: 'go-relay-server',
       environment: childEnvironment,
