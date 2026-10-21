@@ -235,12 +235,23 @@ final class NotificationTapUITests: XCTestCase {
       XCTFail("The freshly registered receiver is not running in foreground")
       return
     }
-    XCUIDevice.shared.press(.home)
-    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+    // A Home press can leave the receiver frontmost on device; activating
+    // SpringBoard is what reliably moves it to the background.
+    springboard.activate()
+    let receiverBackgrounded = NSPredicate { _, _ in
+      springboard.state == .runningForeground
+        && (app.state == .runningBackgroundSuspended || app.state == .runningBackground)
+    }
+    let backgrounded = XCTNSPredicateExpectation(predicate: receiverBackgrounded, object: nil)
+    guard XCTWaiter().wait(for: [backgrounded], timeout: 10) == .completed else {
       XCTFail("The freshly registered receiver did not enter background")
       return
     }
     settleOnSpringboard()
+    guard receiverBackgrounded.evaluate(with: nil) else {
+      XCTFail("The freshly registered receiver left the background before FINAL_READY")
+      return
+    }
     emitPlan258Marker("FINAL_READY", fields: ["registration_bound": "true"])
   }
 

@@ -776,7 +776,22 @@ void main() {
         'func testPayloadFastPathNotificationTap()',
       );
       expect(backgroundOnly, contains('.runningForeground'));
-      expect(backgroundOnly, contains('XCUIDevice.shared.press(.home)'));
+      expect(backgroundOnly, isNot(contains('XCUIDevice.shared.press(.home)')));
+      expect(backgroundOnly, contains('springboard.activate()'));
+      expect(backgroundOnly, contains('springboard.state == .runningForeground'));
+      expect(backgroundOnly, contains('app.state == .runningBackgroundSuspended'));
+      expect(backgroundOnly, contains('app.state == .runningBackground'));
+      expect(backgroundOnly, contains('timeout: 10'));
+      expect(
+        backgroundOnly.indexOf('settleOnSpringboard()'),
+        lessThan(backgroundOnly.indexOf('receiverBackgrounded.evaluate(with: nil)')),
+        reason: 'the background state must be rechecked after the settle',
+      );
+      expect(
+        backgroundOnly.indexOf('receiverBackgrounded.evaluate(with: nil)'),
+        lessThan(backgroundOnly.indexOf('FINAL_READY')),
+        reason: 'FINAL_READY must follow the post-settle recheck',
+      );
       expect(backgroundOnly, contains('registration_bound'));
       expect(backgroundOnly, isNot(contains('app.terminate()')));
       expect(backgroundOnly, isNot(contains('app.launch()')));
