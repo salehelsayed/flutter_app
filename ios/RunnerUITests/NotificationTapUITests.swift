@@ -235,6 +235,7 @@ final class NotificationTapUITests: XCTestCase {
       XCTFail("The freshly registered receiver is not running in foreground")
       return
     }
+    recordReadOnlyNotificationEnvironment(springboard: springboard)
     // A Home press can leave the receiver frontmost on device; activating
     // SpringBoard is what reliably moves it to the background.
     springboard.activate()
@@ -1647,6 +1648,70 @@ final class NotificationTapUITests: XCTestCase {
     NSLog("%@", line)
     fputs("\(line)\n", stdout)
     fflush(stdout)
+  }
+
+  /// Read-only evidence for the owner: the app's per-app notification settings
+  /// and whether any Focus is active, captured just before the final background
+  /// step. It only navigates Settings and never toggles anything.
+  private func recordReadOnlyNotificationEnvironment(springboard: XCUIApplication) {
+    let deadline = Date().addingTimeInterval(60)
+    let statusLabels = springboard.statusBars.firstMatch.descendants(matching: .any)
+      .allElementsBoundByIndex.prefix(40).map { $0.label }.filter { !$0.isEmpty }
+    emitPlan258Marker("READONLY_STATUS_BAR", fields: [
+      "focus_icon": statusLabels.contains { $0.localizedCaseInsensitiveContains("focus")
+        || $0.localizedCaseInsensitiveContains("do not disturb")
+        || $0.localizedCaseInsensitiveContains("sleep") } ? "present" : "absent",
+      "labels": readOnlyJoin(statusLabels),
+    ])
+    let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+    settings.launch()
+    func openCell(_ predicate: NSPredicate) -> Bool {
+      let cell = settings.cells.matching(predicate).firstMatch
+      var swipes = 0
+      while !cell.exists && swipes < 12 && Date() < deadline {
+        settings.swipeUp()
+        swipes += 1
+      }
+      guard cell.waitForExistence(timeout: 3) else { return false }
+      cell.tap()
+      return true
+    }
+    func pageSnapshot() -> String {
+      let switches = settings.switches.allElementsBoundByIndex.prefix(30).map {
+        "\($0.label)=\(($0.value as? String) ?? "?")"
+      }
+      let cells = settings.cells.allElementsBoundByIndex.prefix(30).map { cell -> String in
+        let selected = cell.isSelected ? "*" : ""
+        return "\(cell.label)\(selected)"
+      }
+      return readOnlyJoin(switches + cells)
+    }
+    if openCell(NSPredicate(format: "label == 'Notifications'")) {
+      if openCell(NSPredicate(format: "label BEGINSWITH[c] 'mknoon'")) {
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        emitPlan258Marker("READONLY_APP_NOTIFICATION_SETTINGS", fields: ["found": "true", "page": pageSnapshot()])
+      } else {
+        emitPlan258Marker("READONLY_APP_NOTIFICATION_SETTINGS", fields: ["found": "false"])
+      }
+    } else {
+      emitPlan258Marker("READONLY_APP_NOTIFICATION_SETTINGS", fields: ["found": "notifications_unreachable"])
+    }
+    settings.terminate()
+    settings.launch()
+    if openCell(NSPredicate(format: "label == 'Focus'")) {
+      RunLoop.current.run(until: Date().addingTimeInterval(1))
+      emitPlan258Marker("READONLY_FOCUS", fields: ["found": "true", "page": pageSnapshot()])
+    } else {
+      emitPlan258Marker("READONLY_FOCUS", fields: ["found": "false"])
+    }
+    settings.terminate()
+  }
+
+  private func readOnlyJoin(_ items: [String]) -> String {
+    items.map { $0.replacingOccurrences(of: " ", with: "_").replacingOccurrences(of: ";", with: ",") }
+      .joined(separator: ";")
+      .prefix(1500)
+      .description
   }
 
   private func settleOnSpringboard() {

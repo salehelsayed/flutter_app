@@ -795,6 +795,28 @@ void main() {
       expect(backgroundOnly, contains('registration_bound'));
       expect(backgroundOnly, isNot(contains('app.terminate()')));
       expect(backgroundOnly, isNot(contains('app.launch()')));
+      expect(
+        backgroundOnly.indexOf('recordReadOnlyNotificationEnvironment('),
+        allOf(
+          greaterThan(backgroundOnly.indexOf('.runningForeground')),
+          lessThan(backgroundOnly.indexOf('springboard.activate()')),
+        ),
+        reason: 'read-only settings evidence runs after the foreground guard '
+            'and before the receiver is backgrounded',
+      );
+      final readOnlyHelper = _between(
+        uiTests,
+        'private func recordReadOnlyNotificationEnvironment(',
+        'private func readOnlyJoin(',
+      );
+      expect(readOnlyHelper, contains('READONLY_APP_NOTIFICATION_SETTINGS'));
+      expect(readOnlyHelper, contains('READONLY_FOCUS'));
+      expect(readOnlyHelper, contains('READONLY_STATUS_BAR'));
+      expect(
+        RegExp(r'switches[^\n]*\.tap\(').hasMatch(readOnlyHelper),
+        isFalse,
+        reason: 'the evidence helper must never toggle a setting',
+      );
     },
   );
 
