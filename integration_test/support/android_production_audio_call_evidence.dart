@@ -245,7 +245,13 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
   required bool appStateRestored,
   required List<AndroidProductionAudioCallArtifactDigest> artifacts,
   bool emulatorPair = false,
+  bool physicalCaller = false,
 }) {
+  if (physicalCaller && emulatorPair) {
+    throw const FormatException(
+      'A physical caller topology needs one physical Android target.',
+    );
+  }
   _validateFinalReceipt(
     callerReceipt,
     role: androidProductionAudioCallCallerRole,
@@ -298,8 +304,8 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
       'sameApkBothTargets': true,
     },
     'topology': <String, Object?>{
-      'callerKind': 'emulator',
-      'calleeKind': emulatorPair ? 'emulator' : 'physical',
+      'callerKind': physicalCaller ? 'physical' : 'emulator',
+      'calleeKind': physicalCaller || emulatorPair ? 'emulator' : 'physical',
       'callerDeviceSha256': _sha256Text(emulatorDeviceId),
       'calleeDeviceSha256': _sha256Text(physicalDeviceId),
       'distinctTargets': true,
@@ -337,14 +343,19 @@ Map<String, Object?> aggregateAndroidProductionAudioCallEvidence({
   final validation = validateAndroidProductionAudioCallEvidence(
     proof,
     emulatorPair: emulatorPair,
+    physicalCaller: physicalCaller,
   );
   if (!validation.ok) throw FormatException(validation.detail);
   return Map<String, Object?>.unmodifiable(proof);
 }
 
+/// [physicalCaller] marks the one regression topology (KX29) whose caller
+/// must be the physical Android so an earpiece route exists; the callee is
+/// then the emulator.
 AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
   Map<String, Object?> artifact, {
   bool emulatorPair = false,
+  bool physicalCaller = false,
 }) {
   if (!_hasExactKeys(artifact, _rootKeys) ||
       artifact['schema'] != androidProductionAudioCallEvidenceSchema ||
@@ -387,8 +398,10 @@ AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
         'calleeDeviceSha256',
         'distinctTargets',
       }) ||
-      topology['callerKind'] != 'emulator' ||
-      topology['calleeKind'] != (emulatorPair ? 'emulator' : 'physical') ||
+      (physicalCaller && emulatorPair) ||
+      topology['callerKind'] != (physicalCaller ? 'physical' : 'emulator') ||
+      topology['calleeKind'] !=
+          (physicalCaller || emulatorPair ? 'emulator' : 'physical') ||
       !_isSha256(topology['callerDeviceSha256']) ||
       !_isSha256(topology['calleeDeviceSha256']) ||
       topology['callerDeviceSha256'] == topology['calleeDeviceSha256'] ||
@@ -493,11 +506,13 @@ AndroidCampaignEvidenceValidation validateAndroidProductionAudioCallEvidence(
 Map<String, Object?> androidProductionAudioCallDurablePayload(
   Map<String, Object?> runtimeProof, {
   bool emulatorPair = false,
+  bool physicalCaller = false,
 }) => validatedAndroidRuntimeProofPayload(
   runtimeProof: runtimeProof,
   validate: (proof) => validateAndroidProductionAudioCallEvidence(
     proof,
     emulatorPair: emulatorPair,
+    physicalCaller: physicalCaller,
   ),
 );
 
@@ -505,6 +520,7 @@ AndroidCampaignEvidenceValidation
 validateAndroidProductionAudioCallDurableArtifact(
   Map<String, Object?> artifact, {
   bool emulatorPair = false,
+  bool physicalCaller = false,
 }) => validateDurableAndroidCampaignArtifact(
   artifact: artifact,
   capabilityId: androidProductionAudioCallScenarioId,
@@ -514,6 +530,7 @@ validateAndroidProductionAudioCallDurableArtifact(
   validateRuntimeProof: (proof) => validateAndroidProductionAudioCallEvidence(
     proof,
     emulatorPair: emulatorPair,
+    physicalCaller: physicalCaller,
   ),
 );
 

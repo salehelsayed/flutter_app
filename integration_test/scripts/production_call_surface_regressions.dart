@@ -629,10 +629,12 @@ final class _ProductionCallSurfaceRegression {
   AndroidProductionAudioCallCampaignResult result(
     SimsArtifactEvidence baseline, {
     required bool emulatorPair,
+    bool physicalCaller = false,
   }) {
     proof.addAll({
       'baselineEvidence': baseline.toJson(),
       'emulatorPair': emulatorPair,
+      'physicalCaller': physicalCaller,
     });
     final failures = validateProductionCallRegression(proof);
     File(

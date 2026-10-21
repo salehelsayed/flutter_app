@@ -120,6 +120,7 @@ Map<String, Object?> _aggregate({
   String calleeIdentitySha256 = _calleeIdentity,
   bool nativeCallsReleasedBothEndpoints = true,
   bool emulatorPair = false,
+  bool physicalCaller = false,
   List<AndroidProductionAudioCallArtifactDigest>? artifacts,
 }) => aggregateAndroidProductionAudioCallEvidence(
   callerReceipt: caller ?? _receipt(role: androidProductionAudioCallCallerRole),
@@ -149,6 +150,7 @@ Map<String, Object?> _aggregate({
   appStateRestored: true,
   artifacts: artifacts ?? _expectedArtifacts(),
   emulatorPair: emulatorPair,
+  physicalCaller: physicalCaller,
 );
 
 List<AndroidProductionAudioCallArtifactDigest> _expectedArtifacts() =>
@@ -336,12 +338,19 @@ Map<String, Object?> _callbackProof(String id) {
   return proof;
 }
 
-Map<String, Object?> _surfaceProof(Directory directory, String id) {
+Map<String, Object?> _surfaceProof(
+  Directory directory,
+  String id, {
+  bool physicalCaller = false,
+}) {
   final baseline = writeSimsArtifactEvidenceSync(
     directory: directory,
     capabilityId: androidProductionAudioCallScenarioId,
     validatorIds: [androidProductionAudioCallArtifactValidatorId],
-    payload: androidProductionAudioCallDurablePayload(_aggregate()),
+    payload: androidProductionAudioCallDurablePayload(
+      _aggregate(physicalCaller: physicalCaller),
+      physicalCaller: physicalCaller,
+    ),
   );
   final caller = {'kx0001', 'kx0002', 'kx0029', 'kx0030'}.contains(id);
   final actor = caller ? 'caller' : 'callee';
@@ -415,6 +424,7 @@ Map<String, Object?> _surfaceProof(Directory directory, String id) {
     'attemptDirectory': directory.path,
     'baselineEvidence': baseline.toJson(),
     'emulatorPair': false,
+    'physicalCaller': physicalCaller,
     'otherPeerSha256': otherIdentity,
     'invocations': [
       for (final role in ['caller', 'callee'])
@@ -566,6 +576,22 @@ void main() {
         );
       });
     }
+    test('kx0029 accepts the physical-caller topology it needs', () {
+      expect(
+        validateProductionCallRegression(
+          _surfaceProof(directory, 'kx0029', physicalCaller: true),
+        ),
+        isEmpty,
+      );
+    });
+    test('the physical-caller topology is reserved for kx0029', () {
+      expect(
+        validateProductionCallRegression(
+          _surfaceProof(directory, 'kx0001', physicalCaller: true),
+        ),
+        contains('physical caller topology is reserved for kx0029'),
+      );
+    });
     test(
       'signed-wire comparison preserves real origins instead of assuming five-second delivery headroom',
       () {
@@ -1117,6 +1143,34 @@ Ranking Config:
           emulatorPair: true,
         ).ok,
         isFalse,
+      );
+    },
+  );
+  test(
+    'a physical caller is recorded honestly and needs its own validator flag',
+    () {
+      final proof = _aggregate(physicalCaller: true);
+      final topology = proof['topology'] as Map;
+      expect(topology['callerKind'], 'physical');
+      expect(topology['calleeKind'], 'emulator');
+      expect(validateAndroidProductionAudioCallEvidence(proof).ok, isFalse);
+      expect(
+        validateAndroidProductionAudioCallEvidence(
+          proof,
+          physicalCaller: true,
+        ).ok,
+        isTrue,
+      );
+      expect(
+        validateAndroidProductionAudioCallEvidence(
+          _aggregate(),
+          physicalCaller: true,
+        ).ok,
+        isFalse,
+      );
+      expect(
+        () => _aggregate(physicalCaller: true, emulatorPair: true),
+        throwsFormatException,
       );
     },
   );

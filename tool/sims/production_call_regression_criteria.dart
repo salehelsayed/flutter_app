@@ -38,6 +38,11 @@ List<String> validateProductionCallRegression(Map<String, Object?> proof) {
       ? 'caller'
       : 'callee';
   check(proof['actor'] == actor, 'wrong call endpoint');
+  final physicalCaller = proof['physicalCaller'] == true;
+  check(
+    !physicalCaller || id == 'kx0029',
+    'physical caller topology is reserved for kx0029',
+  );
   final root = proof['attemptDirectory'];
   Map<String, Object?> baseline = {};
   try {
@@ -63,6 +68,7 @@ List<String> validateProductionCallRegression(Map<String, Object?> proof) {
       if (validateAndroidProductionAudioCallDurableArtifact(
         body,
         emulatorPair: proof['emulatorPair'] == true,
+        physicalCaller: physicalCaller,
       ).ok) {
         baseline = _object(body['runtimeProof']);
       }

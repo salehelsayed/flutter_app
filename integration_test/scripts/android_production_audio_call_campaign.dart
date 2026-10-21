@@ -160,6 +160,12 @@ final class AndroidProductionAudioCallTarget {
   final AndroidProductionAudioCallTargetKind kind;
 }
 
+/// KX29 needs a caller with an observed non-speaker route. The emulator only
+/// reports a speaker, so that one row swaps roles: the physical Android
+/// calls and the emulator answers. Every other row keeps the emulator caller.
+bool androidProductionAudioCallUsesPhysicalCaller(String? regressionScenario) =>
+    regressionScenario == 'kx0029';
+
 void validateAndroidProductionAudioCallTopology(
   List<AndroidProductionAudioCallTarget> targets, {
   bool emulatorPair = false,
@@ -549,6 +555,7 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
   required String callerNonce,
   required String calleeNonce,
   bool emulatorPair = false,
+  bool physicalCaller = false,
   Duration rtpObservationTimeout = const Duration(seconds: 20),
   Duration rtpObservationPollInterval = const Duration(milliseconds: 250),
   AndroidProductionAudioCallStageHook? onStage,
@@ -581,8 +588,15 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
   );
   await Future.wait<void>(devices.map(driver.verifyRelayReachable));
 
-  final physicalDeviceId = devices.first;
-  final emulatorDeviceId = devices.last;
+  if (physicalCaller && emulatorPair) {
+    throw const FormatException(
+      'A physical caller topology needs one physical Android target.',
+    );
+  }
+  // Role slots: emulatorDeviceId is the caller slot and physicalDeviceId the
+  // callee slot. [physicalCaller] puts the physical Android in the caller slot.
+  final physicalDeviceId = physicalCaller ? devices.last : devices.first;
+  final emulatorDeviceId = physicalCaller ? devices.first : devices.last;
   var stateCaptured = false;
   var stateRestored = false;
   late AndroidProductionAudioCallIdentity callerIdentity;
@@ -927,6 +941,7 @@ Future<Map<String, Object?>> executeAndroidProductionAudioCallCampaign({
     appStateRestored: stateRestored,
     artifacts: artifacts,
     emulatorPair: emulatorPair,
+    physicalCaller: physicalCaller,
   );
 }
 
@@ -996,9 +1011,14 @@ runAndroidProductionAudioCallCampaign({
       artifactPresent: true,
     );
   }
+  final physicalCaller =
+      androidProductionAudioCallUsesPhysicalCaller(regressionScenario) &&
+      !usesDisposableAndroidPair(env);
+  final physicalSerial = devices.isEmpty ? '' : devices.first;
+  final emulatorSerial = devices.length < 2 ? '' : devices.last;
   final driver = SystemAndroidProductionAudioCallCampaignDriver(
-    physicalDeviceId: devices.isEmpty ? '' : devices.first,
-    emulatorDeviceId: devices.length < 2 ? '' : devices.last,
+    physicalDeviceId: physicalCaller ? emulatorSerial : physicalSerial,
+    emulatorDeviceId: physicalCaller ? physicalSerial : emulatorSerial,
     artifact: artifact,
     artifactSha256: apkSha256,
     packageName: packageName,
@@ -1014,6 +1034,7 @@ runAndroidProductionAudioCallCampaign({
     runtimeProof = await executeAndroidProductionAudioCallCampaign(
       devices: devices,
       emulatorPair: usesDisposableAndroidPair(env),
+      physicalCaller: physicalCaller,
       apkSha256: apkSha256,
       profileSha256: profileSha256,
       relayFixtureIdentitySha256: relay.fixtureIdentitySha256,
@@ -1070,6 +1091,7 @@ runAndroidProductionAudioCallCampaign({
     payload: androidProductionAudioCallDurablePayload(
       runtimeProof,
       emulatorPair: emulatorPair,
+      physicalCaller: physicalCaller,
     ),
   );
   final audit = auditSimsArtifactEvidence(
@@ -1088,6 +1110,7 @@ runAndroidProductionAudioCallCampaign({
       !validateAndroidProductionAudioCallDurableArtifact(
         decoded.map<String, Object?>((key, value) => MapEntry('$key', value)),
         emulatorPair: emulatorPair,
+        physicalCaller: physicalCaller,
       ).ok) {
     return AndroidProductionAudioCallCampaignResult.fail(
       blocker: 'harness',
@@ -1101,7 +1124,11 @@ runAndroidProductionAudioCallCampaign({
   }
   final surface = driver._surfaceRegression;
   if (surface != null) {
-    return surface.result(durable, emulatorPair: emulatorPair);
+    return surface.result(
+      durable,
+      emulatorPair: emulatorPair,
+      physicalCaller: physicalCaller,
+    );
   }
   return AndroidProductionAudioCallCampaignResult.pass(durable);
 }

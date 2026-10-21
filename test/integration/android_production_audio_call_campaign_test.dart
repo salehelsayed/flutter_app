@@ -1336,6 +1336,55 @@ safe lifecycle marker
     },
   );
 
+  test('only kx0029 selects the physical-caller topology', () {
+    expect(androidProductionAudioCallUsesPhysicalCaller('kx0029'), isTrue);
+    for (final other in <String?>[null, 'kx0001', 'kx0008', 'kx0030']) {
+      expect(androidProductionAudioCallUsesPhysicalCaller(other), isFalse);
+    }
+  });
+
+  test(
+    'physical caller swaps only the call roles and records honest kinds',
+    () async {
+      final driver = _FakeDriver();
+
+      final proof = await executeAndroidProductionAudioCallCampaign(
+        devices: const <String>['pixel', 'emulator-5554'],
+        physicalCaller: true,
+        apkSha256: _apkSha,
+        profileSha256: _profileSha,
+        relayFixtureIdentitySha256: _fixtureSha,
+        turnAuthoritySha256: _turnAuthoritySha,
+        coturnInstanceIdentitySha256: _coturnInstanceSha,
+        pionOracle: _pionOracle,
+        driver: driver,
+        runId: 'run-399',
+        callerNonce: 'caller-nonce-399',
+        calleeNonce: 'callee-nonce-399',
+      );
+
+      final topology = proof['topology']! as Map<String, Object?>;
+      expect(topology['callerKind'], 'physical');
+      expect(topology['calleeKind'], 'emulator');
+      expect(
+        validateAndroidProductionAudioCallEvidence(
+          proof,
+          physicalCaller: true,
+        ).ok,
+        isTrue,
+      );
+      expect(
+        driver.actions,
+        containsAllInOrder(<String>[
+          'tap:pixel:Start voice call',
+          'dispatch:pixel:acknowledged',
+          'tap:emulator-5554:Answer',
+          'tap:pixel:End',
+        ]),
+      );
+    },
+  );
+
   test('caller wake readiness must be exact before native Answer', () async {
     final driver = _FakeDriver(wakeAuthorityReady: false);
 
