@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../tool/sims/device_criteria.dart';
+import '../support/android_campaign_topology.dart';
 import 'notification_android_payload_campaign.dart';
 
 class _Scenario {
@@ -248,9 +249,17 @@ Future<void> main(List<String> args) async {
       return;
     }
     final suppliedDevices = devices;
+    final disposableEmulatorPair = usesDisposableAndroidPair(
+      Platform.environment,
+    );
     final physical =
-        _valueFor(args, '--physical') ??
-        Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ??
+        _valueFor(
+          args,
+          disposableEmulatorPair ? '--emulator-sender' : '--physical',
+        ) ??
+        Platform.environment[androidCampaignFirstTargetEnvironment(
+          Platform.environment,
+        )] ??
         (suppliedDevices.isNotEmpty ? suppliedDevices.first : null);
     final emulator =
         _valueFor(args, '--emulator') ??
@@ -289,10 +298,16 @@ Future<void> main(List<String> args) async {
         relayAddresses: Platform.environment['MKNOON_RELAY_ADDRESSES'],
         verbose: args.contains('--verbose'),
         diagnosticB13Reconciliation: diagnostic,
+        disposableEmulatorPair: disposableEmulatorPair,
       ),
     );
     _emitResult(<String, Object?>{
       ...result.json,
+      if (disposableEmulatorPair) ...<String, Object?>{
+        'diagnosticOnly': true,
+        'proofScope': 'android-emulator-pair',
+        'physicalAndroidCertified': false,
+      },
       if (diagnostic) ...<String, Object?>{
         'schema': 'mknoon.notification-b13-reconciliation-probe.v1',
         'scope': androidNotificationB13ProbeScenarioId,

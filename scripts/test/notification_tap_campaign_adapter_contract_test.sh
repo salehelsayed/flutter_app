@@ -79,12 +79,12 @@ printf '%s\n' \
   'printf "adb %s\\n" "$*" >>"${SIMS_NOTIFICATION_COMMAND_LOG:?}"' \
   'if [ "$*" = "version" ]; then' \
   '  printf "Android Debug Bridge version 1.0.41\\n"' \
-  'elif [ "$*" = "-s physical-1 get-state" ] || [ "$*" = "-s emulator-5554 get-state" ]; then' \
+  'elif [ "$*" = "-s ${SIMS_TEST_SENDER_ID:-physical-1} get-state" ] || [ "$*" = "-s ${SIMS_TEST_RECEIVER_ID:-emulator-5554} get-state" ]; then' \
   '  printf "device\\n"' \
-  'elif [ "$*" = "-s physical-1 shell getprop ro.kernel.qemu" ]; then' \
-  '  printf "0\\n"' \
-  'elif [ "$*" = "-s emulator-5554 shell getprop ro.kernel.qemu" ]; then' \
-  '  printf "1\\n"' \
+  'elif [ "$*" = "-s ${SIMS_TEST_SENDER_ID:-physical-1} shell getprop ro.kernel.qemu" ]; then' \
+  '  printf "%s\\n" "${SIMS_TEST_SENDER_QEMU:-0}"' \
+  'elif [ "$*" = "-s ${SIMS_TEST_RECEIVER_ID:-emulator-5554} shell getprop ro.kernel.qemu" ]; then' \
+  '  printf "%s\\n" "${SIMS_TEST_RECEIVER_QEMU:-1}"' \
   'elif [[ "$*" == *"shell dumpsys connectivity" ]]; then' \
   '  printf "Active default network: 100\\n"' \
   'elif [ "$*" = "-s emulator-5554 shell cmd connectivity airplane-mode" ]; then' \
@@ -113,7 +113,7 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'printf "ssh %s\\n" "$*" >>"${SIMS_NOTIFICATION_COMMAND_LOG:?}"' \
-  'printf "active\\n"' >"$fake_bin/ssh"
+  'printf "%s\\n" "${SIMS_TEST_RELAY_STATE:-active}"' >"$fake_bin/ssh"
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
@@ -133,6 +133,7 @@ PATH="$fake_bin:$PATH" \
   SIMS_ARTIFACT_PROFILE_ID=android.production_fcm \
   SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM="$tmp_dir/app-debug.apk" \
   SIMS_ANDROID_PHYSICAL_DEVICE_ID=physical-1 \
+  SIMS_DISPOSABLE_ANDROID_JOURNEYS=0 \
   SIMS_ANDROID_EMULATOR_DEVICE_ID=emulator-5554 \
   SIMS_NOTIFICATION_RELAY_TARGET=relay.example \
   SIMS_NOTIFICATION_RELAY_KEY="$tmp_dir/relay-key.pem" \
@@ -158,6 +159,57 @@ grep -Fq 'ssh ' "$command_log" ||
 if grep -Eq 'flutter (build|test|drive)|gradle|xcodebuild' "$command_log"; then
   fail 'notification campaign attempted a forbidden child build'
 fi
+
+# Exercise the actual leaf/preflight with boundary-only fake ADB/SSH. Valid
+# roles stop at an inactive relay before state capture/install; invalid roles
+# must stop before SSH. None of these commands reaches a connected device.
+for role_case in default_valid default_rejects_emulators pair_valid pair_rejects_phone pair_rejects_receiver pair_rejects_duplicate; do
+  pair=0
+  sender=physical-1
+  receiver=emulator-5558
+  sender_qemu=0
+  receiver_qemu=1
+  expected=environment
+  case "$role_case" in
+    default_rejects_emulators) sender=emulator-5556; sender_qemu=1; expected=targetUnavailable ;;
+    pair_valid) pair=1; sender=emulator-5556; sender_qemu=1 ;;
+    pair_rejects_phone) pair=1; sender=emulator-5556; expected=targetUnavailable ;;
+    pair_rejects_receiver) pair=1; sender=emulator-5556; sender_qemu=1; receiver_qemu=0; expected=targetUnavailable ;;
+    pair_rejects_duplicate) pair=1; sender=emulator-5558; sender_qemu=1; expected=targetUnavailable ;;
+  esac
+  role_log="$tmp_dir/$role_case.commands"
+  role_output="$tmp_dir/$role_case.out"
+  : >"$role_log"
+  set +e
+  PATH="$fake_bin:$PATH" \
+    SIMS_NOTIFICATION_COMMAND_LOG="$role_log" \
+    SIMS_TEST_SENDER_ID="$sender" SIMS_TEST_RECEIVER_ID="$receiver" \
+    SIMS_TEST_SENDER_QEMU="$sender_qemu" SIMS_TEST_RECEIVER_QEMU="$receiver_qemu" \
+    SIMS_TEST_RELAY_STATE=inactive SIMS_DISPOSABLE_ANDROID_JOURNEYS="$pair" \
+    SIMS_ARTIFACT_PROFILE_ID=android.production_fcm \
+    SIMS_ARTIFACT_ANDROID_PRODUCTION_FCM="$tmp_dir/app-debug.apk" \
+    SIMS_ANDROID_PHYSICAL_DEVICE_ID="$sender" \
+    SIMS_ANDROID_EMULATOR_FOURTH_DEVICE_ID="$sender" \
+    SIMS_ANDROID_EMULATOR_DEVICE_ID="$receiver" \
+    SIMS_NOTIFICATION_RELAY_TARGET=relay.example \
+    SIMS_NOTIFICATION_RELAY_KEY="$tmp_dir/relay-key.pem" \
+    SIMS_PROVIDER_FCM_CREDENTIAL_PATH="$tmp_dir/fcm.json" \
+    MKNOON_RELAY_ADDRESSES=/dns4/relay.example/tcp/443/wss/p2p/relay \
+    SIMS_PROOF_DIRECTORY="$tmp_dir/$role_case.proofs" \
+    "${runner[@]}" --scenario android_payload_campaign >"$role_output"
+  role_status=$?
+  set -e
+  [ "$role_status" -eq 78 ] || fail "$role_case exited $role_status, expected BLOCKED"
+  grep -Fq "\"blocker\":\"$expected\"" "$role_output" || fail "$role_case crossed the wrong preflight boundary"
+  if [ "$expected" = environment ]; then
+    grep -q '^ssh ' "$role_log" || fail "$role_case did not accept exact qemu roles"
+  elif grep -q '^ssh ' "$role_log"; then
+    fail "$role_case reached relay after invalid target roles"
+  fi
+  if [ "$pair" = 1 ]; then
+    grep -Fq '"physicalAndroidCertified":false' "$role_output" || fail "$role_case mislabeled emulator scope"
+  fi
+done
 
 adapter=integration_test/scripts/notification_android_payload_campaign.dart
 protocol=lib/core/debug/android_notification_payload_e2e_protocol.dart

@@ -8373,6 +8373,19 @@ race. Capacity, truncation and invalid cursors cannot establish absent events.
 Default iOS group syslog streams have 8 MiB raw limits; the separately bounded
 Plan 398 trace capture retains its existing path and semantics.
 
+The Android permission/channel campaign deliberately recreates its receiver.
+Before a subsequent strict live probe, bind preparation to both current app
+PIDs and refresh the owned sender only when that binding changes. Verify the
+same persisted peer/key and a stable receiver before opening the evidence
+cursor. Captured failures proved the preceding connection unresponsive after
+receiver recreation; the production direct-send policy remains unchanged.
+The [whole causal run](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/android-shared-binding-whole-diagnostic/retained-copy-manifest.redacted.json)
+passed all nine runnable scenarios, including permission and channel recovery,
+with the existing API-specific N/A and exact cleanup. That run used temporary
+transport observation and the explicitly selected emulator pair; clean-app
+acceptance remains separate. Emulator mode verifies both qemu roles and records
+their actual kinds without certifying a physical Android device.
+
 SIMS preflight logs record the typed status, blocker and `childStarted=false`.
 A blocked preflight with no process exit logs 78; policy N/A retains zero.
 Neither represents executed assertions. The C1 audit found 13 retained logs

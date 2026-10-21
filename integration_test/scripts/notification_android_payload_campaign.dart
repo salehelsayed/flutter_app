@@ -10,6 +10,7 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/capture_budget.dart';
 import '../../tool/sims/device_criteria.dart';
 import '../support/android_app_state_guard.dart';
+import '../support/android_campaign_topology.dart';
 import '../support/android_notification_payload_campaign.dart';
 import 'reaction_notification_proof_support.dart';
 import '_android_app_package.dart';
@@ -30,6 +31,7 @@ final class AndroidNotificationCampaignOptions {
     this.serviceAccountPath,
     this.relayAddresses,
     this.diagnosticB13Reconciliation = false,
+    this.disposableEmulatorPair = false,
   });
 
   final String? physicalDeviceId;
@@ -42,6 +44,7 @@ final class AndroidNotificationCampaignOptions {
   final String? serviceAccountPath;
   final String? relayAddresses;
   final bool diagnosticB13Reconciliation;
+  final bool disposableEmulatorPair;
 }
 
 const androidNotificationB13ProbeScenarioId =
@@ -220,6 +223,7 @@ final class _AndroidNotificationCampaign {
   bool _dozeForced = false;
   bool _tokenRotationInFlight = false;
   DateTime? _lastCardObservedAt;
+  ({String senderPid, String receiverPid})? _preparedLiveProcessBinding;
   int _assertionsAttempted = 0;
   String _phase = 'construction';
   Process? _deviceLogProcess;
@@ -581,7 +585,15 @@ final class _AndroidNotificationCampaign {
         'notApplicableScenarioIds': notApplicableScenarioIds,
         'notApplicableReasons': notApplicableReasons,
         'targetIds': <String>[physical, emulator],
-        'targetKinds': const <String>['physical', 'emulator'],
+        'targetKinds': <String>[
+          options.disposableEmulatorPair ? 'emulator' : 'physical',
+          'emulator',
+        ],
+        if (options.disposableEmulatorPair) ...<String, Object?>{
+          'diagnosticOnly': true,
+          'proofScope': 'android-emulator-pair',
+          'physicalAndroidCertified': false,
+        },
         'preparedArtifactPath': apk.resolveSymbolicLinksSync(),
         'preparedArtifactSha256': apkSha256,
         'preparedArtifactSha256After': preparedArtifactSha256After,
@@ -665,11 +677,14 @@ final class _AndroidNotificationCampaign {
     if (!safe.hasMatch(physical) ||
         !safe.hasMatch(emulator) ||
         physical == emulator ||
+        (options.disposableEmulatorPair && !physical.startsWith('emulator-')) ||
         !emulator.startsWith('emulator-')) {
-      throw const _Blocked(
+      throw _Blocked(
         'targetUnavailable',
-        'The campaign requires one explicit physical Android and one distinct '
-            'Android emulator.',
+        options.disposableEmulatorPair
+            ? 'The explicit disposable campaign requires two distinct Android emulators.'
+            : 'The campaign requires one explicit physical Android and one distinct '
+                  'Android emulator.',
       );
     }
 
@@ -733,11 +748,17 @@ final class _AndroidNotificationCampaign {
       'getprop',
       'ro.kernel.qemu',
     ]);
-    if (physicalQemu.trim() == '1' || emulatorQemu.trim() != '1') {
-      throw const _Blocked(
+    if (!androidCampaignPairMatchesQemu(
+      first: physicalQemu,
+      second: emulatorQemu,
+      disposable: options.disposableEmulatorPair,
+    )) {
+      throw _Blocked(
         'targetUnavailable',
-        'Assigned Android target roles are not physical-sender and '
-            'emulator-receiver.',
+        options.disposableEmulatorPair
+            ? 'Assigned disposable Android targets are not both emulators.'
+            : 'Assigned Android target roles are not physical-sender and '
+                  'emulator-receiver.',
       );
     }
     final relay = await _ssh(const <String>[
@@ -1554,6 +1575,63 @@ final class _AndroidNotificationCampaign {
     return (sent: sent, toneGap: toneGap, cursor: cursor, sentAt: sentAt);
   }
 
+  /// Keeps the strict live fixture bound to the current receiver process.
+  /// A deliberate receiver recreation can leave the sender's previous direct
+  /// connection unresponsive. Refresh only that owned sender when either
+  /// process binding changes; production retry behavior is unchanged.
+  Future<bool> _prepareSenderForLiveReceiver({required String runId}) async {
+    final senderPidBeforeRefresh = await _pidof(physical);
+    final receiverPid = await _pidof(emulator);
+    final singlePid = RegExp(r'^[1-9][0-9]*$');
+    if (!singlePid.hasMatch(senderPidBeforeRefresh) ||
+        !singlePid.hasMatch(receiverPid)) {
+      throw _Failure(
+        'Strict live preparation requires both owned app processes.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    final binding = _preparedLiveProcessBinding;
+    if (binding?.senderPid == senderPidBeforeRefresh &&
+        binding?.receiverPid == receiverPid) {
+      return false;
+    }
+
+    await _adb(physical, <String>['shell', 'am', 'force-stop', packageName]);
+    // Require a fresh export from the new process, preserving account data.
+    await _removeAppFile(physical, 'intro_e2e_identity.json');
+    await _launch(physical);
+    final refreshedSenderIdentity = await _identity(physical);
+    final senderPidAfterRefresh = await _pidof(physical);
+    if (!singlePid.hasMatch(senderPidAfterRefresh) ||
+        senderPidAfterRefresh == senderPidBeforeRefresh ||
+        refreshedSenderIdentity.peerId != senderIdentity.peerId ||
+        refreshedSenderIdentity.mlKemPublicKey !=
+            senderIdentity.mlKemPublicKey) {
+      throw _Failure(
+        'Strict live sender refresh changed identity or kept the old process.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    await _runAction(
+      physical,
+      action: androidNotificationTransportReadyAction,
+      runId: '$runId-sender-ready',
+      timeout: const Duration(minutes: 2),
+    );
+    if (await _pidof(physical) != senderPidAfterRefresh ||
+        await _pidof(emulator) != receiverPid) {
+      throw _Failure(
+        'Strict live preparation changed a bound app process.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+    _preparedLiveProcessBinding = (
+      senderPid: senderPidAfterRefresh,
+      receiverPid: receiverPid,
+    );
+    return true;
+  }
+
   /// Uses the same immutable provider-first dispatch as B13. An ordinary
   /// live send can acquire delivered ACK custody before its push hedge; that
   /// intentionally suppresses the provider and cannot exercise an OS channel.
@@ -1562,6 +1640,7 @@ final class _AndroidNotificationCampaign {
   >
   _sendSpacedProviderMarker(String marker, {required String runId}) async {
     final toneGap = await _awaitToneWindow();
+    await _prepareSenderForLiveReceiver(runId: runId);
     final cursor = await _deviceLogcatCursor();
     final sentAt = DateTime.now().toUtc();
     final receiverPid = await _pidof(emulator);
@@ -1873,6 +1952,14 @@ final class _AndroidNotificationCampaign {
       );
     }
 
+    final senderRefreshed = await _prepareSenderForLiveReceiver(runId: runId);
+    if (await _notificationPermissionGranted()) {
+      throw _Failure(
+        'G7 transport preparation changed the bound process or denied state.',
+        assertionsAttempted: _assertionsAttempted,
+      );
+    }
+
     // A foreground receiver would make the zero-card census vacuous: the
     // foreground FCM drain never reaches a notification decision.
     await _backgroundReceiver();
@@ -1946,6 +2033,9 @@ final class _AndroidNotificationCampaign {
         'permissionDeniedHealthEventCount': denied.length,
         'permissionDeniedCardCount': deniedCardCount,
         'permissionDeniedMessageCount': drain['messageCount'],
+        'permissionDeniedSenderProcessRefreshed': senderRefreshed,
+        'permissionDeniedSenderIdentityPreserved': true,
+        'permissionDeniedReceiverProcessPreserved': true,
         'permissionRegrantAlertChannel': controlChannel,
         'toneWindowGapMs': control.toneGap.inMilliseconds,
         'childBuildCount': 0,
