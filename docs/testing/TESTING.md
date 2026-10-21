@@ -3862,7 +3862,18 @@ visible and cannot become an ordinary first-attempt PASS.
   weakening that gate. A completed ordinary group upload with a retained send
   envelope stays pending while automatic send replay owns the row; the causal
   application/screen test also preserves terminal `send_failed` manual retry
-  and proves same-row convergence without reupload.
+  and proves same-row convergence without reupload. On an already mounted
+  group conversation, a status-only local notification leaves the optimistic
+  row's retry payload and `upload_pending` media stale. Failed-media local
+  notifications must hydrate the persisted row and media together before
+  applying the display projection. The wired regression runs the actual
+  incomplete-upload and failed-message retriers on the same mounted state;
+  it proves pending-to-sent convergence with one upload and one message.
+  Held-read controls preserve newer `sent` and terminal `send_failed` updates
+  through the existing mutation-generation fence. Causal RED, the initial
+  fixture's insufficient real-I/O wait, and focused GREEN receipts are in
+  `.codex-test-logs/batch2-g2-live-fix-20261021/`. Device confirmation remains
+  separate from this host evidence.
 
   Relay retirement already clears swarm dial backoff. A late old-path failure
   can restore it before the epoch's fresh dial; the handoff reuses its existing

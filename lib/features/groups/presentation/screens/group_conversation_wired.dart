@@ -2366,6 +2366,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     if (status == null) return;
+    if (status == 'failed') {
+      final visibleIndex = _messages.indexWhere(
+        (message) => message.id == messageId,
+      );
+      final visible = visibleIndex < 0 ? null : _messages[visibleIndex];
+      if (visible != null &&
+          (_mediaMap[messageId] ?? visible.media).isNotEmpty) {
+        // A background reupload also commits retry custody and completed media.
+        // Apply them together so the optimistic row does not flash failed.
+        _recordMessageMutation(messageId);
+        unawaited(
+          _applyMessageUpdate(
+            visible,
+            markAsRead: false,
+            expectedMutationGeneration: _messageMutationGeneration,
+          ),
+        );
+        return;
+      }
+    }
     _updateLocalMessageStatus(messageId, status);
   }
 
@@ -4543,11 +4563,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _applyMessageUpdate(
     GroupMessage message, {
     bool markAsRead = true,
+    int? expectedMutationGeneration,
   }) async {
     final updateGroupId = message.groupId;
     if (widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
     final latestMessage =
@@ -4556,7 +4579,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
         latestMessage.groupId != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
 
@@ -4579,7 +4604,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted ||
         widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
 

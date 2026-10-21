@@ -59,6 +59,8 @@ import 'package:flutter_app/features/groups/application/group_recovery_gate.dart
 import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
@@ -114,6 +116,7 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fixtures/media_bytes.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
+import '../../conversation/application/helpers/fake_upload_media_fn.dart';
 
 const _tinyPngBytes = <int>[
   0x89,
@@ -15217,6 +15220,259 @@ void main() {
         expect(directSiblings.single.downloadStatus, 'upload_pending');
       },
     );
+
+    testWidgets(
+      'G2 mounted photo refreshes retry custody after reupload and never flashes failed before the send retrier succeeds',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final tempDir = Directory.systemTemp.createTempSync('g2-mounted-');
+        final previousDocumentsRoot = MediaFileManager.cachedDocumentsDir;
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        addTearDown(() {
+          if (previousDocumentsRoot == null) {
+            MediaFileManager.debugResetDocumentsDirCache();
+          } else {
+            MediaFileManager.cacheDocumentsDir(previousDocumentsRoot);
+          }
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final files = TrackingDurableMediaFileManager(tempDir);
+        const messageId = 'g2-mounted-photo';
+        const attachmentId = 'g2-mounted-blob';
+        const pendingPath = 'pending_uploads/g2-mounted-photo/photo.jpg';
+        const donePath = 'media/group-1/g2-mounted-blob.jpg';
+        for (final path in [pendingPath, donePath]) {
+          final file = File(p.join(tempDir.path, path));
+          file.parent.createSync(recursive: true);
+          file.writeAsBytesSync(validJpegFixtureBytes);
+        }
+        final parent = makeMessage(
+          id: messageId,
+          text: 'G2 mounted photo',
+          isIncoming: false,
+          senderPeerId: testIdentity.peerId,
+          senderUsername: testIdentity.username,
+          status: GroupMessage.statusQueuedOffline,
+        );
+        final pending = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: validJpegFixtureBytes.length,
+          mediaType: 'image',
+          localPath: pendingPath,
+          downloadStatus: 'upload_pending',
+          createdAt: parent.timestamp.toIso8601String(),
+        );
+        await msgRepo.saveMessage(parent);
+        await mediaAttachmentRepo.saveAttachment(
+          pending,
+          owner: MediaOwnerLane.group,
+        );
+        final upload = FakeUploadMediaFn()
+          ..willReturn(
+            pending.copyWith(
+              localPath: donePath,
+              downloadStatus: 'done',
+              contentHash: sha256.convert(validJpegFixtureBytes).toString(),
+              encryptionKeyBase64: 'key-fixture',
+              encryptionNonce: 'nonce-fixture',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+          );
+        bridge.responses['group:sendReliable'] = {
+          'ok': false,
+          'errorCode': 'RELIABLE_SEND_FAILED',
+          'errorMessage': 'connection reset before topic rejoin completed',
+        };
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: files,
+          ),
+        );
+        final cardFinder = find.byWidgetPredicate(
+          (widget) => widget is LetterCard && widget.text == parent.text,
+        );
+        await pumpUntil(tester, () => cardFinder.evaluate().isNotEmpty);
+        final mountedState = tester.state(find.byType(GroupConversationWired));
+        expect(
+          tester.widget<LetterCard>(cardFinder).media.single.downloadStatus,
+          'upload_pending',
+        );
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .messages
+              .single
+              .inboxRetryPayload,
+          isNull,
+        );
+
+        expect(
+          await tester.runAsync(
+            () => retryIncompleteGroupUploads(
+              groupRepo: groupRepo,
+              groupMsgRepo: msgRepo,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepo: identityRepo,
+              uploadMediaFn: upload.call,
+              mediaFileManager: files,
+            ),
+          ),
+          0,
+        );
+        await pumpUntilAsyncWorkSettles(
+          tester,
+          () =>
+              tester
+                  .widget<GroupConversationScreen>(
+                    find.byType(GroupConversationScreen),
+                  )
+                  .messages
+                  .single
+                  .status ==
+              'failed',
+        );
+        final retained = (await msgRepo.getMessage(messageId))!;
+        expect(retained.status, 'failed');
+        expect(retained.inboxRetryPayload, isNotEmpty);
+        expect(
+          (await mediaAttachmentRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.group,
+          )).single.downloadStatus,
+          'done',
+        );
+        final retryingCard = tester.widget<LetterCard>(cardFinder);
+        expect(
+          retryingCard.status,
+          'sending',
+          reason:
+              'the mounted row must hydrate completed media and retry custody before showing the transient failure',
+        );
+        expect(retryingCard.onRetryFailedMedia, isNull);
+        expect(retryingCard.media.single.downloadStatus, 'done');
+
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'publishSucceeded': true,
+          'inboxStored': true,
+          'topicPeerCount': 1,
+          'expectedRecipientCount': 1,
+        };
+        expect(
+          await tester.runAsync(
+            () => retryFailedGroupMessages(
+              groupMsgRepo: msgRepo,
+              groupRepo: groupRepo,
+              identityRepo: identityRepo,
+              bridge: bridge,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+            ),
+          ),
+          1,
+        );
+        await pumpFrames(tester, count: 10);
+        expect(
+          tester.state(find.byType(GroupConversationWired)),
+          same(mountedState),
+        );
+        expect(tester.widget<LetterCard>(cardFinder).status, 'sent');
+        expect(
+          (await msgRepo.getMessage(messageId))!.timestamp,
+          parent.timestamp,
+        );
+        expect(await msgRepo.getMessagesPage(group.id), hasLength(1));
+        expect(upload.callCount, 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    for (final finalStatus in ['sent', GroupMessage.statusSendFailed]) {
+      testWidgets(
+        'G2 late failed-media hydration preserves newer $finalStatus status',
+        (tester) async {
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          await saveActiveGroupMembers(groupRepo, group);
+          final media = GateFirstSingleMediaReadRepository();
+          addTearDown(() {
+            if (!media.releaseFirstRead.isCompleted)
+              media.releaseFirstRead.complete();
+          });
+          final parent = makeMessage(
+            id: 'g2-late-status',
+            text: 'G2 late status',
+            isIncoming: false,
+            senderPeerId: testIdentity.peerId,
+            senderUsername: testIdentity.username,
+            status: 'sending',
+          );
+          await msgRepo.saveMessage(parent);
+          await media.saveAttachment(
+            MediaAttachment(
+              id: 'g2-late-status-photo',
+              messageId: parent.id,
+              mime: 'image/jpeg',
+              size: 100,
+              mediaType: 'image',
+              downloadStatus: 'upload_pending',
+              createdAt: parent.timestamp.toIso8601String(),
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          await tester.pumpWidget(buildWidget(group: group, mediaRepo: media));
+          await pumpUntil(
+            tester,
+            () => tester
+                .widget<GroupConversationScreen>(
+                  find.byType(GroupConversationScreen),
+                )
+                .messages
+                .any((message) => message.id == parent.id),
+          );
+          final initialPageLoads = msgRepo.getMessagesPageCalls;
+          media.armed = true;
+          await msgRepo.updateMessageStatus(parent.id, 'failed');
+          await pumpUntil(tester, () => media.firstReadCaptured.isCompleted);
+          await msgRepo.updateMessageStatus(parent.id, finalStatus);
+          await pumpUntil(
+            tester,
+            () =>
+                tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .messages
+                    .single
+                    .status ==
+                finalStatus,
+          );
+          media.releaseFirstRead.complete();
+          await pumpFrames(tester, count: 10);
+          expect(
+            tester
+                .widget<GroupConversationScreen>(
+                  find.byType(GroupConversationScreen),
+                )
+                .messages
+                .single
+                .status,
+            finalStatus,
+          );
+          expect(msgRepo.getMessagesPageCalls, initialPageLoads);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
 
     testWidgets(
       'retry control re-sends the targeted failed outgoing text row',
