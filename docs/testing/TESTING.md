@@ -92,6 +92,9 @@ pinned primary emulator independently; setting the global flag just for such a
 case also changes the parent pair. Keep the emulator transport and APK identity
 guards intact. The [causal runner regression](../../.codex-test-logs/plan407-step1/post-reboot-single-fixture-fix/summary.json)
 retains the original constructor failure and the focused preservation checks.
+The [audio retry](../../.codex-test-logs/plan407-step1/validation-report.json)
+also exercised the explicit-primary path in KX0020–KX0024 on the pinned emulator;
+its later restoration failure remains a separate failed campaign result.
 `AndroidInstallOverGuard` admits an existing single APK at the same version code,
 backs it up and uses only `adb install -r` for install/restoration. It does not
 reset app data or create fresh fixtures. Protected fresh-reset phone campaigns
@@ -864,6 +867,16 @@ including legacy binding), and `live-guard-probe-repaired.json` with verified
 capture/restoration on the connected Pixel 6 and existing API 35 emulator.
 This does not establish restoration of the earlier API 37 emulator's original
 private data; its incomplete backup remains an unresolved recovery limitation.
+
+An `INSTALL_FAILED_INSUFFICIENT_STORAGE` error can block original-APK restoration
+before private-data replay. Retain the recovery snapshot and actual installer
+output; never uninstall as a fallback. A [retained-snapshot recovery](../../.codex-test-logs/plan407-step1/post-reboot-audio-restoration/copy-proof.json)
+verified `AndroidAppStateGuard.loadRecovery(...).restoreAll()` with only the
+installer transport changed from `--no-streaming` to `--streaming`, avoiding an
+extra temporary APK copy. The exact APK, replacement flags, real installer exit,
+private archive, permissions and process checks were preserved. This was a
+recovery-only adapter, not a tracked runner change or a passing audio campaign;
+free space still needs review before another full run.
 
 Disposable physical admission requires exactly one valid serial in
 `MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS` and an exact match for every phone
