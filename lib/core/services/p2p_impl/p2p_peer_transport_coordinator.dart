@@ -48,6 +48,7 @@ class _P2PPeerTransportPort {
     required bool preferQuic,
   })
   dialPeer;
+  final Future<void> Function() recoverRelayAfterNetworkChange;
   final Future<void> Function() drainOfflineInbox;
   final Future<Map<String, dynamic>> Function({required String peerId})
   probeRelay;
@@ -90,6 +91,7 @@ class _P2PPeerTransportPort {
     required this.readNodeState,
     required this.allowsAccountNetworkSideEffects,
     required this.dialPeer,
+    required this.recoverRelayAfterNetworkChange,
     required this.drainOfflineInbox,
     required this.probeRelay,
     required this.lookupRelayPresence,
@@ -513,7 +515,13 @@ class _P2PPeerTransportCoordinator {
       _lastNetworkRewarmAt = now;
 
       _emit('P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN', <String, dynamic>{});
-      unawaited(_port.drainOfflineInbox().catchError((Object _) {}));
+      unawaited(
+        _port
+            .recoverRelayAfterNetworkChange()
+            .catchError((Object _) {})
+            .then((_) => _port.drainOfflineInbox())
+            .catchError((Object _) {}),
+      );
 
       final peerId = _activePeerId?.call()?.trim();
       // ActiveConversationTracker remains compatibility state for direct P2P

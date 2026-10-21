@@ -34,6 +34,7 @@ Future<AcceptContactRequestResult> acceptContactRequest({
   required ContactRequestRepository requestRepo,
   required ContactRepository contactRepo,
   required String peerId,
+  Future<void> Function()? beforeMarkAccepted,
 }) async {
   final peerIdPrefix = peerId.length > 10 ? peerId.substring(0, 10) : peerId;
 
@@ -79,6 +80,7 @@ Future<AcceptContactRequestResult> acceptContactRequest({
 
   // 4. Update request status to accepted
   try {
+    await beforeMarkAccepted?.call();
     await requestRepo.updateStatus(peerId, ContactRequestStatus.accepted);
   } catch (e) {
     emitFlowEvent(

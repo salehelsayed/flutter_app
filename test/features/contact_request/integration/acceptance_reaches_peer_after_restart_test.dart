@@ -12,6 +12,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
@@ -37,6 +38,7 @@ Future<ContactModel?> _settledAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async =>
     await contactRepo.getContact(ownerPeerId) ??
     ContactModel(
@@ -171,111 +173,209 @@ void main() {
   });
 
   group('CR-018 acceptance still reaches the other person after a restart', () {
-    test(
-      'pre-egress encryption failure on the reciprocal send after local acceptance is recovered on restart and delivers the accepter ML-KEM key without a second prompt or duplicate contact',
-      () async {
-        final aliceKeyStore = FakeSecureKeyStore();
-        final bobKeyStore = FakeSecureKeyStore();
-        var aliceContacts = _buildContactRepo(aliceDb);
-        var aliceRequests = _buildRequestRepo(aliceDb);
-        var aliceIdentities = _buildIdentityRepo(aliceDb, aliceKeyStore);
-        final bobContacts = _buildContactRepo(bobDb);
-        final bobRequests = _buildRequestRepo(bobDb);
-        final bobIdentities = _buildIdentityRepo(bobDb, bobKeyStore);
+    for (final initialEncryptFailure in [true, false]) {
+      test(
+        initialEncryptFailure
+            ? 'pre-egress encryption failure on the reciprocal send after local acceptance is recovered on restart and delivers the accepter ML-KEM key without a second prompt or duplicate contact'
+            : 'successful reciprocal followed by recovery has no second prompt, duplicate contact or reply loop',
+        () async {
+          final aliceKeyStore = FakeSecureKeyStore();
+          final bobKeyStore = FakeSecureKeyStore();
+          var aliceContacts = _buildContactRepo(aliceDb);
+          var aliceRequests = _buildRequestRepo(aliceDb);
+          var aliceIdentities = _buildIdentityRepo(aliceDb, aliceKeyStore);
+          final bobContacts = _buildContactRepo(bobDb);
+          final bobRequests = _buildRequestRepo(bobDb);
+          final bobIdentities = _buildIdentityRepo(bobDb, bobKeyStore);
 
-        await aliceIdentities.saveIdentity(
-          testIdentityModel(
-            _aliceId,
-            username: 'Alice',
-            mlKemPublicKey: 'mlkem-alice',
-          ),
-        );
-        await bobIdentities.saveIdentity(
-          testIdentityModel(
-            _bobId,
-            username: 'Bob',
-            mlKemPublicKey: 'mlkem-bob',
-          ),
-        );
+          await aliceIdentities.saveIdentity(
+            testIdentityModel(
+              _aliceId,
+              username: 'Alice',
+              mlKemPublicKey: 'mlkem-alice',
+            ),
+          );
+          await bobIdentities.saveIdentity(
+            testIdentityModel(
+              _bobId,
+              username: 'Bob',
+              mlKemPublicKey: 'mlkem-bob',
+            ),
+          );
 
-        final aliceBridge = _FailOnceEncryptBridge(_cryptoBus);
-        final bobBridge = Ed25519ContactRequestBridge(_cryptoBus);
-        var aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
-        final bobP2p = FakeP2PService(peerId: _bobId.peerId, network: network);
-
-        // 1. Bob scans Alice's compact QR (Alice's contact row on Bob starts
-        // with mlKemPublicKey == null) and sends his v2 contact request.
-        await bobContacts.addContact(
-          ContactModel(
+          final aliceBridge = _FailOnceEncryptBridge(_cryptoBus);
+          final bobBridge = Ed25519ContactRequestBridge(_cryptoBus);
+          var aliceP2p = FakeP2PService(
             peerId: _aliceId.peerId,
-            username: 'Alice',
-            publicKey: _aliceId.publicKey,
-            rendezvous: 'rv-alice',
-            signature: 'sig-alice',
-            scannedAt: '2026-10-19T12:00:00.000Z',
-          ),
-        );
+            network: network,
+          );
+          final bobP2p = FakeP2PService(
+            peerId: _bobId.peerId,
+            network: network,
+          );
 
-        var aliceListener = ContactRequestListener(
-          contactRequestStream: aliceP2p.messageStream,
-          requestRepo: aliceRequests,
-          contactRepo: aliceContacts,
-          bridge: aliceBridge,
-          getOwnPeerId: () => _aliceId.peerId,
-          getOwnPrivateKey: () async => _aliceId.privateKey,
-          getOwnPublicKey: () async => _aliceId.publicKey,
-          downloadProfilePictureFn: _settledAvatar,
-        );
-        final bobListener = ContactRequestListener(
-          contactRequestStream: bobP2p.messageStream,
-          requestRepo: bobRequests,
-          contactRepo: bobContacts,
-          bridge: bobBridge,
-          getOwnPeerId: () => _bobId.peerId,
-          getOwnPrivateKey: () async => _bobId.privateKey,
-          getOwnPublicKey: () async => _bobId.publicKey,
-          downloadProfilePictureFn: _settledAvatar,
-        );
+          // 1. Bob scans Alice's compact QR (Alice's contact row on Bob starts
+          // with mlKemPublicKey == null) and sends his v2 contact request.
+          await bobContacts.addContact(
+            ContactModel(
+              peerId: _aliceId.peerId,
+              username: 'Alice',
+              publicKey: _aliceId.publicKey,
+              rendezvous: 'rv-alice',
+              signature: 'sig-alice',
+              scannedAt: '2026-10-19T12:00:00.000Z',
+            ),
+          );
 
-        final aliceInitialPrompts = <ContactRequestModel>[];
-        final bobPrompts = <ContactRequestModel>[];
-        final firstPromptBarrier = Completer<void>();
-        var alicePromptSub = aliceListener.requestStream.listen((request) {
-          aliceInitialPrompts.add(request);
-          if (!firstPromptBarrier.isCompleted) {
-            firstPromptBarrier.complete();
-          }
-        });
-        final bobPromptSub = bobListener.requestStream.listen(bobPrompts.add);
-        aliceListener.start();
-        bobListener.start();
-        addTearDown(() async {
-          await alicePromptSub.cancel();
-          await bobPromptSub.cancel();
-          aliceListener.dispose();
-          bobListener.dispose();
-          aliceP2p.dispose();
-          bobP2p.dispose();
-        });
-
-        expect(
-          await sendContactRequest(
-            p2pService: bobP2p,
-            identityRepo: bobIdentities,
+          var aliceListener = ContactRequestListener(
+            contactRequestStream: aliceP2p.messageStream,
+            requestRepo: aliceRequests,
+            contactRepo: aliceContacts,
+            bridge: aliceBridge,
+            getOwnPeerId: () => _aliceId.peerId,
+            getOwnPrivateKey: () async => _aliceId.privateKey,
+            getOwnPublicKey: () async => _aliceId.publicKey,
+            downloadProfilePictureFn: _settledAvatar,
+          );
+          final bobListener = ContactRequestListener(
+            contactRequestStream: bobP2p.messageStream,
+            requestRepo: bobRequests,
+            contactRepo: bobContacts,
             bridge: bobBridge,
-            targetPeerId: _aliceId.peerId,
-            recipientPublicKey: _aliceId.publicKey,
-          ),
-          SendContactRequestResult.success,
-        );
-        await firstPromptBarrier.future;
-        expect(aliceInitialPrompts, hasLength(1));
+            getOwnPeerId: () => _bobId.peerId,
+            getOwnPrivateKey: () async => _bobId.privateKey,
+            getOwnPublicKey: () async => _bobId.publicKey,
+            downloadProfilePictureFn: _settledAvatar,
+          );
 
-        // 2. Alice accepts, and the fire-and-forget reciprocal send fails at
-        // contactrequest.encrypt before egress after the local contact and
-        // accepted status are persisted.
-        aliceBridge.failEncrypt = true;
-        expect(
+          final aliceInitialPrompts = <ContactRequestModel>[];
+          final bobPrompts = <ContactRequestModel>[];
+          final firstPromptBarrier = Completer<void>();
+          var alicePromptSub = aliceListener.requestStream.listen((request) {
+            aliceInitialPrompts.add(request);
+            if (!firstPromptBarrier.isCompleted) {
+              firstPromptBarrier.complete();
+            }
+          });
+          final bobPromptSub = bobListener.requestStream.listen(bobPrompts.add);
+          final firstBobKeyUpdate = Completer<void>();
+          final bobKeySub = bobListener.contactKeyUpdatedStream.listen((_) {
+            if (!firstBobKeyUpdate.isCompleted) firstBobKeyUpdate.complete();
+          });
+          aliceListener.start();
+          bobListener.start();
+          addTearDown(() async {
+            await alicePromptSub.cancel();
+            await bobPromptSub.cancel();
+            await bobKeySub.cancel();
+            aliceListener.dispose();
+            bobListener.dispose();
+            aliceP2p.dispose();
+            bobP2p.dispose();
+          });
+
+          expect(
+            await sendContactRequest(
+              p2pService: bobP2p,
+              identityRepo: bobIdentities,
+              bridge: bobBridge,
+              targetPeerId: _aliceId.peerId,
+              recipientPublicKey: _aliceId.publicKey,
+            ),
+            SendContactRequestResult.success,
+          );
+          await firstPromptBarrier.future;
+          expect(aliceInitialPrompts, hasLength(1));
+
+          // 2. Alice accepts, and the fire-and-forget reciprocal send fails at
+          // contactrequest.encrypt before egress after the local contact and
+          // accepted status are persisted.
+          aliceBridge.failEncrypt = initialEncryptFailure;
+          expect(
+            await acceptAndReciprocateContactRequest(
+              requestRepo: aliceRequests,
+              contactRepo: aliceContacts,
+              peerId: _bobId.peerId,
+              p2pService: aliceP2p,
+              identityRepo: aliceIdentities,
+              bridge: aliceBridge,
+              secureKeyStore: aliceKeyStore,
+              downloadProfilePictureFn: _settledAvatar,
+            ),
+            AcceptContactRequestResult.success,
+          );
+          if (initialEncryptFailure) {
+            await aliceBridge.failedEncryptBarrier.future;
+          } else {
+            await firstBobKeyUpdate.future;
+          }
+          await Future<void>(() {});
+
+          expect(await readMlKemReannounceMarker(aliceKeyStore), [
+            _bobId.peerId,
+          ]);
+
+          expect(await aliceContacts.getContactCount(), 1);
+          expect(
+            (await aliceRequests.getRequest(_bobId.peerId))?.status,
+            ContactRequestStatus.accepted,
+          );
+          expect(
+            (await bobContacts.getContact(_aliceId.peerId))?.mlKemPublicKey,
+            initialEncryptFailure ? isNull : 'mlkem-alice',
+          );
+
+          // 3. Alice restarts on the same SQLite DB and secure key store with
+          // working encryption.
+          await alicePromptSub.cancel();
+          aliceListener.dispose();
+          aliceP2p.dispose();
+          await aliceDb.close();
+
+          aliceBridge.failEncrypt = false;
+          aliceDb = await _openDb(aliceDbPath);
+          final restartAttachBarrier = Completer<void>();
+          aliceContacts = _buildContactRepo(aliceDb);
+          aliceRequests = _buildRequestRepo(
+            aliceDb,
+            onLoadPendingCompleted: (_) {
+              if (!restartAttachBarrier.isCompleted) {
+                restartAttachBarrier.complete();
+              }
+            },
+          );
+          aliceIdentities = _buildIdentityRepo(aliceDb, aliceKeyStore);
+          aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
+          aliceListener = ContactRequestListener(
+            contactRequestStream: aliceP2p.messageStream,
+            requestRepo: aliceRequests,
+            contactRepo: aliceContacts,
+            bridge: aliceBridge,
+            getOwnPeerId: () => _aliceId.peerId,
+            getOwnPrivateKey: () async => _aliceId.privateKey,
+            getOwnPublicKey: () async => _aliceId.publicKey,
+            downloadProfilePictureFn: _settledAvatar,
+          );
+          final aliceRestartPrompts = <ContactRequestModel>[];
+          alicePromptSub = aliceListener.requestStream.listen(
+            aliceRestartPrompts.add,
+          );
+          aliceListener.start();
+          await restartAttachBarrier.future;
+          await Future<void>(() {});
+
+          // Run reconnect key-exchange recovery and repeat accept.
+          final deliveriesBeforeRecovery = network.deliverCallCount;
+          expect(
+            await retryIncompleteKeyExchanges(
+              contactRepo: aliceContacts,
+              identityRepo: aliceIdentities,
+              p2pService: aliceP2p,
+              bridge: aliceBridge,
+              secureKeyStore: aliceKeyStore,
+            ),
+            1,
+          );
           await acceptAndReciprocateContactRequest(
             requestRepo: aliceRequests,
             contactRepo: aliceContacts,
@@ -283,93 +383,26 @@ void main() {
             p2pService: aliceP2p,
             identityRepo: aliceIdentities,
             bridge: aliceBridge,
+            secureKeyStore: aliceKeyStore,
             downloadProfilePictureFn: _settledAvatar,
-          ),
-          AcceptContactRequestResult.success,
-        );
-        await aliceBridge.failedEncryptBarrier.future;
-        await Future<void>(() {});
+          );
+          await bobP2p.drainOfflineInbox();
+          await Future<void>(() {});
 
-        expect(await aliceContacts.getContactCount(), 1);
-        expect(
-          (await aliceRequests.getRequest(_bobId.peerId))?.status,
-          ContactRequestStatus.accepted,
-        );
-        expect(
-          (await bobContacts.getContact(_aliceId.peerId))?.mlKemPublicKey,
-          isNull,
-        );
-
-        // 3. Alice restarts on the same SQLite DB and secure key store with
-        // working encryption.
-        await alicePromptSub.cancel();
-        aliceListener.dispose();
-        aliceP2p.dispose();
-        await aliceDb.close();
-
-        aliceBridge.failEncrypt = false;
-        aliceDb = await _openDb(aliceDbPath);
-        final restartAttachBarrier = Completer<void>();
-        aliceContacts = _buildContactRepo(aliceDb);
-        aliceRequests = _buildRequestRepo(
-          aliceDb,
-          onLoadPendingCompleted: (_) {
-            if (!restartAttachBarrier.isCompleted) {
-              restartAttachBarrier.complete();
-            }
-          },
-        );
-        aliceIdentities = _buildIdentityRepo(aliceDb, aliceKeyStore);
-        aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
-        aliceListener = ContactRequestListener(
-          contactRequestStream: aliceP2p.messageStream,
-          requestRepo: aliceRequests,
-          contactRepo: aliceContacts,
-          bridge: aliceBridge,
-          getOwnPeerId: () => _aliceId.peerId,
-          getOwnPrivateKey: () async => _aliceId.privateKey,
-          getOwnPublicKey: () async => _aliceId.publicKey,
-          downloadProfilePictureFn: _settledAvatar,
-        );
-        final aliceRestartPrompts = <ContactRequestModel>[];
-        alicePromptSub =
-            aliceListener.requestStream.listen(aliceRestartPrompts.add);
-        aliceListener.start();
-        await restartAttachBarrier.future;
-        await Future<void>(() {});
-
-        // Run reconnect key-exchange recovery and repeat accept.
-        await retryIncompleteKeyExchanges(
-          contactRepo: aliceContacts,
-          identityRepo: aliceIdentities,
-          p2pService: aliceP2p,
-          bridge: aliceBridge,
-          secureKeyStore: aliceKeyStore,
-        );
-        await acceptAndReciprocateContactRequest(
-          requestRepo: aliceRequests,
-          contactRepo: aliceContacts,
-          peerId: _bobId.peerId,
-          p2pService: aliceP2p,
-          identityRepo: aliceIdentities,
-          bridge: aliceBridge,
-          downloadProfilePictureFn: _settledAvatar,
-        );
-        await bobP2p.drainOfflineInbox();
-        await Future<void>(() {});
-
-        expect(await aliceContacts.getContactCount(), 1);
-        expect(aliceRestartPrompts, isEmpty);
-        expect(bobPrompts, isEmpty);
-        expect(
-          (await bobContacts.getContact(_aliceId.peerId))?.mlKemPublicKey,
-          'mlkem-alice',
-          reason:
-              'After Alice restarts from a failed reciprocal send, Bob must receive Alice ML-KEM public key',
-        );
-      },
-      skip:
-          'KNOWN GAP CR-018: acceptAndReciprocateContactRequest fire-and-forgets the reciprocal send without durable recovery on pre-egress encryption failure and retryIncompleteKeyExchanges skips peers whose incoming ML-KEM key is already stored when no reannounce, wake-token, or call-wake marker is pending, lib/features/contact_request/application/accept_and_reciprocate_use_case.dart:44-101. Remove when fixed.',
-    );
+          expect(await aliceContacts.getContactCount(), 1);
+          expect(await bobContacts.getContactCount(), 1);
+          expect(network.deliverCallCount, deliveriesBeforeRecovery + 1);
+          expect(await readMlKemReannounceMarker(aliceKeyStore), isEmpty);
+          expect(aliceRestartPrompts, isEmpty);
+          expect(bobPrompts, isEmpty);
+          expect(
+            (await bobContacts.getContact(_aliceId.peerId))?.mlKemPublicKey,
+            'mlkem-alice',
+            reason:
+                'After Alice restarts from a failed reciprocal send, Bob must receive Alice ML-KEM public key',
+          );
+        },
+      );
+    }
   });
 }

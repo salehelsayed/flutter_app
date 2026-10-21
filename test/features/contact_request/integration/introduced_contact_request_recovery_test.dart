@@ -446,6 +446,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async => null,
           attemptSilentIntroRecovery: (request) {
             recoveryCalls++;

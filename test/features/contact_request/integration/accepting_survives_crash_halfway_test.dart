@@ -34,6 +34,7 @@ Future<ContactModel?> _settledAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async =>
     await contactRepo.getContact(ownerPeerId) ??
     ContactModel(
@@ -150,7 +151,10 @@ void main() {
         );
         final aliceBridge = Ed25519ContactRequestBridge(_cryptoBus);
         final bobBridge = Ed25519ContactRequestBridge(_cryptoBus);
-        var aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
+        var aliceP2p = FakeP2PService(
+          peerId: _aliceId.peerId,
+          network: network,
+        );
         final bobP2p = FakeP2PService(peerId: _bobId.peerId, network: network);
 
         var aliceListener = ContactRequestListener(
@@ -369,8 +373,9 @@ void main() {
         );
 
         expect(await aliceContacts.getContactCount(), 1);
-        final bobAfterRepeatAccept =
-            (await aliceContacts.getContact(_bobId.peerId))!;
+        final bobAfterRepeatAccept = (await aliceContacts.getContact(
+          _bobId.peerId,
+        ))!;
         expect(bobAfterRepeatAccept.mlKemPublicKey, 'mlkem-bob-rotated');
         expect(bobAfterRepeatAccept.isArchived, isTrue);
         expect(bobAfterRepeatAccept.isBlocked, isTrue);

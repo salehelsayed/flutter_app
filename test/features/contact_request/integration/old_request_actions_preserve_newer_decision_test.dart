@@ -37,6 +37,7 @@ Future<ContactModel?> _settledAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async =>
     await contactRepo.getContact(ownerPeerId) ??
     ContactModel(
@@ -200,12 +201,13 @@ void main() {
           identityRepository: aliceIdentities,
           p2pService: aliceP2p,
           bridge: aliceBridge,
-          presentPendingRequest: ({
-            required navigator,
-            required request,
-            required onAccept,
-            required onDecline,
-          }) async {},
+          presentPendingRequest:
+              ({
+                required navigator,
+                required request,
+                required onAccept,
+                required onDecline,
+              }) async {},
           openConversation: ({required navigator, required contact}) async {
             openedConversations.add(contact);
           },
@@ -406,8 +408,9 @@ void main() {
           peerId: _bobId.peerId,
         );
 
-        final bobAfterStaleAccept =
-            (await aliceContacts.getContact(_bobId.peerId))!;
+        final bobAfterStaleAccept = (await aliceContacts.getContact(
+          _bobId.peerId,
+        ))!;
         expect(bobAfterStaleAccept.isBlocked, isTrue);
         expect(bobAfterStaleAccept.mlKemPublicKey, 'mlkem-bob-newer');
       },

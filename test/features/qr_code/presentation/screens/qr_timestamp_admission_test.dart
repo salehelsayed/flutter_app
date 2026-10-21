@@ -194,6 +194,7 @@ Future<_Scanner> _mount(WidgetTester tester) async {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async => null,
         shouldMarkContactRequest: (_) async => false,
       ),

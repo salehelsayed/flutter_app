@@ -548,6 +548,7 @@ class _Shell {
             required contactRepo,
             required ownerPeerId,
             required avatarVersion,
+            bool retryPendingRequest = false,
           }) async => null,
     )..start();
   }

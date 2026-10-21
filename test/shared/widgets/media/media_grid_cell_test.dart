@@ -341,6 +341,51 @@ void main() {
   );
 
   testWidgets(
+    'retained failed upload uses canonical owned source for truthful status '
+    '(replicates the device repro: pending path deleted, owned copy present)',
+    (tester) async {
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      const peer = '12D3KooWBob';
+      const blob = '19a57608-0afc-4c5a-a88f-f9d425016a2e';
+      // The durable owned copy EXISTS (what the upload actually committed).
+      File('${tempDir.path}/media/$peer/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      // The displayed attachment still holds the DELETED optimistic
+      // pending_uploads ABSOLUTE path (never swapped for the durable copy) —
+      // exactly what the device diagnostic showed.
+      final stalePending = '${tempDir.path}/pending_uploads/msg-1/$blob.jpg';
+      expect(File(stalePending).existsSync(), isFalse);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'upload_failed',
+                localPath: stalePending,
+              ),
+              ownedMediaPeerId: peer,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Render gate falls back to media/<peer>/<blob>.jpg -> displayable.
+      expect(find.text('failed'), findsOneWidget);
+      expect(find.byType(MediaThumbnailImage), findsNothing);
+      expect(find.text('Media unavailable'), findsNothing);
+    },
+  );
+
+  testWidgets(
     '128: a done image whose path does not exist emits the gate diagnostic',
     (tester) async {
       MediaGridCell.debugResetUnavailableDiagnostics();

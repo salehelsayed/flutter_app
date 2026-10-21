@@ -656,6 +656,7 @@ Future<void> runIntroE2EActions({
   required ContactRequestRepository contactRequestRepo,
   required IntroductionRepository introRepo,
   required MessageRepository messageRepo,
+  required SecureKeyStore secureKeyStore,
   ResolveWakeTokenForIntroE2EFn? resolveWakeToken,
   ResolveCallWakeHandleForIntroE2EFn? resolveCallWakeHandle,
   OnCallWakeHandleDistributedForIntroE2EFn? onCallWakeHandleDistributed,
@@ -736,6 +737,7 @@ Future<void> runIntroE2EActions({
       contactRepo: contactRepo,
       contactRequestRepo: contactRequestRepo,
       messageRepo: messageRepo,
+      secureKeyStore: secureKeyStore,
     );
 
     final nodeActionResult = await _runNodeActionBeforeIntroPhase(
@@ -1557,6 +1559,7 @@ void startIntroE2EPoller({
         contactRequestRepo: contactRequestRepo,
         introRepo: introRepo,
         messageRepo: messageRepo,
+        secureKeyStore: groupReactionProbeSecureKeyStore,
         resolveWakeToken: resolveWakeToken,
         resolveCallWakeHandle: resolveCallWakeHandle,
         onCallWakeHandleDistributed: onCallWakeHandleDistributed,
@@ -1879,6 +1882,7 @@ Future<void> _runContactRequestAction({
   required ContactRepository contactRepo,
   required ContactRequestRepository contactRequestRepo,
   required MessageRepository messageRepo,
+  required SecureKeyStore secureKeyStore,
 }) async {
   if (action != 'accept_all') return;
 
@@ -1907,6 +1911,7 @@ Future<void> _runContactRequestAction({
         p2pService: p2pService,
         identityRepo: identityRepo,
         bridge: bridge,
+        secureKeyStore: secureKeyStore,
         onProfileDownloaded: (_) {},
       );
     }

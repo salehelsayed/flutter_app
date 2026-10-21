@@ -594,6 +594,7 @@ Future<ContactModel?> _noopDownloadProfilePicture({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async => null;
 
 ChatMessage _makeChatMessage({
@@ -3049,6 +3050,7 @@ void main() {
             required ContactRepository contactRepo,
             required String ownerPeerId,
             required String avatarVersion,
+            bool retryPendingRequest = false,
           }) {
             attempts.add(ownerPeerId);
             final completer = Completer<ContactModel?>();

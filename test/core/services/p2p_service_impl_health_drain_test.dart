@@ -10,6 +10,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -141,10 +142,12 @@ void main() {
   late _FakeBridge bridge;
   late P2PServiceImpl service;
   late _StatusFeed statusFeed;
+  late StreamController<void> networkChanges;
   bool foreground = true;
 
   setUp(() {
     foreground = true;
+    networkChanges = StreamController<void>.broadcast();
     bridge = _FakeBridge();
     statusFeed = _StatusFeed(sticky: _statusJson(relayState: 'online'));
     bridge.whenCommand('node:status', (_) => statusFeed.next());
@@ -164,12 +167,14 @@ void main() {
     service = P2PServiceImpl(
       bridge: bridge,
       isAppForeground: () => foreground,
+      networkChangeSignal: networkChanges.stream,
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
   });
 
-  tearDown(() {
+  tearDown(() async {
     service.dispose();
+    await networkChanges.close();
   });
 
   int drains() =>
@@ -186,6 +191,132 @@ void main() {
     expect(drains(), 1, reason: 'fixture: healthy tick drains exactly once');
     bridge.calledCommands.clear();
   }
+
+  test(
+    'background network change reconnects before inbox drain without enabling health polls',
+    () async {
+      await startAndLatchOnline();
+      service.recordSuccessfulSendProof(source: 'fixture', trigger: 'fixture');
+      expect(service.currentState.sendCapabilityReady, isTrue);
+      foreground = false;
+      statusFeed.sticky = _statusJson(relayState: 'degraded');
+      final releaseReconnect = Completer<void>();
+      final drainAfterRecovery = Completer<void>();
+      var relayReady = false;
+      bridge.whenCommand('relay:reconnect', (_) async {
+        await releaseReconnect.future;
+        relayReady = true;
+        return jsonEncode({
+          'ok': true,
+          'success': true,
+          'recoveryMode': 'in_place',
+        });
+      });
+      bridge.whenCommand('inbox:retrieve_pending', (_) {
+        if (relayReady && !drainAfterRecovery.isCompleted) {
+          drainAfterRecovery.complete();
+        }
+        return jsonEncode({'ok': relayReady, 'messages': [], 'hasMore': false});
+      });
+      addTearDown(() {
+        if (!releaseReconnect.isCompleted) releaseReconnect.complete();
+      });
+
+      await withClock(Clock(() => DateTime.utc(2026, 10, 21)), () async {
+        networkChanges.add(null);
+        await Future<void>(() {});
+
+        expect(
+          reconnects(),
+          1,
+          reason:
+              'an explicit OS network edge must recover the relay even '
+              'while foreground health polling is paused',
+        );
+        expect(
+          service.currentState.sendCapabilityReady,
+          isFalse,
+          reason: 'a reconnect cannot reuse send proof from the old path',
+        );
+        expect(service.currentState.inboxCapabilityReady, isFalse);
+        expect(drains(), 0, reason: 'the relay is still reconnecting');
+        networkChanges.add(null);
+        networkChanges.add(null);
+        await Future<void>(() {});
+        expect(
+          reconnects(),
+          1,
+          reason: 'the existing 5s floor coalesces flaps',
+        );
+
+        releaseReconnect.complete();
+        await drainAfterRecovery.future.timeout(const Duration(seconds: 2));
+        expect(drains(), 1);
+        await service.performImmediateHealthCheck();
+        expect(
+          bridge.calledCommands,
+          isNot(contains('node:status')),
+          reason: 'explicit recovery must not restart background polling',
+        );
+      });
+    },
+  );
+
+  test('network change does not reconnect a stopped node', () async {
+    foreground = false;
+    networkChanges.add(null);
+    await Future<void>(() {});
+
+    expect(reconnects(), 0);
+    expect(drains(), 0);
+    expect(bridge.calledCommands, isNot(contains('node:status')));
+  });
+
+  test(
+    'background network reconnect respects the account migration gate',
+    () async {
+      service.dispose();
+      service = P2PServiceImpl(
+        bridge: bridge,
+        isAppForeground: () => foreground,
+        networkChangeSignal: networkChanges.stream,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        accountMigrationNetworkGate: ({peerId, required operation}) async =>
+            operation != 'p2p_relay_recovery',
+      );
+      await startAndLatchOnline();
+      foreground = false;
+      networkChanges.add(null);
+      await Future<void>(() {});
+
+      expect(reconnects(), 0);
+      expect(drains(), 1);
+      expect(bridge.calledCommands, isNot(contains('node:status')));
+    },
+  );
+
+  test(
+    'failed background network reconnect still attempts the explicit inbox drain',
+    () async {
+      await startAndLatchOnline();
+      foreground = false;
+      bridge.whenCommand(
+        'relay:reconnect',
+        (_) => jsonEncode({
+          'ok': true,
+          'success': false,
+          'errorCode': 'RELAY_UNREACHABLE',
+        }),
+      );
+      networkChanges.add(null);
+      await Future<void>(() {});
+
+      expect(reconnects(), 1);
+      expect(drains(), 1);
+      expect(bridge.calledCommands, isNot(contains('node:status')));
+      expect(service.currentState.sendCapabilityReady, isFalse);
+    },
+  );
 
   test(
     'background health polling pauses while explicit inbox drains still run',

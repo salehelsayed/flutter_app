@@ -467,6 +467,7 @@ class _Notifications {
             required contactRepo,
             required ownerPeerId,
             required avatarVersion,
+            bool retryPendingRequest = false,
           }) async => null,
     );
   }

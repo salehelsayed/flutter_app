@@ -6,6 +6,48 @@ import 'package:flutter_app/core/services/connectivity_signal.dart';
 
 void main() {
   group('182 connectivity restored-edge detector', () {
+    test(
+      'interface handoff emits without an intervening offline sample',
+      () async {
+        final source = StreamController<List<ConnectivityResult>>();
+        final emissions = <void>[];
+        final sub = restoredEdges(source.stream).listen(emissions.add);
+
+        source.add([ConnectivityResult.wifi]);
+        source.add([ConnectivityResult.mobile]);
+        source.add([ConnectivityResult.mobile]);
+        source.add([ConnectivityResult.wifi]);
+        await source.close();
+
+        expect(
+          emissions.length,
+          3,
+          reason:
+              'startup and both interface handoffs must reach recovery; '
+              'a repeated mobile sample remains a no-op',
+        );
+        await sub.cancel();
+      },
+    );
+
+    test('interface order and duplicate samples remain no-ops', () async {
+      final source = StreamController<List<ConnectivityResult>>();
+      final emissions = <void>[];
+      final sub = restoredEdges(source.stream).listen(emissions.add);
+
+      source.add([ConnectivityResult.wifi, ConnectivityResult.vpn]);
+      source.add([ConnectivityResult.vpn, ConnectivityResult.wifi]);
+      source.add([
+        ConnectivityResult.wifi,
+        ConnectivityResult.vpn,
+        ConnectivityResult.wifi,
+      ]);
+      await source.close();
+
+      expect(emissions.length, 1);
+      await sub.cancel();
+    });
+
     // TC-182-07: emits on restored edges only — never on loss or no-op repeats.
     test(
       'TC-182-07: emits on restored edges only, never on loss/no-op',

@@ -129,11 +129,14 @@ const _closureConsumerUriRewrites = <String, String>{
       'post_repository_impl.dart',
 };
 
+// Batch 2 (reviewed against dbab73ebc) adds profile-recovery callbacks, their
+// migration gate, and contact reannounce-store threading at existing app owners.
+// The four app-owner digests below include that wiring.
 // Plans 347 and 370 deliberately add app-owned lifecycle callbacks ahead of
 // incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
 const _resumeSha256 =
-    '59e79cb5247d99e0481c952e0ded0de88dd173f1edb268b9332375037c3a9e30';
+    'd922d3be1eae6726670285f210b5ca82a58d924862fc0f4bdda136a86a8cf833';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -231,7 +234,7 @@ const _privacySha256 =
 // C2 kx0007: root-owned callback feedback uses localized navigator context
 // and the modal call messenger. Existing owners and resume dispatch stay put.
 const _applicationRootNormalizedSha256 =
-    'cee655b42b439053f29d66e5494d388e1ec2ff2b983168bb98f6854b88208950';
+    '18820348121a551ea856ee7187f80c70ec448c97027f34144d9f862345bc7df4';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -388,7 +391,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '4e4e33ea2b964f92eb0a26f261119dd90d96c045c2e7186bfe1675d62104f0a6';
+    'df84b79ffd82d6e7ffd31ebd21f3ffc2f30f37d7b24e3ffdca42deebda92c68f';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -409,7 +412,7 @@ const _productionBootstrapNormalizedSha256 =
 // primary lifecycle hook with a paged loader; the historical callback and
 // app-owned P2P responsibility are unchanged. Both bootstrap pins cover this.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '0c46caf60f5ec69bf21eed0536ba32e1a06950e37a44c510307f92bdaa62a610';
+    'b8a39b014443e587706c365653a707b74a901c62cc52e8f0a50ff57e102b202e';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

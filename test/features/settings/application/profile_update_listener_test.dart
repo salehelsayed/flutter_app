@@ -245,6 +245,7 @@ void main() {
                 required ContactRepository contactRepo,
                 required String ownerPeerId,
                 required String avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadedContacts.add(ownerPeerId);
                 final contact = _makeContact(ownerPeerId).copyWith(
@@ -288,6 +289,7 @@ void main() {
               required ContactRepository contactRepo,
               required String ownerPeerId,
               required String avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               attempts++;
               if (attempts == 1) {

@@ -83,19 +83,23 @@ class DocumentAttachmentTile extends StatelessWidget {
     final name = _isSupported
         ? (attachment.fileName ?? 'PDF')
         : l10n.media_document_unsupported;
+    final uploadStatus = retainedUploadStatusText(l10n, attachment);
     final failureText = receiverMediaFailureText(
       l10n,
       attachment,
       canRetry: onRetryUnavailableMedia != null && _isSupported,
     );
     final subtitle =
+        uploadStatus ??
         failureText ??
         (_isSupported
             ? 'PDF · ${_formatSize(attachment.size)}'
             : (attachment.fileName ?? _formatSize(attachment.size)));
 
     Widget trailing;
-    if (_isUnavailable &&
+    if (uploadStatus != null) {
+      trailing = const Icon(Icons.schedule_rounded);
+    } else if (_isUnavailable &&
         attachment.downloadStatus != kMediaDownloadStatusUnavailable &&
         attachment.downloadStatus != kMediaDownloadStatusIntegrityFailed &&
         onRetryUnavailableMedia != null &&

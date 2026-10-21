@@ -68,6 +68,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryIncompleteGroupDownloadsFn;
   final Future<int> Function()? retryIncompleteGroupDownloadsPeriodicFn;
   final Future<int> Function()? retryFailedGroupMessagesFn;
+  final Future<int> Function()? retryPendingProfilePictureDownloadsFn;
   final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
 
@@ -152,6 +153,7 @@ class PendingMessageRetrier {
     this.retryIncompleteGroupDownloadsFn,
     this.retryIncompleteGroupDownloadsPeriodicFn,
     this.retryFailedGroupMessagesFn,
+    this.retryPendingProfilePictureDownloadsFn,
     this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
     this.clearGroupRetryBackoffFn,
@@ -1009,6 +1011,18 @@ class PendingMessageRetrier {
             layer: 'FL',
             event: 'PENDING_RETRIER_INBOX_CUSTODY_ERROR',
             details: {'error': e.toString()},
+          );
+        }
+      }
+
+      if (retryPendingProfilePictureDownloadsFn != null) {
+        try {
+          await retryPendingProfilePictureDownloadsFn!();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_PROFILE_DOWNLOAD_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
           );
         }
       }

@@ -377,12 +377,14 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) {
                 return downloadProfilePicture(
                   bridge: bridge,
                   contactRepo: contactRepo,
                   ownerPeerId: ownerPeerId,
                   avatarVersion: avatarVersion,
+                  retryPendingRequest: retryPendingRequest,
                   avatarNormalizer: avatarNormalizer,
                 );
               },
@@ -545,6 +547,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 userADownloadAttempts++;
                 if (userADownloadAttempts == 1) {
@@ -555,6 +558,7 @@ void main() {
                   contactRepo: contactRepo,
                   ownerPeerId: ownerPeerId,
                   avatarVersion: avatarVersion,
+                  retryPendingRequest: retryPendingRequest,
                   avatarNormalizer: avatarNormalizer,
                 );
               },
@@ -570,6 +574,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 userCDownloadAttempts++;
                 return downloadProfilePicture(
@@ -577,6 +582,7 @@ void main() {
                   contactRepo: contactRepo,
                   ownerPeerId: ownerPeerId,
                   avatarVersion: avatarVersion,
+                  retryPendingRequest: retryPendingRequest,
                   avatarNormalizer: avatarNormalizer,
                 );
               },

@@ -559,6 +559,14 @@ class P2PServiceImpl
               timeoutMs: timeoutMs,
               preferQuic: preferQuic,
             ),
+        recoverRelayAfterNetworkChange: () async {
+          if (_stopped || !_currentState.isStarted) return;
+          _beginReadinessProofWindow(
+            phase: 'recovery',
+            trigger: 'network_change',
+          );
+          await _attemptRelayRecovery(recoverySource: 'network_change');
+        },
         drainOfflineInbox: drainOfflineInbox,
         probeRelay: ({required String peerId}) =>
             callP2PRelayProbe(_bridge, peerId: peerId),

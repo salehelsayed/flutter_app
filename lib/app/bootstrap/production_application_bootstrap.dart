@@ -6975,6 +6975,8 @@ final class ProductionApplicationBootstrap
       profileUpdateStream: messageRouter.profileUpdateStream,
       contactRepo: contactRepository,
       bridge: bridge,
+      accountMigrationNetworkGate:
+          accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     );
 
     // Slice 2 / UDM-G — the real outbound active key-pull. Constructed below once
@@ -9050,6 +9052,7 @@ final class ProductionApplicationBootstrap
       identityRepo: repository,
       contactRepo: contactRepository,
       bridge: bridge,
+      retryPendingProfilePictureDownloadsFn: profileUpdateListener.retryNow,
       mediaAttachmentRepo: mediaAttachmentRepository,
       mediaFileManager: mediaFileManager,
       rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {

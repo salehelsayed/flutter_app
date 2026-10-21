@@ -76,6 +76,7 @@ Future<ContactModel?> _ignoreAvatarDownload({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async => null;
 
 void main() {

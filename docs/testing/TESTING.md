@@ -3794,8 +3794,9 @@ visible and cannot become an ordinary first-attempt PASS.
   errors remain isolated; the permanent overlap regression preserves two outgoing
   passes before the held receive completes. Parent lifecycle, private-media policy,
   user download preferences and typed ownership remain authoritative. The small recovery
-  registry has one contract test for eligible owned states and lifecycle wiring;
-  unowned adapters keep their prior failure behavior pending separate work.
+  registry has one contract test for eligible owned states and lifecycle wiring
+  and remains limited to direct/group receive rows. Profile and post storage use
+  their existing feature recovery owners described below.
   Image/video, voice and document tiles show loading during automatic recovery,
   a localized tap-to-retry prompt after transport backoff, confirmed unavailable
   only for absence or lost local copies, and a distinct cannot-open message for
@@ -3805,6 +3806,64 @@ visible and cannot become an ordinary first-attempt PASS.
   and hold a transfer to prove text appears before completion. The stall simulator
   uses the existing persistent owner-enforcing fake: three watchdog timeouts retain
   actual partial bytes, `retry_waiting`, and a zero nontransport counter.
+
+  Profile downloads now retain the desired version in an owner-specific avatar
+  retry marker, independently of the contact's committed `avatarVersion`.
+  The existing profile listener owns startup and explicit recovery passes;
+  the existing pending-message retrier and resume path request those same
+  passes. Recovery checks the account-migration network gate, scans known
+  contacts, skips blocked contacts, and avoids overlapping native transfers.
+  Successful commit or a nontransport failure retires the matching request;
+  an older completion cannot clear a newer requested version. Recovery replay
+  checks the saved version before claiming work and cannot overwrite a newer
+  desired request after an awaited contact lookup. The host
+  [profile cases](../../test/features/settings/application/download_profile_picture_use_case_test.dart)
+  cover interrupted transfer, a newly started owner without another profile
+  event, normalized commit, supersession, terminal absence and recovery gates.
+
+  Post downloads persist `retry_waiting` for classified transport interruption
+  and reuse the existing pending-post-media owner for startup, relay readiness
+  and resume. Shared-tile projection maps that durable backoff to normal loading
+  while preserving `retry_waiting` in storage. Its feed query is unpaginated, and it loads attachment rows
+  separately, so recovery is not restricted to a mounted or first-page feed.
+  The host [post recovery case](../../test/features/posts/improvement/post_media_restart_recovery_test.dart)
+  writes a real encrypted prefix, recovers without another post event or tap,
+  and checks exact plaintext bytes plus blocked-contact and migration gates.
+  Its bridge crypto is a content-transforming XOR fake; this does not certify
+  Go AES-GCM, a live relay or OS delivery. Relay absence, encrypted rows without
+  required keys, unknown encryption schemes, ciphertext-hash mismatch and
+  decrypt failure remain fail-closed;
+  post fetches never delete the shared relay blob. Retained outgoing source
+  rows stay pending with the existing localized upload copy while the same
+  owner can retry them. Missing source files remain terminal.
+
+  Sender `upload_failed` is terminal even at retry count zero; only
+  `upload_pending` claims automatic upload activity. Existing manual retry
+  ceilings remain authoritative. Retry-owned text sends stay pending without
+  a failure snackbar; failures without a retained envelope preserve the manual
+  error path. Contact consent/QR key announcements reuse the existing durable
+  reannounce marker and key-exchange owner. CR-018 restart coverage and a held
+  send/fresh-list mutation case verify recovery and preservation of newly
+  queued peers. The QR "Added to your circle!" finding was refuted: the copy
+  describes the completed local addition, and offline protocol work has an
+  existing retry owner. An interface handoff explicitly requests existing relay
+  recovery before inbox drain; background polling remains disabled. Actual
+  Android background OS delivery is **UNTESTED** by these host fixtures.
+
+  Focused Batch 2 receipts and causal REDs are retained in
+  `.codex-test-logs/batch2-20261021/`, including first-attempt obsolete UI
+  expectations before alignment with the silent-retry requirement. Focused
+  receipts do not establish the broader batch gate or certify an
+  installed/signed candidate.
+
+  An exact `dbab73ebc` replay confirms two preexisting group-screen assertion
+  failures: pending voice expects `--:--`, and quarantined media expects the old
+  "Couldn't verify this media" label. Both fail identically in the Batch 2
+  host pass; evidence is in `base-group-probe/` under the receipts directory.
+  Keep this assertion debt separate from new regressions. Isolated worktrees
+  also lack ignored inputs unless provisioned: the iOS Firebase project-config
+  test and CV-14 native-symbol gate fail on absent configuration/frameworks/AAR.
+  Those failures are environment limits, not passing native-build evidence.
 
   [The camera/caption regression](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart)
   uses a real multi-megabyte EXIF-oriented JPEG, actual legacy upload/send,

@@ -143,10 +143,8 @@ Future<int> retryIncompleteKeyExchanges({
         // Drain the marker entry only on success — partial failure keeps
         // the remainder for the next retry trigger.
         if (markerStore != null && reannouncePending.contains(contact.peerId)) {
-          reannouncePending = reannouncePending
-              .where((peerId) => peerId != contact.peerId)
-              .toList();
-          await writeMlKemReannounceMarker(markerStore, reannouncePending);
+          await completeMlKemReannouncePeer(markerStore, contact.peerId);
+          reannouncePending = await readMlKemReannounceMarker(markerStore);
           emitFlowEvent(
             layer: 'FL',
             event: 'KEY_REANNOUNCE_SENT',

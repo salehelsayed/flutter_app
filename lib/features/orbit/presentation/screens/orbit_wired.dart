@@ -2525,6 +2525,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       p2pService: widget.p2pService,
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
+      secureKeyStore: widget.secureKeyStore,
       onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
       resolveCallWakeHandle: widget.resolveCallWakeHandle,
       onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,

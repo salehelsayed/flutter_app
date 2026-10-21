@@ -5044,6 +5044,13 @@ class _ConversationWiredState extends State<ConversationWired>
                 result == SendChatMessageResult.dialFailed ||
                 result == SendChatMessageResult.sendFailed) &&
             message != null;
+        final automaticallyQueued =
+            keepRetriable ||
+            (result == SendChatMessageResult.nodeNotRunning &&
+                message != null &&
+                message.media.isEmpty &&
+                message.privateMediaMode == PrivateMediaMode.ordinary &&
+                (message.wireEnvelope?.trim().isNotEmpty ?? false));
 
         if (message != null) {
           final persistedMedia =
@@ -5098,7 +5105,8 @@ class _ConversationWiredState extends State<ConversationWired>
           }
         }
 
-        if (result != SendChatMessageResult.success) {
+        // Existing recovery owns retained sends; keep that retry silent.
+        if (result != SendChatMessageResult.success && !automaticallyQueued) {
           // 185: name the REAL cause. When WE are offline, a connectivity-class
           // failure must not blame the contact — say so honestly (and truthfully
           // promise the queued send). nodeNotRunning is inherently sender-side,

@@ -51,6 +51,44 @@ void main() {
   });
 
   group('PendingMessageRetrier', () {
+    test('relay reconnect re-drives profile recovery after a failed pass', () {
+      fakeAsync((async) {
+        var attempts = 0;
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          retryDebounce: const Duration(milliseconds: 10),
+          retryFailedMessagesOverride: () async => 0,
+          retryUnackedMessagesOverride: () async => 0,
+          retryPendingProfilePictureDownloadsFn: () async {
+            attempts++;
+            if (attempts == 1) throw StateError('err=EOF');
+            return 1;
+          },
+        );
+        retrier.start();
+        const online = NodeState(
+          isStarted: true,
+          peerId: 'own',
+          circuitAddresses: ['/relay'],
+        );
+        p2pService.emitState(online);
+        async.elapse(const Duration(milliseconds: 11));
+        async.flushMicrotasks();
+        expect(attempts, 1);
+        p2pService.emitState(const NodeState(isStarted: false));
+        async.flushMicrotasks();
+        p2pService.emitState(online);
+        async.elapse(const Duration(milliseconds: 11));
+        async.flushMicrotasks();
+        expect(attempts, 2);
+        retrier.dispose();
+      });
+    });
+
     for (final failFirst in [false, true]) {
       test(
         'OS restore defers group downloads until ready and then retries, failure=$failFirst',

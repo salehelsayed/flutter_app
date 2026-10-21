@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -199,8 +200,14 @@ void main() {
   );
 
   testWidgets(
-    'multi-image upload failure keeps the failed post in the upload placeholder state',
+    'retained multi-image upload recovery stays pending without failure text',
     (tester) async {
+      final sourceDir = Directory.systemTemp.createTempSync('post-ui-retry-');
+      addTearDown(() => sourceDir.deleteSync(recursive: true));
+      final firstPhoto = File('${sourceDir.path}/photo-1.jpg')
+        ..writeAsBytesSync([0xFF, 0xD8, 0xFF]);
+      final secondPhoto = File('${sourceDir.path}/photo-2.jpg')
+        ..writeAsBytesSync([0xFF, 0xD8, 0xFF]);
       final posts = InMemoryPostRepository();
       addTearDown(posts.dispose);
       final secureKeyStore = FakeSecureKeyStore();
@@ -223,15 +230,9 @@ void main() {
                   return XFile('${path}_processed');
                 },
           ),
-          onAttachMedia: () async => const [
-            PostMediaDraft(
-              localFilePath: '/tmp/photo-1.jpg',
-              mime: 'image/jpeg',
-            ),
-            PostMediaDraft(
-              localFilePath: '/tmp/photo-2.jpg',
-              mime: 'image/jpeg',
-            ),
+          onAttachMedia: () async => [
+            PostMediaDraft(localFilePath: firstPhoto.path, mime: 'image/jpeg'),
+            PostMediaDraft(localFilePath: secondPhoto.path, mime: 'image/jpeg'),
           ],
           uploadPostMediaFn:
               ({
@@ -284,10 +285,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
 
       final storedPost = (await posts.loadFeed()).single;
-      expect(storedPost.deliveryStatus, 'failed');
+      expect(storedPost.deliveryStatus, 'sending');
       expect(storedPost.media, isEmpty);
-      expect(find.text('Upload failed'), findsOneWidget);
-      expect(find.text('Photo upload failed'), findsOneWidget);
+      expect(
+        await posts.loadPostMediaUploadRecoveryItems(storedPost.id),
+        hasLength(2),
+      );
+      expect(find.text('Upload failed'), findsNothing);
+      expect(find.text('Photo upload failed'), findsNothing);
+      expect(find.text('Uploading media...'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('post-media-skeleton-placeholder')),
         findsOneWidget,

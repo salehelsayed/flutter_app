@@ -232,8 +232,14 @@ class MediaGridCell extends StatelessWidget {
     final isVideo = attachment.mediaType == 'video';
     final isDone = attachment.downloadStatus == 'done';
     final hasPath = attachment.localPath != null;
-    if (attachment.downloadStatus == kMediaDownloadStatusUploadPending) {
-      return _buildUploadPendingPlaceholder(context);
+    final uploadStatus = retainedUploadStatusText(
+      AppLocalizations.of(context)!,
+      attachment,
+      ownedMediaPeerId: ownedMediaPeerId,
+    );
+    if (attachment.downloadStatus == kMediaDownloadStatusUploadPending ||
+        uploadStatus != null) {
+      return _buildUploadPendingPlaceholder(context, statusText: uploadStatus);
     }
 
     if (_isEvicted) {
@@ -288,7 +294,10 @@ class MediaGridCell extends StatelessWidget {
     return _buildLoadingPlaceholder(context);
   }
 
-  Widget _buildUploadPendingPlaceholder(BuildContext context) {
+  Widget _buildUploadPendingPlaceholder(
+    BuildContext context, {
+    String? statusText,
+  }) {
     final l10n = AppLocalizations.of(context)!;
     return Container(
       color: const Color.fromRGBO(255, 255, 255, 0.04),
@@ -305,7 +314,7 @@ class MediaGridCell extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                l10n.post_media_pending_upload,
+                statusText ?? l10n.post_media_pending_upload,
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -315,19 +324,21 @@ class MediaGridCell extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              const SizedBox(height: 4),
-              Text(
-                l10n.post_media_pending_upload_desc,
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color.fromRGBO(255, 255, 255, 0.58),
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500,
-                  height: 1.2,
+              if (statusText != l10n.message_status_failed) ...[
+                const SizedBox(height: 4),
+                Text(
+                  l10n.post_media_pending_upload_desc,
+                  textAlign: TextAlign.center,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color.fromRGBO(255, 255, 255, 0.58),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                    height: 1.2,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),

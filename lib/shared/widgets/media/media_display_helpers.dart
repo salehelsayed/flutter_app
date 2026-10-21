@@ -47,6 +47,30 @@ String formatDurationMs(int? ms) {
   return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
+/// Upload status describes sending, not the availability of retained bytes.
+/// Failed uploads are terminal even below the retry ceiling; only pending
+/// uploads have automatic retry ownership. Existing message actions own rearm.
+String? retainedUploadStatusText(
+  AppLocalizations l10n,
+  MediaAttachment attachment, {
+  String? ownedMediaPeerId,
+}) {
+  if (attachment.downloadStatus != kMediaDownloadStatusUploadPending &&
+      attachment.downloadStatus != kMediaDownloadStatusUploadFailed) {
+    return null;
+  }
+  if (resolveExistingMediaPathForDisplay(
+        attachment: attachment,
+        ownedMediaPeerId: ownedMediaPeerId,
+      ) ==
+      null) {
+    return null;
+  }
+  return attachment.downloadStatus == kMediaDownloadStatusUploadFailed
+      ? l10n.message_status_failed
+      : l10n.post_media_pending_upload;
+}
+
 /// Receiver copy follows actual evidence, independently of retry scheduling.
 /// Null is the silent loading state. Old download_failed rows have no durable
 /// absence reason, so their label must not claim that the relay lost the file.

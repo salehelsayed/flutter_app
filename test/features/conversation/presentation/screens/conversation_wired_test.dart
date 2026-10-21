@@ -90,6 +90,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/direct_received_media_action_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/swipe_to_quote_bubble.dart';
@@ -13860,7 +13861,20 @@ void main() {
             false,
           ], reason: 'retry follows lease release');
           expect(find.text('Uploading media'), findsNothing);
-          expect(find.text('Media pending upload'), findsOneWidget);
+          expect(
+            find.descendant(
+              of: find.byKey(const ValueKey('message-media-pending-note')),
+              matching: find.text('Media pending upload'),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.descendant(
+              of: find.byType(AudioPlayerWidget),
+              matching: find.text('Media pending upload'),
+            ),
+            findsOneWidget,
+          );
           expect(
             find.byKey(const ValueKey('upload-progress-banner')),
             findsNothing,

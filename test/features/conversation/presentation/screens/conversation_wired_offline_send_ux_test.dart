@@ -672,34 +672,11 @@ void main() {
         );
         await _settleStartup(tester);
 
-        // 185: nodeNotRunning is inherently a sender-offline condition, so it
-        // shows the honest sender-offline copy — a short one-liner paired with
-        // the wifi-off glyph (the icon carries "no internet").
-        const offlineSnackText = "Will send when you're back online";
-
+        // A genuine failure without custody still reports an error, and its
+        // snackbar must leave the composer usable.
         await _typeAndSend(tester, 'offline message');
         expect(recorder.callCount, 1);
-
-        // Production's fresh-text node-stopped path has already staged exact
-        // custody and returns its authoritative failed row. The snackbar's
-        // promise is therefore backed by durable retry ownership.
-        final sentId = recorder.messageIds.last!;
-        final failedMessage = ConversationMessage(
-          id: sentId,
-          contactPeerId: _contactPeerId,
-          senderPeerId: _identity.peerId,
-          text: 'offline message',
-          timestamp: '2026-08-06T10:00:00.000Z',
-          status: 'failed',
-          isIncoming: false,
-          createdAt: '2026-08-06T10:00:00.000Z',
-          wireEnvelope: '{"type":"chat_message","version":"2"}',
-        );
-        await messageRepo.saveMessage(failedMessage);
-        recorder.completeLastWithMessage(
-          SendChatMessageResult.nodeNotRunning,
-          failedMessage,
-        );
+        recorder.completeLast(SendChatMessageResult.sendFailed);
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800)); // slide-in
 
@@ -707,10 +684,7 @@ void main() {
         expect(snackBarFinder, findsOneWidget);
         final snackBar = tester.widget<SnackBar>(snackBarFinder);
 
-        // Distinct discriminator: pinned to the offline-notice bar. 185:
-        // nodeNotRunning is a sender-offline (queued, self-healing) state, so it
-        // uses the informational slate tone, NOT the error-red.
-        expect(snackBar.backgroundColor, Colors.blueGrey[700]);
+        expect(snackBar.backgroundColor, Colors.red[700]);
 
         // S1 core: the failure bar carries a bottom margin that lifts it off
         // the composer. (RED on HEAD: margin == null.)
@@ -739,7 +713,9 @@ void main() {
               'the failure SnackBar, lifted by its bottom margin, must sit '
               'entirely above the composer / Send button',
         );
-        final contentRect = tester.getRect(find.text(offlineSnackText));
+        final contentRect = tester.getRect(
+          find.text('Failed to send message. Message saved.'),
+        );
         expect(
           contentRect.overlaps(composeRect),
           isFalse,
@@ -794,14 +770,16 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
         await tester.pump();
 
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.byType(SnackBar), findsNothing);
         expect(
-          find.byIcon(Icons.error_outline_rounded),
-          findsOneWidget,
-          reason:
-              'the custody-authoritative failed row must drive the bubble '
-              '(this is the retry affordance source)',
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller
+              ?.text,
+          '',
         );
-        expect(find.byIcon(Icons.done_rounded), findsNothing);
 
         // The durable "failed" status the retry path re-dispatches from is
         // persisted (retry re-dispatch itself is covered by
@@ -1046,69 +1024,45 @@ void main() {
         'Failed to send message. Message saved.',
       ),
     ]) {
-      testWidgets(
-        'TC-185-20 offline failure snackbar names the sender connection '
-        '(${c.$1.name})',
-        (tester) async {
-          final messageRepo = _FakeMessageRepository();
-          final recorder = _GatedSendRecorder();
+      testWidgets('TC-185-20 retry-owned offline send stays silent '
+          '(${c.$1.name})', (tester) async {
+        final messageRepo = _FakeMessageRepository();
+        final recorder = _GatedSendRecorder();
 
-          await tester.pumpWidget(
-            _buildTestWidget(
-              messageRepo: messageRepo,
-              sendChatMessageFn: recorder.fn,
-            ),
-          );
-          await _settleStartup(tester);
+        await tester.pumpWidget(
+          _buildTestWidget(
+            messageRepo: messageRepo,
+            sendChatMessageFn: recorder.fn,
+          ),
+        );
+        await _settleStartup(tester);
 
-          await _typeAndSend(tester, 'offline snack');
-          // All three connectivity results reach this UI branch in their
-          // production terminal-rung shape: a non-null failedMessage carrying
-          // the staged envelope. Null results have no transport authority and
-          // remain terminal under Plan 336.
-          final sentId = recorder.messageIds.last!;
-          final failedMessage = ConversationMessage(
-            id: sentId,
-            contactPeerId: _contactPeerId,
-            senderPeerId: _identity.peerId,
-            text: 'offline snack',
-            timestamp: '2026-07-01T10:00:00.000Z',
-            status: 'failed',
-            isIncoming: false,
-            createdAt: '2026-07-01T10:00:00.000Z',
-            wireEnvelope:
-                '{"type":"chat_message","version":"2","encrypted":{}}',
-          );
-          await messageRepo.saveMessage(failedMessage);
-          recorder.completeLastWithMessage(c.$1, failedMessage);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 800));
+        await _typeAndSend(tester, 'offline snack');
+        // All three connectivity results reach this UI branch in their
+        // production terminal-rung shape: a non-null failedMessage carrying
+        // the staged envelope. Null results have no transport authority and
+        // remain terminal under Plan 336.
+        final sentId = recorder.messageIds.last!;
+        final failedMessage = ConversationMessage(
+          id: sentId,
+          contactPeerId: _contactPeerId,
+          senderPeerId: _identity.peerId,
+          text: 'offline snack',
+          timestamp: '2026-07-01T10:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-07-01T10:00:00.000Z',
+          wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+        );
+        await messageRepo.saveMessage(failedMessage);
+        recorder.completeLastWithMessage(c.$1, failedMessage);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
 
-          expect(find.text(senderOfflineCopy), findsOneWidget);
-          expect(find.text(c.$2), findsNothing);
-          // 185: offline-queued uses the informational slate tone, not error-red.
-          expect(
-            tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
-            Colors.blueGrey[700],
-          );
-          // The wifi-off glyph is the "no internet" signal that lets the copy
-          // stay a short one-liner.
-          expect(
-            find.descendant(
-              of: find.byType(SnackBar),
-              matching: find.byIcon(Icons.wifi_off_rounded),
-            ),
-            findsOneWidget,
-          );
-          final offlineText = tester.widget<Text>(
-            find.descendant(
-              of: find.byType(SnackBar),
-              matching: find.text(senderOfflineCopy),
-            ),
-          );
-          expect(offlineText.maxLines, 1);
-        },
-      );
+        expect(find.text(senderOfflineCopy), findsNothing);
+        expect(find.text(c.$2), findsNothing);
+        expect(find.byType(SnackBar), findsNothing);
+      });
 
       testWidgets('TC-185-21 online ${c.$1.name} '
           'snackbar keeps its non-offline copy (no over-correction)', (
@@ -1229,7 +1183,7 @@ void main() {
     }
 
     testWidgets(
-      'TC-192-02 online-glitch retry shows inbox only after custody acceptance',
+      'TC-192-02 automatic online-glitch recovery is silent until custody acceptance',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -1264,7 +1218,7 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800));
 
-        expect(find.text(queuedRetryCopy), findsOneWidget);
+        expect(find.text(queuedRetryCopy), findsNothing);
         final outgoingCard = find.byType(LetterCard);
         expect(outgoingCard, findsOneWidget);
         expect(
@@ -1287,24 +1241,7 @@ void main() {
           find.text('Failed to send message. Message saved.'),
           findsNothing,
         );
-        expect(
-          tester.widget<SnackBar>(find.byType(SnackBar)).backgroundColor,
-          Colors.blueGrey[700],
-        );
-        expect(
-          find.descendant(
-            of: find.byType(SnackBar),
-            matching: find.byIcon(Icons.schedule_send_rounded),
-          ),
-          findsOneWidget,
-        );
-        final glitchText = tester.widget<Text>(
-          find.descendant(
-            of: find.byType(SnackBar),
-            matching: find.text(queuedRetryCopy),
-          ),
-        );
-        expect(glitchText.maxLines, 1);
+        expect(find.byType(SnackBar), findsNothing);
         // The lane must NOT restore the composer draft (that writer re-stamps
         // 'failed' and resurrects the Retry).
         expect(

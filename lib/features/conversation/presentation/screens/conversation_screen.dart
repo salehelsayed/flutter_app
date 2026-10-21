@@ -1169,10 +1169,21 @@ class _ConversationScreenState extends State<ConversationScreen>
                     MediaFileManager.resolveStoredPathSync(storedPath),
                   ).existsSync(),
                 );
+            // A persisted envelope remains owned by automatic direct recovery,
+            // including rows reopened before the next successful retry.
+            final automaticallyRetriedText =
+                !message.isDeleted &&
+                !message.isIncoming &&
+                message.status == 'failed' &&
+                message.media.isEmpty &&
+                message.privateMediaMode == PrivateMediaMode.ordinary &&
+                message.text.trim().isNotEmpty &&
+                (message.wireEnvelope?.trim().isNotEmpty ?? false);
             final showFailedTextRetry =
                 !message.isDeleted &&
                 !message.isIncoming &&
                 message.status == 'failed' &&
+                !automaticallyRetriedText &&
                 message.media.isEmpty &&
                 message.text.trim().isNotEmpty &&
                 widget.onRetryFailedMessage != null;
@@ -1498,7 +1509,11 @@ class _ConversationScreenState extends State<ConversationScreen>
                     message.privateMediaMode == PrivateMediaMode.viewOnce &&
                     message.privateMediaState ==
                         PrivateMediaLifecycleState.consumed,
-                status: message.isIncoming ? null : message.status,
+                status: message.isIncoming
+                    ? null
+                    : automaticallyRetriedText
+                    ? 'sending'
+                    : message.status,
                 transport: message.transport,
                 quotedText: quotedText,
                 isQuoteUnavailable: isQuoteUnavailable,

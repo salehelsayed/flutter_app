@@ -189,13 +189,13 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     return (SendPostResult.success, created.copyWith(mediaDrafts: const []));
   }
   if (secureKeyStore == null || imageProcessor == null) {
-    final failedPost = await _persistFailedMediaPreparationPost(
+    final pendingPost = await _persistPendingMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
     );
     return (
       SendPostResult.sendFailed,
-      created.copyWith(post: failedPost, mediaDrafts: drafts),
+      created.copyWith(post: pendingPost, mediaDrafts: drafts),
     );
   }
 
@@ -210,13 +210,13 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     bridge: bridge,
   );
   if (result != AttachPostMediaResult.success) {
-    final failedPost = await _persistFailedMediaPreparationPost(
+    final pendingPost = await _persistPendingMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
     );
     return (
       SendPostResult.sendFailed,
-      created.copyWith(post: failedPost, mediaDrafts: drafts),
+      created.copyWith(post: pendingPost, mediaDrafts: drafts),
     );
   }
 
@@ -362,14 +362,15 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
   }
 }
 
-Future<PostModel> _persistFailedMediaPreparationPost({
+Future<PostModel> _persistPendingMediaPreparationPost({
   required PostRepository postRepo,
   required PostModel post,
 }) async {
   await postRepo.replacePostMediaAttachments(post.id, const []);
-  final failedPost = post.copyWith(deliveryStatus: 'failed', media: const []);
-  await postRepo.savePost(failedPost);
-  return failedPost;
+  // Durable source rows remain eligible for the existing upload retrier.
+  final pendingPost = post.copyWith(deliveryStatus: 'sending', media: const []);
+  await postRepo.savePost(pendingPost);
+  return pendingPost;
 }
 
 String _draftMime(_PreparedPostMediaDraft prepared, PostMediaDraft original) {

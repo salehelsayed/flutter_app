@@ -978,6 +978,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          secureKeyStore: widget.secureKeyStore,
           onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
           resolveCallWakeHandle: widget.resolveCallWakeHandle,
           onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
@@ -2795,6 +2796,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionRepo: widget.reactionRepository,
         pendingReactionRepo: widget.groupPendingReactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
+        retryPendingProfilePictureDownloadsFn:
+            widget.profileUpdateListener.retryNow,
         retryPendingPostMediaUploads:
             widget.pendingPostMediaUploadRetrier.retryNow,
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,

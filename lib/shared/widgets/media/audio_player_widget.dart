@@ -607,6 +607,16 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     if (_isEvicted) {
       return _buildEvictedAudio();
     }
+    final uploadStatus = retainedUploadStatusText(
+      AppLocalizations.of(context)!,
+      widget.attachment,
+    );
+    if (uploadStatus != null) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(uploadStatus),
+      );
+    }
     if (_showsUnavailableMedia || _loadFailed) {
       return _buildUnavailableAudio();
     }
