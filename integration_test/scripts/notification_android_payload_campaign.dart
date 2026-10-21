@@ -241,6 +241,7 @@ final class _AndroidNotificationCampaign {
   String? _g24AppOpModeAfterRecovery;
   String? _g24AppOpModeAfterCampaignRestore;
   int _notificationTapInvocation = 0;
+  ({int dumpExitCode, int? readExitCode})? _lastUiDumpStatus;
   final List<String> _dualPathCleanupFailures = <String>[];
   _DualPathHostObservation? _lastDualPathHostObservation;
 
@@ -4000,33 +4001,126 @@ final class _AndroidNotificationCampaign {
   }
 
   Future<void> _waitForUiText(String marker) async {
-    await _waitFor(
-      'message visible in the tapped conversation',
-      const Duration(seconds: 60),
-      () async => findSemanticNodeCenter(await _uiDump(), marker) != null,
-    );
+    var lastXml = '';
+    ({int dumpExitCode, int? readExitCode})? lastStatus;
+    try {
+      await _waitFor(
+        'message visible in the tapped conversation',
+        const Duration(seconds: 60),
+        () async {
+          lastXml = await _uiDump();
+          lastStatus = _lastUiDumpStatus;
+          return findSemanticNodeCenter(lastXml, marker) != null;
+        },
+      );
+    } on _Failure {
+      try {
+        final captureId = _token('notification-text-timeout');
+        final xml = File('${proofDirectory.path}/$captureId.xml');
+        await xml.writeAsString(lastXml, flush: true);
+        final png = File('${proofDirectory.path}/$captureId.png');
+        final remote = '/data/local/tmp/$captureId.png';
+        const runner = SystemAndroidHostProcessRunner(
+          commandTimeout: Duration(seconds: 10),
+        );
+        final screenshot = <String, Object?>{'remotePath': remote};
+        try {
+          final capture = await runner.run('adb', <String>[
+            '-s',
+            emulator,
+            'shell',
+            'screencap',
+            '-p',
+            remote,
+          ]);
+          screenshot['captureExitCode'] = capture.exitCode;
+          if (capture.exitCode == 0) {
+            final pull = await runner.run('adb', <String>[
+              '-s',
+              emulator,
+              'pull',
+              remote,
+              png.path,
+            ]);
+            screenshot['pullExitCode'] = pull.exitCode;
+            if (pull.exitCode == 0 && png.existsSync()) {
+              screenshot['path'] = png.path;
+              screenshot['sha256'] = sha256
+                  .convert(png.readAsBytesSync())
+                  .toString();
+            }
+          }
+        } on Object {
+          screenshot['captureUnavailable'] = true;
+        } finally {
+          try {
+            final cleanup = await runner.run('adb', <String>[
+              '-s',
+              emulator,
+              'shell',
+              'rm',
+              '-f',
+              remote,
+            ]);
+            screenshot['remoteCleanupExitCode'] = cleanup.exitCode;
+          } on Object {
+            screenshot['remoteCleanupUnavailable'] = true;
+          }
+        }
+        await File('${proofDirectory.path}/$captureId.json').writeAsString(
+          jsonEncode(<String, Object?>{
+            'schema': 'mknoon.notification-text-timeout-diagnostic.v1',
+            'status': 'diagnostic_only',
+            'phase': _phase,
+            'targetId': emulator,
+            'markerSha256': sha256.convert(utf8.encode(marker)).toString(),
+            'lastXml': <String, Object?>{
+              'path': xml.path,
+              'sha256': sha256.convert(xml.readAsBytesSync()).toString(),
+              'dumpExitCode': lastStatus?.dumpExitCode,
+              'readExitCode': lastStatus?.readExitCode,
+            },
+            'failureTimeScreenshot': screenshot,
+          }),
+          flush: true,
+        );
+      } on Object {
+        // Failure evidence must never replace the original visibility failure.
+      }
+      rethrow;
+    }
   }
 
   Future<String> _uiDump() async {
-    const remote = '/data/local/tmp/sims_notification_payload.xml';
-    await _adb(emulator, const <String>[
+    final remote = '/data/local/tmp/${_token('sims_notification_payload')}.xml';
+    _lastUiDumpStatus = null;
+    final dump = await _adb(emulator, <String>[
       'shell',
       'uiautomator',
       'dump',
       remote,
     ], allowFailure: true);
-    final result = await _adb(emulator, const <String>[
-      'shell',
-      'cat',
-      remote,
-    ], allowFailure: true);
-    await _adb(emulator, const <String>[
-      'shell',
-      'rm',
-      '-f',
-      remote,
-    ], allowFailure: true);
-    return '${result.stdout}';
+    _lastUiDumpStatus = (dumpExitCode: dump.exitCode, readExitCode: null);
+    try {
+      if (dump.exitCode != 0) return '';
+      final result = await _adb(emulator, <String>[
+        'shell',
+        'cat',
+        remote,
+      ], allowFailure: true);
+      _lastUiDumpStatus = (
+        dumpExitCode: dump.exitCode,
+        readExitCode: result.exitCode,
+      );
+      return result.exitCode == 0 ? '${result.stdout}' : '';
+    } finally {
+      await _adb(emulator, <String>[
+        'shell',
+        'rm',
+        '-f',
+        remote,
+      ], allowFailure: true);
+    }
   }
 
   Future<void> _terminateReceiver() async {
