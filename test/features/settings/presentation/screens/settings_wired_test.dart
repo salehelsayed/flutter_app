@@ -6,6 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart'
+    as identity_db;
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -36,6 +40,7 @@ import 'package:flutter_app/features/settings/presentation/widgets/media_downloa
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -296,7 +301,7 @@ void main() {
 
   Future<void> pumpScreen(
     WidgetTester tester, {
-    required FakeIdentityRepository identityRepo,
+    required IdentityRepository identityRepo,
     Bridge? bridge,
     ContactRepository? contactRepo,
     P2PService? p2pService,
@@ -351,6 +356,129 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets(
+    'SETTINGS-001 name boundaries persist through repository and Settings restart',
+    (tester) async {
+      final directory = Directory.systemTemp.createTempSync(
+        'astra-settings-name-',
+      );
+      addTearDown(() => directory.deleteSync(recursive: true));
+      var fixture = (await tester.runAsync(
+        () => MediaRepositoryRealDbFixture.create(
+          databasePath: '${directory.path}/identity.db',
+          databaseFactoryOverride: databaseFactoryFfiNoIsolate,
+        ),
+      ))!;
+      addTearDown(() => fixture.dispose());
+      var writes = 0;
+      IdentityRepositoryImpl repository() => IdentityRepositoryImpl(
+        dbLoadIdentityRow: () => identity_db.dbLoadIdentityRow(fixture.db),
+        dbUpsertIdentityRow: (row) async {
+          writes++;
+          await identity_db.dbUpsertIdentityRow(fixture.db, row);
+        },
+        secureKeyStore: fixture.secureKeyStore,
+      );
+      var repo = repository();
+      await tester.runAsync(() => repo.saveIdentity(makeIdentity()));
+      writes = 0;
+      await pumpScreen(tester, identityRepo: repo);
+
+      for (final boundary in const [
+        ('   ', 'Alice', 0),
+        ('🙂', 'Alice', 0),
+        ('\u202e', 'Alice', 0),
+        ('Z', 'Z', 1),
+        ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 2),
+        (
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaab',
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          2,
+        ),
+        ('ليلى_1', 'ليلى_1', 3),
+      ]) {
+        await tester.tap(find.byIcon(Icons.edit));
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), boundary.$1);
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump();
+        expect(writes, boundary.$3);
+        expect(find.text('@${boundary.$2}'), findsOneWidget);
+        await tester.runAsync(() async {
+          expect((await repo.loadIdentity())!.username, boundary.$2);
+          expect(
+            (await identity_db.dbLoadIdentityRow(fixture.db))!['username'],
+            boundary.$2,
+          );
+        });
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      fixture = (await tester.runAsync(() => fixture.reopen()))!;
+      repo = repository();
+      expect(
+        (await tester.runAsync(() => repo.loadIdentity()))!.username,
+        'ليلى_1',
+      );
+      await pumpScreen(tester, identityRepo: repo);
+      expect(find.text('@ليلى_1'), findsOneWidget);
+      expect(
+        writes,
+        3,
+        reason: 'restarting does not publish or rewrite the name',
+      );
+    },
+  );
+
+  group(
+    'KNOWN GAP',
+    () {
+      testWidgets(
+        'SETTINGS-005 failed account copy never reports success and can retry',
+        (tester) async {
+          var fail = true;
+          final attemptedValues = <String>[];
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            (call) async {
+              if (call.method == 'Clipboard.setData') {
+                attemptedValues.add((call.arguments as Map)['text'] as String);
+                if (fail)
+                  throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
+              }
+              return null;
+            },
+          );
+          addTearDown(
+            () => tester.binding.defaultBinaryMessenger
+                .setMockMethodCallHandler(SystemChannels.platform, null),
+          );
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+          );
+          await tester.tap(find.byIcon(Icons.copy));
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+          expect(attemptedValues, ['12D3KooWMyPeer123']);
+          expect(find.byIcon(Icons.check), findsNothing);
+          expect(find.byIcon(Icons.copy).hitTestable(), findsOneWidget);
+          fail = false;
+          await tester.tap(find.byIcon(Icons.copy));
+          await tester.pump();
+          expect(attemptedValues, ['12D3KooWMyPeer123', '12D3KooWMyPeer123']);
+          expect(find.byIcon(Icons.check), findsOneWidget);
+          await tester.pump(const Duration(seconds: 2));
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(find.byIcon(Icons.copy), findsOneWidget);
+        },
+      );
+    },
+    skip:
+        'KNOWN GAP: settings_wired.dart:207 reports account-copy success before the platform completes. Run with --run-skipped for the desired recovery failure.',
+  );
 
   testWidgets('loads identity on init, displays peerId and username', (
     tester,

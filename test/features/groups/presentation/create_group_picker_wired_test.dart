@@ -6,6 +6,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -61,6 +64,27 @@ class _NoOpMsgRepo implements GroupMessageRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => null;
+}
+
+class _RecordingGroupRepository extends InMemoryGroupRepository {
+  int writes = 0;
+  @override
+  Future<void> saveGroup(GroupModel group) async {
+    writes++;
+    await super.saveGroup(group);
+  }
+
+  @override
+  Future<void> saveMember(GroupMember member) async {
+    writes++;
+    await super.saveMember(member);
+  }
+
+  @override
+  Future<void> saveKey(GroupKeyInfo key) async {
+    writes++;
+    await super.saveKey(key);
+  }
 }
 
 // --- Test data ---
@@ -130,7 +154,7 @@ ContactModel buildContact(int index) {
 
 void main() {
   group('CreateGroupPickerWired', () {
-    late InMemoryGroupRepository groupRepo;
+    late _RecordingGroupRepository groupRepo;
     late InMemoryGroupMessageRepository msgRepo;
     late InMemoryContactRepository contactRepo;
     late PassthroughCryptoBridge bridge;
@@ -139,7 +163,7 @@ void main() {
     late StreamController<GroupMessage> messageStreamController;
 
     setUp(() {
-      groupRepo = InMemoryGroupRepository();
+      groupRepo = _RecordingGroupRepository();
       msgRepo = InMemoryGroupMessageRepository();
       contactRepo = InMemoryContactRepository();
       bridge = PassthroughCryptoBridge();
@@ -185,6 +209,135 @@ void main() {
         ),
       );
     }
+
+    Future<void> expectNoCreateEffects() async {
+      expect(groupRepo.writes, 0);
+      expect(await groupRepo.getAllGroups(), isEmpty);
+      expect(bridge.sentMessages, isEmpty);
+      expect(p2pService.sendMessageCallCount, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+    }
+
+    testWidgets(
+      'GROUP-001 empty selection and select-deselect leave zero effects',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+        expect(find.text('Start group chat'), findsNothing);
+        await expectNoCreateEffects();
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+        expect(find.text('Start group chat').hitTestable(), findsOneWidget);
+        // The panel adds a second literal name, so target the actual contact row.
+        await tester.tap(find.text('Alice').first);
+        await pumpFrames(tester);
+        expect(find.text('Start group chat'), findsNothing);
+        await expectNoCreateEffects();
+        await tester.tap(find.byTooltip('Back'));
+        await pumpFrames(tester);
+        await expectNoCreateEffects();
+      },
+    );
+
+    testWidgets(
+      'GROUP-001 cancel selected routed picker leaves zero writes and sends',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+        final picker = (buildWidget() as MaterialApp).home!;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute<void>(builder: (_) => picker)),
+                  child: const Text('Open group picker'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Open group picker'));
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+        await tester.enterText(find.byType(TextField).last, 'Draft group name');
+        tester.testTextInput.hide();
+        tester.binding.focusManager.primaryFocus?.unfocus();
+        await pumpFrames(tester);
+        await tester.tap(find.byTooltip('Back'));
+        await pumpFrames(tester, count: 30);
+        expect(find.byType(CreateGroupPickerWired), findsNothing);
+        expect(find.text('Open group picker'), findsOneWidget);
+        await expectNoCreateEffects();
+      },
+    );
+
+    test(
+      'GROUP-001 empty member list is rejected before writes or egress',
+      () async {
+        await expectLater(
+          createGroupWithMembers(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            p2pService: p2pService,
+            identity: testIdentity,
+            selectedContacts: const [],
+            type: GroupType.chat,
+            name: 'Optional valid name',
+          ),
+          throwsArgumentError,
+        );
+        await expectNoCreateEffects();
+      },
+      skip:
+          'KNOWN GAP: create_group_with_members_use_case.dart:136 accepts an empty member list with an explicit name. Run with --run-skipped for the desired zero-effects failure.',
+    );
+
+    group(
+      'KNOWN GAP',
+      () {
+        testWidgets(
+          'GROUP-001 invalid selected member is rejected before writes or egress',
+          (tester) async {
+            contactRepo.addTestContact(
+              contactAlice.copyWith(peerId: '   ', username: 'Invalid member'),
+            );
+            await tester.pumpWidget(buildWidget());
+            await pumpFrames(tester);
+            await tester.tap(find.text('Invalid member'));
+            await pumpFrames(tester);
+            await tester.tap(find.text('Start group chat'));
+            await pumpFrames(tester, count: 30);
+            await expectNoCreateEffects();
+            expect(find.byType(GroupConversationScreen), findsNothing);
+          },
+        );
+      },
+      skip:
+          'KNOWN GAP: create_group_with_members_use_case.dart:226 creates and saves before rejecting the invalid member. Run with --run-skipped for the desired zero-effects failure.',
+    );
+
+    testWidgets(
+      'GROUP-001 blank optional name creates the selected valid group',
+      (tester) async {
+        contactRepo.addTestContact(contactAlice);
+        await tester.pumpWidget(buildWidget());
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await pumpFrames(tester);
+        await tester.tap(find.text('Start group chat'));
+        await pumpFrames(tester, count: 30);
+        expect((await groupRepo.getGroup('new-group-id'))!.name, 'Alice');
+        expect(find.byType(GroupConversationScreen), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'shows contact-loading state instead of empty state while contacts are loading',

@@ -614,6 +614,43 @@ void main() {
     );
 
     test(
+      'SETTINGS-003 undecodable output preserves the prior valid avatar',
+      () async {
+        const peer = '12D3KooWMalformedAvatarFixture';
+        final validPriorBytes = base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAEAAAAAgCAIAAAAt/+nTAAAATklEQVR4nO3PUQkAIBTAwNfAfmY3jCH8OITBAtxm7fN1wwUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjx2AV3NKJdv7voVAAAAAElFTkSuQmCC',
+        );
+        final prior = _makeContact(
+          peerId: peer,
+        ).copyWith(avatarPath: 'media/avatars/$peer.jpg', avatarVersion: 'v1');
+        contactRepo.contactResult = prior;
+        final canonical = File('${tempDir.path}/media/avatars/$peer.jpg');
+        canonical.parent.createSync(recursive: true);
+        await canonical.writeAsBytes(validPriorBytes, flush: true);
+        final malformedNormalizer = _makeAvatarNormalizer(
+          Uint8List.fromList([0x42, 0x41, 0x44, 0x00]),
+        );
+        final result = await downloadProfilePicture(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          ownerPeerId: peer,
+          avatarVersion: 'v2',
+          avatarNormalizer: malformedNormalizer,
+        );
+        expect(await canonical.readAsBytes(), orderedEquals(validPriorBytes));
+        expect(result, isNull);
+        expect(contactRepo.lastAdded, isNull);
+        expect(contactRepo.contactResult!.avatarVersion, 'v1');
+        expect(
+          contactRepo.contactResult!.avatarPath,
+          'media/avatars/$peer.jpg',
+        );
+      },
+      skip:
+          'KNOWN GAP: avatar_normalization_helper.dart:34 accepts nonempty undecodable output and overwrites the prior avatar. Run with --run-skipped for the desired preservation failure.',
+    );
+
+    test(
       'keeps the canonical avatar untouched when processing fails',
       () async {
         bridge.profileDownloadBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF]);

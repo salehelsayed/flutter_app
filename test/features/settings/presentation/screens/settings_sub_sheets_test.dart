@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
@@ -105,6 +106,104 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group(
+    'KNOWN GAP',
+    () {
+      testWidgets(
+        'SETTINGS-004 recovery phrase conceals on background and stays hidden on return',
+        (tester) async {
+          await pumpWired(tester);
+          await openSheet(tester, 'settings-row-recovery');
+          await tester.tap(find.text('Tap to reveal'));
+          await tester.pump();
+          expect(find.text('abandon'), findsOneWidget);
+          for (final state in const [
+            AppLifecycleState.inactive,
+            AppLifecycleState.hidden,
+            AppLifecycleState.paused,
+          ]) {
+            tester.binding.handleAppLifecycleStateChanged(state);
+          }
+          await tester.pump();
+          expect(find.text('Tap to reveal'), findsOneWidget);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(find.text('Tap to reveal'), findsOneWidget);
+          expect(find.text('Hide'), findsNothing);
+        },
+      );
+    },
+    skip:
+        'KNOWN GAP: settings_wired.dart:217 reveal state has no background concealment. Run with --run-skipped for the desired privacy failure.',
+  );
+
+  testWidgets('SETTINGS-004 navigating away resets reveal for the next sheet', (
+    tester,
+  ) async {
+    await pumpWired(tester);
+    await openSheet(tester, 'settings-row-recovery');
+    await tester.tap(find.text('Tap to reveal'));
+    await tester.pump();
+    expect(find.text('Hide'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await settleSheetClose(tester);
+    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+    expect(find.text('abandon'), findsNothing);
+    await openSheet(tester, 'settings-row-recovery');
+    expect(find.text('Tap to reveal'), findsOneWidget);
+    expect(find.text('Hide'), findsNothing);
+  });
+
+  group(
+    'KNOWN GAP',
+    () {
+      testWidgets(
+        'SETTINGS-004 failed phrase copy stays truthful and retries',
+        (tester) async {
+          var fail = true;
+          final attempts = <String>[];
+          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            (call) async {
+              if (call.method == 'Clipboard.setData') {
+                attempts.add((call.arguments as Map)['text'] as String);
+                if (fail)
+                  throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
+              }
+              return null;
+            },
+          );
+          addTearDown(
+            () => tester.binding.defaultBinaryMessenger
+                .setMockMethodCallHandler(SystemChannels.platform, null),
+          );
+          await pumpWired(tester);
+          await openSheet(tester, 'settings-row-recovery');
+          await tester.tap(find.text('Tap to reveal'));
+          await tester.pump();
+          await tester.tap(find.text('Copy to clipboard'));
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+          expect(attempts, [twelveWords]);
+          expect(find.text('Copied!'), findsNothing);
+          expect(find.text('Copy to clipboard').hitTestable(), findsOneWidget);
+          fail = false;
+          await tester.tap(find.text('Copy to clipboard'));
+          await tester.pump();
+          expect(attempts, [twelveWords, twelveWords]);
+          expect(find.text('Copied!'), findsOneWidget);
+          await tester.tap(find.text('Hide'));
+          await tester.pump();
+          expect(find.text('Tap to reveal'), findsOneWidget);
+        },
+      );
+    },
+    skip:
+        'KNOWN GAP: settings_wired.dart:225 reports phrase-copy success before the platform completes. Run with --run-skipped for the desired recovery failure.',
+  );
 
   testWidgets(
     'call privacy availability opens the persisted setting in the existing sheet',

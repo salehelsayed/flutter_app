@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -119,6 +119,176 @@ Widget _buildSubject({
 }
 
 void main() {
+  testWidgets(
+    'INTRO-001 search select deselect and cancel create no outbox or sends',
+    (tester) async {
+      final contactRepo = InMemoryContactRepository();
+      final introRepo = InMemoryIntroductionRepository();
+      final recipient = _contact('peer-B', 'Lina');
+      contactRepo.addTestContact(recipient);
+      contactRepo.addTestContact(_contact('peer-C', 'Sarah'));
+      contactRepo.addTestContact(_contact('peer-D', 'Dana'));
+      final network = FakeP2PNetwork();
+      final service = FakeP2PService(peerId: 'peer-A', network: network);
+      final bridge = PassthroughCryptoBridge();
+      addTearDown(service.dispose);
+      var callbacks = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                child: const Text('Open picker'),
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => SizedBox(
+                    height: 500,
+                    child: FriendPickerWired(
+                      recipient: recipient,
+                      contactRepo: contactRepo,
+                      introRepo: introRepo,
+                      p2pService: service,
+                      bridge: bridge,
+                      identityRepo: _FakeIdentityRepository(_identity()),
+                      onIntroductionsSent: (_) => callbacks++,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open picker'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<ElevatedButton>(find.byType(ElevatedButton)).onPressed,
+        isNull,
+      );
+      await tester.enterText(find.byType(TextField), 'Sar');
+      await tester.pump();
+      expect(find.text('Dana'), findsNothing);
+      await tester.tap(find.text('Sarah'));
+      await tester.pump();
+      expect(
+        tester.widget<ElevatedButton>(find.byType(ElevatedButton)).onPressed,
+        isNotNull,
+      );
+      await tester.tap(find.text('Sarah'));
+      await tester.pump();
+      expect(
+        tester.widget<ElevatedButton>(find.byType(ElevatedButton)).onPressed,
+        isNull,
+      );
+      // A selected friend is also safe to cancel; no submission has occurred.
+      await tester.tap(find.text('Sarah'));
+      await tester.pump();
+      tester.testTextInput.hide();
+      await tester.tap(find.byIcon(Icons.close));
+      await tester.pumpAndSettle();
+      expect(find.byType(FriendPickerWired), findsNothing);
+      expect(find.text('Open picker'), findsOneWidget);
+      expect(await introRepo.getIntroductionsByIntroducer('peer-A'), isEmpty);
+      expect(introRepo.allOutboxDeliveries(), isEmpty);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(bridge.sentMessages, isEmpty);
+      expect(callbacks, 0);
+      expect((await contactRepo.getContact('peer-B'))!.introsSentAt, isNull);
+    },
+  );
+
+  testWidgets(
+    'ACCESS-002 introduction controls expose labels disabled state and 44 point targets',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final repo = InMemoryContactRepository();
+      final recipient = _contact('peer-B', 'Lina');
+      repo.addTestContact(recipient);
+      repo.addTestContact(_contact('peer-C', 'Sarah'));
+      final service = FakeP2PService(
+        peerId: 'peer-A',
+        network: FakeP2PNetwork(),
+      );
+      addTearDown(service.dispose);
+      try {
+        await tester.pumpWidget(
+          _buildSubject(
+            recipient: recipient,
+            contactRepo: repo,
+            introRepo: InMemoryIntroductionRepository(),
+            identityRepo: _FakeIdentityRepository(_identity()),
+            p2pService: service,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final send = find.byType(ElevatedButton);
+        expect(tester.getSize(send).height, greaterThanOrEqualTo(44));
+        final disabled = tester.getSemantics(send).getSemanticsData();
+        expect(disabled.label.trim(), isNotEmpty);
+        expect(disabled.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
+        expect(disabled.hasFlag(SemanticsFlag.isEnabled), isFalse);
+        expect(disabled.hasAction(SemanticsAction.tap), isFalse);
+        await tester.tap(find.text('Sarah'));
+        await tester.pump();
+        final enabled = tester.getSemantics(send).getSemanticsData();
+        expect(enabled.hasFlag(SemanticsFlag.isButton), isTrue);
+        expect(enabled.hasFlag(SemanticsFlag.isEnabled), isTrue);
+        expect(enabled.hasAction(SemanticsAction.tap), isTrue);
+        final close = find.widgetWithIcon(IconButton, Icons.close);
+        expect(tester.getSize(close).width, greaterThanOrEqualTo(44));
+        expect(tester.getSize(close).height, greaterThanOrEqualTo(44));
+      } finally {
+        semantics.dispose();
+      }
+    },
+  );
+
+  group(
+    'KNOWN GAP',
+    () {
+      testWidgets('ACCESS-002 introduction Close exposes a spoken name', (
+        tester,
+      ) async {
+        final semantics = tester.ensureSemantics();
+        final repo = InMemoryContactRepository();
+        final recipient = _contact('peer-B', 'Lina');
+        repo.addTestContact(recipient);
+        final service = FakeP2PService(
+          peerId: 'peer-A',
+          network: FakeP2PNetwork(),
+        );
+        addTearDown(service.dispose);
+        try {
+          await tester.pumpWidget(
+            _buildSubject(
+              recipient: recipient,
+              contactRepo: repo,
+              introRepo: InMemoryIntroductionRepository(),
+              identityRepo: _FakeIdentityRepository(_identity()),
+              p2pService: service,
+            ),
+          );
+          await tester.pumpAndSettle();
+          final close = find.widgetWithIcon(IconButton, Icons.close);
+          expect(
+            tester.getSemantics(close).getSemanticsData().label.trim(),
+            isNotEmpty,
+            reason: 'An icon-only Close control needs a spoken name',
+          );
+        } finally {
+          semantics.dispose();
+        }
+      });
+    },
+    skip:
+        'KNOWN GAP: friend_picker_screen.dart:97 provides an icon-only Close button without a spoken name. Run with --run-skipped for the desired accessibility failure.',
+  );
+
   testWidgets(
     'filters recipient, self, blocked, and archived contacts while keeping eligible friends selectable',
     (tester) async {
@@ -271,7 +441,10 @@ void main() {
     'loads, searches, selects, sends with progress, and returns introductions to the parent callback',
     (tester) async {
       final network = FakeP2PNetwork();
-      final recipientService = FakeP2PService(peerId: 'peer-B', network: network);
+      final recipientService = FakeP2PService(
+        peerId: 'peer-B',
+        network: network,
+      );
       final friendCService = FakeP2PService(peerId: 'peer-C', network: network);
       final friendDService = FakeP2PService(peerId: 'peer-D', network: network);
       final contactRepo = InMemoryContactRepository();
@@ -280,9 +453,7 @@ void main() {
       final p2pService = _DelayedSendFakeP2PService(
         peerId: 'peer-A',
         network: network,
-        sendReplyDelayByPeerId: const {
-          'peer-D': Duration(milliseconds: 500),
-        },
+        sendReplyDelayByPeerId: const {'peer-D': Duration(milliseconds: 500)},
       );
       addTearDown(recipientService.dispose);
       addTearDown(friendCService.dispose);
@@ -340,10 +511,10 @@ void main() {
 
       expect(sentIntroductions, isNotNull);
       expect(sentIntroductions, hasLength(2));
-      expect(
-        sentIntroductions!.map((intro) => intro.introducedId).toSet(),
-        {'peer-C', 'peer-D'},
-      );
+      expect(sentIntroductions!.map((intro) => intro.introducedId).toSet(), {
+        'peer-C',
+        'peer-D',
+      });
       expect(
         sentIntroductions!.every(
           (intro) => intro.recipientId == recipientB.peerId,
