@@ -567,10 +567,14 @@ void main() {
       'final logcatCursor = await _deviceLogcatCursor',
     );
     final toneGap = leg.indexOf('final toneGap = await _awaitToneWindow()');
+    final senderPreparation = leg.indexOf(
+      'await _prepareSenderForLiveReceiver(runId: runId)',
+    );
     expect(readiness, greaterThanOrEqualTo(0));
-    expect(background, greaterThan(readiness));
-    expect(toneGap, greaterThan(background));
-    expect(cursor, greaterThan(toneGap));
+    expect(toneGap, greaterThan(readiness));
+    expect(senderPreparation, greaterThan(toneGap));
+    expect(background, greaterThan(senderPreparation));
+    expect(cursor, greaterThan(background));
     expect(leg, contains('messageId: sent.messageId'));
     expect(leg, contains('_sendB13ProviderBeforeLive('));
     expect(leg, isNot(contains('await _sendText(')));

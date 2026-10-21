@@ -1254,6 +1254,12 @@ final class _AndroidNotificationCampaign {
       runId: '$runId-ready',
       timeout: const Duration(minutes: 2),
     );
+    // Keep fixture preparation foreground-owned; the delivery race below is
+    // still backgrounded. Background health recovery intentionally does not run.
+    // Pay the preceding leg's alert-spacing debt before opening the evidence
+    // window so a late B12 receipt cannot be paired with B13's live marker.
+    final toneGap = await _awaitToneWindow();
+    await _prepareSenderForLiveReceiver(runId: runId);
     await _adb(emulator, const <String>[
       'shell',
       'input',
@@ -1261,10 +1267,6 @@ final class _AndroidNotificationCampaign {
       'KEYCODE_HOME',
     ]);
     await Future<void>.delayed(const Duration(milliseconds: 750));
-    // Pay the preceding leg's alert-spacing debt before opening the evidence
-    // window. Otherwise a late B12 FCM receipt can be paired with B13's live
-    // marker and make a single-path delivery look dual-path.
-    final toneGap = await _awaitToneWindow();
     final logcatCursor = await _deviceLogcatCursor();
     final sentAt = DateTime.now().toUtc();
     final receiverPid = await _pidof(emulator);
