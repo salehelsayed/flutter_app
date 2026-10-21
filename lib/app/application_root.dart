@@ -992,6 +992,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 if (kE2ETestMode) {
                   return;
                 }
+                Future<void>? decision;
                 await showDialog<void>(
                   context: navigator.context,
                   barrierDismissible: false,
@@ -999,14 +1000,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     request: request,
                     onAccept: () {
                       Navigator.of(dialogContext).pop();
-                      unawaited(onAccept());
+                      decision = onAccept();
                     },
                     onDecline: () {
                       Navigator.of(dialogContext).pop();
-                      unawaited(onDecline());
+                      decision = onDecline();
                     },
                   ),
                 );
+                await decision;
               },
           openConversation: ({required navigator, required contact}) =>
               _openConversationForContact(
