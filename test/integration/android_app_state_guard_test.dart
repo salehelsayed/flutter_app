@@ -552,6 +552,162 @@ Future<void> main() async {
     },
   );
 
+  for (final split in <bool>[false, true]) {
+    test(
+      'original APK restore fallback preserves ${split ? 'split' : 'single'} APK state under storage pressure',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'state-guard-storage-pressure-',
+        );
+        addTearDown(() async {
+          if (root.existsSync()) await root.delete(recursive: true);
+        });
+        final artifact = File('${root.path}/candidate.apk')
+          ..writeAsBytesSync(<int>[9, 9, 9], flush: true);
+        final originalApks = <List<int>>[
+          <int>[1, 3, 5, 7],
+          if (split) <int>[2, 4, 6, 8],
+        ];
+        final originalPermissions = <String, bool>{
+          'android.permission.RECORD_AUDIO': true,
+          'android.permission.POST_NOTIFICATIONS': false,
+        };
+        final adb = _FakeAdbState.installed(
+          apkBytes: originalApks,
+          permissions: originalPermissions,
+          privateEntries: const <String>{'cache', 'code_cache', 'files'},
+          directPrivateRestoreExact: true,
+          running: true,
+        );
+        const storageError =
+            'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: '
+            'Failed to override installation location]';
+        final runner = _OriginalInstallFailureRunner(
+          adb,
+          nonStreamingFailure: ProcessResult(
+            1,
+            1,
+            split ? '' : storageError,
+            split ? storageError : '',
+          ),
+        );
+        final guard = await AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: 'storage-pressure-test',
+          runner: runner,
+          privateArchiveCapturer: (_, _, entries, destination) async {
+            _writePrivateTarFixture(destination, entries);
+          },
+        );
+        addTearDown(() async {
+          if (guard.backupDirectory.existsSync()) {
+            await guard.backupDirectory.delete(recursive: true);
+          }
+        });
+        await guard.prepareFreshInstall(
+          device: 'physical-1',
+          artifact: artifact,
+        );
+        adb.privateEntries.add('campaign-only');
+
+        await guard.restoreAll();
+
+        expect(guard.restored, isTrue);
+        expect(guard.backupDirectory.existsSync(), isFalse);
+        expect(adb.apkBytes, originalApks);
+        expect(adb.privateEntries, <String>{'cache', 'code_cache', 'files'});
+        expect(adb.permissions, originalPermissions);
+        expect(adb.running, isTrue);
+        expect(adb.foreground, isFalse);
+        expect(runner.originalInstallAttempts, hasLength(2));
+        final first = runner.originalInstallAttempts.first;
+        final second = runner.originalInstallAttempts.last;
+        expect(first, contains('--no-streaming'));
+        expect(
+          second,
+          first
+              .map((value) => value == '--no-streaming' ? '--streaming' : value)
+              .toList(),
+        );
+        expect(first[2], split ? 'install-multiple' : 'install');
+        expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+        expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
+      },
+    );
+  }
+
+  for (final storagePressure in <bool>[false, true]) {
+    test(
+      'original APK restore fallback retains recovery after ${storagePressure ? 'streaming' : 'non-storage'} failure',
+      () async {
+        final adb = _FakeAdbState.installed(
+          apkBytes: <List<int>>[
+            <int>[1, 2, 3, 4],
+          ],
+          permissions: const <String, bool>{},
+        );
+        const storageError =
+            'Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE: legacy staging]';
+        const finalError =
+            'Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: '
+            'original signer rejected]';
+        final runner = _OriginalInstallFailureRunner(
+          adb,
+          nonStreamingFailure: ProcessResult(
+            1,
+            1,
+            storagePressure ? storageError : '',
+            storagePressure ? '' : finalError,
+          ),
+          streamingFailure: ProcessResult(2, 1, '', finalError),
+        );
+        final guard = await AndroidAppStateGuard.capture(
+          devices: const <String>['physical-1'],
+          packageName: _packageName,
+          backupLabel: 'installer-failure-test',
+          runner: runner,
+        );
+        addTearDown(() async {
+          if (guard.backupDirectory.existsSync()) {
+            await guard.backupDirectory.delete(recursive: true);
+          }
+        });
+        final manifest = File(
+          '${guard.backupDirectory.path}/recovery-manifest.json',
+        );
+        final originalManifest = manifest.readAsBytesSync();
+
+        await expectLater(
+          guard.restoreAll(),
+          throwsA(
+            isA<AndroidAppStateFailure>().having(
+              (failure) => failure.detail,
+              'actual final installer error',
+              contains(finalError),
+            ),
+          ),
+        );
+
+        expect(guard.restored, isFalse);
+        expect(guard.backupDirectory.existsSync(), isTrue);
+        expect(manifest.readAsBytesSync(), originalManifest);
+        expect(
+          File(
+            '${guard.backupDirectory.path}/physical-1/installed-0.apk',
+          ).readAsBytesSync(),
+          <int>[1, 2, 3, 4],
+        );
+        expect(
+          runner.originalInstallAttempts,
+          hasLength(storagePressure ? 2 : 1),
+        );
+        expect(adb.commands.join('\n'), isNot(contains('uninstall')));
+        expect(adb.commands.join('\n'), isNot(contains(' pm clear ')));
+      },
+    );
+  }
+
   test('state guard retries a bounded transient adb offline window', () async {
     final state = _FakeAdbState.installed(
       apkBytes: <List<int>>[
@@ -2825,6 +2981,37 @@ final class _TimeoutRecordingAdbRunner
       arguments: List<String>.unmodifiable(arguments),
       timeout: timeout,
     ));
+    return delegate.run(executable, arguments);
+  }
+}
+
+final class _OriginalInstallFailureRunner implements AndroidHostProcessRunner {
+  _OriginalInstallFailureRunner(
+    this.delegate, {
+    required this.nonStreamingFailure,
+    this.streamingFailure,
+  });
+
+  final AndroidHostProcessRunner delegate;
+  final ProcessResult nonStreamingFailure;
+  final ProcessResult? streamingFailure;
+  final List<List<String>> originalInstallAttempts = <List<String>>[];
+
+  @override
+  Future<ProcessResult> run(String executable, List<String> arguments) async {
+    final args = arguments.length >= 2 && arguments.first == '-s'
+        ? arguments.sublist(2)
+        : arguments;
+    if (executable == 'adb' &&
+        args.isNotEmpty &&
+        (args.first == 'install' || args.first == 'install-multiple') &&
+        args.any((value) => value.endsWith('installed-0.apk'))) {
+      originalInstallAttempts.add(List<String>.from(arguments));
+      if (args.contains('--no-streaming')) return nonStreamingFailure;
+      if (args.contains('--streaming') && streamingFailure != null) {
+        return streamingFailure!;
+      }
+    }
     return delegate.run(executable, arguments);
   }
 }
