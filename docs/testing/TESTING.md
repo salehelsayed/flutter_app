@@ -2969,6 +2969,19 @@ before capture. An isolated probe that omitted this step timed out; granting the
 identified prompts through Appium allowed the unchanged identity check to pass.
 This fixture is host-only and does not change production identity recovery.
 
+Native notification tests on an iPhone must load the shared TC396 JSON from
+the test bundle. A compiled Mac `#filePath` is unavailable on the phone. Keep
+the canonical `test/shared/fixtures/ios_direct_notification_source_v1.json`
+as a RunnerTests resource and resolve it through `Bundle(for:)`. The original
+device run retained 46 passes and this fixture failure; the corrected bundle
+then passed all [51 existing preservation tests](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/native-preservation-fixture/native-five-preservation-verdict.redacted.json)
+with unchanged assertions and byte-identical fixture data. This closes the
+fixture finding; notification presentation and the three-phase campaign remain
+separate. Disable optional Xcode system-diagnostic collection for these focused
+tests; it previously spawned a local sudo check after failure, without supplied
+credentials, and delayed finalization. This does not disable test results or
+the campaign's required UI evidence.
+
 APNs acceptance, NSE decryption and an authorized content handoff do not prove
 that SpringBoard displayed a card. The [first complete campaign attempt](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/original-campaign-attempt-1/results.json)
 passed the fresh identity preconditions but failed its original fast-path card

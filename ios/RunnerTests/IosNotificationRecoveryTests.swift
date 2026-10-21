@@ -2128,15 +2128,12 @@ final class IosNotificationRecoveryTests: XCTestCase {
   }
 
   private func loadTC396DirectSourceFixture() throws -> [String: Any] {
-    let iosRoot = URL(fileURLWithPath: #filePath)
-      .deletingLastPathComponent()
-      .deletingLastPathComponent()
-    let appRoot = iosRoot.deletingLastPathComponent()
-    let url = appRoot
-      .appendingPathComponent("test")
-      .appendingPathComponent("shared")
-      .appendingPathComponent("fixtures")
-      .appendingPathComponent("ios_direct_notification_source_v1.json")
+    let url = try XCTUnwrap(
+      Bundle(for: type(of: self)).url(
+        forResource: "ios_direct_notification_source_v1",
+        withExtension: "json"
+      )
+    )
     let data = try Data(contentsOf: url)
     return try XCTUnwrap(
       JSONSerialization.jsonObject(with: data) as? [String: Any]

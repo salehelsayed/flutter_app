@@ -55,6 +55,7 @@
 		E373000573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */; };
 		E373000673A8000000000001 /* ios_nse_mailbox_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100673A8000000000001 /* ios_nse_mailbox_v1.json */; };
 		E373000773A8000000000001 /* local_notification_ledger_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E373100773A8000000000001 /* local_notification_ledger_v1.json */; };
+		E396000173AB000000000001 /* ios_direct_notification_source_v1.json in Resources */ = {isa = PBXBuildFile; fileRef = E396100173AB000000000001 /* ios_direct_notification_source_v1.json */; };
 		F10C6A2E0B4C44E2A0C0A001 /* GoBridgeCriticalTaskTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */; };
 		F191A00173A0000000000001 /* ForegroundPushForwardPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */; };
 		F191B00173A0000000000001 /* ForegroundPushForwardPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */; };
@@ -209,6 +210,7 @@
 		E373100573A8000000000001 /* IosNseMailboxWakeCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNseMailboxWakeCoordinatorTests.swift; sourceTree = "<group>"; };
 		E373100673A8000000000001 /* ios_nse_mailbox_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = ios_nse_mailbox_v1.json; path = ../../test/shared/fixtures/ios_nse_mailbox_v1.json; sourceTree = "<group>"; };
 		E373100773A8000000000001 /* local_notification_ledger_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = local_notification_ledger_v1.json; path = ../../test/shared/fixtures/local_notification_ledger_v1.json; sourceTree = "<group>"; };
+		E396100173AB000000000001 /* ios_direct_notification_source_v1.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = ios_direct_notification_source_v1.json; path = ../../test/shared/fixtures/ios_direct_notification_source_v1.json; sourceTree = "<group>"; };
 		F10C6A2E0B4C44E2A0C0A002 /* GoBridgeCriticalTaskTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoBridgeCriticalTaskTests.swift; sourceTree = "<group>"; };
 		F191A00173A0000000000002 /* ForegroundPushForwardPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicy.swift; sourceTree = "<group>"; };
 		F191B00173A0000000000002 /* ForegroundPushForwardPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundPushForwardPolicyTests.swift; sourceTree = "<group>"; };
@@ -340,6 +342,7 @@
 				D371B00573A7000000000001 /* app_visibility_snapshot_v1.json */,
 				E373100673A8000000000001 /* ios_nse_mailbox_v1.json */,
 				E373100773A8000000000001 /* local_notification_ledger_v1.json */,
+				E396100173AB000000000001 /* ios_direct_notification_source_v1.json */,
 				D371B00373A7000000000001 /* IosAppVisibilitySnapshotTests.swift */,
 				C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */,
 				E373100173A8000000000001 /* IosLocalNotificationFinalEffect.swift */,
@@ -655,6 +658,7 @@
 				F260D3010000000000000001 /* wire_fixtures_v1.json in Resources */,
 				E373000673A8000000000001 /* ios_nse_mailbox_v1.json in Resources */,
 				E373000773A8000000000001 /* local_notification_ledger_v1.json in Resources */,
+				E396000173AB000000000001 /* ios_direct_notification_source_v1.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
