@@ -894,6 +894,14 @@ class _SettingsWiredState extends State<SettingsWired>
       await _showSettingsSheet(
         builder: (sheetContext, setSheetState) {
           sheetRoute = ModalRoute.of<void>(sheetContext);
+          // Native inactivity can arrive after push but before this first frame.
+          if (protection?.latchedCriticalEvent != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final route = sheetRoute;
+              if (route != null && route.isCurrent) route.navigator?.pop();
+            });
+            return const SizedBox.shrink();
+          }
           _recoverySheetTick = () => setSheetState(() {});
           return SettingsRecoveryPhraseCard(
             words: words,

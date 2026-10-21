@@ -3794,7 +3794,10 @@ visible and cannot become an ordinary first-attempt PASS.
   Future completes before dismissal removes the phrase pixels. The same owner
   enables the existing iOS opaque cover on native application/scene inactivity,
   before its event reaches Dart; the recovery sheet then conceals and closes
-  before releasing the cover. Failed or late native grants must never mount a
+  before releasing the cover. Check the coordinator's critical latch in the
+  first sheet build as well: inactivity can arrive after route push but before
+  the builder captures its route, and must not strand a live native cover.
+  Failed or late native grants must never mount a
   phrase or leave a secure-window owner behind. Focused host tests use the real
   protection coordinator with native grants/events faked; these do not certify
   an actual Android/iOS app-switcher image. The Pixel 6 failure was reported by

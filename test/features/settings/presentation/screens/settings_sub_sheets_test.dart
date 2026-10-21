@@ -206,6 +206,46 @@ void main() {
     },
   );
 
+  testWidgets(
+    'native inactivity before the first sheet frame cannot strand its cover',
+    (tester) async {
+      final nativeEvents = StreamController<Object?>.broadcast(sync: true);
+      addTearDown(nativeEvents.close);
+      final methods = <String>[];
+      final protection = PrivateMediaProtectionCoordinator(
+        invokeMethod: (method, arguments) async {
+          methods.add(method);
+          return <String, Object?>{
+            'ok': true,
+            'protectionActive': method == 'enter',
+          };
+        },
+        nativeEvents: nativeEvents.stream,
+      );
+      await pumpWired(tester, protectionCoordinator: protection);
+      await tester.tap(find.byKey(const ValueKey('settings-row-recovery')));
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.value();
+      }
+      expect(methods, ['enter']);
+      expect(protection.coverActive, isFalse);
+      expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+      nativeEvents.add(<String, Object?>{'event': 'inactive'});
+      try {
+        await tester.pump();
+        await settleSheetClose(tester);
+        expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+        expect(methods, ['enter', 'exit']);
+      } finally {
+        final card = find.byType(SettingsRecoveryPhraseCard);
+        if (card.evaluate().isNotEmpty) {
+          Navigator.of(tester.element(card)).pop();
+          await settleSheetClose(tester);
+        }
+      }
+    },
+  );
+
   testWidgets('failed native protection never mounts the recovery phrase', (
     tester,
   ) async {
