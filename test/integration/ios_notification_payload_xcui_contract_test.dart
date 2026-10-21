@@ -1102,6 +1102,66 @@ void main() {
     },
   );
 
+  test('network restoration cannot be skipped by a failed tap or a flaky Control Center', () {
+    final source = File(
+      'ios/RunnerUITests/NotificationTapUITests.swift',
+    ).readAsStringSync();
+    final tap = _between(
+      source,
+      'func testPayloadFastPathNotificationTap()',
+      'func testRestorePayloadFastPathNetwork()',
+    );
+    expect(tap, contains('payloadNetworkRestorePending = true'));
+    expect(tap, contains('addTeardownBlock'));
+    expect(tap, contains('restorePendingPayloadNetwork()'));
+    expect(
+      tap.indexOf('addTeardownBlock'),
+      lessThan(tap.indexOf('guard try setAirplaneMode(true, fromCurrentSurface: true)')),
+      reason: 'the teardown restore must be registered before airplane mode turns on',
+    );
+    final teardownRestore = _between(
+      source,
+      'private func restorePendingPayloadNetwork()',
+      'private func settleOnSpringboard()',
+    );
+    expect(teardownRestore, contains('guard payloadNetworkRestorePending'));
+    expect(teardownRestore, contains('setAirplaneMode(false)'));
+
+    final setter = _between(
+      source,
+      'private func setAirplaneMode(',
+      'private func airplaneModeToggle(',
+    );
+    expect(source, contains('private let controlCenterOpenAttempts = 3'));
+    expect(setter, contains('for openAttempt in 1...controlCenterOpenAttempts'));
+    expect(
+      setter.indexOf('for openAttempt in 1...controlCenterOpenAttempts'),
+      lessThan(setter.indexOf('Control Center airplane-mode toggle is unavailable')),
+    );
+    expect(setter, contains('dismissControlCenterToCurrentSurface(springboard)'));
+    expect(setter, isNot(contains('dy: 0.98')));
+    final dismiss = _between(
+      source,
+      'private func dismissControlCenterToCurrentSurface(',
+      'private func restorePendingPayloadNetwork()',
+    );
+    expect(dismiss, contains('dy: 0.94)).tap()'));
+    expect(dismiss, isNot(contains('thenDragTo')));
+
+    final driver = File(
+      'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+    ).readAsStringSync();
+    final cleanup = _between(
+      driver,
+      'Future<String> _runUiCleanup()',
+      'Future<void> _cleanupAllAcquiredState()',
+    );
+    expect(driver, contains('static const int _uiCleanupAttempts = 3;'));
+    expect(cleanup, contains("'testRestorePayloadFastPathNetwork'"));
+    expect(cleanup, contains('attempt <= _uiCleanupAttempts && !_uiCleanupComplete'));
+    expect(cleanup, contains('if (!_uiCleanupComplete && lastFailure != null) throw lastFailure;'));
+  });
+
   test('airplane switch automation is exact, localized, and tri-state', () {
     final source = File(
       'ios/RunnerUITests/NotificationTapUITests.swift',

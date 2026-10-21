@@ -2844,16 +2844,32 @@ final class _IosPayloadDriver {
     _makeOwnerOnly(diagnostic);
   }
 
+  /// Network restoration must not be skipped by one flaky Control Center
+  /// gesture, so the restore selector is retried a bounded number of times.
+  static const int _uiCleanupAttempts = 3;
+
   Future<String> _runUiCleanup() async {
     _uiCleanupAttempted = true;
-    final output = await _runXcui(
-      'testRestorePayloadFastPathNetwork',
-      'cleanup-${_uiLogs.length}',
-    );
-    if (_hasMarker(output, 'NETWORK_RESTORED') &&
-        output.contains('app_terminated=true')) {
-      _uiCleanupComplete = true;
+    Object? lastFailure;
+    var output = '';
+    for (var attempt = 1;
+        attempt <= _uiCleanupAttempts && !_uiCleanupComplete;
+        attempt++) {
+      try {
+        output = await _runXcui(
+          'testRestorePayloadFastPathNetwork',
+          'cleanup-${_uiLogs.length}',
+        );
+      } catch (error) {
+        lastFailure = error;
+        continue;
+      }
+      if (_hasMarker(output, 'NETWORK_RESTORED') &&
+          output.contains('app_terminated=true')) {
+        _uiCleanupComplete = true;
+      }
     }
+    if (!_uiCleanupComplete && lastFailure != null) throw lastFailure;
     return output;
   }
 

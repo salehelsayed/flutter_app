@@ -4,6 +4,11 @@ import XCTest
 final class NotificationTapUITests: XCTestCase {
   private let readyMarker = "MKNOON_APNS_TAP_READY"
 
+  private let controlCenterOpenAttempts = 3
+  /// Set while the payload tap has airplane mode on; a teardown block restores
+  /// the network if a failed assertion stops the test before its own restore.
+  private var payloadNetworkRestorePending = false
+
   override func setUpWithError() throws {
     continueAfterFailure = false
     executionTimeAllowance = 120
@@ -286,6 +291,9 @@ final class NotificationTapUITests: XCTestCase {
         if !appTerminated {
           XCTFail("Payload fast-path app did not terminate before network restoration")
         }
+        if networkRestored {
+          payloadNetworkRestorePending = false
+        }
         if networkRestored && appTerminated {
           emitPlan258Marker(
             "NETWORK_RESTORED",
@@ -307,6 +315,10 @@ final class NotificationTapUITests: XCTestCase {
     }
     emitPlan258Marker("APNS_DELIVERED", fields: ["card_observed": "true"])
     mustRestoreNetwork = true
+    payloadNetworkRestorePending = true
+    addTeardownBlock { [weak self] in
+      self?.restorePendingPayloadNetwork()
+    }
     guard try setAirplaneMode(true, fromCurrentSurface: true) else {
       return
     }
@@ -1217,12 +1229,23 @@ final class NotificationTapUITests: XCTestCase {
     let center = springboard.coordinate(
       withNormalizedOffset: CGVector(dx: 0.92, dy: 0.62)
     )
-    topRight.press(forDuration: 0.1, thenDragTo: center)
-    RunLoop.current.run(until: Date().addingTimeInterval(1.5))
-
     let localizedValues = localizedAirplaneToggleValues()
-    let toggle = airplaneModeToggle(in: springboard)
-    guard toggle.waitForExistence(timeout: 10) else {
+    var toggle = airplaneModeToggle(in: springboard)
+    var controlCenterOpen = false
+    for openAttempt in 1...controlCenterOpenAttempts {
+      if openAttempt > 1 {
+        XCUIDevice.shared.press(.home)
+        settleOnSpringboard()
+      }
+      topRight.press(forDuration: 0.1, thenDragTo: center)
+      RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+      toggle = airplaneModeToggle(in: springboard)
+      if toggle.waitForExistence(timeout: openAttempt == controlCenterOpenAttempts ? 10 : 5) {
+        controlCenterOpen = true
+        break
+      }
+    }
+    guard controlCenterOpen else {
       XCTFail("Control Center airplane-mode toggle is unavailable")
       return false
     }
@@ -1260,10 +1283,7 @@ final class NotificationTapUITests: XCTestCase {
       return false
     }
     if fromCurrentSurface {
-      let bottom = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
-      let upper = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
-      bottom.press(forDuration: 0.05, thenDragTo: upper)
-      RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+      dismissControlCenterToCurrentSurface(springboard)
     } else {
       XCUIDevice.shared.press(.home)
       settleOnSpringboard()
@@ -1746,6 +1766,25 @@ final class NotificationTapUITests: XCTestCase {
       .joined(separator: ";")
       .prefix(1500)
       .description
+  }
+
+  /// A tap on empty Control Center space closes it and returns to the surface
+  /// underneath; a bottom swipe would also close that surface.
+  private func dismissControlCenterToCurrentSurface(_ springboard: XCUIApplication) {
+    springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.94)).tap()
+    RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+  }
+
+  private func restorePendingPayloadNetwork() {
+    guard payloadNetworkRestorePending else { return }
+    let restored = (try? setAirplaneMode(false)) ?? false
+    if restored {
+      payloadNetworkRestorePending = false
+      emitPlan258Marker(
+        "NETWORK_RESTORED",
+        fields: ["airplane": "false", "app_terminated": "false", "inline": "teardown"]
+      )
+    }
   }
 
   private func settleOnSpringboard() {
