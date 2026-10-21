@@ -11,7 +11,7 @@ enum ParseQRResult {
   /// Successfully parsed and verified.
   success,
 
-  /// The QR data is not valid JSON.
+  /// The QR data has invalid JSON or an invalid timestamp.
   invalidJson,
 
   /// Required fields are missing from the payload.
@@ -115,25 +115,24 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
     return (ParseQRResult.selfScan, null);
   }
 
-  // 4. Check timestamp (optional expiration)
-  try {
-    final payloadTime = DateTime.parse(timestamp);
-    final now = DateTime.now().toUtc();
-    if (now.difference(payloadTime) > maxAge) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'QR_PARSE_EXPIRED',
-        details: {'timestamp': timestamp},
-      );
-      return (ParseQRResult.expired, null);
-    }
-  } catch (e) {
-    // If timestamp parsing fails, continue without expiration check
+  // 4. Admit only readable timestamps that are not in the future.
+  final payloadTime = DateTime.tryParse(timestamp)?.toUtc();
+  final now = DateTime.now().toUtc();
+  if (payloadTime == null || payloadTime.isAfter(now)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'QR_PARSE_TIMESTAMP_ERROR',
-      details: {'error': e.toString()},
+      details: {'reason': payloadTime == null ? 'unreadable' : 'future'},
     );
+    return (ParseQRResult.invalidJson, null);
+  }
+  if (now.difference(payloadTime) > maxAge) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'QR_PARSE_EXPIRED',
+      details: {'timestamp': timestamp},
+    );
+    return (ParseQRResult.expired, null);
   }
 
   // 5. Verify signature
