@@ -1665,6 +1665,14 @@ final class NotificationTapUITests: XCTestCase {
     ])
     let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
     settings.launch()
+    func returnToSettingsRoot() {
+      var steps = 0
+      while settings.navigationBars.buttons["BackButton"].exists && steps < 6 {
+        settings.navigationBars.buttons["BackButton"].tap()
+        steps += 1
+      }
+    }
+    returnToSettingsRoot()
     func openCell(_ predicate: NSPredicate) -> Bool {
       let cell = settings.cells.matching(predicate).firstMatch
       var swipes = 0
@@ -1698,6 +1706,7 @@ final class NotificationTapUITests: XCTestCase {
     }
     settings.terminate()
     settings.launch()
+    returnToSettingsRoot()
     if openCell(NSPredicate(format: "label == 'Focus'")) {
       RunLoop.current.run(until: Date().addingTimeInterval(1))
       emitPlan258Marker("READONLY_FOCUS", fields: ["found": "true", "page": pageSnapshot()])

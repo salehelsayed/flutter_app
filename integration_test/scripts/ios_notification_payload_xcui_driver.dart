@@ -326,6 +326,29 @@ final class _IosPayloadDriver {
   late final String _identityFixtureMlKemPublicKeySha256;
   late final File _patchedXctestrun;
   late final File _rawSyslog;
+
+  /// Keeps only the receiver test-profile diagnostic lines (hashed ids and
+  /// counts, no raw content) before the raw device log is privately deleted.
+  void _retainPayloadDiagnosticLines() {
+    const prefix = 'MKNOON_IOS_PAYLOAD_DIAGNOSTIC_V1';
+    final File raw;
+    try {
+      raw = _rawSyslog;
+    } catch (_) {
+      return;
+    }
+    if (!raw.existsSync()) return;
+    final kept = <String>[];
+    for (final line in raw.readAsLinesSync(encoding: latin1)) {
+      final index = line.indexOf(prefix);
+      if (index < 0) continue;
+      final stamp = line.length < 32 ? line : line.substring(0, 32);
+      kept.add('$stamp ${line.substring(index)}');
+      if (kept.length >= 2000) break;
+    }
+    File('${options.captureDirectory.path}/payload-diagnostic.redacted.log')
+        .writeAsStringSync('${kept.join('\n')}\n', flush: true);
+  }
   late final File _providerReceiptFile;
   late final File _providerCleanupReceiptFile;
   late final File _providerRetryReceiptFile;
@@ -687,6 +710,7 @@ final class _IosPayloadDriver {
                   status: options.output.existsSync() ? 'passed' : 'failed',
                 );
               }
+              _retainPayloadDiagnosticLines();
             },
             cleanupOwners: <FutureOr<void> Function()>[
               _cleanupAllAcquiredState,
@@ -1099,6 +1123,7 @@ final class _IosPayloadDriver {
                   status: options.output.existsSync() ? 'passed' : 'failed',
                 );
               }
+              _retainPayloadDiagnosticLines();
             },
             cleanupOwners: <FutureOr<void> Function()>[
               _cleanupAllAcquiredState,
@@ -1419,6 +1444,7 @@ final class _IosPayloadDriver {
                   status: options.output.existsSync() ? 'passed' : 'failed',
                 );
               }
+              _retainPayloadDiagnosticLines();
             },
             cleanupOwners: <FutureOr<void> Function()>[
               _cleanupAllAcquiredState,
