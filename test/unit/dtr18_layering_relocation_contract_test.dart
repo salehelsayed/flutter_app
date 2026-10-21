@@ -230,8 +230,10 @@ const _privacySha256 =
 // No lifecycle, repository, or resume ownership moves.
 // C2 kx0007: root-owned callback feedback uses localized navigator context
 // and the modal call messenger. Existing owners and resume dispatch stay put.
+// Plan 407 KX8: permission-dialog focus loss keeps the pending callback current;
+// hidden/paused/detached and replacement still fence it. No owner moves.
 const _applicationRootNormalizedSha256 =
-    'cee655b42b439053f29d66e5494d388e1ec2ff2b983168bb98f6854b88208950';
+    '51a653398dc9df10b3a85441cd6a39eb09c6233cc8de86aa348ddafa74eb6b77';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

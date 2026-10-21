@@ -1703,9 +1703,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       ready: _callBackReady,
       redial: CallRedialController(
         capability: () => mounted ? widget.outgoingCallCapability : null,
+        // A system permission dialog can return before Flutter regains focus.
+        // Hidden/paused/detached still cancel this unadmitted action.
         isCurrent: () =>
             mounted &&
-            WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed,
+            switch (WidgetsBinding.instance.lifecycleState) {
+              AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+              _ => false,
+            },
         contactAllowed: (peerId) async {
           final contact = await widget.contactRepository.getContact(peerId);
           return mounted && contact != null && !contact.isBlocked;

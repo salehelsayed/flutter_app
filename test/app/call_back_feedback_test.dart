@@ -90,27 +90,53 @@ final _now = DateTime.utc(2026, 10, 19, 12);
 
 void main() {
   for (final surface in [
-    (
-      name: 'no call surface',
-      active: false,
-      minimized: false,
-      controlled: false,
-    ),
+    for (final permissionLifecycle in <AppLifecycleState?>[
+      null,
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.detached,
+    ])
+      (
+        name: 'no call surface',
+        active: false,
+        minimized: false,
+        controlled: false,
+        permissionLifecycle: permissionLifecycle,
+      ),
     (
       name: 'withdrawn preparing surface',
       active: false,
       minimized: false,
       controlled: true,
+      permissionLifecycle: null,
     ),
-    (name: 'expanded call', active: true, minimized: false, controlled: false),
-    (name: 'minimized call', active: true, minimized: true, controlled: true),
+    (
+      name: 'expanded call',
+      active: true,
+      minimized: false,
+      controlled: false,
+      permissionLifecycle: null,
+    ),
+    (
+      name: 'minimized call',
+      active: true,
+      minimized: true,
+      controlled: true,
+      permissionLifecycle: null,
+    ),
   ]) {
     for (final result in [
-      OutgoingCallStartResult.unavailable,
+      if (surface.permissionLifecycle == null)
+        OutgoingCallStartResult.unavailable,
       OutgoingCallStartResult.microphoneDenied,
     ]) {
+      final permissionLifecycle = surface.permissionLifecycle;
       testWidgets('production root exposes ${result.name} feedback with '
-          '${surface.name} without ending a retained call', (tester) async {
+          '${surface.name} without ending a retained call '
+          '(permission lifecycle: ${permissionLifecycle?.name ?? 'resumed'})', (
+        tester,
+      ) async {
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );
@@ -120,6 +146,16 @@ void main() {
             active: surface.active,
             controlled: surface.controlled,
             result: result,
+            beforeResult: permissionLifecycle == null
+                ? null
+                : () async {
+                    // The OS permission result can precede focus returning to
+                    // Flutter. Exercise the actual root's request fence then.
+                    tester.binding.handleAppLifecycleStateChanged(
+                      permissionLifecycle,
+                    );
+                    await Future<void>.delayed(Duration.zero);
+                  },
           );
           addTearDown(calls.dispose);
           final notifications = _Notifications();
@@ -264,15 +300,27 @@ void main() {
           for (var frame = 0; frame < 6; frame++) {
             await tester.pump(const Duration(milliseconds: 100));
           }
+          final canceled =
+              permissionLifecycle != null &&
+              permissionLifecycle != AppLifecycleState.inactive;
+          expect(completed, [
+            canceled ? OutgoingCallStartResult.canceled : result,
+          ]);
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pump();
           final message = result == OutgoingCallStartResult.microphoneDenied
               ? 'Microphone permission is needed to make calls.'
               : 'Voice calling is unavailable.';
-          expect(find.text(message).hitTestable(), findsOneWidget);
+          expect(
+            find.text(message).hitTestable(),
+            canceled ? findsNothing : findsOneWidget,
+          );
           expect(
             find.bySemanticsLabel(RegExp(RegExp.escape(message))),
-            findsOneWidget,
+            canceled ? findsNothing : findsOneWidget,
           );
-          expect(completed, [result]);
           expect(calls.current, same(before));
           if (surface.active) {
             expect(calls.current!.session.callId, _activeId);
@@ -389,8 +437,10 @@ class _BusyCall extends _Unused
     required bool active,
     required this.controlled,
     required this.result,
+    this.beforeResult,
   }) : current = active ? _activeProjection : null;
   final OutgoingCallStartResult result;
+  final Future<void> Function()? beforeResult;
   final bool controlled;
   final _refusal = Completer<OutgoingCallStartResult>();
   int startRequests = 0;
@@ -430,6 +480,8 @@ class _BusyCall extends _Unused
     OutgoingCallStartRequest? request,
   }) async {
     startRequests += 1;
+    await beforeResult?.call();
+    request?.checkPending();
     if (!controlled) return result;
     if (current == null) {
       current = ForegroundCallProjection(
