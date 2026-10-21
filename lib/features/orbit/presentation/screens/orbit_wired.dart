@@ -2502,15 +2502,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       },
     );
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => ContactRequestDialog(
-        request: request,
-        onAccept: () => _acceptRequest(ctx, request),
-        onDecline: () => _declineRequest(ctx, request),
-      ),
-    );
+    widget.contactRequestListener.presentRequest(request, () async {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => ContactRequestDialog(
+          request: request,
+          onAccept: () => _acceptRequest(ctx, request),
+          onDecline: () => _declineRequest(ctx, request),
+        ),
+      );
+    });
   }
 
   Future<void> _acceptRequest(

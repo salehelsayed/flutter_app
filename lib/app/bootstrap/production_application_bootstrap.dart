@@ -6566,6 +6566,7 @@ final class ProductionApplicationBootstrap
       getOwnAccountPeerId: () async =>
           (await repository.loadIdentity())?.peerId,
       onRepairReplyQueued: () => unawaited(contactRepairOutboxWorker.drain()),
+      presentationGateChanges: contactRequestPresentationGate,
       shouldSuppressPresentationForPeerId:
           contactRequestPresentationGate.shouldSuppress,
       // 171 follow-up (user decision): the scanned user is notified via the

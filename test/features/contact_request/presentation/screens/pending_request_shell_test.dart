@@ -115,37 +115,32 @@ void main() {
     timeout: const Timeout(Duration(seconds: 45)),
   );
 
-  group(
-    'missed request recovery obligation',
-    () {
-      testWidgets(
-        'CR-003 suppression release reveals a missed request with shell subscribers retained',
-        (tester) async {
-          final h = await _open(tester);
-          await h.mount(tester, withOrbit: true);
-          final wire = await h.makeWire(tester, 0x52, 'Bob');
-          h.gate.suppress(wire.from);
-          await h.live(tester, wire);
-          expect(_dialogs, findsNothing);
-          expect(
-            await tester.runAsync(h.requests.getPendingRequests),
-            hasLength(1),
-          );
-          h.gate.release(wire.from);
-          h.shell.switchTo(AppShellTab.feed);
-          await _frames(tester);
-          h.shell.switchTo(AppShellTab.orbit);
-          await _frames(tester);
-          expect(_dialogs, findsOneWidget);
-          expect(find.text('Bob'), findsOneWidget);
-          expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
-        },
-        timeout: const Timeout(Duration(seconds: 45)),
-      );
-    },
-    skip:
-        'KNOWN GAP CR-003: releasing presentation suppression emits no retry while the shell remains subscribed, lib/features/contact_request/application/contact_request_presentation_gate.dart:21. Remove when fixed.',
-  );
+  group('missed request recovery obligation', () {
+    testWidgets(
+      'CR-003 suppression release reveals a missed request with shell subscribers retained',
+      (tester) async {
+        final h = await _open(tester);
+        await h.mount(tester, withOrbit: true);
+        final wire = await h.makeWire(tester, 0x52, 'Bob');
+        h.gate.suppress(wire.from);
+        await h.live(tester, wire);
+        expect(_dialogs, findsNothing);
+        expect(
+          await tester.runAsync(h.requests.getPendingRequests),
+          hasLength(1),
+        );
+        h.gate.release(wire.from);
+        h.shell.switchTo(AppShellTab.feed);
+        await _frames(tester);
+        h.shell.switchTo(AppShellTab.orbit);
+        await _frames(tester);
+        expect(_dialogs, findsOneWidget);
+        expect(find.text('Bob'), findsOneWidget);
+        expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
+  });
 
   testWidgets(
     'CR-005 live plus inbox duplicate and listener restart retain one consent dialog',
@@ -178,31 +173,26 @@ void main() {
     timeout: const Timeout(Duration(seconds: 45)),
   );
 
-  group(
-    'single dialog ownership obligation',
-    () {
-      testWidgets(
-        'CR-005 one event with Feed and embedded Orbit mounted opens one dialog route',
-        (tester) async {
-          final h = await _open(tester);
-          await h.mount(tester, withOrbit: true);
-          final wire = await h.makeWire(tester, 0x52, 'Bob');
-          await h.live(tester, wire);
-          await tester.runAsync(() => h.listener.processIncomingMessage(wire));
-          await _frames(tester);
-          expect(
-            await tester.runAsync(h.requests.getPendingRequests),
-            hasLength(1),
-          );
-          expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
-          expect(_dialogs, findsOneWidget);
-        },
-        timeout: const Timeout(Duration(seconds: 45)),
-      );
-    },
-    skip:
-        'KNOWN GAP CR-005: Feed and embedded Orbit both open a dialog for one broadcast, lib/features/feed/presentation/screens/feed_wired.dart:1494; lib/features/orbit/presentation/screens/orbit_wired.dart:2505. Remove when fixed.',
-  );
+  group('single dialog ownership obligation', () {
+    testWidgets(
+      'CR-005 one event with Feed and embedded Orbit mounted opens one dialog route',
+      (tester) async {
+        final h = await _open(tester);
+        await h.mount(tester, withOrbit: true);
+        final wire = await h.makeWire(tester, 0x52, 'Bob');
+        await h.live(tester, wire);
+        await tester.runAsync(() => h.listener.processIncomingMessage(wire));
+        await _frames(tester);
+        expect(
+          await tester.runAsync(h.requests.getPendingRequests),
+          hasLength(1),
+        );
+        expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+        expect(_dialogs, findsOneWidget);
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
+  });
 
   testWidgets(
     'CR-014 burst preserves each distinct pending row without granting consent',
@@ -220,41 +210,36 @@ void main() {
     timeout: const Timeout(Duration(seconds: 45)),
   );
 
-  group(
-    'sequential burst presentation obligation',
-    () {
-      testWidgets(
-        'CR-014 burst presents one request at a time and keeps the others until answered',
-        (tester) async {
-          final h = await _open(tester);
-          await h.mount(tester);
-          for (final pair in [(0x52, 'Bob'), (0x53, 'Carol'), (0x54, 'Dana')]) {
-            await h.live(tester, await h.makeWire(tester, pair.$1, pair.$2));
-          }
-          final answered = <String>{};
-          for (var remaining = 3; remaining > 0; remaining--) {
-            expect(
-              await tester.runAsync(h.requests.getPendingRequests),
-              hasLength(remaining),
-            );
-            expect(_dialogs, findsOneWidget);
-            answered.add(
-              tester.widget<ContactRequestDialog>(_dialogs).request.username,
-            );
-            await tester.tap(find.text('Decline'));
-            await _frames(tester);
-          }
-          expect(answered, {'Bob', 'Carol', 'Dana'});
-          expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
-          expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
-          expect(_dialogs, findsNothing);
-        },
-        timeout: const Timeout(Duration(seconds: 45)),
-      );
-    },
-    skip:
-        'KNOWN GAP CR-014: each broadcast opens showDialog instead of queuing behind the current request, lib/features/feed/presentation/screens/feed_wired.dart:1494. Remove when fixed.',
-  );
+  group('sequential burst presentation obligation', () {
+    testWidgets(
+      'CR-014 burst presents one request at a time and keeps the others until answered',
+      (tester) async {
+        final h = await _open(tester);
+        await h.mount(tester);
+        for (final pair in [(0x52, 'Bob'), (0x53, 'Carol'), (0x54, 'Dana')]) {
+          await h.live(tester, await h.makeWire(tester, pair.$1, pair.$2));
+        }
+        final answered = <String>{};
+        for (var remaining = 3; remaining > 0; remaining--) {
+          expect(
+            await tester.runAsync(h.requests.getPendingRequests),
+            hasLength(remaining),
+          );
+          expect(_dialogs, findsOneWidget);
+          answered.add(
+            tester.widget<ContactRequestDialog>(_dialogs).request.username,
+          );
+          await tester.tap(find.text('Decline'));
+          await _frames(tester);
+        }
+        expect(answered, {'Bob', 'Carol', 'Dana'});
+        expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+        expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+        expect(_dialogs, findsNothing);
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
+  });
 
   testWidgets(
     'CR-005 accepting once converges one contact each and no reciprocal loop',
@@ -541,6 +526,7 @@ class _Shell {
       getOwnPrivateKey: () async => local.privateKey,
       getOwnPublicKey: () async => local.publicKey,
       getOwnAccountPeerId: () async => local.peerId,
+      presentationGateChanges: gate,
       shouldSuppressPresentationForPeerId: gate.shouldSuppress,
       downloadProfilePictureFn:
           ({
