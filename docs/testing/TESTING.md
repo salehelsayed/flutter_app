@@ -489,6 +489,25 @@ that child before handing the device to another campaign. The receipt at
 `.codex-test-logs/all-tests-y227gs8x/appium-mcp-transport-001/readiness.json`
 proves automation readiness, not Mknoon behavior or a signed candidate.
 
+Appium can also use a private copy of WDA's project, signing configuration and
+DerivedData while another worktree owns the shared build lease. With XCUITest
+12.8.2 and its nested WDA 16.8.0, set `bootstrapPath`, `agentPath`,
+`derivedDataPath` and `xcodeConfigFile` to that private root. The existing
+Xcode-managed profile required automatic signing and `Apple Development`;
+forcing Manual signing or a certificate SHA-1 selector failed before launch.
+Verify the produced app's embedded profile and signing leaf against the existing
+approved identity. `usePrebuiltWDA=true` avoids the driver's project-cleanup
+branch. Combining it with `prebuildWDA=true` built successfully, but this driver
+retained its build-only exit state and proxied before the test server was ready.
+After ending only that owned test child, a fresh session with
+`prebuildWDA=false` and the same private prebuilt artifact worked through actual
+Appium MCP. Recorded Xcode commands used private project/config/output paths;
+the shared WDA project was unchanged. The iPhone device lease remained exclusive.
+This proved automation and a fresh Mknoon notification-settings inspection, with
+no settings-switch change or provider dispatch; it did not prove notification
+delivery. Redacted evidence:
+`.codex-test-logs/plan407-three-fixes/ios-independent-setup-proof/`.
+
 For the October 10 iPhone 11 / Pixel_8 emulator call probe, the emulator's
 virtual Wi-Fi path lost provisioning in two attempts, including after a cold
 boot. Both attempts first verified inbound and outbound RTP, then lost media;
@@ -8084,6 +8103,18 @@ State an investigation area separately from a proven root cause.
   parallel native manifest checks writing the same gomobile AAR and corrupting
   it; sequential checks restored it (about 18 seconds plus six seconds).
   Keep shared native artifact mutations serialized or use isolated outputs.
+  Compilation alone does not establish a shared-output collision. The original
+  audio adapter's AAR, gomobile tools/stamp, Gradle outputs, native-hook outputs
+  and SIMS artifact cache resolved to distinct checkout-local paths. Its fixture
+  used a unique private directory and checked dynamic ports. Go's same-machine
+  cache explicitly coordinates concurrent writers with OS locks; Gradle and
+  Flutter also coordinate their shared caches. With SDK installation/upgrades,
+  `gomobile init` and shared cleanup excluded, the unchanged central audio build
+  passed while a foreign worktree retained its build lease. Canonical Android
+  device leases remained exclusive. This direct extra-suite route does not
+  change the normal check wrapper's global-lock policy, and a successful build
+  does not certify the audio scenarios. Source/output audit and exact APK
+  binding: `.codex-test-logs/plan407-three-fixes/audio-independent-setup-proof/`.
 - **Historical product counterexample:**
   `artifacts/phantom-notification-20260910/predeployment_reproduction.md` records
   an intentionally failing old-notification-history Go overlay and a passing
