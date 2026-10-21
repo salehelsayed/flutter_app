@@ -15,6 +15,9 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
   final List<FakeAudioLoadBarrier> _queuedLoads = [];
 
   final List<String> loadedUris = [];
+
+  /// Optional native-source check; default tests still accept synthetic paths.
+  void Function(String uri)? loadUriValidator;
   int playCallCount = 0;
 
   /// Queues one caller-controlled load. Existing users that do not queue a
@@ -47,6 +50,7 @@ class FakeJustAudioPlatform extends JustAudioPlatform {
     final uri = _firstUri(source);
     if (uri != null) {
       loadedUris.add(uri);
+      loadUriValidator?.call(uri);
     }
 
     if (_queuedLoads.isEmpty) {

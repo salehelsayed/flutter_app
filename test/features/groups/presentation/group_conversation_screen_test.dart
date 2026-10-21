@@ -1960,7 +1960,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Sending automatically…'), findsOneWidget);
-    expect(find.text('Uploading photo · 50%'), findsOneWidget);
+    expect(find.text('Uploading · 50%'), findsOneWidget);
   });
 
   testWidgets('shows loading shell while initial group page is still loading', (

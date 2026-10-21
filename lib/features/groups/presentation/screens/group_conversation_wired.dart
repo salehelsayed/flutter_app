@@ -2899,7 +2899,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           height: m.height,
           durationMs: m.durationMs,
           localPath: m.file.path,
-          downloadStatus: 'done',
+          downloadStatus: 'upload_pending',
           createdAt: createdAt,
           fileName: documentFileNameForPath(
             m.file.path,
@@ -3122,7 +3122,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   .map(
                     (plan) => plan.pendingAttachment.copyWith(
                       localPath: plan.absoluteDurablePath,
-                      downloadStatus: 'done',
                     ),
                   )
                   .toList(growable: false);

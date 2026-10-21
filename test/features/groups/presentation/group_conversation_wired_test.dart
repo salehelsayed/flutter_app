@@ -4968,7 +4968,16 @@ void main() {
             ..writeAsBytesSync(validJpegFixtureBytes),
         ];
 
-        final testMediaFileManager = FakeMediaFileManager();
+        final previousDocumentsRoot = MediaFileManager.cachedDocumentsDir;
+        MediaFileManager.cacheDocumentsDir(tempDir.path);
+        addTearDown(() {
+          if (previousDocumentsRoot == null) {
+            MediaFileManager.debugResetDocumentsDirCache();
+          } else {
+            MediaFileManager.cacheDocumentsDir(previousDocumentsRoot);
+          }
+        });
+        final testMediaFileManager = TrackingDurableMediaFileManager(tempDir);
         final uploadStarts = <String>[];
         final seenBlobIds = <String>[];
         final pendingSeenBeforeUpload = <bool>[];
@@ -5051,6 +5060,54 @@ void main() {
         final sendFuture = await startScreenSend(tester, 'Durable media');
         await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 1);
         expect(uploadStarts, hasLength(1));
+        await pumpFrames(tester, count: 5);
+
+        final outgoingCard = find.byWidgetPredicate(
+          (widget) => widget is LetterCard && widget.text == 'Durable media',
+        );
+        expect(outgoingCard, findsOneWidget);
+        final pendingCard = tester.widget<LetterCard>(outgoingCard);
+        expect(pendingCard.requireVerifiedContentHash, isTrue);
+        expect(pendingCard.media, hasLength(3));
+        for (final attachment in pendingCard.media) {
+          expect(attachment.hasEncryptionMetadata, isFalse);
+          expect(
+            File(
+              MediaFileManager.resolveStoredPathSync(attachment.localPath!),
+            ).readAsBytesSync(),
+            orderedEquals(validJpegFixtureBytes),
+          );
+        }
+        expect(
+          find.descendant(
+            of: outgoingCard,
+            matching: find.text("Couldn't open this file"),
+          ),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: outgoingCard,
+            matching: find.byIcon(Icons.broken_image_outlined),
+          ),
+          findsNothing,
+        );
+        for (final attachment in pendingCard.media) {
+          final tileFinder = find.byKey(
+            ValueKey(
+              'media-grid-cell-${attachment.messageId}-${attachment.id}',
+            ),
+          );
+          expect(
+            find.descendant(
+              of: tileFinder,
+              matching: find.text('Media pending upload'),
+            ),
+            findsOneWidget,
+          );
+          final tile = tester.widget<GestureDetector>(tileFinder);
+          expect(tile.onTap, isNull, reason: 'pending upload is not verified');
+        }
         uploadReleases[0].complete();
         await pumpUntilAsyncWorkSettles(tester, () => uploadStarts.length == 2);
         expect(uploadStarts, hasLength(2));
@@ -14374,7 +14431,7 @@ void main() {
 
       expect(find.text('50%'), findsOneWidget);
       expect(find.text('Sending automatically…'), findsOneWidget);
-      expect(find.text('Uploading photo · 50%'), findsOneWidget);
+      expect(find.text('Uploading · 50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,

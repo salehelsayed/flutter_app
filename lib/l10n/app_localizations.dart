@@ -5969,13 +5969,13 @@ abstract class AppLocalizations {
   /// No description provided for @media_uploading_percent.
   ///
   /// In en, this message translates to:
-  /// **'Uploading photo · {percent}%'**
+  /// **'Uploading · {percent}%'**
   String media_uploading_percent(int percent);
 
   /// No description provided for @media_uploading.
   ///
   /// In en, this message translates to:
-  /// **'Uploading photo…'**
+  /// **'Uploading…'**
   String get media_uploading;
 
   /// No description provided for @media_view_once_not_viewed.

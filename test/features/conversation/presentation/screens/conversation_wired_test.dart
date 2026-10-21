@@ -14544,7 +14544,7 @@ void main() {
 
       expect(find.text('50%'), findsOneWidget);
       expect(find.text('Sending automatically…'), findsOneWidget);
-      expect(find.text('Uploading photo · 50%'), findsOneWidget);
+      expect(find.text('Uploading · 50%'), findsOneWidget);
       expect(
         find.text('Keep the app open until the upload completes'),
         findsOneWidget,

@@ -5410,7 +5410,8 @@
     {
       "id": "localization",
       "patterns": [
-        "lib/l10n/*"
+        "lib/l10n/*",
+        "test/l10n/*"
       ],
       "checks": [
         "affected-conversation",

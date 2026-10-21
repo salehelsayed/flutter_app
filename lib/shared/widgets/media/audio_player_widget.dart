@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -376,8 +377,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   Future<void> _loadAudioSource() async {
-    final path = widget.attachment.localPath;
-    if (path == null || !_isAvailable) return;
+    final storedPath = widget.attachment.localPath;
+    if (storedPath == null || !_isAvailable) return;
+    final path = MediaFileManager.resolveStoredPathSync(storedPath);
     if ((_isLoaded && _loadedPath == path) || _loadingPath == path) return;
     final loadVersion = ++_loadVersion;
     _loadingPath = path;

@@ -39,7 +39,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Sending automatically…'), findsOneWidget);
-    expect(find.text('Uploading photo · 50%'), findsOneWidget);
+    expect(find.text('Uploading · 50%'), findsOneWidget);
   });
 
   testWidgets('uses localized fallback when the bridge omits total bytes', (
@@ -57,7 +57,7 @@ void main() {
     );
 
     expect(find.text('Sending automatically…'), findsOneWidget);
-    expect(find.text('Uploading photo…'), findsOneWidget);
+    expect(find.text('Uploading…'), findsOneWidget);
     expect(find.textContaining('%'), findsNothing);
   });
 }

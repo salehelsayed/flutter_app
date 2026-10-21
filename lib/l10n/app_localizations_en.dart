@@ -3583,11 +3583,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String media_uploading_percent(int percent) {
-    return 'Uploading photo · $percent%';
+    return 'Uploading · $percent%';
   }
 
   @override
-  String get media_uploading => 'Uploading photo…';
+  String get media_uploading => 'Uploading…';
 
   @override
   String get media_view_once_not_viewed => 'Not viewed yet.';

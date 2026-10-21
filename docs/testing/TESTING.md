@@ -3850,6 +3850,31 @@ visible and cannot become an ordinary first-attempt PASS.
   recovery before inbox drain; background polling remains disabled. Actual
   Android background OS delivery is **UNTESTED** by these host fixtures.
 
+  A mounted sender voice player must resolve a newly committed relative path
+  before handing it to the platform player. The audio widget regression keeps
+  the same state mounted across durable commit, preserves exact source bytes,
+  and covers recovery from an earlier load failure. Its fake player checks
+  file existence and playback dispatch, not native codec decoding. Group
+  optimistic media must keep `upload_pending` until upload completes: marking
+  retained plaintext `done` makes the receive verification gate correctly
+  reject its not-yet-created encryption metadata. The held-upload wired test
+  proves exact JPEG retention, pending tiles and disabled opening without
+  weakening that gate. A completed ordinary group upload with a retained send
+  envelope stays pending while automatic send replay owns the row; the causal
+  application/screen test also preserves terminal `send_failed` manual retry
+  and proves same-row convergence without reupload.
+
+  Relay retirement already clears swarm dial backoff. A late old-path failure
+  can restore it before the epoch's fresh dial; the handoff reuses its existing
+  second attempt after clearing only that relay's backoff. The real loopback
+  relay/proxy test requires an initial actual backoff error, then a fresh socket
+  and reservation in the same epoch without a host restart or another event.
+  Repeated backoff remains bounded; ordinary failure and cancellation preserve
+  their existing behavior. These host fixtures do not certify Android freezer
+  behavior or background delivery. Causal REDs, initial fixture failures,
+  resource stops and focused GREEN receipts are retained in
+  `.codex-test-logs/batch2-voice-fix-20261021/`.
+
   Focused Batch 2 receipts and causal REDs are retained in
   `.codex-test-logs/batch2-20261021/`, including first-attempt obsolete UI
   expectations before alignment with the silent-retry requirement. Focused
