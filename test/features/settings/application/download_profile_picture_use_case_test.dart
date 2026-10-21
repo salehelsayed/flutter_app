@@ -18,6 +18,10 @@ import 'package:flutter_app/features/settings/application/download_profile_pictu
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/profile_update_listener.dart';
 
+Uint8List _validNormalizedAvatarBytes() => base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGNhAAMWCAUAAGIACcSrH9MAAAAASUVORK5CYII=',
+);
+
 // ---------------------------------------------------------------------------
 // Fakes
 // ---------------------------------------------------------------------------
@@ -176,9 +180,7 @@ void main() {
     bridge = _MockBridge();
     bridge.profileDownloadBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]);
     contactRepo = _FakeContactRepository();
-    avatarNormalizer = _makeAvatarNormalizer(
-      Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]),
-    );
+    avatarNormalizer = _makeAvatarNormalizer(_validNormalizedAvatarBytes());
 
     tempDir = await Directory.systemTemp.createTemp('download_profile_test_');
     PathProviderPlatform.instance = _FakePathProvider(tempDir.path);
@@ -341,7 +343,7 @@ void main() {
         expect(bridge.downloadCount, 2);
         expect(
           File('${tempDir.path}/media/avatars/$peerId.jpg').readAsBytesSync(),
-          orderedEquals([0xCA, 0xFE, 0xBA, 0xBE]),
+          orderedEquals(_validNormalizedAvatarBytes()),
         );
         await listener.retryNow();
         expect(
@@ -586,7 +588,7 @@ void main() {
         final rawRelayBytes = Uint8List.fromList(
           List<int>.generate(96, (index) => index % 256),
         );
-        final processedBytes = Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]);
+        final processedBytes = _validNormalizedAvatarBytes();
         bridge.profileDownloadBytes = rawRelayBytes;
         contactRepo.contactResult = _makeContact(
           peerId: '12D3KooWRawRelayPeer123456',
@@ -646,8 +648,6 @@ void main() {
           'media/avatars/$peer.jpg',
         );
       },
-      skip:
-          'KNOWN GAP: avatar_normalization_helper.dart:34 accepts nonempty undecodable output and overwrites the prior avatar. Run with --run-skipped for the desired preservation failure.',
     );
 
     test(

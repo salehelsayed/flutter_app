@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:image/image.dart' as img;
 
 /// Shared helper for avatar normalization and canonical disk commits.
 ///
@@ -36,7 +37,14 @@ class AvatarNormalizationHelper {
       );
     }
 
-    return processedPath;
+    try {
+      if (img.decodeImage(await processedFile.readAsBytes()) != null) {
+        return processedPath;
+      }
+    } catch (_) {
+      // A malformed image can throw from the decoder instead of returning null.
+    }
+    throw StateError('Avatar processing did not write a decodable image');
   }
 
   /// Commits a processed avatar to the canonical on-disk path.
