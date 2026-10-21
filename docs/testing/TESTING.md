@@ -4062,6 +4062,12 @@ visible and cannot become an ordinary first-attempt PASS.
   prepared tools are removed in suite teardown; preparation is not a scenario
   pass. The repaired fixture completed with its Go process at 6.75 seconds in
   `source045-focused-green.log`; the two full focused files passed 137 cases.
+  The disposable relay's Go test deadline must also cover the full campaign:
+  its former 45-minute limit killed the relay during a 47-minute run, causing
+  later connection failures and unrun rows. The fixture and its exact-command
+  shim now use 120 minutes; individual scenario deadlines and assertions stay
+  unchanged. The [runner evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/audio-runner-summary.md)
+  retains that first failure and the subsequent passing fixture-affected rows.
 - **Bounded journal publication:** `recordTerminal` may return after its 200 ms
   caller-impact budget while atomic persistence continues. Tests asserting the
   published JSON must observe the existing atomic-writer completion seam before
@@ -6421,6 +6427,16 @@ visible and cannot become an ordinary first-attempt PASS.
   failure feedback. The [causal source receipt](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/microphone-feedback/summary.json)
   covers the real composition and ConversationWired path, not an OS permission
   dialog or a candidate's device behavior.
+  Notification Call back still waits for foreground unlock before starting.
+  During its microphone preflight, `inactive` can represent the system dialog
+  retaining focus and must not cancel the pending action. Hidden, paused and
+  detached states, disposal, replacement and explicit cancellation retain their
+  fences. `call_back_feedback_test.dart` completes the permission boundary in
+  each lifecycle state and checks both typed outcomes and visible feedback.
+  The [focused host evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/host-evidence/)
+  retains the failing inactive-state reproduction, 177 passing focused checks
+  and eight passing placement sentinels for the approved fix. The original
+  device failure returned `canceled`; a device rerun remains separate proof.
   Provider wake acceptance establishes custody only. Caller **Ringing** and
   ringback require authenticated remote ringing; a recipient may answer while
   the caller still shows Connecting. The earlier focused affected-calls receipt
