@@ -2848,6 +2848,13 @@ tests use bounded pumps rather than waiting for a file-image loading ticker;
 they do not certify device image decoding. The [scoped host receipts](../../.codex-test-logs/plan407-step2/retained-host-evidence/)
 retain initial failures and the 214-test Orbit integration rerun. These host
 checks do not prove real transport, OS notification taps or device rendering.
+The Step 2 `feature-host-all` gate completed on host source `d8481bb3a`
+with 11,959 passing tests, 14 declared skips and no failures across 1,018 test
+files. The [family receipt](../../.codex-test-logs/plan407-step2/retained-host-evidence/feature-host-all-d848/summary.redacted.json)
+binds the command, clean source, raw log and unchanged Step 2 production files.
+Its skipped fixtures are unchanged from the Step 2 comparison base: eleven
+contact-request gaps, two QR timestamp gaps and one SQLCipher capability check
+assigned to native integration testing. Those skipped assertions remain unproven.
 
 The canonical full planner still performs its global inventory census with
 `--only`. A scoped native row can pass while the overall report stays BLOCKED
