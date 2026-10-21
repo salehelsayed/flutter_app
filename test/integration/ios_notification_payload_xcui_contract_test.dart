@@ -1134,6 +1134,21 @@ void main() {
     );
     expect(source, contains('private let controlCenterOpenAttempts = 3'));
     expect(setter, contains('for openAttempt in 1...controlCenterOpenAttempts'));
+    final retryLoop = _between(
+      setter,
+      'for openAttempt in 1...controlCenterOpenAttempts',
+      'topRight.press(forDuration: 0.1, thenDragTo: center)',
+    );
+    expect(
+      retryLoop,
+      contains('if openAttempt > 1 && !fromCurrentSurface {'),
+      reason: 'a retry over Notification Center must never press Home',
+    );
+    expect(
+      RegExp(r'if openAttempt > 1 \{').hasMatch(retryLoop),
+      isFalse,
+      reason: 'an unconditional Home reset would close Notification Center',
+    );
     expect(
       setter.indexOf('for openAttempt in 1...controlCenterOpenAttempts'),
       lessThan(setter.indexOf('Control Center airplane-mode toggle is unavailable')),

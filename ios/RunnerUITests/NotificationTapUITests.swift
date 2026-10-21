@@ -1233,7 +1233,9 @@ final class NotificationTapUITests: XCTestCase {
     var toggle = airplaneModeToggle(in: springboard)
     var controlCenterOpen = false
     for openAttempt in 1...controlCenterOpenAttempts {
-      if openAttempt > 1 {
+      // A Home press would close an open Notification Center, so only the
+      // default path resets to SpringBoard between Control Center retries.
+      if openAttempt > 1 && !fromCurrentSurface {
         XCUIDevice.shared.press(.home)
         settleOnSpringboard()
       }
