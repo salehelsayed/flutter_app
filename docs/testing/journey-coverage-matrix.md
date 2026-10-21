@@ -1,8 +1,8 @@
 # Mknoon journey coverage matrix
 
-Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
+Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
-295 representative journeys: **31 strong, 247 partial, 15 missing, 2 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+295 representative journeys: **35 strong, 244 partial, 15 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
 ## Interpretation and execution
 
@@ -13,23 +13,25 @@ Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-2
 - Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped test executions. No analyzer, host-all, native tests or device/manual campaign run in this audit.
 - The first static preview reported 34 fallback checks and unmapped YAML; preserve that initial result. Follow-up adds only the exact docs/testing/journey-coverage-matrix.yaml path to existing documentation_only rules; Markdown already matches *.md. Current explicit-base/local wrapper plan and metadata validation are retained with the handoff. No new check was added.
 - Initial ordinary change-plan attempts were held before launch (change-plan.log, change-plan-v2.log). Static preview omitted toolchain capture. The final metadata-only wrapper plan captures version information and selection without launching checks or device discovery; selected checks remain unexecuted.
-- Known source-disabled CONTACT presentation and malformed/future legacy QR cases remain identified in per-row gaps. These are not tests skipped by this audit. GIF manual default is overridden true by its registered media runner, so it is not falsely classified disabled.
+- The initial audit identified source-disabled CONTACT presentation and malformed/future QR cases. Group B now enables and passes the CR-003/005/014/025 host guards; other per-row known gaps remain separate. GIF manual default is overridden true by its registered media runner.
 - Registration does not establish CI execution. Host-all discovers test/**/*_test.dart except performance; native/SIMS/legacy dispatch described per entry. CI job condition/trusted-event and actual external vars/runs were not inspected. No registered lane means not_run, never implicit pass.
 - Snapshot catalog source SHA256 57f78df40631adcaa1da16eb743bd0f4570c378d6af11be60affb43c4a9ad64c, 103 IDs; read-only live inventory snapshot generated 2026-10-20T11:46:09.388Z head a502c06bc. Linked test files, notes and old PASS labels are not substituted for reviewed assertions or fresh evidence.
 - Owner-reported stock iOS 1.0.1 (125) / Android 125 camera Original incident and reported compressed/default nonreproduction are reports, not this audit results. Actual original MIME/encoded bytes remain unknown; do not assume HEIC. New strict-custody cohort proofs cannot certify stock125 legacy behavior.
 - Default OFF linked authoring/multi-device/strict-custody/document-send/rotate-on-add cohorts are separate from default production behavior and retained durable authority. Existing PDF receive/open remains supported with send flag off. On-join metadata resync defaults ON. Full phrase-restore group convergence and dormant Posts are separate planned/unreachable scope.
 - Available-target project policy applies to all proposed device work: unavailable target/version/accessory/topology is N/A (target unavailable by project policy), not a release blocker. This agent did not discover/control devices; flutter_app owns execution. Actual previous published baseline and exact signed candidate/manual evidence were not supplied.
 
+- Scoped Group B host update at f4005fbfa66391500dce2c2b82a6f325cc65934f (2026-10-21): CR-003/005/014/025 strong; VC-013 partial with capability still planned; NAV-011 remains partial for unproven invite/recovery surfaces. Focused validation: 14 files, 200 passed, 0 skipped; first failures and one resource-aborted run retained under .codex-test-logs/groupB-fixes/. Full journey execution remains not_run; broad affected lanes, native/device, analyzer and full host-all were not run.
+
 ## Feature coverage
 
 | Feature | Strong | Partial | Missing | Unknown | Biggest gap |
 | --- | ---: | ---: | ---: | ---: | --- |
 | IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. |
-| CONTACT — QR, contact requests, profiles and contact management | 3 | 31 | 2 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation are missing; malformed/future legacy QR and presentation serialization oracles retain known skips. |
+| CONTACT — QR, contact requests, profiles and contact management | 7 | 27 | 2 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
 | CHAT — Direct text and conversation state | 2 | 9 | 2 | 0 | No qualifying 100-message both-restart preservation journey or actual full iPhone/Android text/media parity; some restart labels reconstruct objects over retained memory. |
 | MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 37 | 5 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
 | GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. |
-| CALL — Voice calls, lifecycle, privacy and history | 9 | 24 | 2 | 1 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
+| CALL — Voice calls, lifecycle, privacy and history | 9 | 25 | 2 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
 | INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
 | NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. |
 | NAV — Feed, Orbit, rings, search and navigation | 0 | 10 | 0 | 1 | Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency membership and sculpt geometry must not imply that shipped editor. |
@@ -545,7 +547,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-003 — A missed request can still be found and answered
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-003.
+**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-003.
 
 **Steps**
 
@@ -560,22 +562,29 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Inspected test evidence**
 
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-003 stored request replays on first attach and stays until declined` (widget).
-  - Real: real Feed request/dialog/listener flow; current SQLite and real Ed25519.
-  - Faked: fake network/native services/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:54: Persisted request replays at attach and stays until Decline; suppression-release case is a separate skipped known gap. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Stored pending request is visible on attach and Navigator remount, remains pending until Decline, then leaves no contact or pending row. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
+- [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-003 suppression release reveals a missed request with shell subscribers retained` (widget).
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Observable gate release replays the missed durable pending row into one dialog while Feed and Orbit remain subscribed; tab switching grants no contact. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-005 live plus inbox duplicate and listener restart retain one consent dialog` (widget).
-  - Real: real listener/dialog/retained pending SQL.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:150: Live+inbox duplicate and listener restart keep one dialog/pending row under the tested single-shell setup; two shell subscribers have a separate skipped known-gap test. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Repeated live/inbox input and listener restart retain one consent dialog and pending row without implicit contact creation. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-005 one event with Feed and embedded Orbit mounted opens one dialog route` (widget).
-  - Real: desired real Feed/Orbit consent owner assertion; SQL/real Ed25519 fixtures.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:184: Asserts one dialog across retained Feed+Orbit; enclosing group explicitly skips due known duplicate-dialog ownership gap. Not an active passing guard. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Both retained shell subscribers receive the broadcast but share one dialog presentation owner. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
+- [test/features/contact_request/application/contact_request_notification_materializer_test.dart](../../test/features/contact_request/application/contact_request_notification_materializer_test.dart) — `notification decline persists before gate release replays pending rows` (widget).
+  - Real: production notification materializer, listener and observable presentation gate.
+  - Faked: in-memory request/contact repositories with an explicitly delayed status write; test dialog presenter matching the root await contract; native/network services.
+  - Proves / registration: A delayed decision keeps notification suppression until the declined status is persisted; release then reads no pending row. A companion source guard verifies both root callbacks capture and await their decision. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/017-consent-race.log. Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- First attach/persistence is asserted; suppression-release replay is an explicitly skipped known gap, so retained subscribers may not re-present missed consent.
-- Two-shell duplicate ownership remains a separate skipped gap.
+- Host replay, remount, retained-subscriber release and decision-before-replay timing pass. Real OS notification delivery and native/network peer behavior remain outside this scoped host proof.
 
 #### CR-004 — Fake or tampered requests are rejected
 
@@ -612,7 +621,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-005 — The same request arriving twice shows once
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-005.
+**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-005.
 
 **Steps**
 
@@ -627,17 +636,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Inspected test evidence**
 
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-005 live plus inbox duplicate and listener restart retain one consent dialog` (widget).
-  - Real: real listener/dialog/retained pending SQL.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:150: Live+inbox duplicate and listener restart keep one dialog/pending row under the tested single-shell setup; two shell subscribers have a separate skipped known-gap test. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Repeated live/inbox input and listener restart retain one consent dialog and pending row without implicit contact creation. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-005 one event with Feed and embedded Orbit mounted opens one dialog route` (widget).
-  - Real: desired real Feed/Orbit consent owner assertion; SQL/real Ed25519 fixtures.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:184: Asserts one dialog across retained Feed+Orbit; enclosing group explicitly skips due known duplicate-dialog ownership gap. Not an active passing guard. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Both retained shell subscribers receive the broadcast but share one dialog presentation owner. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- Active single-shell duplicate/restart test is meaningful; Feed+embedded-Orbit one-dialog obligation is explicitly KNOWN GAP skipped.
+- Single-shell restart and retained Feed/Orbit ownership pass with real pending SQL; actual OS/native transport ingress remains modeled.
 
 #### CR-006 — A request reaches someone who was offline for less than a day
 
@@ -845,7 +854,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-014 — Many requests at once are all kept
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-014.
+**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-014.
 
 **Steps**
 
@@ -860,17 +869,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Inspected test evidence**
 
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-014 burst preserves each distinct pending row without granting consent` (widget).
-  - Real: real receive listener/pending SQL storage.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:207: Three distinct valid signed requests remain three pending rows with no contact; sequential one-at-a-time answer presentation is separately skipped as known gap. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Three distinct signed requests remain three pending rows with no contact consent. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-014 burst presents one request at a time and keeps the others until answered` (widget).
-  - Real: desired sequential dialog/pending-queue assertion.
-  - Faked: fake network/native/lookup encryption.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:226: Desired answer-one/retain-rest assertion is explicitly KNOWN GAP skipped; storing rows alone does not prove usable sequential presentation. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: The three-request burst presents one dialog at a time; declining each preserves the remaining rows until their own explicit answer. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- Storage preserves all3 rows, but sequential one-dialog presentation is explicitly KNOWN GAP skipped. Row count alone does not establish every request can be answered through current UI.
+- The bounded three-request host burst passes; production load, native transport and OS lifecycle behavior are not certified by this fixture.
 
 #### CR-015 — A fake or altered QR code adds no contact
 
@@ -1150,7 +1159,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-025 — Old QR codes are refused
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-025.
+**Coverage:** strong. **Execution:** not_run. **Catalog:** CR-025.
 
 **Steps**
 
@@ -1167,7 +1176,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 - [test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart](../../test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart) — `is refused without contact or outbound request` (widget).
   - Real: real scanner admission/SQL fixture; real signed QR fixtures.
   - Faked: native scanner callback/network/lookup encryption.
-  - Proves / registration: test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart:49: Parameterized groups: older-than24h is active; malformed/future groups explicitly KNOWN GAP skipped. Desired assertion checks zero contact/request/outbound/encryption; do not report all three groups passed. Registered: affected-identity, host-all.
+  - Proves / registration: Expired, unreadable and future signed timestamp groups all actively reject before any contact/request/outbound/encryption side effect; the fresh signed control succeeds. All four scanner cases pass. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/006-qr-admission.log. Registered: affected-identity, host-all.
 - [test/features/qr_code/application/parse_qr_identity_binding_test.dart](../../test/features/qr_code/application/parse_qr_identity_binding_test.dart) — `K2 self-signs a QR that claims K1 peer ID: rejected before any contact is built` (unit).
   - Real: real parser/Ed25519 verification/production peer-ID derivation.
   - Faked: test account keys and clock.
@@ -1175,7 +1184,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Older-than24h scanner obligation is active; malformed/future timestamp groups explicitly skip KNOWN GAP at parse_qr_payload_use_case.dart:130/:122. Do not count them as guarded/pass.
+- All four scanner timestamp cases pass with real signed input and SQL. Native camera acquisition, platform clock correctness and actual remote network delivery remain modeled.
 
 #### CONTACT-001 — Cancel the QR camera or deny camera permission without adding a contact
 
@@ -4535,7 +4544,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### VC-013 — A relayed call can later switch to a direct connection safely
 
-**Coverage:** unknown. **Execution:** not_run. **Catalog:** VC-013.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-013.
 
 **Steps**
 
@@ -4548,12 +4557,19 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
-No qualifying active automated test found for this scoped journey.
-
+- [test/features/call/integration/call_turn_policy_test.dart](../../test/features/call/integration/call_turn_policy_test.dart) — `VC-013 selected relay-to-direct media path preserves both call owners` (integration).
+  - Real: CallCoordinator, CallNegotiationEffectExecutor and CallAudioNegotiationPreparer; FlutterWebRtcCallEngine and both call owners.
+  - Faked: accepted control/signaling fixtures and native selected-transport/readiness observations; peer connection/media platform seam; no real NAT, RTP or DCUtR initiation.
+  - Proves / registration: Both connected call owners preserve identity, session, connectedAt, readiness and state when the selected media path changes; no ICE restart, new connection or premature terminal history. Explicit hangup creates one history row per owner. Fresh host PASS: .codex-test-logs/groupB-fixes/011-vc013-turn.log (33 passed, 0 skipped). Registered broad lanes remain unrun.
+- [test/features/call/integration/call_turn_policy_test.dart](../../test/features/call/integration/call_turn_policy_test.dart) — `VC-013 upgrade hint without selected direct media retains both relay calls` (integration).
+  - Real: CallCoordinator, CallNegotiationEffectExecutor and CallAudioNegotiationPreparer; FlutterWebRtcCallEngine and both call owners.
+  - Faked: accepted control/signaling fixtures and native selected-transport/readiness observations; peer connection/media platform seam; no real NAT, RTP or DCUtR initiation.
+  - Proves / registration: A direct-upgrade hint alone cannot relabel native TURN-selected media or end either connected call. Fresh host PASS: .codex-test-logs/groupB-fixes/011-vc013-turn.log. This does not implement or enable the planned upgrade capability.
 
 **Remaining gaps**
 
-- vc02.dcutr_upgrade and vc02.dcutr_symmetric_cgnat_negative have automationReady=false. Future capability retained as planned; no current unconditional release gate or invented implemented flow.
+- Host owner continuity and advisory-hint negative control pass; actual upgrade initiation, NAT/symmetric-CGNAT behavior, SDP, RTP and native DCUtR remain unproven.
+- vc02.dcutr_upgrade and vc02.dcutr_symmetric_cgnat_negative retain automationReady=false. Capability/catalog remain planned and are not current unconditional release gates.
 
 **Open questions**
 
@@ -6496,7 +6512,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### NAV-011 — Navigation during pending request/invite/recovery does not stack duplicate dialogs
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** source-derived.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** none.
 
 **Steps**
 
@@ -6511,18 +6527,18 @@ No qualifying active automated test found for this scoped journey.
 **Inspected test evidence**
 
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-005 one event with Feed and embedded Orbit mounted opens one dialog route` (widget).
-  - Real: real Feed/Orbit shell and request consent dialogs; FFI SQLite request/contact repositories; Ed25519 contact request crypto.
-  - Faked: P2P/native services.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:184: Asserts one dialog when both shell subscribers receive one event; enclosing group is KNOWN GAP skipped by default. The current source does not automatically guard this behavior. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Both retained shell subscribers receive the broadcast but share one dialog presentation owner. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 - [test/features/contact_request/presentation/screens/pending_request_shell_test.dart](../../test/features/contact_request/presentation/screens/pending_request_shell_test.dart) — `CR-003 suppression release reveals a missed request with shell subscribers retained` (widget).
-  - Real: real retained shell and pending request state; FFI SQLite/Ed25519 receive handling.
-  - Faked: P2P/native services.
-  - Proves / registration: test/features/contact_request/presentation/screens/pending_request_shell_test.dart:121: Asserts replay after suppression release; enclosing known-gap group is skipped by default, so not active automatic passing evidence. Registered: affected-identity, host-all.
+  - Real: production Feed/retained Orbit, ContactRequestListener and ContactRequestDialog; current FFI SQLite repositories and real Ed25519 signatures.
+  - Faked: P2P/native services and lookup-table request encryption.
+  - Proves / registration: Observable gate release replays the missed durable pending row into one dialog while Feed and Orbit remain subscribed; tab switching grants no contact. Fresh host PASS, 0 skips: .codex-test-logs/groupB-fixes/018-shell-persistence.log. Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- Two causal desired-behavior tests exist but are explicitly skipped as known gaps: duplicate Feed/Orbit dialog ownership and suppression-release replay.
-- Other pending group invite/recovery surfaces need their own assertions; inactive known-gap tests do not close the navigation journey.
+- Request-shell deduplication and suppression-release navigation are active passing guards. Other pending group invite/recovery surfaces still need their own assertions, so this broader journey remains Partial.
+- Host SQL/signatures and real retained shell do not establish OS/native multi-peer behavior.
 
 ### SHARE — External share and received-media forwarding
 

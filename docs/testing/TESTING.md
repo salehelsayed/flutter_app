@@ -2293,18 +2293,35 @@ native cryptography proofs.
 
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
-Their case-scoped `KNOWN GAP` groups retain three separate failing obligations:
-releasing presentation suppression must retry an already-subscribed shell;
-one broadcast must open one dialog across both retained screens; and distinct
-burst requests must queue behind the current dialog. Storage preservation,
-consent/reciprocal convergence, replay deduplication and repair overflow/retry
-remain enabled independently. The scanner tests similarly retain separate
-malformed/future timestamp rejection gaps while expired and fresh controls run.
-`testWidgets.skip` accepts only a boolean; place a descriptive skip reason on a
-one-case `group`, and prove its intended failure with `--run-skipped`.
+The three presentation obligations are now active: observable suppression release
+replays durable pending rows, both retained screens share one presentation queue,
+and distinct burst requests wait for their own explicit answer. The queue starts
+eagerly; releasing it on the last stream-subscriber cancellation is necessary
+because removing a Navigator does not complete its old dialog Future. A generation
+check keeps that obsolete callback from releasing a new mount's presentation.
+All nine shell cases pass, including remount, blocked-peer filtering, duplicate
+input/restart, reciprocal acceptance and repair overflow/retry. The scanner's
+expired, unreadable and future timestamp cases plus its fresh control all pass;
+malformed/future timestamps are rejected before contact or outbound effects.
+The original assertions and per-case 45-second deadlines remain unchanged.
+
+Consent ownership must include the decision Future after the dialog route pops.
+Otherwise an observable gate release can read a still-pending row and present it
+again before Accept/Decline persists. The root and shell presenters await the
+captured decision. The notification materializer's delayed-write test causally
+proves persistence precedes replay; its companion source guard checks the root
+callback wiring. This host fixture uses an in-memory delayed repository/presenter,
+so it is not an OS notification or complete application-root journey.
 Evidence: `test/features/contact_request/presentation/screens/pending_request_shell_test.dart`,
-`test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart` and
-the green and explicit run-skipped logs under `.codex-test-logs/astra-it4/`.
+`test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart`,
+`test/features/contact_request/application/contact_request_notification_materializer_test.dart`
+and `.codex-test-logs/groupB-fixes/` (`018-shell-persistence.log`,
+`006-qr-admission.log`, `016-consent-race-red.log`, `017-consent-race.log`).
+Keep the first resource-aborted run and intermediate causal failures there;
+`001-shared-dialogs` exited 75 after the swap-out limit and is not a pass.
+The final focused set is 14 files / 200 passes / zero skips. Native transport,
+real OS delivery and the planned VC-013 upgrade capability remain outside this
+host proof; broader affected lanes and full host-all remain for the coordinator.
 
 Direct notification lifecycle widgets use the real SQL read projector and
 `FlutterNotificationService`, with native notification publication and registry
