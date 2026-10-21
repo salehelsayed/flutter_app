@@ -417,6 +417,7 @@ final class _IosPayloadDriver {
         deliveryBinding: true,
       );
       await _backgroundFinalRegisteredReceiver('final-registered-background');
+      await _restartLiveSyslogBeforeProvider();
       final nseObservationBoundary = _captureSyslogObservationBoundary();
       final providerReceipt = await _runProviderSetup();
       _assertionsAttempted += 1;
@@ -803,6 +804,7 @@ final class _IosPayloadDriver {
         'recovery-final-registered-background',
       );
 
+      await _restartLiveSyslogBeforeProvider();
       final nseBoundary = _captureSyslogObservationBoundary();
       final providerReceipt = await _runProviderSetup();
       _assertionsAttempted += 1;
@@ -1151,6 +1153,7 @@ final class _IosPayloadDriver {
         'retry-final-registered-background',
       );
 
+      await _restartLiveSyslogBeforeProvider();
       final completeWindowBoundary = _captureSyslogObservationBoundary();
       final firstProviderReceipt = await _runProviderSetup();
       _assertionsAttempted += 1;
@@ -2180,6 +2183,25 @@ final class _IosPayloadDriver {
         'The selected physical iPhone log stream disconnected before capture.',
       );
     }
+  }
+
+  /// idevicesyslog can keep running yet stop writing after the preceding
+  /// XCUITest/launch steps reset the device session. Start a fresh stream after
+  /// the last pre-provider launch and require it to be live before APNs.
+  Future<void> _restartLiveSyslogBeforeProvider() async {
+    await _stopSyslog();
+    await _startSyslog();
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(deadline)) {
+      if (_syslogExitCode != null) break;
+      if (_rawSyslog.existsSync() && _rawSyslog.lengthSync() > 0) return;
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    throw const _DriverBlocked(
+      'deviceLost',
+      'The restarted physical iPhone log stream wrote nothing before APNs '
+          'provider submission.',
+    );
   }
 
   _SyslogObservationBoundary _captureSyslogObservationBoundary() {
