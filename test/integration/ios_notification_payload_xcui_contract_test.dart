@@ -1057,7 +1057,7 @@ void main() {
         'func testPayloadFastPathNotificationTap()',
         'func testRestorePayloadFastPathNetwork()',
       );
-      expect(tap, contains('try setAirplaneMode(true)'));
+      expect(tap, contains('try setAirplaneMode(true, fromCurrentSurface: true)'));
       expect(tap, contains('defer'));
       expect(tap, contains('networkRestored = try setAirplaneMode(false)'));
       expect(tap, contains('app.wait(for: .notRunning'));
@@ -1070,7 +1070,7 @@ void main() {
       );
       expect(
         tap.indexOf('mustRestoreNetwork = true'),
-        lessThan(tap.indexOf('guard try setAirplaneMode(true)')),
+        lessThan(tap.indexOf('guard try setAirplaneMode(true, fromCurrentSurface: true)')),
       );
       final finalization = _between(
         tap,
@@ -1082,6 +1082,12 @@ void main() {
         lessThan(finalization.indexOf('try setAirplaneMode(false)')),
       );
       expect(tap, contains('guard message.waitForExistence(timeout: 20) else'));
+      expect(tap, contains('startFromCurrentSurface: true'));
+      expect(
+        tap.indexOf('emitPlan258Marker("APNS_DELIVERED"'),
+        lessThan(tap.indexOf('guard try setAirplaneMode(true, fromCurrentSurface: true)')),
+        reason: 'the card is observed before airplane mode, on the same surface',
+      );
       expect(tap, contains('MKNOON_258'));
 
       final cleanup = _between(

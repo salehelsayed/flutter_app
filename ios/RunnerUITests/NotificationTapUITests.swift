@@ -307,13 +307,14 @@ final class NotificationTapUITests: XCTestCase {
     }
     emitPlan258Marker("APNS_DELIVERED", fields: ["card_observed": "true"])
     mustRestoreNetwork = true
-    guard try setAirplaneMode(true) else {
+    guard try setAirplaneMode(true, fromCurrentSurface: true) else {
       return
     }
     emitPlan258Marker("AIRPLANE_ENABLED", fields: ["before_tap": "true"])
     try tapExistingNotification(
       waitForHostPush: false,
-      requireTitleMatchedNotification: true
+      requireTitleMatchedNotification: true,
+      startFromCurrentSurface: true
     )
     emitPlan258Marker("TAPPED", fields: ["automated": "true"])
 
@@ -1197,14 +1198,18 @@ final class NotificationTapUITests: XCTestCase {
     return nil
   }
 
-  private func setAirplaneMode(_ enabled: Bool) throws -> Bool {
+  private func setAirplaneMode(_ enabled: Bool, fromCurrentSurface: Bool = false) throws -> Bool {
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-    XCUIDevice.shared.press(.home)
-    guard springboard.wait(for: .runningForeground, timeout: 10) else {
-      XCTFail("SpringBoard did not become ready for airplane-mode automation")
-      return false
+    // fromCurrentSurface keeps an open Notification Center underneath Control
+    // Center, so the card found there can be tapped without a second lookup.
+    if !fromCurrentSurface {
+      XCUIDevice.shared.press(.home)
+      guard springboard.wait(for: .runningForeground, timeout: 10) else {
+        XCTFail("SpringBoard did not become ready for airplane-mode automation")
+        return false
+      }
+      settleOnSpringboard()
     }
-    settleOnSpringboard()
 
     let topRight = springboard.coordinate(
       withNormalizedOffset: CGVector(dx: 0.92, dy: 0.01)
@@ -1254,8 +1259,15 @@ final class NotificationTapUITests: XCTestCase {
       )
       return false
     }
-    XCUIDevice.shared.press(.home)
-    settleOnSpringboard()
+    if fromCurrentSurface {
+      let bottom = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.98))
+      let upper = springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+      bottom.press(forDuration: 0.05, thenDragTo: upper)
+      RunLoop.current.run(until: Date().addingTimeInterval(1.5))
+    } else {
+      XCUIDevice.shared.press(.home)
+      settleOnSpringboard()
+    }
     return true
   }
 
@@ -1448,7 +1460,8 @@ final class NotificationTapUITests: XCTestCase {
 
   private func tapExistingNotification(
     waitForHostPush: Bool,
-    requireTitleMatchedNotification: Bool = false
+    requireTitleMatchedNotification: Bool = false,
+    startFromCurrentSurface: Bool = false
   ) throws {
     let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
     let title = configuredValue(
@@ -1467,6 +1480,17 @@ final class NotificationTapUITests: XCTestCase {
     let app = XCUIApplication(bundleIdentifier: bundleId)
     let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
 
+    // The card was just found on the open surface; tapping it there avoids a
+    // second Notification Center lookup, which can no longer show a seen card.
+    var visibleCardBody = false
+    if startFromCurrentSurface, let expectedBody {
+      visibleCardBody = notificationTextExists(expectedBody, springboard: springboard, timeout: 3)
+      emitPlan258Marker(
+        "CARD_REUSE",
+        fields: ["visible_on_current_surface": visibleCardBody ? "true" : "false"]
+      )
+    }
+    if !visibleCardBody {
     XCUIDevice.shared.press(.home)
     XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
     settleOnSpringboard()
@@ -1517,6 +1541,7 @@ final class NotificationTapUITests: XCTestCase {
         "MKNOON_IOS_NOTIFICATION_PRESENTED title_matched=true body_matched=true routeCategory=%@",
         routeCategory
       )
+    }
     }
     XCTAssertTrue(
       tapNotification(
