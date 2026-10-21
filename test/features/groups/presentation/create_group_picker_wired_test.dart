@@ -296,32 +296,52 @@ void main() {
         );
         await expectNoCreateEffects();
       },
-      skip:
-          'KNOWN GAP: create_group_with_members_use_case.dart:136 accepts an empty member list with an explicit name. Run with --run-skipped for the desired zero-effects failure.',
     );
 
-    group(
-      'KNOWN GAP',
-      () {
-        testWidgets(
-          'GROUP-001 invalid selected member is rejected before writes or egress',
-          (tester) async {
-            contactRepo.addTestContact(
-              contactAlice.copyWith(peerId: '   ', username: 'Invalid member'),
-            );
-            await tester.pumpWidget(buildWidget());
-            await pumpFrames(tester);
-            await tester.tap(find.text('Invalid member'));
-            await pumpFrames(tester);
-            await tester.tap(find.text('Start group chat'));
-            await pumpFrames(tester, count: 30);
-            await expectNoCreateEffects();
-            expect(find.byType(GroupConversationScreen), findsNothing);
-          },
-        );
+    group('KNOWN GAP', () {
+      testWidgets(
+        'GROUP-001 invalid selected member is rejected before writes or egress',
+        (tester) async {
+          contactRepo.addTestContact(
+            contactAlice.copyWith(peerId: '   ', username: 'Invalid member'),
+          );
+          await tester.pumpWidget(buildWidget());
+          await pumpFrames(tester);
+          await tester.tap(find.text('Invalid member'));
+          await pumpFrames(tester);
+          await tester.tap(find.text('Start group chat'));
+          await pumpFrames(tester, count: 30);
+          await expectNoCreateEffects();
+          expect(find.byType(GroupConversationScreen), findsNothing);
+        },
+      );
+    });
+
+    test(
+      'GROUP-001 invalid identity or blocked member rejects the entire set before effects',
+      () async {
+        for (final invalid in [
+          contactAlice.copyWith(peerId: testIdentity.peerId),
+          contactAlice.copyWith(publicKey: '   '),
+          contactAlice.copyWith(isBlocked: true),
+        ]) {
+          await expectLater(
+            createGroupWithMembers(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              p2pService: p2pService,
+              identity: testIdentity,
+              selectedContacts: [
+                contactAlice.copyWith(peerId: 'another-valid-peer'),
+                invalid,
+              ],
+              type: GroupType.chat,
+            ),
+            throwsArgumentError,
+          );
+          await expectNoCreateEffects();
+        }
       },
-      skip:
-          'KNOWN GAP: create_group_with_members_use_case.dart:226 creates and saves before rejecting the invalid member. Run with --run-skipped for the desired zero-effects failure.',
     );
 
     testWidgets(

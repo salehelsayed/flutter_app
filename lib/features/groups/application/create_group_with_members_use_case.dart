@@ -133,6 +133,16 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   GroupInviteLatencyTrace? inviteLatencyTrace,
 }) async {
+  if (selectedContacts.isEmpty ||
+      selectedContacts.any(
+        (contact) =>
+            contact.peerId.trim().isEmpty ||
+            contact.peerId.trim() == identity.peerId.trim() ||
+            contact.publicKey.trim().isEmpty ||
+            contact.isBlocked,
+      )) {
+    throw ArgumentError('Select at least one valid contact to create a group');
+  }
   final uniqueContacts = _dedupeContactsByPeerId(selectedContacts);
   final selectedPeerIds = uniqueContacts
       .map((contact) => contact.peerId)
