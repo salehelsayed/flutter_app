@@ -64,6 +64,10 @@ List<String> iosTestWithoutBuildingArguments({
     '-only-testing:$validatedSelector',
     '-resultBundlePath',
     resultBundle.path,
+    // A failing run otherwise makes Xcode collect diagnostics via `sudo true`,
+    // which prompts the owner for a password.
+    '-collect-test-diagnostics',
+    'never',
   ];
 }
 

@@ -4962,6 +4962,8 @@ class _Plan257Capture {
               '-only-testing:RunnerUITests/NotificationTapUITests/$selector',
               '-resultBundlePath',
               resultBundle.path,
+              '-collect-test-diagnostics',
+              'never',
             ];
       final output = await _runStreaming(
         'xcodebuild',

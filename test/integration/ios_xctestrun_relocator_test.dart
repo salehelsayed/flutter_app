@@ -123,6 +123,10 @@ void main() {
     );
     expect(arguments, isNot(contains('build-for-testing')));
     expect(arguments, isNot(contains('build')));
+    expect(
+      arguments.sublist(arguments.length - 2),
+      <String>['-collect-test-diagnostics', 'never'],
+    );
   });
 
   test(

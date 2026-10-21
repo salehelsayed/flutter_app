@@ -355,7 +355,7 @@ final class SystemGroupMediaIosCommandRunner
     if (normalized.split('/').last != 'xcodebuild') return null;
     final arguments = command.arguments;
     final exactShape =
-        arguments.length == 10 &&
+        arguments.length == 12 &&
         arguments[0] == 'test-without-building' &&
         arguments[1] == '-xctestrun' &&
         _safeAbsoluteCommandPath(arguments[2], suffix: '.xctestrun') &&
@@ -370,6 +370,8 @@ final class SystemGroupMediaIosCommandRunner
         ).hasMatch(arguments[7]) &&
         arguments[8] == '-resultBundlePath' &&
         _safeAbsoluteCommandPath(arguments[9], suffix: '.xcresult') &&
+        arguments[10] == '-collect-test-diagnostics' &&
+        arguments[11] == 'never' &&
         command.environment['SIMS_CHILD_BUILDS_FORBIDDEN'] == '1';
     return exactShape
         ? null
