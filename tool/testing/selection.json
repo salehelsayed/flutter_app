@@ -861,7 +861,8 @@
       "requirements": [
         "dart",
         "flutter",
-        "xcrun"
+        "xcrun",
+        "python3"
       ],
       "device_roles": [
         "ios_physical"
@@ -1788,6 +1789,24 @@
         "graphify-arch/",
         ".claude/skills/graphify/",
         "AGENTS.md"
+      ],
+      "inspected": true
+    },
+    "ios-notification-identity-fixture": {
+      "kind": "python",
+      "paths": [
+        "scripts/test/ios_notification_identity_fixture_test.py"
+      ],
+      "boundary": "Pristine iOS notification identity database restoration is bound to the dedicated device, peer, key and exact protected files before first launch",
+      "limitations": "Fake host transfers prove byte and authority guards; real Keychain continuity and APNs/NSE delivery require device-notifications-ios.",
+      "timeout_seconds": 120,
+      "estimated_seconds": null,
+      "requirements": [
+        "python3"
+      ],
+      "investigate": [
+        "integration_test/scripts/ios_notification_identity_fixture.py",
+        "integration_test/scripts/ios_receiver_bootstrap.py"
       ],
       "inspected": true
     },
@@ -6141,12 +6160,16 @@
       "id": "ios-notification-payload-harness",
       "patterns": [
         "integration_test/scripts/ios_notification_payload_xcui_driver.dart",
+        "integration_test/scripts/ios_notification_identity_fixture.py",
+        "integration_test/scripts/ios_receiver_bootstrap.py",
         "integration_test/support/ios_notification_payload_campaign.dart",
+        "scripts/test/ios_notification_identity_fixture_test.py",
         "test/integration/ios_notification_payload_xcui_contract_test.dart",
         "test/integration/ios_notification_payload_campaign_support_test.dart"
       ],
       "checks": [
         "notification-payload-harness-contract",
+        "ios-notification-identity-fixture",
         "device-notifications-ios"
       ],
       "why": "Physical iOS payload driver changes must preserve exact receipt binding, failure diagnostics, cleanup and native APNs/NSE assertions; safe host diagnostics cannot certify delivery."

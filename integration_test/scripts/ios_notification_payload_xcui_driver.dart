@@ -323,6 +323,7 @@ final class _IosPayloadDriver {
   late final Map<String, Object?> _staging;
   late final String _applicationSha256;
   late final String _requestSha256;
+  late final String _identityFixtureMlKemPublicKeySha256;
   late final File _patchedXctestrun;
   late final File _rawSyslog;
   late final File _providerReceiptFile;
@@ -1443,6 +1444,7 @@ final class _IosPayloadDriver {
       'plutil',
       'codesign',
       'idevicesyslog',
+      'python3',
     ]) {
       final found = await Process.run('which', <String>[command]);
       if (found.exitCode != 0) {
@@ -1562,6 +1564,9 @@ final class _IosPayloadDriver {
         'The explicit physical target, peer, or relay target is invalid.',
       );
     }
+    final identityFixture = await _runIdentityFixture(action: 'validate');
+    _identityFixtureMlKemPublicKeySha256 =
+        identityFixture['mlKemPublicKeySha256']! as String;
     _applicationSha256 = sha256FileSystemEntity(options.application);
     _requestSha256 = _sha256File(options.providerRequest);
   }
@@ -1701,6 +1706,12 @@ final class _IosPayloadDriver {
     final mlKemPublicKeySha256 = sha256
         .convert(utf8.encode(mlKemPublicKey))
         .toString();
+    if (mlKemPublicKeySha256 != _identityFixtureMlKemPublicKeySha256) {
+      throw _DriverFailure(
+        'The restored receiver does not have the pristine fixture ML-KEM key.',
+        _assertionsAttempted,
+      );
+    }
     if (!deliveryBinding) {
       _payloadReceiverPeerIdSha256 = peerIdSha256;
       _payloadReceiverMlKemPublicKeySha256 = mlKemPublicKeySha256;
@@ -2009,6 +2020,14 @@ final class _IosPayloadDriver {
   }
 
   Future<void> _installExactApplication() async {
+    final beforeInstall = await _installedApplicationsJson('before-install');
+    if (!devicectlResultAppsAreEmpty(beforeInstall.readAsStringSync())) {
+      throw const _DriverBlocked(
+        'deviceState',
+        'The dedicated receiver must have no candidate app before a fresh '
+            'notification phase install.',
+      );
+    }
     final installJson = File(
       '${options.captureDirectory.path}/devicectl-install.json',
     );
@@ -2043,39 +2062,93 @@ final class _IosPayloadDriver {
       );
     }
     _applicationInstalled = true;
-    await _stageReceiverAutoSetup();
+    await _runIdentityFixture(action: 'restore');
   }
 
-  /// Cleanup uninstalls the app, so every attempt installs it fresh with no
-  /// account. The production build creates one only through onboarding or
-  /// Documents/auto_setup.json; without it the node never starts and the
-  /// receiver bootstrap can never publish its handoff.
-  Future<void> _stageReceiverAutoSetup() async {
-    final local = File('${options.captureDirectory.path}/auto_setup.json')
-      ..writeAsStringSync('{"username":"SimsPayloadReceiver"}\n', flush: true);
-    final copy = await _runCommand('xcrun', <String>[
-      'devicectl',
-      'device',
-      'copy',
-      'to',
-      '--device',
-      options.receiverDeviceId,
-      '--source',
-      local.path,
-      '--destination',
-      'Documents/auto_setup.json',
-      '--domain-type',
-      'appDataContainer',
-      '--domain-identifier',
-      _bundleId,
-      '--quiet',
-    ], timeout: const Duration(minutes: 2));
-    if (copy.exitCode != 0) {
-      throw _deviceCommandFailure(
-        'The receiver auto-setup file could not be staged.',
-        copy,
+  /// The same pristine, pre-dispatch database is restored before first launch
+  /// after each uninstall. Private keys stay in this disposable phone's
+  /// Keychain; the subsequent fresh protected handoff verifies peer and key.
+  Future<Map<String, Object?>> _runIdentityFixture({
+    required String action,
+  }) async {
+    final helper = File.fromUri(
+      Platform.script.resolve('ios_notification_identity_fixture.py'),
+    );
+    if (!_regularFile(helper)) {
+      throw const _DriverBlocked(
+        'missingDriver',
+        'The pristine iOS identity fixture adapter is unavailable.',
       );
     }
+    final result = await _runCommand('python3', <String>[
+      helper.path,
+      '--action',
+      action,
+      '--staging-manifest',
+      options.stagingManifest.path,
+      '--receiver',
+      options.receiverDeviceId,
+      '--peer',
+      options.peerDeviceId,
+    ], timeout: const Duration(minutes: 2));
+    Map<String, Object?>? receipt;
+    try {
+      const prefix = 'IOS_NOTIFICATION_IDENTITY_FIXTURE_RESULT_JSON=';
+      final lines = const LineSplitter()
+          .convert(result.stdout)
+          .where((line) => line.startsWith(prefix))
+          .toList();
+      if (lines.length == 1 && lines.single.length < 2048) {
+        final value = jsonDecode(lines.single.substring(prefix.length));
+        if (value is Map<String, dynamic>) receipt = value;
+      }
+    } on FormatException {
+      // Raw helper output and private paths never enter the public verdict.
+    }
+    const exactKeys = <String>{
+      'schema',
+      'action',
+      'status',
+      'containsSecrets',
+      'code',
+      'manifestSha256',
+      'mlKemPublicKeySha256',
+    };
+    if (result.exitCode != 0 ||
+        receipt == null ||
+        receipt.keys.toSet().difference(exactKeys).isNotEmpty ||
+        exactKeys.difference(receipt.keys.toSet()).isNotEmpty ||
+        receipt['schema'] !=
+            'mknoon.sims.ios-notification-identity-fixture-result.v1' ||
+        receipt['action'] != action ||
+        receipt['status'] != 'PASS' ||
+        receipt['containsSecrets'] != false ||
+        receipt['code'] != 'ok' ||
+        receipt['manifestSha256'] !=
+            _staging['identityDatabaseSnapshotSha256'] ||
+        !_sha256Pattern.hasMatch('${receipt['mlKemPublicKeySha256']}')) {
+      if (action == 'validate') {
+        throw const _DriverBlocked(
+          'credentials',
+          'The pristine iOS identity snapshot is missing, unprotected, '
+              'changed, or not bound to this dedicated receiver and peer.',
+        );
+      }
+      throw _DriverFailure(
+        'The pristine receiver identity database was not restored and '
+        'verified before first launch.',
+        _assertionsAttempted,
+      );
+    }
+    if (action == 'restore' &&
+        receipt['mlKemPublicKeySha256'] !=
+            _identityFixtureMlKemPublicKeySha256) {
+      throw _DriverFailure(
+        'The identity fixture changed after read-only validation.',
+        _assertionsAttempted,
+      );
+    }
+    return receipt;
   }
 
   Future<void> _startSyslog() async {

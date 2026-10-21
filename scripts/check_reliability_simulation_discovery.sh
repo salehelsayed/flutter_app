@@ -730,6 +730,7 @@ classify_path() {
       ;;
     integration_test/scripts/ios_notification_provider_adapter.md|\
     integration_test/scripts/ios_notification_provider_adapter.py|\
+    integration_test/scripts/ios_notification_identity_fixture.py|\
     integration_test/scripts/ios_notification_relay_fixture.md|\
     integration_test/scripts/ios_notification_relay_fixture_driver.py|\
     integration_test/scripts/ios_notification_relay_remote_helper.py|\
