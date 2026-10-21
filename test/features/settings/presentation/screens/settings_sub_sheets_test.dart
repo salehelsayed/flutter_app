@@ -152,53 +152,48 @@ void main() {
     expect(find.text('Hide'), findsNothing);
   });
 
-  group(
-    'KNOWN GAP',
-    () {
-      testWidgets(
-        'SETTINGS-004 failed phrase copy stays truthful and retries',
-        (tester) async {
-          var fail = true;
-          final attempts = <String>[];
-          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-            SystemChannels.platform,
-            (call) async {
-              if (call.method == 'Clipboard.setData') {
-                attempts.add((call.arguments as Map)['text'] as String);
-                if (fail)
-                  throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
-              }
-              return null;
-            },
-          );
-          addTearDown(
-            () => tester.binding.defaultBinaryMessenger
-                .setMockMethodCallHandler(SystemChannels.platform, null),
-          );
-          await pumpWired(tester);
-          await openSheet(tester, 'settings-row-recovery');
-          await tester.tap(find.text('Tap to reveal'));
-          await tester.pump();
-          await tester.tap(find.text('Copy to clipboard'));
-          await tester.pump();
-          expect(tester.takeException(), isNull);
-          expect(attempts, [twelveWords]);
-          expect(find.text('Copied!'), findsNothing);
-          expect(find.text('Copy to clipboard').hitTestable(), findsOneWidget);
-          fail = false;
-          await tester.tap(find.text('Copy to clipboard'));
-          await tester.pump();
-          expect(attempts, [twelveWords, twelveWords]);
-          expect(find.text('Copied!'), findsOneWidget);
-          await tester.tap(find.text('Hide'));
-          await tester.pump();
-          expect(find.text('Tap to reveal'), findsOneWidget);
+  group('KNOWN GAP', () {
+    testWidgets('SETTINGS-004 failed phrase copy stays truthful and retries', (
+      tester,
+    ) async {
+      var fail = true;
+      final attempts = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            attempts.add((call.arguments as Map)['text'] as String);
+            if (fail) throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
+          }
+          return null;
         },
       );
-    },
-    skip:
-        'KNOWN GAP: settings_wired.dart:225 reports phrase-copy success before the platform completes. Run with --run-skipped for the desired recovery failure.',
-  );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await pumpWired(tester);
+      await openSheet(tester, 'settings-row-recovery');
+      await tester.tap(find.text('Tap to reveal'));
+      await tester.pump();
+      await tester.tap(find.text('Copy to clipboard'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(attempts, [twelveWords]);
+      expect(find.text('Copied!'), findsNothing);
+      expect(find.text('Copy to clipboard').hitTestable(), findsOneWidget);
+      fail = false;
+      await tester.tap(find.text('Copy to clipboard'));
+      await tester.pump();
+      expect(attempts, [twelveWords, twelveWords]);
+      expect(find.text('Copied!'), findsOneWidget);
+      await tester.tap(find.text('Hide'));
+      await tester.pump();
+      expect(find.text('Tap to reveal'), findsOneWidget);
+    });
+  });
 
   testWidgets(
     'call privacy availability opens the persisted setting in the existing sheet',
@@ -425,6 +420,17 @@ void main() {
     'T6 recovery sheet: warning, blur, reveal, copy, hide re-blurs; phrase '
     'never on the main page',
     (tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
       await pumpWired(tester);
 
       // Never-on-page lock: the first mnemonic word is absent at rest.

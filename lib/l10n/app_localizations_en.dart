@@ -1194,6 +1194,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_recovery_copied => 'Copied!';
 
   @override
+  String get settings_copy_failed => 'Couldn\'t copy. Please try again.';
+
+  @override
   String get settings_recovery_copy => 'Copy to clipboard';
 
   @override

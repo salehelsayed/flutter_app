@@ -1217,6 +1217,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_recovery_copied => 'Kopiert!';
 
   @override
+  String get settings_copy_failed =>
+      'Kopieren fehlgeschlagen. Bitte erneut versuchen.';
+
+  @override
   String get settings_recovery_copy => 'In die Zwischenablage kopieren';
 
   @override

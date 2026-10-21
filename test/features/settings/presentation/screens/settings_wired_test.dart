@@ -432,53 +432,49 @@ void main() {
     },
   );
 
-  group(
-    'KNOWN GAP',
-    () {
-      testWidgets(
-        'SETTINGS-005 failed account copy never reports success and can retry',
-        (tester) async {
-          var fail = true;
-          final attemptedValues = <String>[];
-          tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+  group('KNOWN GAP', () {
+    testWidgets(
+      'SETTINGS-005 failed account copy never reports success and can retry',
+      (tester) async {
+        var fail = true;
+        final attemptedValues = <String>[];
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (call) async {
+            if (call.method == 'Clipboard.setData') {
+              attemptedValues.add((call.arguments as Map)['text'] as String);
+              if (fail) throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
+            }
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
             SystemChannels.platform,
-            (call) async {
-              if (call.method == 'Clipboard.setData') {
-                attemptedValues.add((call.arguments as Map)['text'] as String);
-                if (fail)
-                  throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
-              }
-              return null;
-            },
-          );
-          addTearDown(
-            () => tester.binding.defaultBinaryMessenger
-                .setMockMethodCallHandler(SystemChannels.platform, null),
-          );
-          await pumpScreen(
-            tester,
-            identityRepo: FakeIdentityRepository(makeIdentity()),
-          );
-          await tester.tap(find.byIcon(Icons.copy));
-          await tester.pump();
-          expect(tester.takeException(), isNull);
-          expect(attemptedValues, ['12D3KooWMyPeer123']);
-          expect(find.byIcon(Icons.check), findsNothing);
-          expect(find.byIcon(Icons.copy).hitTestable(), findsOneWidget);
-          fail = false;
-          await tester.tap(find.byIcon(Icons.copy));
-          await tester.pump();
-          expect(attemptedValues, ['12D3KooWMyPeer123', '12D3KooWMyPeer123']);
-          expect(find.byIcon(Icons.check), findsOneWidget);
-          await tester.pump(const Duration(seconds: 2));
-          await tester.pump(const Duration(milliseconds: 300));
-          expect(find.byIcon(Icons.copy), findsOneWidget);
-        },
-      );
-    },
-    skip:
-        'KNOWN GAP: settings_wired.dart:207 reports account-copy success before the platform completes. Run with --run-skipped for the desired recovery failure.',
-  );
+            null,
+          ),
+        );
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+        );
+        await tester.tap(find.byIcon(Icons.copy));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(attemptedValues, ['12D3KooWMyPeer123']);
+        expect(find.byIcon(Icons.check), findsNothing);
+        expect(find.byIcon(Icons.copy).hitTestable(), findsOneWidget);
+        fail = false;
+        await tester.tap(find.byIcon(Icons.copy));
+        await tester.pump();
+        expect(attemptedValues, ['12D3KooWMyPeer123', '12D3KooWMyPeer123']);
+        expect(find.byIcon(Icons.check), findsOneWidget);
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.byIcon(Icons.copy), findsOneWidget);
+      },
+    );
+  });
 
   testWidgets('loads identity on init, displays peerId and username', (
     tester,
@@ -628,6 +624,17 @@ void main() {
   testWidgets('copy mnemonic in sheet: shows Copied! for 2s then reverts', (
     tester,
   ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
     final identityRepo = FakeIdentityRepository(makeIdentity());
     await pumpScreen(tester, identityRepo: identityRepo);
 

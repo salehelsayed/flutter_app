@@ -540,6 +540,7 @@
   "settings_recovery_warning": "لا تشارك هذه العبارة أبدًا مع أي شخص. فهي تمنح وصولًا كاملًا إلى حسابك.",
   "settings_recovery_tap": "اضغط للكشف",
   "settings_recovery_copied": "تم النسخ!",
+  "settings_copy_failed": "تعذّر النسخ. يُرجى المحاولة مجددًا.",
   "settings_recovery_copy": "نسخ إلى الحافظة",
   "settings_recovery_hide": "إخفاء",
   "connected_title": "تمت الإضافة!",

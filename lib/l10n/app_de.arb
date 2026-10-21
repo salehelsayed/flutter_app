@@ -540,6 +540,7 @@
   "settings_recovery_warning": "Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.",
   "settings_recovery_tap": "Zum Anzeigen tippen",
   "settings_recovery_copied": "Kopiert!",
+  "settings_copy_failed": "Kopieren fehlgeschlagen. Bitte erneut versuchen.",
   "settings_recovery_copy": "In die Zwischenablage kopieren",
   "settings_recovery_hide": "Verbergen",
   "connected_title": "Verbunden!",

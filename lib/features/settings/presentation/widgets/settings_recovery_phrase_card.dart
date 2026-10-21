@@ -9,6 +9,7 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
   final List<String> words;
   final bool isRevealed;
   final bool isCopied;
+  final String? copyError;
   final VoidCallback? onToggleReveal;
   final VoidCallback? onCopy;
   final VoidCallback? onHide;
@@ -18,6 +19,7 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
     required this.words,
     this.isRevealed = false,
     this.isCopied = false,
+    this.copyError,
     this.onToggleReveal,
     this.onCopy,
     this.onHide,
@@ -136,6 +138,14 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (isRevealed && copyError != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 14),
+                        child: Text(
+                          copyError!,
+                          style: TextStyle(color: warningColor),
+                        ),
+                      ),
                     // Action buttons (only when revealed)
                     if (isRevealed)
                       Padding(

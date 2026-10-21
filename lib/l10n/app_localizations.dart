@@ -2074,6 +2074,12 @@ abstract class AppLocalizations {
   /// **'Copied!'**
   String get settings_recovery_copied;
 
+  /// No description provided for @settings_copy_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t copy. Please try again.'**
+  String get settings_copy_failed;
+
   /// No description provided for @settings_recovery_copy.
   ///
   /// In en, this message translates to:

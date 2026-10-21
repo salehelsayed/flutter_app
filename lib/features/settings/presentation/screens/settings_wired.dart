@@ -127,6 +127,7 @@ class _SettingsWiredState extends State<SettingsWired>
   bool _isMnemonicRevealed = false;
   bool _isPeerIdCopied = false;
   bool _isMnemonicCopied = false;
+  String? _mnemonicCopyError;
   Uint8List? _pickedAvatarBytes;
   Timer? _peerIdCopyTimer;
   Timer? _mnemonicCopyTimer;
@@ -212,11 +213,29 @@ class _SettingsWiredState extends State<SettingsWired>
     Navigator.of(context).pop();
   }
 
-  void _onCopyPeerId() {
+  Future<void> _onCopyPeerId() async {
     final peerId = _identity?.peerId;
     if (peerId == null) return;
 
-    Clipboard.setData(ClipboardData(text: peerId));
+    try {
+      await Clipboard.setData(ClipboardData(text: peerId));
+    } catch (_) {
+      if (!mounted) return;
+      _peerIdCopyTimer?.cancel();
+      setState(() => _isPeerIdCopied = false);
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.settings_copy_failed),
+          action: SnackBarAction(
+            label: l10n.btn_retry,
+            onPressed: _onCopyPeerId,
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
 
     _peerIdCopyTimer?.cancel();
     setState(() => _isPeerIdCopied = true);
@@ -230,14 +249,30 @@ class _SettingsWiredState extends State<SettingsWired>
     setState(() => _isMnemonicRevealed = true);
   }
 
-  void _onCopyMnemonic() {
+  Future<void> _onCopyMnemonic() async {
     final mnemonic = _identity?.mnemonic12;
-    if (mnemonic == null) return;
+    if (mnemonic == null || !_isMnemonicRevealed) return;
 
-    Clipboard.setData(ClipboardData(text: mnemonic));
+    try {
+      await Clipboard.setData(ClipboardData(text: mnemonic));
+    } catch (_) {
+      if (!mounted) return;
+      _mnemonicCopyTimer?.cancel();
+      setState(() {
+        _isMnemonicCopied = false;
+        _mnemonicCopyError = AppLocalizations.of(context)!.settings_copy_failed;
+      });
+      _recoverySheetTick?.call();
+      return;
+    }
+    if (!mounted || !_isMnemonicRevealed) return;
 
     _mnemonicCopyTimer?.cancel();
-    setState(() => _isMnemonicCopied = true);
+    setState(() {
+      _isMnemonicCopied = true;
+      _mnemonicCopyError = null;
+    });
+    _recoverySheetTick?.call();
 
     _mnemonicCopyTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _isMnemonicCopied = false);
@@ -251,6 +286,7 @@ class _SettingsWiredState extends State<SettingsWired>
     setState(() {
       _isMnemonicRevealed = false;
       _isMnemonicCopied = false;
+      _mnemonicCopyError = null;
     });
     _mnemonicCopyTimer?.cancel();
   }
@@ -820,14 +856,12 @@ class _SettingsWiredState extends State<SettingsWired>
           words: words,
           isRevealed: _isMnemonicRevealed,
           isCopied: _isMnemonicCopied,
+          copyError: _mnemonicCopyError,
           onToggleReveal: () {
             _onToggleMnemonic();
             setSheetState(() {});
           },
-          onCopy: () {
-            _onCopyMnemonic();
-            setSheetState(() {});
-          },
+          onCopy: _onCopyMnemonic,
           onHide: () {
             _onHideMnemonic();
             setSheetState(() {});

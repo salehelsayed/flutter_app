@@ -1211,6 +1211,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_recovery_copied => 'تم النسخ!';
 
   @override
+  String get settings_copy_failed => 'تعذّر النسخ. يُرجى المحاولة مجددًا.';
+
+  @override
   String get settings_recovery_copy => 'نسخ إلى الحافظة';
 
   @override

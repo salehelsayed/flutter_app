@@ -600,6 +600,7 @@
   "settings_recovery_warning": "Never share this phrase with anyone. It grants full access to your account.",
   "settings_recovery_tap": "Tap to reveal",
   "settings_recovery_copied": "Copied!",
+  "settings_copy_failed": "Couldn't copy. Please try again.",
   "settings_recovery_copy": "Copy to clipboard",
   "settings_recovery_hide": "Hide",
   "connected_title": "Connected!",
