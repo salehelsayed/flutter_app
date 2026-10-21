@@ -6228,7 +6228,10 @@ visible and cannot become an ordinary first-attempt PASS.
   production bidirectional RTP plus a separate exact Pion oracle, native cleanup
   and exact guard restoration. Earlier failed audio attempts remain unchanged;
   this is not decoded-PCM or physical-transducer proof.
-  B13 must create two real notification-capable contenders. An ordinary live
+  The original B13 two-arrival contract required two real notification-capable
+  contenders. Its live-acknowledged mode retains these requirements; the
+  background custody exception approved on 2026-10-21 is described below.
+  An ordinary live
   send can commit first, allowing the real custody store to suppress redundant
   provider notification. The
   [retained notifications03 diagnosis](../../.codex-test-logs/audio-call-beta-rest-20260917/final148-device-notifications-android-03/independent-restoration-review/b13-diagnosis/diagnosis.json)
@@ -6239,11 +6242,12 @@ visible and cannot become an ordinary first-attempt PASS.
   then requires the full staged message/sender/ciphertext tuple and actual FCM
   receipt before an exact nonce-bound, single-use release of the same wire.
   The receiver remains pinned through release. Its later stored/listener proof
-  must identify a notify-capable live transport, rejecting silent inbox replay;
+  in live-acknowledged mode must identify a notify-capable live transport,
+  rejecting silent inbox replay;
   original one-card/audible-channel/typed-suppression gates remain unchanged.
   Failed exact sender receipts now retain only fixed, allowlisted error and
   cleanup codes in the diagnostic-only host observation before retirement and
-  app restoration. This does not relax live acknowledgement or custody gates;
+  app restoration. That diagnostic change did not relax live acknowledgement or custody gates;
   the original source042 sender failure had no retained code and its cause
   remains unproven (all-tests-y227gs8x/source042-android-payload-native).
   Cancellation retires only this action and preserves the original failure;
@@ -8421,6 +8425,26 @@ with the existing API-specific N/A and exact cleanup. That run used temporary
 transport observation and the explicitly selected emulator pair; clean-app
 acceptance remains separate. Emulator mode verifies both qemu roles and records
 their actual kinds without certifying a physical Android device.
+
+For a receiver verified in the background immediately before live release,
+the owner approved a custody-plus-push delivery oracle on 2026-10-21. Exact
+relay custody, staged sender/message/ciphertext binding and push-wake evidence
+remain required. Only the exact nonce-bound `live_not_acked` sender retirement
+can select `custody_push_wake`; other errors, changed bindings, cleanup errors,
+or a foreground receiver still fail. That mode retains the single decrypted
+card/audible-channel assertions, brings the receiver forward and requires one
+authoritative store for the message after the five-second settle. It makes no
+two-arrival claim; the live-acknowledged branch retains its live-arrival and
+typed losing-path assertions. The shared G7 sender helper has the same
+background-specific rule. This is a test-contract change, not a production
+transport repair. The [runner's clean-app report](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/android-custody-closure/runner-summary.md)
+records three diagnostic pairs and the whole nine-assertion campaign passing
+on a USB Android sender plus a headless emulator, with exact cleanup and the
+existing emulator permission/app-op N/A. The original strict two-arrival
+failures remain retained. Source changes originate in `dd1f2816d`, `d328d46d3`,
+`11c653ba3`, and `6aa735ddb`; the [local contract receipts](../../.codex-test-logs/plan407-three-fixes/retained-host-evidence/adopted-notification-contracts.execution.json)
+cover 109 Android ordering/support and iOS XCUITest contracts without running
+devices. They do not close the separate missing iOS card or audio UI findings.
 
 SIMS preflight logs record the typed status, blocker and `childStarted=false`.
 A blocked preflight with no process exit logs 78; policy N/A retains zero.
