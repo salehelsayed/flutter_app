@@ -151,6 +151,14 @@ do not establish stale symbols. A Plan 407 clean-checkout run failed because
 all four inputs were absent; their existing receipt-matched copies passed the
 exact binary-symbol check. Input restoration and the first failure are retained
 under `.codex-test-logs/plan407-step1/post-reboot-midnight-fixture-fix/`.
+Restore complete frameworks, including headers and the macOS version symlinks,
+when also running the native wrapper API check. Reuse existing raw bindings only
+after their normal source/toolchain input stamps match; keep their hashes
+separate from tracked-source identity and do not copy SIMS attestations. The
+[isolated host restoration receipts](../../.codex-test-logs/plan407-three-fixes/retained-host-evidence/selected-host-completion/copy-manifest.redacted.json)
+retain the missing-input failures, matching input stamps, complete framework
+repair, passing all-platform API verifier and binary-symbol sentinel, and the
+subsequent affected transport group (1,323 passed, no failures or skips).
 
 ## Daily commands
 
