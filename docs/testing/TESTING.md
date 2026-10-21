@@ -3013,6 +3013,12 @@ separate. Disable optional Xcode system-diagnostic collection for these focused
 tests; it previously spawned a local sudo check after failure, without supplied
 credentials, and delayed finalization. This does not disable test results or
 the campaign's required UI evidence.
+The shared physical `test-without-building` helper and notification-capture
+route now pass `-collect-test-diagnostics never` explicitly. Their command
+guards accept that exact option while preserving the prebuilt bundle, narrow
+selector and child-build prohibition. The [stable host receipts](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/host-evidence/final-ios-harness-execution.json)
+cover 106 argument, guard, relocation and payload-contract assertions; physical
+campaign completion remains separate evidence.
 
 APNs acceptance, NSE decryption and an authorized content handoff do not prove
 that SpringBoard displayed a card. The [first complete campaign attempt](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/original-campaign-attempt-1/results.json)
