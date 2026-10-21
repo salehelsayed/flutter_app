@@ -874,9 +874,16 @@ output; never uninstall as a fallback. A [retained-snapshot recovery](../../.cod
 verified `AndroidAppStateGuard.loadRecovery(...).restoreAll()` with only the
 installer transport changed from `--no-streaming` to `--streaming`, avoiding an
 extra temporary APK copy. The exact APK, replacement flags, real installer exit,
-private archive, permissions and process checks were preserved. This was a
-recovery-only adapter, not a tracked runner change or a passing audio campaign;
-free space still needs review before another full run.
+private archive, permissions and process checks were preserved. The tracked
+guard now makes that substitution once, only after a nonzero installer result
+containing the exact storage error. Single and split APK restoration retain the
+same paths and replacement flags; unrelated errors do not retry, and a failed
+fallback retains the backup and final installer output. Four causal tests failed
+before the fix and passed afterward; the complete guard/install-over contract
+selection passed 89 tests without failures or skips. The [guard contract report](../../.codex-test-logs/plan407-three-fixes/common-candidate/retained-initial-gates/results.json)
+records its exact candidate scope. These host and recovery proofs do not replace
+the original KX0025 scenario or the full 21-runtime audio campaign, which still
+require fresh execution and successful cleanup.
 
 Disposable physical admission requires exactly one valid serial in
 `MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS` and an exact match for every phone
@@ -2924,15 +2931,29 @@ The redacted discovery receipts and hashes are in
 `.codex-test-logs/plan407-step1/provider-setup-provenance/`. These establish setup
 availability, not notification delivery.
 
-The physical iOS payload XCUI campaign has a source-confirmed fixture blocker:
-each phase removes the receiver app, deleting its Documents identity database,
-then username-only auto-setup creates a new random identity. Its handoff checks
-still require the fixed peer from the manifest/request. Keychain persistence
-does not recreate the missing database row. Until that fixture lifecycle is
-repaired, signing and receiver-bootstrap readiness do not establish campaign
-execution or APNs delivery. The [source trace](../../.codex-test-logs/plan407-step1/post-reboot-ios-precondition-source-trace.redacted.json)
-records this precondition without claiming a launched iOS scenario or changing
-production identity recovery.
+The physical iOS payload XCUI campaign restores a protected, pristine identity
+database snapshot before the first launch of every fresh receiver installation.
+The manifest pins its bytes and the full device, peer and ML-KEM public-key
+identities; a fresh protected handoff must match them. Keychain persistence
+alone does not recreate the database deleted by uninstall. The [same-device roundtrip](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/same-device-identity-roundtrip.redacted.json)
+verified exact restored database bytes and matching peer/key identity on the
+approved iPhone. Reinstallation can raise notification and Local Network
+prompts again: the original native permission-preparation selector must run
+before capture. An isolated probe that omitted this step timed out; granting the
+identified prompts through Appium allowed the unchanged identity check to pass.
+This fixture is host-only and does not change production identity recovery.
+
+APNs acceptance, NSE decryption and an authorized content handoff do not prove
+that SpringBoard displayed a card. The [first complete campaign attempt](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/original-campaign-attempt-1/results.json)
+passed the fresh identity preconditions but failed its original fast-path card
+lookup; recovery and retry were not run. A [focused reproduction](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/ios/fast-path-causal-probe-1/failure-ui-inspection-and-cleanup.redacted.json)
+captured a badge of one with no Mknoon card in expanded Notification Center.
+The runner deletes private result bundles during cleanup; failure-time UI
+evidence must be exported privately before that deletion. For the observed
+failed selector, Apple's `--only-failures` attachment filter returned nothing
+because its attachments were not marked as failure-associated; exporting that
+same selector's attachments without the filter recovered the evidence. Neither
+the identity proof nor these diagnostics certify the three-phase campaign.
 
 The Android group-media row accepts `full_suite.relay_addresses`; it does not
 require the local fixture. The central builder embeds `MKNOON_RELAY_ADDRESSES`
