@@ -900,9 +900,16 @@ same paths and replacement flags; unrelated errors do not retry, and a failed
 fallback retains the backup and final installer output. Four causal tests failed
 before the fix and passed afterward; the complete guard/install-over contract
 selection passed 89 tests without failures or skips. The [guard contract report](../../.codex-test-logs/plan407-three-fixes/common-candidate/retained-initial-gates/results.json)
-records its exact candidate scope. These host and recovery proofs do not replace
-the original KX0025 scenario or the full 21-runtime audio campaign, which still
-require fresh execution and successful cleanup.
+records its exact candidate scope. A fresh original KX0025 run subsequently
+passed its scenario and exact app restoration, with no restoration oracle
+failures; its [cleanup receipt](../../.codex-test-logs/plan407-three-fixes/audio-independent-setup-proof/kx0025-cleanup.json)
+records `exactRestorationVerified=true`. That run had about 3 GB free on the
+emulator, so it does not establish that the storage-pressure fallback executed.
+The complete original 21-scenario invocation later stopped at KX0006, with ten
+passes, one failure and ten unrun cases; the KX0025 restoration finding is closed,
+while whole-suite acceptance remains incomplete. The original failed restoration
+and the [new terminal evidence](../../.codex-test-logs/plan407-three-fixes/retained-device-evidence/audio-original-full21/)
+remain separate.
 
 Disposable physical admission requires exactly one valid serial in
 `MKNOON_DISPOSABLE_PHYSICAL_ANDROID_SERIALS` and an exact match for every phone
@@ -7740,6 +7747,16 @@ visible and cannot become an ordinary first-attempt PASS.
   These bounds do not identify the captured kx0006 stall: an alive, focused
   process with a pending command and older result cannot distinguish a blocked
   observation from a command-loop stall. Fresh device closure remains separate.
+  A later original KX0006 run exposed a concrete fixture lifecycle failure:
+  after wake and keyguard dismissal, `_superseded` called `_launch`, whose
+  `am force-stop` destroyed the process holding pending callback B. Resume now
+  uses the existing `_foreground` operation with `--activity-reorder-to-front`;
+  the earlier intentional process death, callback assertions, time limits and
+  keyguard restoration remain unchanged. Two existing foreground/cold-launch
+  host sentinels passed, and independent source review found no issue. The
+  original failed run is retained; the focused real-device KX0006 rerun and
+  complete audio suite still need proof. Evidence:
+  `.codex-test-logs/plan407-three-fixes/kx6-resume-fix/`.
   Quiet-call proof requires owned native channel/priority state and complete SystemUI
   heads-up-manager samples; observed publication order uses the always-on
   `notification_enqueue` and `notification_canceled` events, not the
