@@ -65,6 +65,7 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
   bool _callLive = false;
   bool _navigatorCanHandlePop = false;
   bool _publishedBlocking = false;
+  bool _storeLaunchFailed = false;
 
   @override
   void initState() {
@@ -180,11 +181,8 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
                       decision: hard,
                       installedBuildNumber:
                           widget.controller.installedBuildNumber,
-                      onUpdate: () => unawaited(
-                        widget.launchStore(
-                          updateStoreUrlForPlatform(widget.controller.platform),
-                        ),
-                      ),
+                      onUpdate: _onUpdate,
+                      storeLaunchFailed: _storeLaunchFailed,
                     ),
                   ),
                 ),
@@ -193,6 +191,18 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
         },
       ),
     );
+  }
+
+  Future<void> _onUpdate() async {
+    var opened = false;
+    try {
+      opened = await widget.launchStore(
+        updateStoreUrlForPlatform(widget.controller.platform),
+      );
+    } catch (_) {
+      // A platform refusal keeps the required gate and its retry button active.
+    }
+    if (mounted) setState(() => _storeLaunchFailed = !opened);
   }
 
   void _publishFrameworkHandlesBack(bool blocking) {
@@ -215,11 +225,13 @@ class UpdateRequiredScreen extends StatelessWidget {
     required this.decision,
     required this.installedBuildNumber,
     required this.onUpdate,
+    this.storeLaunchFailed = false,
   });
 
   final UpdateDecisionHard decision;
   final String? installedBuildNumber;
   final VoidCallback onUpdate;
+  final bool storeLaunchFailed;
 
   @override
   Widget build(BuildContext context) {
@@ -274,6 +286,14 @@ class UpdateRequiredScreen extends StatelessWidget {
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium,
                   ),
+                  if (storeLaunchFailed)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Text(
+                        l10n.update_required_store_failed,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   const SizedBox(height: 28),
                   SizedBox(
                     width: double.infinity,

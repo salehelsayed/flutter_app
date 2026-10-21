@@ -4248,6 +4248,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get media_download => 'Download';
 
   @override
+  String get update_required_store_failed =>
+      'Couldn\'t open the store. Try updating again.';
+
+  @override
   String get update_required_title => 'Please update Mknoon';
 
   @override

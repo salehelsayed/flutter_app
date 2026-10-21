@@ -7100,6 +7100,12 @@ abstract class AppLocalizations {
   /// **'Download'**
   String get media_download;
 
+  /// No description provided for @update_required_store_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the store. Try updating again.'**
+  String get update_required_store_failed;
+
   /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///
   /// In en, this message translates to:

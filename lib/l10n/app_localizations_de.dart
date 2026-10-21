@@ -4351,6 +4351,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get media_download => 'Herunterladen';
 
   @override
+  String get update_required_store_failed =>
+      'Der Store konnte nicht geöffnet werden. Versuche es erneut.';
+
+  @override
   String get update_required_title => 'Bitte aktualisiere Mknoon';
 
   @override

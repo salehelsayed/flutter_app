@@ -2124,6 +2124,7 @@
   "media_document_only_pdf": "Only PDF files can be sent.",
   "media_document_open": "Open document",
   "media_download": "Download",
+  "update_required_store_failed": "Couldn't open the store. Try updating again.",
   "update_required_title": "Please update Mknoon",
   "@update_required_title": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"

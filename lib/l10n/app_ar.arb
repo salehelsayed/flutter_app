@@ -1975,6 +1975,7 @@
   "media_document_only_pdf": "يمكن إرسال ملفات PDF فقط.",
   "media_document_open": "فتح المستند",
   "media_download": "تنزيل",
+  "update_required_store_failed": "تعذّر فتح المتجر. حاول التحديث مجددًا.",
   "update_required_title": "يلزم تحديث مكنون",
   "@update_required_title": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"

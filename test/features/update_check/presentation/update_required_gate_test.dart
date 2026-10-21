@@ -157,82 +157,81 @@ void main() {
       (Locale('ar'), 'يلزم تحديث مكنون', 'حدّث الآن'),
     ]) {
       for (final outcome in ['false', 'throw', 'cancel']) {
-        group(
-          'Store launcher recovery',
-          () {
-            testWidgets(
-              '${copy.$1.languageCode} $outcome keeps blocking and retries',
-              (tester) async {
-                final semantics = tester.ensureSemantics();
-                try {
-                  var attempts = 0;
-                  final targets = <Uri>[];
-                  await pumpApp(
-                    tester,
-                    locale: copy.$1,
-                    storeLauncher: (target) async {
-                      targets.add(target);
-                      attempts++;
-                      if (attempts == 1) {
-                        if (outcome == 'throw') {
-                          throw PlatformException(
-                            code: 'STORE_HANDOFF_REJECTED',
-                          );
-                        }
-                        return outcome == 'cancel';
+        group('Store launcher recovery', () {
+          testWidgets(
+            '${copy.$1.languageCode} $outcome keeps blocking and retries',
+            (tester) async {
+              final semantics = tester.ensureSemantics();
+              try {
+                var attempts = 0;
+                final targets = <Uri>[];
+                await pumpApp(
+                  tester,
+                  locale: copy.$1,
+                  storeLauncher: (target) async {
+                    targets.add(target);
+                    attempts++;
+                    if (attempts == 1) {
+                      if (outcome == 'throw') {
+                        throw PlatformException(code: 'STORE_HANDOFF_REJECTED');
                       }
-                      return true;
-                    },
-                  );
-                  expect(find.text(copy.$2), findsOneWidget);
-                  await tester.tap(find.text(copy.$3));
-                  await tester.pumpAndSettle();
+                      return outcome == 'cancel';
+                    }
+                    return true;
+                  },
+                );
+                expect(find.text(copy.$2), findsOneWidget);
+                await tester.tap(find.text(copy.$3));
+                await tester.pumpAndSettle();
 
-                  // A platform refusal/exception or return without an install must
-                  // leave truthful localized recovery and all root blocking intact.
-                  expect(tester.takeException(), isNull);
-                  expect(attempts, 1);
-                  expect(find.text(copy.$2), findsOneWidget);
-                  expect(find.text(copy.$3).hitTestable(), findsOneWidget);
-                  expect(guard.blocking, isTrue);
-                  expect(controller.value, isA<UpdateDecisionHard>());
-                  expect(controller.installedBuildNumber, '118');
-                  expect(await tester.binding.handlePopRoute(), isTrue);
+                // A platform refusal/exception or return without an install must
+                // leave truthful localized recovery and all root blocking intact.
+                expect(tester.takeException(), isNull);
+                expect(attempts, 1);
+                if (outcome != 'cancel') {
+                  final l10n = AppLocalizations.of(
+                    tester.element(find.byKey(_overlay)),
+                  )!;
                   expect(
-                    tester.semantics
-                        .simulatedAccessibilityTraversal()
-                        .map((n) => n.label)
-                        .where((label) => label.contains(_homeLabel)),
-                    isEmpty,
+                    find.text(l10n.update_required_store_failed),
+                    findsOneWidget,
                   );
-
-                  // The user returned from the external store without installing.
-                  await resume(tester);
-                  expect(service.checks, 2);
-                  expect(find.byKey(_overlay), findsOneWidget);
-                  expect(find.text(copy.$2), findsOneWidget);
-                  await tester.tap(find.text(copy.$3));
-                  await tester.pumpAndSettle();
-                  expect(attempts, 2);
-                  expect(targets, [
-                    Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
-                    Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
-                  ]);
-                  expect(guard.blocking, isTrue);
-                  expect(find.byKey(_overlay), findsOneWidget);
-                  expect(find.byType(CloseButton), findsNothing);
-                } finally {
-                  semantics.dispose();
                 }
-              },
-            );
-          },
-          skip: outcome == 'throw'
-              ? 'KNOWN GAP: update_required_gate.dart:184 does not catch a '
-                    'throwing store launcher. Run with --run-skipped to '
-                    'retain the desired recovery failure.'
-              : false,
-        );
+                expect(find.text(copy.$2), findsOneWidget);
+                expect(find.text(copy.$3).hitTestable(), findsOneWidget);
+                expect(guard.blocking, isTrue);
+                expect(controller.value, isA<UpdateDecisionHard>());
+                expect(controller.installedBuildNumber, '118');
+                expect(await tester.binding.handlePopRoute(), isTrue);
+                expect(
+                  tester.semantics
+                      .simulatedAccessibilityTraversal()
+                      .map((n) => n.label)
+                      .where((label) => label.contains(_homeLabel)),
+                  isEmpty,
+                );
+
+                // The user returned from the external store without installing.
+                await resume(tester);
+                expect(service.checks, 2);
+                expect(find.byKey(_overlay), findsOneWidget);
+                expect(find.text(copy.$2), findsOneWidget);
+                await tester.tap(find.text(copy.$3));
+                await tester.pumpAndSettle();
+                expect(attempts, 2);
+                expect(targets, [
+                  Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+                  Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+                ]);
+                expect(guard.blocking, isTrue);
+                expect(find.byKey(_overlay), findsOneWidget);
+                expect(find.byType(CloseButton), findsNothing);
+              } finally {
+                semantics.dispose();
+              }
+            },
+          );
+        });
       }
     }
   });

@@ -1975,6 +1975,7 @@
   "media_document_only_pdf": "Nur PDF-Dateien können gesendet werden.",
   "media_document_open": "Dokument öffnen",
   "media_download": "Herunterladen",
+  "update_required_store_failed": "Der Store konnte nicht geöffnet werden. Versuche es erneut.",
   "update_required_title": "Bitte aktualisiere Mknoon",
   "@update_required_title": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"

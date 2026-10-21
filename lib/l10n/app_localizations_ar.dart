@@ -4316,6 +4316,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get media_download => 'تنزيل';
 
   @override
+  String get update_required_store_failed =>
+      'تعذّر فتح المتجر. حاول التحديث مجددًا.';
+
+  @override
   String get update_required_title => 'يلزم تحديث مكنون';
 
   @override
