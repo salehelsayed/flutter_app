@@ -40,81 +40,71 @@ void main() {
         TextDirection.ltr,
       ),
     ]) {
-      group(
-        'KNOWN GAP',
-        () {
-          testWidgets('CR-016 unsafe bidi name renders safely: ${sample.$3}', (
-            tester,
-          ) async {
-            final request = makeRequest(username: sample.$1);
-            await tester.pumpWidget(
-              wrap(
-                ContactRequestDialog(
-                  request: request,
-                  onAccept: () {},
-                  onDecline: () {},
-                ),
+      group('KNOWN GAP', () {
+        testWidgets('CR-016 unsafe bidi name renders safely: ${sample.$3}', (
+          tester,
+        ) async {
+          final request = makeRequest(username: sample.$1);
+          await tester.pumpWidget(
+            wrap(
+              ContactRequestDialog(
+                request: request,
+                onAccept: () {},
+                onDecline: () {},
               ),
-            );
-            expect(
-              request.username,
-              sample.$1,
-              reason: 'display safety must not rewrite signed request content',
-            );
-            expect(find.text(sample.$2), findsOneWidget);
-            expect(find.text(sample.$1), findsNothing);
-            expect(
-              tester.widget<Text>(find.text(sample.$2)).textDirection,
-              sample.$3,
-            );
-            expect(find.text('Accept').hitTestable(), findsOneWidget);
-            expect(find.text('Decline').hitTestable(), findsOneWidget);
-          });
-        },
-        skip:
-            'KNOWN GAP: contact_request_dialog.dart:68 renders unsafe bidi controls. Run with --run-skipped for the desired display failure.',
-      );
+            ),
+          );
+          expect(
+            request.username,
+            sample.$1,
+            reason: 'display safety must not rewrite signed request content',
+          );
+          expect(find.text(sample.$2), findsOneWidget);
+          expect(find.text(sample.$1), findsNothing);
+          expect(
+            tester.widget<Text>(find.text(sample.$2)).textDirection,
+            sample.$3,
+          );
+          expect(find.text('Accept').hitTestable(), findsOneWidget);
+          expect(find.text('Decline').hitTestable(), findsOneWidget);
+        });
+      });
     }
 
-    group(
-      'KNOWN GAP',
-      () {
-        testWidgets(
-          'CR-016 extreme emoji name keeps both narrow-view actions reachable',
-          (tester) async {
-            tester.view.devicePixelRatio = 1;
-            tester.view.physicalSize = const Size(320, 568);
-            addTearDown(tester.view.resetDevicePixelRatio);
-            addTearDown(tester.view.resetPhysicalSize);
-            final username = List.filled(
-              120,
-              'ليلى 👩🏽‍💻 Alpha 👨‍👩‍👧‍👦',
-            ).join(' ');
-            var accepted = 0;
-            var declined = 0;
-            await tester.pumpWidget(
-              wrap(
-                ContactRequestDialog(
-                  request: makeRequest(username: username),
-                  onAccept: () => accepted++,
-                  onDecline: () => declined++,
-                ),
+    group('KNOWN GAP', () {
+      testWidgets(
+        'CR-016 extreme emoji name keeps both narrow-view actions reachable',
+        (tester) async {
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(320, 568);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(tester.view.resetPhysicalSize);
+          final username = List.filled(
+            120,
+            'ليلى 👩🏽‍💻 Alpha 👨‍👩‍👧‍👦',
+          ).join(' ');
+          var accepted = 0;
+          var declined = 0;
+          await tester.pumpWidget(
+            wrap(
+              ContactRequestDialog(
+                request: makeRequest(username: username),
+                onAccept: () => accepted++,
+                onDecline: () => declined++,
               ),
-            );
-            await tester.pumpAndSettle();
-            expect(tester.takeException(), isNull);
-            expect(find.text('Accept').hitTestable(), findsOneWidget);
-            expect(find.text('Decline').hitTestable(), findsOneWidget);
-            await tester.tap(find.text('Accept'));
-            await tester.pump();
-            expect(accepted, 1);
-            expect(declined, 0);
-          },
-        );
-      },
-      skip:
-          'KNOWN GAP: contact_request_dialog.dart:59-76 overflows with extreme names. Run with --run-skipped for the desired reachable-actions failure.',
-    );
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(tester.takeException(), isNull);
+          expect(find.text('Accept').hitTestable(), findsOneWidget);
+          expect(find.text('Decline').hitTestable(), findsOneWidget);
+          await tester.tap(find.text('Accept'));
+          await tester.pump();
+          expect(accepted, 1);
+          expect(declined, 0);
+        },
+      );
+    });
 
     testWidgets(
       'CR-016 ACCESS-002 emoji consent labels targets and disabled actions',
