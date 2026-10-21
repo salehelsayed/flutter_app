@@ -531,14 +531,24 @@ final class _ProductionCallBackRegression {
     // startup must not consume the real 12-second pre-admission deadline.
     final title = reposted['title'] as String;
     await _nativeAction(title, prepareOnly: true);
-    final receipt = await ProductionJourneyFlowRunner(output, driver._runner)
-        .run(
-          peer.device,
-          'production_call_microphone_denial',
-          'microphone-denied',
-          {'CALLBACK_TITLE': RegExp.escape(title)},
-          packageName: driver.packageName,
-        );
+    final String receipt;
+    try {
+      receipt = await ProductionJourneyFlowRunner(output, driver._runner)
+          .run(
+            peer.device,
+            'production_call_microphone_denial',
+            'microphone-denied',
+            {'CALLBACK_TITLE': RegExp.escape(title)},
+            packageName: driver.packageName,
+          );
+    } catch (_) {
+      // Records the typed callback outcome and lifecycle the denial produced,
+      // so a silent "canceled" can be told apart from a UI/automation miss.
+      proof['denialDiagnostic'] = await _denialDiagnostic(target);
+      await _save();
+      rethrow;
+    }
+    proof['denialDiagnostic'] = await _denialDiagnostic(target);
     proof['denialFlowReceipt'] = receipt;
     // The Maestro flow asserts the actual message before it disappears. It is
     // the sole UI automation owner until that receipt has completed.
@@ -546,6 +556,36 @@ final class _ProductionCallBackRegression {
     proof['negativeCapture'] = await _captureState();
     await _snapshot('after-microphone-denial');
     await _save();
+  }
+
+  Future<Map<String, Object?>> _denialDiagnostic(
+    AndroidProductionAudioCallIdentity target,
+  ) async {
+    final diagnostic = <String, Object?>{};
+    try {
+      final snapshot = await peer.command('call_back.snapshot');
+      diagnostic['callbackEvents'] = snapshot['events'];
+      diagnostic['callbackState'] = snapshot['state'];
+    } catch (error) {
+      diagnostic['callbackSnapshotError'] = error.runtimeType.toString();
+    }
+    try {
+      final direct = await peer.command('direct_snapshot', {
+        'peerIds': [target.peerId],
+      });
+      diagnostic['flutterLifecycle'] = direct['lifecycle'];
+    } catch (error) {
+      diagnostic['flutterLifecycleError'] = error.runtimeType.toString();
+    }
+    final focus = await peer.adb([
+      'shell',
+      'dumpsys',
+      'window',
+    ], allowFailure: true);
+    diagnostic['focusedWindow'] = RegExp(
+      r'mCurrentFocus=Window\{\S+ \S+ ([^}]+)\}',
+    ).firstMatch('${focus.stdout}')?.group(1);
+    return diagnostic;
   }
 
   AndroidProductionAudioCallCampaignResult result(
