@@ -7754,7 +7754,13 @@ visible and cannot become an ordinary first-attempt PASS.
   the earlier intentional process death, callback assertions, time limits and
   keyguard restoration remain unchanged. Two existing foreground/cold-launch
   host sentinels passed, and independent source review found no issue. The
-  original failed run is retained; the focused real-device KX0006 rerun and
+  affected audio harness, SIMS plan and Maestro runner commands subsequently
+  passed 184, 333 and 9 tests respectively, with no failures or skips and
+  unchanged candidate source identity. These exact selected commands ran in a
+  private checkout without the broad native-build lease; they do not turn the
+  canceled aggregate wrapper run into a pass. Their [source-bound receipts](../../.codex-test-logs/plan407-three-fixes/retained-host-evidence/independent-affected-contracts/results.redacted.json)
+  retain that scope. The original failed run is retained; the focused native
+  KX0006 rerun and
   complete audio suite still need proof. Evidence:
   `.codex-test-logs/plan407-three-fixes/kx6-resume-fix/`.
   Quiet-call proof requires owned native channel/priority state and complete SystemUI
