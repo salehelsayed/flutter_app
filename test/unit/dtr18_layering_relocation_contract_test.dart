@@ -233,8 +233,10 @@ const _privacySha256 =
 // No lifecycle, repository, or resume ownership moves.
 // C2 kx0007: root-owned callback feedback uses localized navigator context
 // and the modal call messenger. Existing owners and resume dispatch stay put.
+// Group B captures and awaits the existing consent decision before releasing
+// presentation suppression; the root owner and import floor are unchanged.
 const _applicationRootNormalizedSha256 =
-    '18820348121a551ea856ee7187f80c70ec448c97027f34144d9f862345bc7df4';
+    'd1d09ac0d4ac4fc69957cfc07e70beed2d1114785cc835cc81800932e683c19f';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -288,6 +290,8 @@ const _applicationRootNormalizedSha256 =
 // local missed-call notifier. No provider payload or ownership boundary moves.
 // P1 wires debug call envelope/timer/output observers and existing fixture
 // controls through this app-owned composition; ordinary callbacks stay null.
+// Group B adds the existing contact-request presentation gate as a Listenable
+// at the same listener construction; no bootstrap owner or adapter moves.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -391,7 +395,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    'df84b79ffd82d6e7ffd31ebd21f3ffc2f30f37d7b24e3ffdca42deebda92c68f';
+    '3ee1a5dc46e323207c3cf3293aa64144349f2884acaf9d06c997694ce9a9a939';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -411,8 +415,10 @@ const _productionBootstrapNormalizedSha256 =
 // Media transport recovery composes the existing incoming listener into the
 // primary lifecycle hook with a paged loader; the historical callback and
 // app-owned P2P responsibility are unchanged. Both bootstrap pins cover this.
+// The same Group B gate callback changes this remainder; the historical
+// notification proof injection remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'b8a39b014443e587706c365653a707b74a901c62cc52e8f0a50ff57e102b202e';
+    'c5b6cc7719d3dc478b1b89b8385d9ff35d087a55e738b5e9cf7c45a54b49470e';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

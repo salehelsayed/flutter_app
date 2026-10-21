@@ -3813,7 +3813,14 @@ visible and cannot become an ordinary first-attempt PASS.
   Avatar normalizer output must decode before replacing a canonical file;
   nonempty bytes are insufficient, and decoders can throw on malformed input.
   Success fixtures use real square images without dropping byte/path/version
-  assertions. Simulated profile recipients need separate documents directories
+  assertions. Group-download and repost avatar fixtures also need encoded square
+  PNGs for both the source and processed output; a signature-only PNG/JPEG or
+  arbitrary nonempty bytes cannot stand in for a decodable image. Preserve the
+  exact processed-byte, 64-KiB omission, durable snapshot and rendered-author
+  assertions when aligning these fixtures; keep malformed-output controls.
+  Evidence: `.codex-test-logs/groupAB-align/` and the existing group storage,
+  pass-along and repost-avatar smoke tests. Simulated profile recipients need
+  separate documents directories
   and actual failed-download request markers for replay, matching separate apps.
   Contact-request display strips bidi controls without altering signed bytes
   and bounds long names so both consent actions remain reachable. Group creation
@@ -5451,6 +5458,12 @@ visible and cannot become an ordinary first-attempt PASS.
   pins before P1 and accounts for all three changes. The four DTR-18 cases pass
   with callback uniqueness, import/relocation and exception sets unchanged;
   evidence is in `.codex-test-logs/F10-host-fixes-20261018/c-pin-chain-proof.json`.
+  Group B's consent-decision await changes the app-root digest, while the single
+  observable presentation-gate callback changes both bootstrap digests. Reversing
+  only those exact hunks reproduces `a345dee2f` and all three old fingerprints;
+  resume/adapter fingerprints and the unique historical notification callback
+  stay unchanged. Preserve that proof before refreshing the three explained pins
+  (`.codex-test-logs/groupAB-align/pin-chain-proof.json`).
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now

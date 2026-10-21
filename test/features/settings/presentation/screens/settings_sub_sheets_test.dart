@@ -253,8 +253,9 @@ void main() {
     addTearDown(nativeEvents.close);
     final protection = PrivateMediaProtectionCoordinator(
       invokeMethod: (method, arguments) async {
-        if (method == 'enter')
+        if (method == 'enter') {
           throw PlatformException(code: 'protection_unavailable');
+        }
         return <String, Object?>{'ok': true, 'protectionActive': false};
       },
       nativeEvents: nativeEvents.stream,

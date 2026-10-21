@@ -879,8 +879,9 @@ class _SettingsWiredState extends State<SettingsWired>
         }
         events = protection.events.listen((event) {
           if (event == PrivateMediaProtectionEvent.foreground ||
-              event == PrivateMediaProtectionEvent.captureStopped)
+              event == PrivateMediaProtectionEvent.captureStopped) {
             return;
+          }
           if (!mounted) return;
           _onHideMnemonic();
           _recoverySheetTick?.call();

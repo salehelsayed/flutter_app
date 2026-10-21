@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:image/image.dart' as img;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -248,11 +250,10 @@ void main() {
 
     final uploadPayload =
         bridge.sentMessages
-                .map(
-                  (message) => jsonDecode(message) as Map<String, dynamic>,
-                )
-                .firstWhere((message) => message['cmd'] == 'media:upload')[
-            'payload']
+                .map((message) => jsonDecode(message) as Map<String, dynamic>)
+                .firstWhere(
+                  (message) => message['cmd'] == 'media:upload',
+                )['payload']
             as Map<String, dynamic>;
     expect(uploadPayload['mime'], kOpaqueMediaTransportMime);
   });
@@ -301,8 +302,8 @@ void main() {
     'includes processed avatar in encrypted repost payload when avatar exists',
     () async {
       await posts.savePost(_directPost());
-      final avatarBytes = Uint8List.fromList(const <int>[1, 2, 3, 4, 5]);
-      final processedAvatarBytes = Uint8List.fromList(const <int>[9, 8, 7, 6]);
+      final avatarBytes = _avatarSnapshotBytes();
+      final processedAvatarBytes = _avatarSnapshotBytes(red: 200);
 
       final receivedByCara = caraService.messageStream.first;
 
@@ -332,7 +333,10 @@ void main() {
         snapshot['original_author_avatar_base64'],
         base64Encode(processedAvatarBytes),
       );
-      expect(_flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_START'), isNotEmpty);
+      expect(
+        _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_START'),
+        isNotEmpty,
+      );
       expect(
         _flowEventDetails(events, 'POST_PASS_AVATAR_LOAD_SUCCESS'),
         isNotEmpty,
@@ -393,12 +397,7 @@ void main() {
     () async {
       await posts.savePost(_directPost());
       final avatarBytes = _validButOversizedAvatarBytes();
-      final processedAvatarBytes = Uint8List.fromList(const <int>[
-        0xCA,
-        0xFE,
-        0xBA,
-        0xBE,
-      ]);
+      final processedAvatarBytes = _avatarSnapshotBytes(red: 200);
       final probe = _AvatarProcessingProbe();
 
       final receivedByCara = caraService.messageStream.first;
@@ -441,7 +440,7 @@ void main() {
     'omits avatar in encrypted repost payload when processed avatar still exceeds the 64 KB bound',
     () async {
       await posts.savePost(_directPost());
-      final avatarBytes = Uint8List.fromList(const <int>[5, 4, 3, 2, 1]);
+      final avatarBytes = _avatarSnapshotBytes();
       final processedAvatarBytes = _validButOversizedAvatarBytes();
       expect(processedAvatarBytes.length, greaterThan(65536));
 
@@ -469,10 +468,7 @@ void main() {
       final json = jsonDecode(message.content) as Map<String, dynamic>;
       final snapshot = _decodeEncryptedOriginalSnapshot(json);
 
-      expect(
-        snapshot.containsKey('original_author_avatar_base64'),
-        isFalse,
-      );
+      expect(snapshot.containsKey('original_author_avatar_base64'), isFalse);
       expect(
         _flowEventDetails(events, 'POST_PASS_AVATAR_OMITTED_TOO_LARGE'),
         isNotEmpty,
@@ -613,11 +609,9 @@ void main() {
         recipientPeerIds: const <String>['peer-cara'],
         loadAvatarBytesFn: (peerId) async {
           requestedPeerIds.add(peerId);
-          return Uint8List.fromList(const <int>[9, 8, 7]);
+          return _avatarSnapshotBytes();
         },
-        avatarNormalizer: _makeAvatarNormalizer(
-          Uint8List.fromList(const <int>[9, 8, 7]),
-        ),
+        avatarNormalizer: _makeAvatarNormalizer(_avatarSnapshotBytes(red: 200)),
       );
 
       expect(result, PassPostAlongResult.success);
@@ -630,8 +624,8 @@ void main() {
     'createLocalPostPass persists processed avatar snapshot in durable state before delivery starts',
     () async {
       await posts.savePost(_directPost());
-      final avatarBytes = Uint8List.fromList(const <int>[42, 41, 40, 39]);
-      final processedAvatarBytes = Uint8List.fromList(const <int>[99, 98, 97]);
+      final avatarBytes = _avatarSnapshotBytes();
+      final processedAvatarBytes = _avatarSnapshotBytes(red: 200);
 
       final (result, created) = await createLocalPostPass(
         p2pService: aliceService,
@@ -1411,75 +1405,10 @@ Uint8List _validButOversizedAvatarBytes() {
   return builder.toBytes();
 }
 
-Uint8List _avatarSnapshotBytes() {
-  return Uint8List.fromList(const <int>[
-    0x89,
-    0x50,
-    0x4E,
-    0x47,
-    0x0D,
-    0x0A,
-    0x1A,
-    0x0A,
-    0x00,
-    0x00,
-    0x00,
-    0x0D,
-    0x49,
-    0x48,
-    0x44,
-    0x52,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x00,
-    0x00,
-    0x00,
-    0x01,
-    0x08,
-    0x06,
-    0x00,
-    0x00,
-    0x00,
-    0x1F,
-    0x15,
-    0xC4,
-    0x89,
-    0x00,
-    0x00,
-    0x00,
-    0x0A,
-    0x49,
-    0x44,
-    0x41,
-    0x54,
-    0x78,
-    0x9C,
-    0x62,
-    0x00,
-    0x00,
-    0x00,
-    0x02,
-    0x00,
-    0x01,
-    0xE5,
-    0x27,
-    0xDE,
-    0xFC,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x49,
-    0x45,
-    0x4E,
-    0x44,
-    0xAE,
-    0x42,
-    0x60,
-    0x82,
-  ]);
+Uint8List _avatarSnapshotBytes({int red = 60}) {
+  final image = img.Image(width: 16, height: 16);
+  img.fill(image, color: img.ColorRgb8(red, 120, 200));
+  return Uint8List.fromList(img.encodePng(image));
 }
 
 class _AvatarProcessingProbe {
@@ -1673,7 +1602,5 @@ class _PeerPolicy {
   final Completer<void>? sendGate;
   final bool requireDiscoverAndDialBeforeSend = false;
 
-  const _PeerPolicy({
-    this.sendGate,
-  });
+  const _PeerPolicy({this.sendGate});
 }

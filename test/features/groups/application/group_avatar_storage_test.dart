@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:image/image.dart' as img;
+
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +15,12 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
+
+Uint8List _avatarSnapshotBytes({int red = 60}) {
+  final image = img.Image(width: 16, height: 16);
+  img.fill(image, color: img.ColorRgb8(red, 120, 200));
+  return Uint8List.fromList(img.encodePng(image));
+}
 
 class _FakePathProvider extends Fake
     with MockPlatformInterfaceMixin
@@ -133,10 +141,8 @@ void main() {
   test(
     'downloadGroupAvatar creates the group avatar directory before bridge download',
     () async {
-      final bridge = _AvatarDownloadBridge(
-        Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0]),
-      );
-      final processedBytes = Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]);
+      final bridge = _AvatarDownloadBridge(_avatarSnapshotBytes());
+      final processedBytes = _avatarSnapshotBytes(red: 200);
 
       final result = await downloadGroupAvatar(
         bridge: bridge,

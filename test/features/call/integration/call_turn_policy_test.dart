@@ -58,8 +58,9 @@ void main() {
           peer.start();
         }
         await time.settle();
-        for (final peer in peers)
+        for (final peer in peers) {
           peer.current.native.connect(WebRtcTransportClass.turnUdp);
+        }
         await time.settle();
         final connectedAt = peers
             .map((p) => p.coordinator.activeSession!.connectedAt)
@@ -79,8 +80,9 @@ void main() {
             .map((states) => states.length)
             .toList();
         await time.elapse(const Duration(seconds: 5));
-        for (final peer in peers)
+        for (final peer in peers) {
           peer.current.native.connect(WebRtcTransportClass.direct);
+        }
         await time.settle();
         for (var i = 0; i < peers.length; i++) {
           final peer = peers[i];
@@ -107,9 +109,13 @@ void main() {
           expect(peer.history.entries, isEmpty);
         }
         // A later connected callback must not create a second session/history.
-        for (final peer in peers) peer.current.native.emit();
+        for (final peer in peers) {
+          peer.current.native.emit();
+        }
         await time.settle();
-        for (final peer in peers) peer.hangup();
+        for (final peer in peers) {
+          peer.hangup();
+        }
         await time.settle();
         for (final peer in peers) {
           expect(peer.history.entries, hasLength(1));
@@ -128,7 +134,9 @@ void main() {
         for (final subscription in subscriptions) {
           await time.tester.runAsync(subscription.cancel);
         }
-        for (final peer in peers) peer.close();
+        for (final peer in peers) {
+          peer.close();
+        }
         await time.settle();
       }
     },
@@ -144,16 +152,18 @@ void main() {
           peer.start();
         }
         await time.settle();
-        for (final peer in peers)
+        for (final peer in peers) {
           peer.current.native.connect(WebRtcTransportClass.turnUdp);
+        }
         await time.settle();
         final connectedAt = peers
             .map((p) => p.coordinator.activeSession!.connectedAt)
             .toList();
         // A stale/advisory event is not selected-pair evidence. Simulate an
         // unsuccessful opportunity while native snapshot still selects TURN.
-        for (final peer in peers)
+        for (final peer in peers) {
           peer.current.native.emit(eventTransport: WebRtcTransportClass.direct);
+        }
         await time.elapse(const Duration(seconds: 5));
         for (var i = 0; i < peers.length; i++) {
           final peer = peers[i];
@@ -173,11 +183,17 @@ void main() {
           expect(peer.current.engine.isClosed, isFalse);
           expect(peer.history.entries, isEmpty);
         }
-        for (final peer in peers) peer.hangup();
+        for (final peer in peers) {
+          peer.hangup();
+        }
         await time.settle();
-        for (final peer in peers) expect(peer.history.entries, hasLength(1));
+        for (final peer in peers) {
+          expect(peer.history.entries, hasLength(1));
+        }
       } finally {
-        for (final peer in peers) peer.close();
+        for (final peer in peers) {
+          peer.close();
+        }
         await time.settle();
       }
     },
