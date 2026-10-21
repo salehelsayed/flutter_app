@@ -2830,8 +2830,10 @@ must advance their final head/tail expectation to 122 while preserving historic
 starting versions. Orphan media cleanup precedes all post retriers and retries
 a failed cold cleanup on a later startup attempt. Bootstrap fingerprint updates
 require the plan's scoped owner approval; the Posts repository and app-root
-fingerprints remain unchanged. Focused verification and the preserved initial
-failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
+fingerprints stayed unchanged in the initial Thoughts engine implementation.
+The separately approved KX8 Call back repair later re-pins only app-root, as
+described in the microphone preflight guidance below. Focused verification and
+the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
 Step 2 adds host coverage for the eligible newest-per-friend thought query,
