@@ -100,7 +100,7 @@ void main() {
       final feed = await bobPosts.loadFeed();
       expect(feed, hasLength(1));
       expect(feed.single.id, sentPost.id);
-      expect(appShellController.activeTab, AppShellTab.feed);
+      expect(appShellController.activeTab, AppShellTab.orbit);
       expect(pendingTargetStore.target?.postId, sentPost.id);
     },
   );
