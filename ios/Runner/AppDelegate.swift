@@ -1000,8 +1000,24 @@ final class IosSetupReadinessEntryCoordinator {
     withCompletionHandler rawCompletionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     let appTrace = UUID().uuidString.lowercased()
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    let diagnosticRequestIdentifier = notification.request.identifier
+    logIosPayloadProfileDiagnostic(
+      "will_present_enter",
+      identifiers: [diagnosticRequestIdentifier],
+      content: notification.request.content,
+      counts: ["appState": Thread.isMainThread ? UIApplication.shared.applicationState.rawValue : -1]
+    )
+#endif
     MknoonAppDiagnostics.shared.record("push", "receive", "ok", values: ["direction": "incoming"], traceId: appTrace)
     let completionHandler: (UNNotificationPresentationOptions) -> Void = { options in
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+      logIosPayloadProfileDiagnostic(
+        "will_present_complete",
+        identifiers: [diagnosticRequestIdentifier],
+        counts: ["options": Int(options.rawValue)]
+      )
+#endif
       // Completion options request presentation; they do not prove a visible banner.
       MknoonAppDiagnostics.shared.record("push", "presentation", options.isEmpty ? "blocked" : "pending", options.isEmpty ? "lifecycle_interrupted" : "none", traceId: appTrace)
       rawCompletionHandler(options)

@@ -3,6 +3,40 @@ import Foundation
 import UIKit
 import UserNotifications
 
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+import os.log
+
+// Disposable receiver-profile evidence only. Never emit message/peer text,
+// payloads, keys or raw request identifiers into the device log.
+func logIosPayloadProfileDiagnostic(
+  _ event: String,
+  identifiers: [String] = [],
+  content: UNNotificationContent? = nil,
+  counts: [String: Int] = [:]
+) {
+  func hash(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8))
+      .map { String(format: "%02x", $0) }.joined()
+  }
+  var row: [String: Any] = [
+    "event": event,
+    "requestHashes": identifiers.prefix(32).map(hash).sorted(),
+    "requestCount": identifiers.count,
+    "requestOverflow": identifiers.count > 32,
+    "counts": counts,
+  ]
+  if let content {
+    row["titleSha256"] = hash(content.title)
+    row["bodySha256"] = hash(content.body)
+    row["titleBytes"] = content.title.utf8.count
+    row["bodyBytes"] = content.body.utf8.count
+  }
+  guard let data = try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys),
+        let encoded = String(data: data, encoding: .utf8) else { return }
+  os_log("MKNOON_IOS_PAYLOAD_DIAGNOSTIC_V1 %{public}@", log: .default, type: .info, encoded)
+}
+#endif
+
 struct IosDirectNotificationInventory: Equatable, Sendable {
   static let stableSampleTarget = 3
   static let stableSampleIntervalMilliseconds = 500
@@ -412,6 +446,19 @@ extension UNUserNotificationCenter: IosNotificationRecoveryCenter {
     completionHandler: @escaping @Sendable (Set<String>) -> Void
   ) {
     getDeliveredNotifications { notifications in
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+      for notification in notifications.prefix(32) {
+        logIosPayloadProfileDiagnostic(
+          "delivered_inventory",
+          identifiers: [notification.request.identifier],
+          content: notification.request.content
+        )
+      }
+      logIosPayloadProfileDiagnostic(
+        "delivered_inventory_summary",
+        identifiers: notifications.map(\.request.identifier)
+      )
+#endif
       completionHandler(Set(notifications.map(\.request.identifier)))
     }
   }
@@ -562,6 +609,16 @@ final class IosNotificationRecoveryCoordinator {
     identities: [IosNotificationCanonicalIdentity],
     completion: @escaping (Bool) -> Void
   ) {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    logIosPayloadProfileDiagnostic(
+      "canonical_commit_enter",
+      counts: [
+        "complete": canonicalStateComplete ? 1 : 0,
+        "badge": canonicalBadgeCount,
+        "identities": identities.count,
+      ]
+    )
+#endif
     if canonicalStateComplete,
        (canonicalBadgeCount != identities.count ||
          Set(identities).count != identities.count) {
@@ -608,6 +665,9 @@ final class IosNotificationRecoveryCoordinator {
     conversationId: String,
     completion: @escaping (Bool) -> Void
   ) {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    logIosPayloadProfileDiagnostic("retire_conversation_enter")
+#endif
     sessionLock.lock()
     guard let watermark = store.retireConversation(
       accountPeerId: accountPeerId,
@@ -649,6 +709,9 @@ final class IosNotificationRecoveryCoordinator {
           .map(\.requestIdentifier)
       ).sorted()
       if !selected.isEmpty {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+        logIosPayloadProfileDiagnostic("remove_group_invite", identifiers: selected)
+#endif
         self.center.removeDeliveredNotifications(withIdentifiers: selected)
       }
       self.center.getDeliveredNotificationSnapshots { remaining in
@@ -660,6 +723,9 @@ final class IosNotificationRecoveryCoordinator {
   }
 
   func clearAccount(completion: @escaping (Bool) -> Void) {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    logIosPayloadProfileDiagnostic("clear_account_enter")
+#endif
     sessionLock.lock()
     guard let watermark = store.clearAccount() else {
       sessionLock.unlock()
@@ -708,7 +774,13 @@ final class IosNotificationRecoveryCoordinator {
         return
       }
       let candidates = self.store.removalCandidates(watermark: watermark)
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+      logIosPayloadProfileDiagnostic("reconcile_candidates", identifiers: candidates)
+#endif
       if !candidates.isEmpty {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+        logIosPayloadProfileDiagnostic("remove_reconciled", identifiers: candidates)
+#endif
         self.center.removeDeliveredNotifications(withIdentifiers: candidates)
       }
       self.center.getDeliveredRequestIdentifiers { [weak self] remaining in

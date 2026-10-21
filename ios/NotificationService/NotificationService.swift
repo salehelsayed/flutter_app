@@ -1,6 +1,32 @@
 import Foundation
 import UserNotifications
 
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+import CryptoKit
+import os.log
+
+private func logIosPayloadProfileHandoff(
+  requestIdentifier: String,
+  content: UNNotificationContent
+) {
+  func hash(_ value: String) -> String {
+    SHA256.hash(data: Data(value.utf8))
+      .map { String(format: "%02x", $0) }.joined()
+  }
+  let row: [String: Any] = [
+    "event": "nse_content_handoff",
+    "requestHashes": [hash(requestIdentifier)],
+    "titleSha256": hash(content.title),
+    "bodySha256": hash(content.body),
+    "titleBytes": content.title.utf8.count,
+    "bodyBytes": content.body.utf8.count,
+  ]
+  guard let data = try? JSONSerialization.data(withJSONObject: row, options: .sortedKeys),
+        let encoded = String(data: data, encoding: .utf8) else { return }
+  os_log("MKNOON_IOS_PAYLOAD_DIAGNOSTIC_V1 %{public}@", log: .default, type: .info, encoded)
+}
+#endif
+
 final class NotificationService: UNNotificationServiceExtension {
   private let completionGate = NotificationServiceCompletionGate()
   private var appDiagnosticScope: MknoonNseAppDiagnosticScope?
@@ -71,11 +97,17 @@ final class NotificationService: UNNotificationServiceExtension {
     _ request: UNNotificationRequest,
     withContentHandler rawContentHandler: @escaping (UNNotificationContent) -> Void
   ) {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    let diagnosticRequestIdentifier = request.identifier
+#endif
     let diagnosticScope = MknoonNseAppDiagnosticScope()
     diagnosticScope.record("receive", "ok"); diagnosticScope.record("process", "started")
     let contentHandler: (UNNotificationContent) -> Void = { content in
       // This is a handoff request, never proof that iOS displayed a banner.
       diagnosticScope.record("presentation", "pending")
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+      logIosPayloadProfileHandoff(requestIdentifier: diagnosticRequestIdentifier, content: content)
+#endif
       rawContentHandler(content)
     }
     previewEventEmitter.emit(event: "PUSH_NSE_DID_RECEIVE", details: [:])
