@@ -1285,10 +1285,23 @@ final class AndroidAppStateGuard {
             '-t',
             ...snapshot.apkFiles.map((file) => file.path),
           ];
-    final install = await _adb(device, arguments, allowFailure: true);
+    var install = await _adb(device, arguments, allowFailure: true);
+    if (install.exitCode != 0 &&
+        '${install.stdout}\n${install.stderr}'.contains(
+          'INSTALL_FAILED_INSUFFICIENT_STORAGE',
+        )) {
+      install = await _adb(device, <String>[
+        for (final argument in arguments)
+          argument == '--no-streaming' ? '--streaming' : argument,
+      ], allowFailure: true);
+    }
     if (install.exitCode != 0) {
       // An uninstall/reinstall fallback would destroy Android Keystore state.
-      throw StateError('original APK restore failed without an uninstall');
+      throw StateError(
+        'original APK restore failed without an uninstall '
+        '(exit ${install.exitCode}): '
+        '${install.stdout}\n${install.stderr}',
+      );
     }
   }
 
