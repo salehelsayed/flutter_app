@@ -542,7 +542,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('TC-194-26: lit node keeps 48px tap target and opens chat', (
+    testWidgets('TC-194-26: lit node keeps at least 48px tap target and opens chat', (
       tester,
     ) async {
       final friends = [_makeFriend(0, unreadCount: 3)];
@@ -559,7 +559,7 @@ void main() {
       await pumpBounded(tester);
 
       final tapTarget = find.byType(GestureDetector);
-      expect(tester.getSize(tapTarget), const Size(48, 48));
+      expect(tester.getSize(tapTarget), const Size(38 * 1.4, 38 * 1.4));
       final rect = tester.getRect(tapTarget);
       await tester.tapAt(rect.center + const Offset(22, 0));
       expect(tapped?.peerId, 'peer-0-abcdef1234');
@@ -930,7 +930,7 @@ void main() {
       // No self-tap callback → no center detector mounts, so the 1-friend tree
       // still has EXACTLY one GestureDetector (TC-194-26's single-match holds).
       expect(find.byKey(centerKey), findsNothing);
-      expect(tester.getSize(find.byType(GestureDetector)), const Size(48, 48));
+      expect(tester.getSize(find.byType(GestureDetector)), const Size(38 * 1.4, 38 * 1.4));
     });
   });
 }

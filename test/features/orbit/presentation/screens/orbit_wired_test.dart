@@ -803,7 +803,7 @@ void main() {
         setLargeTestSurface(tester);
         identityRepo.seed(testIdentity);
         contactRepo.seed([testContact]);
-        var now = thoughtNow;
+        final clockStart = tester.binding.clock.now();
         final posts = _OrbitThoughtPostRepository();
         final pending = PendingPostTargetStore()
           ..setTarget(const PostRouteTarget(postId: 'expires-unswept'));
@@ -820,15 +820,19 @@ void main() {
           buildOrbitWired(
             postRepository: posts,
             pendingPostTargetStore: pending,
-            thoughtNowProvider: () => now,
+            thoughtNowProvider: () => thoughtNow.add(
+              tester.binding.clock.now().difference(clockStart),
+            ),
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
 
-        now = thoughtNow.add(const Duration(seconds: 5));
         await tester.pump(const Duration(seconds: 5));
-        await pumpOrbitFrames(tester, count: 4);
+        expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+        // Content closes at expiry; allow the ordinary route's reverse
+        // transition to dispose its offstage widget before asserting absence.
+        await pumpOrbitFrames(tester, count: 8);
 
         expect(find.byType(OrbitWired), findsOneWidget);
         expect(

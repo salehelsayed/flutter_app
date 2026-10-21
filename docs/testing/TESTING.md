@@ -2834,6 +2834,21 @@ fingerprints remain unchanged. Focused verification and the preserved initial
 failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+Step 2 adds host coverage for the eligible newest-per-friend thought query,
+Thought Card media/retry and navigation, dense note collision geometry, and
+Orbit notification/expiry integration. Pairwise collision corrections can
+reintroduce an earlier overlap at a canvas edge; the layout's final ordered
+projection is covered at 320/390/430-point widths and two note heights. Existing
+geometry and hit-testing scenarios that require the compact pre-407 layout
+must seed those saved preferences explicitly; new-install and Reset tests use
+the new 1.4 avatar / 1.5 spacing defaults. Expiry widget tests should derive time
+from the binding clock and distinguish content closing at its deadline from
+the ordinary route's later reverse-transition disposal. Media metadata/control
+tests use bounded pumps rather than waiting for a file-image loading ticker;
+they do not certify device image decoding. The [scoped host receipts](../../.codex-test-logs/plan407-step2/retained-host-evidence/)
+retain initial failures and the 214-test Orbit integration rerun. These host
+checks do not prove real transport, OS notification taps or device rendering.
+
 The canonical full planner still performs its global inventory census with
 `--only`. A scoped native row can pass while the overall report stays BLOCKED
 by unrelated inventory gaps. Verify those gaps against the explicit checkpoint

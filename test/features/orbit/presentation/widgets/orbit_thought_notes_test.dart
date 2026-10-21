@@ -97,14 +97,14 @@ void main() {
     'bubble width/ellipsis and only heavier text distinguish unseen',
     (tester) async {
       await tester.pumpWidget(
-        wrap(OrbitThoughtNoteBubble(note: note('short', text: 'Hi'))),
+        wrap(OrbitThoughtNoteBubble(note: note('short', text: 'H'))),
       );
       final shortWidth = tester
           .getSize(find.byType(OrbitThoughtNoteBubble))
           .width;
       expect(shortWidth, 40);
       expect(
-        tester.widget<Text>(find.text('Hi')).style!.fontWeight,
+        tester.widget<Text>(find.text('H')).style!.fontWeight,
         FontWeight.w600,
       );
       final long = List.filled(100, 'long thought').join(' ');

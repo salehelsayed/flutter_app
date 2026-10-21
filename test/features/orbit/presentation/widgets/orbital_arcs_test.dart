@@ -489,7 +489,7 @@ void main() {
     });
 
     testWidgets(
-      'TC-224-08 canvas box width grows when expanded and stays 320 otherwise',
+      'TC-224-08 canvas box contains expanded arcs and larger default rings',
       (tester) async {
         await tester.pumpWidget(
           expandable(
@@ -511,7 +511,7 @@ void main() {
           ),
         );
         await settle(tester);
-        expect(canvasRect(tester).width, closeTo(320.0, 0.01));
+        expect(canvasRect(tester).width, closeTo(388.0, 0.01));
 
         await tester.pumpWidget(
           expandable(

@@ -160,6 +160,56 @@ class OrbitThoughtSwim {
       }
       if (!moved) break;
     }
+
+    // Pair corrections can reintroduce a collision with a previously visited
+    // neighbour, especially at a horizontal bound. Finish in seat order and
+    // choose the nearest clear vertical position against the already fixed
+    // shapes. Candidate boundaries include a position above/below every shape,
+    // so this also resolves dense layouts without an iteration-count guess.
+    final fixed = <Rect>[self];
+    for (final seat in rings) {
+      final index = seat.index;
+      final ownHalf =
+          math.max(seat.avatarSize, noteSizes[index]?.width ?? 0) / 2;
+      final position = _positions[index]!;
+      final x = position.dx
+          .clamp(-halfWidth + ownHalf, halfWidth - ownHalf)
+          .toDouble();
+      final shapes = <Rect>[
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: seat.avatarSize,
+          height: seat.avatarSize,
+        ),
+        if (noteSizes.containsKey(index))
+          orbitThoughtNoteRect(Offset.zero, seat.avatarSize, noteSizes[index]!),
+      ];
+      final candidates = <double>{position.dy};
+      for (final obstacle in fixed) {
+        for (final shape in shapes) {
+          candidates.add(obstacle.top - shape.bottom - 6.1);
+          candidates.add(obstacle.bottom - shape.top + 6.1);
+        }
+      }
+      final ordered = candidates.toList()
+        ..sort((a, b) {
+          final distance = (a - position.dy).abs().compareTo(
+            (b - position.dy).abs(),
+          );
+          return distance == 0 ? a.compareTo(b) : distance;
+        });
+      final y = ordered.firstWhere((candidate) {
+        final offset = Offset(x, candidate);
+        return shapes.every(
+          (shape) => fixed.every(
+            (obstacle) =>
+                !shape.shift(offset).inflate(3).overlaps(obstacle.inflate(3)),
+          ),
+        );
+      });
+      _positions[index] = Offset(x, y);
+      fixed.addAll(shapes.map((shape) => shape.shift(_positions[index]!)));
+    }
     return Map<int, Offset>.unmodifiable(_positions);
   }
 }

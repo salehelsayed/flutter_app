@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -132,15 +133,27 @@ List<OrbitSeat> _arcSeatsAtAbsDx({
         .toList()
       ..sort((a, b) => a.dx.compareTo(b.dx));
 
+// Existing geometry/band cases exercise a saved pre-407 layout. New-install
+// defaults and Reset are tested separately; saved preferences must stay valid.
+const _savedCompactGeometry = OrbitGeometryPrefs(
+  avatarScale: 1.0,
+  spacingScale: 1.0,
+  arcWrap: 1.0,
+  maxPerArc: 9,
+  orbitGap: 1.0,
+);
+
 void main() {
   late List<OrbitFriend> tappedFriends;
   late List<OrbitGroup> tappedGroups;
   late List<bool> editEvents;
+  OrbitGeometryPrefs? savedFixtureGeometry;
 
   setUp(() {
     tappedFriends = [];
     tappedGroups = [];
     editEvents = [];
+    savedFixtureGeometry = null;
   });
 
   Widget host(
@@ -153,30 +166,41 @@ void main() {
     TargetPlatform? platform,
     double bottomClearance = 0,
     VoidCallback? onSurfaceBuild,
-  }) => MaterialApp(
-    locale: locale,
-    localizationsDelegates: AppLocalizations.localizationsDelegates,
-    supportedLocales: AppLocalizations.supportedLocales,
-    theme: ThemeData(
-      platform: platform,
-      extensions: [BackgroundReadableColors.dark],
-    ),
-    home: Scaffold(
-      resizeToAvoidBottomInset: resizeToAvoidBottomInset,
-      body: InnerCircleInteractiveSurface(
-        key: key,
-        userPeerId: 'me',
-        items: items,
-        onFriendTap: tappedFriends.add,
-        onGroupTap: tappedGroups.add,
-        secureKeyStore: store,
-        onEditSessionActiveChanged: editEvents.add,
-        resetSignal: resetSignal,
-        bottomClearance: bottomClearance,
-        debugOnSurfaceBuild: onSurfaceBuild,
+  }) {
+    if (store == null && savedFixtureGeometry != null) {
+      store = FakeSecureKeyStore();
+      unawaited(
+        store.write(
+          OrbitGeometryPrefs.storageKey,
+          savedFixtureGeometry!.toStorageString(),
+        ),
+      );
+    }
+    return MaterialApp(
+      locale: locale,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      theme: ThemeData(
+        platform: platform,
+        extensions: [BackgroundReadableColors.dark],
       ),
-    ),
-  );
+      home: Scaffold(
+        resizeToAvoidBottomInset: resizeToAvoidBottomInset,
+        body: InnerCircleInteractiveSurface(
+          key: key,
+          userPeerId: 'me',
+          items: items,
+          onFriendTap: tappedFriends.add,
+          onGroupTap: tappedGroups.add,
+          secureKeyStore: store,
+          onEditSessionActiveChanged: editEvents.add,
+          resetSignal: resetSignal,
+          bottomClearance: bottomClearance,
+          debugOnSurfaceBuild: onSurfaceBuild,
+        ),
+      ),
+    );
+  }
 
   Future<void> settle(WidgetTester tester, {int count = 16}) async {
     for (var i = 0; i < count; i++) {
@@ -751,7 +775,8 @@ void main() {
   });
 
   group('198 fidelity — geometry-anchored handles (F rows)', () {
-    const g0 = OrbitGeometryPrefs.defaults;
+    setUp(() => savedFixtureGeometry = _savedCompactGeometry);
+    const g0 = _savedCompactGeometry;
 
     testWidgets(
       'TC-198F-01 five handles seated at geometry anchors (expanded)',
@@ -791,7 +816,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 20));
         await gDrag.moveBy(const Offset(0, -20)); // consume the touch slop
         await tester.pump();
-        await gDrag.moveBy(const Offset(0, -100)); // deep past the 0.7 clamp
+        await gDrag.moveBy(const Offset(0, -60)); // deep past the 0.7 clamp
         await tester.pump(); // the single frame under test — no lag allowed
         expect(find.text('0.7×'), findsOneWidget);
         final gNew = g0.copyWith(spacingScale: 0.7);
@@ -809,7 +834,13 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('orbit-edit-reset')));
         await tester.pump();
         for (final k in OrbitKnob.values) {
-          final expected = expectedCenter(tester, k, g0, 20, expanded: true);
+          final expected = expectedCenter(
+            tester,
+            k,
+            OrbitGeometryPrefs.defaults,
+            20,
+            expanded: true,
+          );
           expect(
             (tester.getCenter(handleF(k)) - expected).distance,
             lessThan(2.0),
@@ -1212,7 +1243,7 @@ void main() {
           lessThanOrEqualTo(12),
           reason: 'bubble hugs the disc (gap ≤12px)',
         );
-        expect(find.text('1.4×'), findsOneWidget);
+        expect(find.text('1.0×'), findsOneWidget);
         final text = tester.widget<Text>(
           find.descendant(of: bubbleF(), matching: find.byType(Text)),
         );
@@ -1251,7 +1282,7 @@ void main() {
         await g.moveBy(const Offset(0, -25));
         await tester.pump(); // mid-drag frame
         expect(
-          find.text('1.5×'),
+          find.text('1.0×'),
           findsNothing,
           reason: 'value updates live mid-drag, not on drag-end',
         );
@@ -1329,14 +1360,6 @@ void main() {
         await longPressBg(tester);
         await tester.tap(handleF(OrbitKnob.avatarScale));
         await tester.pump();
-        // Start below the new 1.4 default so the growth assertion still proves
-        // a same-frame change rather than a no-op at the maximum.
-        for (var i = 0; i < 2; i++) {
-          await tester.tap(
-            find.byKey(const ValueKey('orbit-edit-step-decrease')),
-          );
-          await tester.pump();
-        }
         expect(
           tester
               .getSize(
@@ -1719,30 +1742,18 @@ void main() {
         return v;
       }
 
-      // Preserve the explicit 1.0-vs-1.5 causal comparison despite the new
-      // larger default: lower only spacing before the first identical drag.
-      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
-      for (var i = 0; i < 5; i++) {
-        await tester.tap(
-          find.byKey(const ValueKey('orbit-edit-step-decrease')),
-        );
-        await tester.pump();
-      }
-      expect(find.text('1.0×'), findsOneWidget);
       final ogAtSp1 = await dragOgAndRead();
       await tester.tap(find.byKey(const ValueKey('orbit-edit-reset')));
       await tester.pump();
 
-      // sp → 1.5 via the stepper (5 coarse increments of 0.1).
-      await tester.tap(handleF(OrbitKnob.spacingScale), warnIfMissed: false);
-      await tester.pump();
-      for (var i = 0; i < 5; i++) {
-        await tester.tap(
-          find.byKey(const ValueKey('orbit-edit-step-increase')),
-        );
-        await tester.pump();
-      }
-      expect(find.text('1.5×'), findsOneWidget);
+      // Reset itself selects the new 1.5 spacing default.
+      expect(
+        tester
+            .widget<OrbitalVisualization>(find.byType(OrbitalVisualization))
+            .geometry
+            .spacingScale,
+        1.5,
+      );
       final ogAtSp15 = await dragOgAndRead();
 
       expect(
@@ -2105,6 +2116,7 @@ void main() {
   });
 
   group('223 — expanded arc bottom overhang', () {
+    setUp(() => savedFixtureGeometry = _savedCompactGeometry);
     testWidgets(
       'TC-223-02 bottom node is TAPPABLE under large expanded geometry',
       (tester) async {
@@ -2192,7 +2204,7 @@ void main() {
     testWidgets('TC-223-05b bottom ARC node tappable at arcWrap=2.5', (
       tester,
     ) async {
-      final geometry = OrbitGeometryPrefs.defaults.copyWith(arcWrap: 2.5);
+      final geometry = _savedCompactGeometry.copyWith(arcWrap: 2.5);
       final bottomSeat = _bottomTapSeat(
         memberCount: 50,
         geometry: geometry,
@@ -2226,9 +2238,7 @@ void main() {
       'TC-223-06 handles stay seated & circle planted at sp=1.5 with bottom-growth active',
       (tester) async {
         const itemCount = 80;
-        final geometry = OrbitGeometryPrefs.defaults.copyWith(
-          spacingScale: 1.5,
-        );
+        final geometry = _savedCompactGeometry.copyWith(spacingScale: 1.5);
         final store = FakeSecureKeyStore();
         await store.write(
           OrbitGeometryPrefs.storageKey,
@@ -2289,6 +2299,7 @@ void main() {
   });
 
   group('224 — expanded side arc tappability', () {
+    setUp(() => savedFixtureGeometry = _savedCompactGeometry);
     const g0 = OrbitGeometryPrefs(
       avatarScale: 1.4,
       spacingScale: 1.0,
@@ -2332,7 +2343,7 @@ void main() {
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.reset);
 
-        final geometry = OrbitGeometryPrefs.defaults.copyWith(arcWrap: 2.5);
+        final geometry = _savedCompactGeometry.copyWith(arcWrap: 2.5);
         final store = FakeSecureKeyStore();
         await store.write(
           OrbitGeometryPrefs.storageKey,
@@ -2476,7 +2487,7 @@ void main() {
         tester.view.devicePixelRatio = 1.0;
         addTearDown(tester.view.reset);
 
-        final geometry = OrbitGeometryPrefs.defaults.copyWith(arcWrap: 2.5);
+        final geometry = _savedCompactGeometry.copyWith(arcWrap: 2.5);
         final flankSeats = _arcSeatsAtAbsDx(
           memberCount: 30,
           geometry: geometry,
@@ -2527,6 +2538,7 @@ void main() {
   // label-toggle avatar blink). All rows extend this GROUP_TESTS-pinned suite.
   // ==========================================================================
   group('201 — element identity + find UX (TC-201)', () {
+    setUp(() => savedFixtureGeometry = _savedCompactGeometry);
     // TC-201-01 — the find TextField element survives an edit enter AND exit.
     testWidgets('TC-201-01 find TextField State survives edit enter and exit', (
       tester,

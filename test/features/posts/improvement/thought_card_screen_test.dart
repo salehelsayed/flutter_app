@@ -101,6 +101,15 @@ void main() {
     await tester.pump();
   }
 
+  Future<void> pumpMediaFrames(WidgetTester tester) async {
+    // These assertions cover downloaded metadata and viewer/retry controls.
+    // File-image decoding can retain a loading ticker in a fake-async test;
+    // bounded frames flush repository futures without waiting on that ticker.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
+
   testWidgets(
     'shows name, age and text, marks shown thought and exposes no engagement',
     (tester) async {
@@ -334,7 +343,7 @@ void main() {
           );
         },
       );
-      await tester.pumpAndSettle();
+      await pumpMediaFrames(tester);
 
       expect(downloads, hasLength(1));
       expect(downloads.single.encryptionKeyBase64, 'private-key');
@@ -343,7 +352,7 @@ void main() {
       expect(grid.media.single.localPath, photo.path);
       expect(grid.media.single.downloadStatus, 'done');
       grid.onTap!(0);
-      await tester.pumpAndSettle();
+      await pumpMediaFrames(tester);
       final viewer = tester.widget<FullScreenTypedMediaViewer>(
         find.byType(FullScreenTypedMediaViewer),
       );
@@ -381,14 +390,14 @@ void main() {
           );
         },
       );
-      await tester.pumpAndSettle();
+      await pumpMediaFrames(tester);
       expect(attempts, 1);
       final retry = find.byKey(
         const ValueKey('unavailable-media-retry-thought-1-blob-image'),
       );
       await tester.ensureVisible(retry);
       await tester.tap(retry);
-      await tester.pumpAndSettle();
+      await pumpMediaFrames(tester);
       expect(attempts, 2);
       expect(
         tester
