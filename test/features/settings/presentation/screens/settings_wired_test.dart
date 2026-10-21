@@ -29,6 +29,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -316,12 +317,23 @@ void main() {
     if (appShellController == null) {
       addTearDown(shellController.dispose);
     }
+    final nativeEvents = StreamController<Object?>.broadcast();
+    addTearDown(nativeEvents.close);
+    final protection = PrivateMediaProtectionCoordinator(
+      invokeMethod: (method, arguments) async => <String, Object?>{
+        'ok': true,
+        'protectionActive': method == 'enter',
+      },
+      nativeEvents: nativeEvents.stream,
+    );
+    addTearDown(protection.dispose);
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: SettingsWired(
+          protectionCoordinator: protection,
           identityRepo: identityRepo,
           bridge: bridge ?? _FakeBridge(),
           contactRepo: contactRepo ?? _FakeContactRepo(),

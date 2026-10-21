@@ -1,3 +1,5 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -231,14 +233,14 @@ void main() {
         expect(tester.getSize(send).height, greaterThanOrEqualTo(44));
         final disabled = tester.getSemantics(send).getSemanticsData();
         expect(disabled.label.trim(), isNotEmpty);
-        expect(disabled.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
-        expect(disabled.hasFlag(SemanticsFlag.isEnabled), isFalse);
+        expect(disabled.flagsCollection.isEnabled, isNot(Tristate.none));
+        expect(disabled.flagsCollection.isEnabled, Tristate.isFalse);
         expect(disabled.hasAction(SemanticsAction.tap), isFalse);
         await tester.tap(find.text('Sarah'));
         await tester.pump();
         final enabled = tester.getSemantics(send).getSemanticsData();
-        expect(enabled.hasFlag(SemanticsFlag.isButton), isTrue);
-        expect(enabled.hasFlag(SemanticsFlag.isEnabled), isTrue);
+        expect(enabled.flagsCollection.isButton, isTrue);
+        expect(enabled.flagsCollection.isEnabled, Tristate.isTrue);
         expect(enabled.hasAction(SemanticsAction.tap), isTrue);
         final close = find.widgetWithIcon(IconButton, Icons.close);
         expect(tester.getSize(close).width, greaterThanOrEqualTo(44));

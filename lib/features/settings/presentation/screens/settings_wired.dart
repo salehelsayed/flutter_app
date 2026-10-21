@@ -15,6 +15,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
@@ -74,6 +75,7 @@ class SettingsWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final bool showNavigationBar;
+  final PrivateMediaProtectionCoordinator? protectionCoordinator;
   final Map<String, bool>? voiceCallFeatureFlags;
 
   /// 209 — host-built QR entries (the orbit host wraps its existing
@@ -110,6 +112,7 @@ class SettingsWired extends StatefulWidget {
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.showNavigationBar = true,
+    this.protectionCoordinator,
     this.voiceCallFeatureFlags,
     this.onMyQrRequested,
     this.onScanQrRequested,
@@ -157,6 +160,7 @@ class _SettingsWiredState extends State<SettingsWired>
   // changes outside a sheet gesture (the 2s copy-revert timer). Null when no
   // recovery sheet is open.
   VoidCallback? _recoverySheetTick;
+  bool _recoverySheetActive = false;
 
   double _settingsSwipeBackDx = 0;
 
@@ -846,34 +850,77 @@ class _SettingsWiredState extends State<SettingsWired>
     );
   }
 
-  Future<void> _openRecoverySheet() {
+  Future<void> _openRecoverySheet() async {
     final words = _identity?.mnemonic12.split(' ') ?? const <String>[];
-    if (words.length != 12) return Future.value();
-    return _showSettingsSheet(
-      builder: (sheetContext, setSheetState) {
-        _recoverySheetTick = () => setSheetState(() {});
-        return SettingsRecoveryPhraseCard(
-          words: words,
-          isRevealed: _isMnemonicRevealed,
-          isCopied: _isMnemonicCopied,
-          copyError: _mnemonicCopyError,
-          onToggleReveal: () {
-            _onToggleMnemonic();
-            setSheetState(() {});
-          },
-          onCopy: _onCopyMnemonic,
-          onHide: () {
-            _onHideMnemonic();
-            setSheetState(() {});
-          },
-        );
-      },
-    ).whenComplete(() {
+    if (_recoverySheetActive || words.length != 12) return;
+    _recoverySheetActive = true;
+    final protection =
+        widget.protectionCoordinator ??
+        (Platform.isAndroid || Platform.isIOS
+            ? PrivateMediaProtectionCoordinator.sharedPlatform()
+            : null);
+    PrivateMediaProtectionOwner? owner;
+    StreamSubscription<PrivateMediaProtectionEvent>? events;
+    ModalRoute<void>? sheetRoute;
+    try {
+      if (protection != null) {
+        // Do not mount phrase pixels until the native window is protected.
+        owner = await protection.enter();
+        if (!mounted) return;
+        if (owner == null || protection.coverActive) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.mnemonic_error_generic,
+              ),
+            ),
+          );
+          return;
+        }
+        events = protection.events.listen((event) {
+          if (event == PrivateMediaProtectionEvent.foreground ||
+              event == PrivateMediaProtectionEvent.captureStopped)
+            return;
+          if (!mounted) return;
+          _onHideMnemonic();
+          _recoverySheetTick?.call();
+          // iOS has already placed its opaque native cover before this event.
+          // Close this sheet so releasing its owner reveals only Settings.
+          final route = sheetRoute;
+          if (route != null && route.isCurrent) route.navigator?.pop();
+        });
+      }
+      if (!mounted) return;
+      await _showSettingsSheet(
+        builder: (sheetContext, setSheetState) {
+          sheetRoute = ModalRoute.of<void>(sheetContext);
+          _recoverySheetTick = () => setSheetState(() {});
+          return SettingsRecoveryPhraseCard(
+            words: words,
+            isRevealed: _isMnemonicRevealed,
+            isCopied: _isMnemonicCopied,
+            copyError: _mnemonicCopyError,
+            onToggleReveal: () {
+              _onToggleMnemonic();
+              setSheetState(() {});
+            },
+            onCopy: _onCopyMnemonic,
+            onHide: () {
+              _onHideMnemonic();
+              setSheetState(() {});
+            },
+          );
+        },
+      );
+      // Route pop completes before its reverse animation removes the pixels.
+      await sheetRoute?.completed;
+    } finally {
       _recoverySheetTick = null;
-      // Session hygiene: re-blur for the next open — the phrase is NEVER
-      // rendered on the One-Screen page itself (TC-209-29).
       if (mounted) _onHideMnemonic();
-    });
+      unawaited(events?.cancel());
+      if (owner != null) await protection!.exit(owner);
+      _recoverySheetActive = false;
+    }
   }
 
   void _onMoveAccountToNewPhone() {

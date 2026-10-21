@@ -90,13 +90,16 @@ class SettingsRecoveryPhraseCard extends StatelessWidget {
                         child: Stack(
                           children: [
                             // Word grid
-                            ImageFiltered(
-                              imageFilter: isRevealed
-                                  ? ImageFilter.blur()
-                                  : ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                              child: IgnorePointer(
-                                ignoring: !isRevealed,
-                                child: _buildWordGrid(readableColors),
+                            ExcludeSemantics(
+                              excluding: !isRevealed,
+                              child: ImageFiltered(
+                                imageFilter: isRevealed
+                                    ? ImageFilter.blur()
+                                    : ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+                                child: IgnorePointer(
+                                  ignoring: !isRevealed,
+                                  child: _buildWordGrid(readableColors),
+                                ),
                               ),
                             ),
                             // Reveal overlay (only when hidden)

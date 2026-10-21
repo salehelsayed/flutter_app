@@ -1,3 +1,5 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,9 +138,9 @@ void main() {
             expect(size.height, greaterThanOrEqualTo(44));
             final data = tester.getSemantics(control).getSemanticsData();
             expect(data.label, label);
-            expect(data.hasFlag(SemanticsFlag.isButton), isTrue);
-            expect(data.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
-            expect(data.hasFlag(SemanticsFlag.isEnabled), isTrue);
+            expect(data.flagsCollection.isButton, isTrue);
+            expect(data.flagsCollection.isEnabled, isNot(Tristate.none));
+            expect(data.flagsCollection.isEnabled, Tristate.isTrue);
             expect(data.hasAction(SemanticsAction.tap), isTrue);
           }
           await tester.tap(find.text('Decline'));
@@ -166,9 +168,9 @@ void main() {
             );
             final data = node.getSemanticsData();
             expect(data.label, label);
-            expect(data.hasFlag(SemanticsFlag.isButton), isTrue);
-            expect(data.hasFlag(SemanticsFlag.hasEnabledState), isTrue);
-            expect(data.hasFlag(SemanticsFlag.isEnabled), isFalse);
+            expect(data.flagsCollection.isButton, isTrue);
+            expect(data.flagsCollection.isEnabled, isNot(Tristate.none));
+            expect(data.flagsCollection.isEnabled, Tristate.isFalse);
             expect(data.hasAction(SemanticsAction.tap), isFalse);
           }
         } finally {

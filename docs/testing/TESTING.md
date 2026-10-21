@@ -3786,7 +3786,25 @@ visible and cannot become an ordinary first-attempt PASS.
 
 - **Settings, consent, group creation and update recovery boundaries:** recovery
   phrase visibility is page-owned but its modal sheet must also rebuild when
-  inactive/hidden/paused conceals it. Clipboard success must follow the awaited
+  inactive/hidden/paused conceals it. A visual blur does not exclude phrase
+  words from accessibility; exclude the hidden word grid from semantics and
+  retain only the reveal label. Android can snapshot before the Dart inactive
+  rebuild, so acquire the existing native privacy owner before mounting the
+  recovery sheet. Keep the owner until `ModalRoute.completed`: the route-pop
+  Future completes before dismissal removes the phrase pixels. The same owner
+  enables the existing iOS opaque cover on native application/scene inactivity,
+  before its event reaches Dart; the recovery sheet then conceals and closes
+  before releasing the cover. Failed or late native grants must never mount a
+  phrase or leave a secure-window owner behind. Focused host tests use the real
+  protection coordinator with native grants/events faked; these do not certify
+  an actual Android/iOS app-switcher image. The Pixel 6 failure was reported by
+  the device owner in Kayan task m-e15dc1cc; native/device revalidation remains
+  with that owner. Source and first-failure/green evidence are retained under
+  `.codex-test-logs/groupAB-secure/`. Semantics visibility checks traverse the
+  current tree with `find.semantics.byLabel`; a widget-based semantics finder can
+  retain a detached render node after re-hiding. Dispose the semantics handle
+  within the test's `finally`, before Flutter's end-of-test verification.
+  Clipboard success must follow the awaited
   platform write; platform failures keep copy retryable and show localized
   feedback. Host success fixtures must explicitly provide a clipboard handler.
   Avatar normalizer output must decode before replacing a canonical file;
