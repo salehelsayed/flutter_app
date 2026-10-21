@@ -376,7 +376,7 @@ final class _ProductionCallBackRegression {
           'KEYCODE_WAKEUP',
         ]);
         await driver._adbShell(peer.device, ['wm', 'dismiss-keyguard']);
-        await driver._launch(peer.device);
+        await driver._foreground(peer.device);
       }
       proof['resultSnapshot'] = await _completed('started');
       await _snapshot('b-started');
