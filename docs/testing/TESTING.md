@@ -6449,6 +6449,16 @@ visible and cannot become an ordinary first-attempt PASS.
   and the explanation was visible. Its 27 base call assertions and five KX29
   route assertions also passed. Earlier full-suite rows and this focused rerun
   retain their separate source/artifact scopes; this is not one fresh full-21 run.
+  The approved fix's [affected-check receipts](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/host-evidence/affected-components-summary.redacted.json)
+  cover all 22 required components across scoped runs on `f7e4bd558`, with
+  the original lease block and missing ignored Firebase plist failure retained.
+  Restoring the existing configuration made the full push component pass;
+  these receipts do not claim one aggregate wrapper pass. Android native JUnit
+  separately reports 624 passing tests, and all three changed Dart files pass
+  analysis. The [core-family receipt](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/host-evidence/core-host-all/summary.redacted.json)
+  records 4,422 passes, zero failures or skips across 483 Flutter files, plus
+  both native manifest checks, on clean `e7347691f`. Production source equality
+  with the approved fix is retained separately from harness and device evidence.
   Provider wake acceptance establishes custody only. Caller **Ringing** and
   ringback require authenticated remote ringing; a recipient may answer while
   the caller still shows Connecting. The earlier focused affected-calls receipt
