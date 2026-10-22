@@ -107,6 +107,7 @@ type directMediaDeviceFixture struct {
 	host                host.Host
 	stores              *controlPlaneStores
 	media               *MediaStore
+	faults              *directMediaFixtureFaults
 	redis               *miniredis.Miniredis
 	probe               *http.Server
 	probeLn             net.Listener
@@ -506,6 +507,7 @@ func startDirectMediaDeviceFixture(
 		return fail(fmt.Errorf("start production media store: %w", err))
 	}
 	fixture.media = media
+	fixture.faults = newDirectMediaFixtureFaults(media)
 	media.StartCleanup(ctx)
 	probeURL, err := fixture.startProbe(advertisedHost)
 	if err != nil {
@@ -732,6 +734,9 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 			"protectedInboxEnvelopeSha256":  inboxEnvelopeSHA256,
 		})
 	})
+	if fixture.faults != nil {
+		mux.HandleFunc(path+"/fault", fixture.faults.serve)
+	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	fixture.probe = server
 	go func() {
