@@ -116,9 +116,10 @@ def host_summary(result):
             for s in result['slots'] for h in s['holders']]
     if held:
         line += ' (' + '; '.join(held) + ')'
-    if result['nativeWanted']:
+    waiting = [w for w in result['nativeWanted'] if w['state'] == 'waiting']
+    if waiting:
         line += ' [native priority: new slots paused, %s]' % ', '.join(
-            'pid %d %s' % (w['pid'], w['state']) for w in result['nativeWanted'])
+            'pid %d %s' % (w['pid'], w['state']) for w in waiting)
     return line
 
 

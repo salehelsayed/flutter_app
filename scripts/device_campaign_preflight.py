@@ -267,9 +267,9 @@ def default_host_guard():
 def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=15, sleep=time.sleep, clock=time.monotonic):
     """Hold one of the host-test slots for a Mac-only Flutter/Dart check.
 
-    New slots wait while a native build holds or wants the native lease, while the
-    memory guard fails, or while both slots are busy. Running holders are never
-    interrupted.
+    New slots wait while a native build is waiting for the native lease, while the
+    memory guard fails, or while both slots are busy. A native lease that is merely
+    held does not pause host slots. Running holders are never interrupted.
     """
     directory = lease_directory(directory)
     guard = guard or default_host_guard
@@ -278,7 +278,7 @@ def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=1
     deadline = clock() + wait_seconds
     while True:
         handle = None
-        if native_wanted(directory):
+        if any(w['state'] == 'waiting' for w in native_wanted(directory)):
             reason = 'native build priority'
         elif not guard():
             reason = 'host memory or swap guard'

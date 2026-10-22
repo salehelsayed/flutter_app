@@ -101,6 +101,15 @@ class LeaseStatusTest(unittest.TestCase):
                          ('mknoon.host-tests', 1, ['FREE', 'HELD']))
         self.assertEqual([w['state'] for w in host['nativeWanted']], ['waiting'])
 
+    def test_holding_native_marker_does_not_report_a_pause(self):
+        write_exe(self.lsof, 'exit 1\n')
+        with open(os.path.join(self.dir, 'native-wanted.%d' % os.getppid()), 'w') as f:
+            json.dump({'pid': os.getppid(), 'state': 'holding', 'time': time.time()}, f)
+        lines = self.run_main().splitlines()
+        self.assertEqual(lines[1], 'mknoon.host-tests: 0/2 slots used')
+        host = json.loads(self.run_main('--json'))[1]
+        self.assertEqual([w['state'] for w in host['nativeWanted']], ['holding'])
+
     def test_other_lease_names(self):
         write_exe(self.lsof, 'exit 1\n')
         self.assertEqual(self.run_main(LEASE, 'emulator-5560').splitlines(),
