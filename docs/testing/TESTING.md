@@ -3532,6 +3532,18 @@ to cross the actual display gate. Do not disable that gate or replace all frame
 waits with an unbounded `pumpAndSettle`; unrelated pending thumbnails can keep
 animating after a route closes. Wait for the exact route/item state instead.
 
+The [Lever 2 native ledger](astra-lever2-media-native-runbook.md) adds a test-only
+native-client observer of the actual `blob:encrypt` input, after processing,
+with full plaintext/ciphertext hashes and pinned cross-process receipts. Its
+receiver gate reloads exact owner/parent/item, current authority and complete
+decrypted file; the ciphertext descriptor hash is not a plaintext digest.
+The 23 host adversarial cases in `media_content_oracle_test.dart` use a replaced
+native crypto port and prove observer/receipt/hash/refusal logic only. Native
+open requires a mobile-produced source, an actual mobile executor and a named
+reviewed frame/player/page assertion; byte PASS alone leaves native NOT RUN.
+The helper is not installed automatically in existing apps/campaigns and does
+not add a persisted production plaintext digest or certify arbitrary delegates.
+
 The exact numbered transcript is in
 `group_a_text_journeys_test.dart`: both database handles and runtime graphs are
 rebuilt every 25 messages, with exact IDs/text/order/direction checked before and
