@@ -5921,6 +5921,46 @@ visible and cannot become an ordinary first-attempt PASS.
   tests cover recovery only after acknowledgement of the exact old terminal,
   both cancellation/presentation orderings and both new-call admission orders.
   Missing receipts, live predecessors and adopted-call fences remain protected.
+  **VC-026 process-loss candidate:** owner-approved task `m-ea6ea1ed`, based
+  on RCA SHA256 `66974a7ebb2156d7466a46d4877b0acb12f382a6d6f06cbb3175cc368b35b4de`,
+  adds fresh-native-controller reconciliation for a persisted ADOPTED journal.
+  Only absence of its exact UUID from the live CallKit observer permits orphan
+  recovery; a live UUID remains under the normal lifecycle and expiry policy.
+  The native owner durably appends the closed `orphaned` terminal when needed,
+  then uses the existing exact terminal ACK/receipt before enabling admission.
+  An existing terminal is acknowledged without rewriting its event identity.
+  Failed persistence/ACK blocks enable and retains that exact startup candidate
+  for an explicit retry. A retained predecessor receipt cannot release a
+  successor's audio. No provider reset or time-based orphan inference is used.
+  The iOS shared reconciler accepts that proof only in journal phase, preserves
+  ordinary adopted-call fences, and finishes an attached orphan's exact ACK
+  before graph advertisement. A well-formed expired incoming preStart snapshot
+  containing a native terminal can also reach exact cleanup on iOS cold start;
+  expired nonterminal snapshots remain rejected, and incoming invite admission
+  deadlines are unchanged. This prevents ordinary terminal expiry from globally
+  invalidating the adapter. An already authenticated successor remains owned
+  by its canonical coordinator while that predecessor is retired. Headless
+  decline/ringing, wake tokens, two pending slots and the foreground-start
+  retry invalidation latch retain their existing owners.
+  Runtime snapshots reuse closed reason codes to distinguish malformed batches,
+  journal authority mismatch and missing receipts from ordinary refusal/expiry;
+  native presentation also records its closed busy/provider/persistence result.
+  In these lifecycle snapshots `found` means a descriptor exists, `accepted`
+  means its phase is journal/adopted, and `terminal` means it contains a terminal.
+  Thus false/false, true/false and true/true identify none, preStart and journal
+  without exporting call IDs, handles, payloads or exception text. No diagnostic
+  schema or relay deployment is required.
+  The eight-file Dart preservation selection passes 444 cases without skips,
+  including 18 added recovery/ACK-order/diagnostic-privacy cases; two-file
+  analysis is clean. Three changed Swift files pass frontend syntax parsing
+  only. Four added RunnerTests methods have not been compiled or executed;
+  the full iOS target build, RunnerTests execution, and same-candidate iPhone 13
+  kill-ringing/kill-active, relaunch, next-incoming proof remain with flutter_app
+  (install over the existing app and retain identity). The original refusal's
+  orphan-journal cause remains a source-supported candidate until that device
+  proof distinguishes it from other native failures. Raw first fixture failures,
+  unsupported-proof RED, authenticated-successor-first RED, and corrected
+  preservation results remain in `.codex-test-logs/ios-call-recovery-20261022/`.
   Receipt acknowledgement must also leave a successor's shared native audio
   and timeout work intact. Appium subsequently exercised that exact sequence
   on the physical iPhone 13 and Pixel 6. Native journal copies established an

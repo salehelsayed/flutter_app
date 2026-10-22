@@ -432,8 +432,21 @@ final class AndroidCallLifecycleAdapter
       await _schedule<void>(() async {
         if (_closed || _invalid) return;
         await _ingest(attached);
+        final activeCallId = _coordinator.activeSession?.callId;
+        final successorHandle = activeCallId == null
+            ? null
+            : _resolveAuthenticatedHandle(activeCallId);
+        if (_pendingTerminal?.type == _NativeEventType.orphaned &&
+            !await _retireUnboundIncomingTerminal(
+              successorHandle: successorHandle,
+            )) {
+          throw const FormatException(
+            'native orphan terminal receipt unavailable',
+          );
+        }
       });
     } catch (error) {
+      _recordNativeLifecycleFailure(_nativeLifecycleFailureReason(error));
       await _schedule<void>(() async => _invalidate());
       if (failStartOnAttachError) {
         throw AndroidCallLifecycleException(
@@ -448,7 +461,22 @@ final class AndroidCallLifecycleAdapter
   @override
   Future<bool> present(IncomingCallPresentation presentation) async {
     await start();
-    return _schedule<bool>(() => _presentNow(presentation));
+    return _schedule<bool>(() async {
+      try {
+        final presented = await _presentNow(presentation);
+        if (!presented) {
+          _recordNativeLifecycleFailure(
+            _clock().isBefore(presentation.expiresAt)
+                ? 'unavailable'
+                : 'expired',
+          );
+        }
+        return presented;
+      } catch (error) {
+        _recordNativeLifecycleFailure(_nativeLifecycleFailureReason(error));
+        rethrow;
+      }
+    });
   }
 
   /// Retries only the prior bound call's canonical cleanup, then gives its
@@ -1534,7 +1562,8 @@ final class AndroidCallLifecycleAdapter
         try {
           await _ingest(value);
           await _reconcileBoundEvents();
-        } catch (_) {
+        } catch (error) {
+          _recordNativeLifecycleFailure(_nativeLifecycleFailureReason(error));
           await _invalidate();
         }
       }),
@@ -1661,6 +1690,7 @@ final class AndroidCallLifecycleAdapter
         case _NativeEventType.expired:
         case _NativeEventType.providerRemoved:
         case _NativeEventType.nativeFailure:
+        case _NativeEventType.orphaned:
           if (!await _dispatch(event)) return;
           await _acknowledge(
             _highestObservedSequence,
@@ -1744,7 +1774,8 @@ final class AndroidCallLifecycleAdapter
           _NativeEventType.remoteCancelled ||
           _NativeEventType.expired ||
           _NativeEventType.providerRemoved ||
-          _NativeEventType.nativeFailure => CallNativeAction.end,
+          _NativeEventType.nativeFailure ||
+          _NativeEventType.orphaned => CallNativeAction.end,
           _NativeEventType.presented ||
           _NativeEventType.muteChanged ||
           _NativeEventType.routeChanged ||
@@ -1761,7 +1792,8 @@ final class AndroidCallLifecycleAdapter
                   : CallEndReason.remoteHangup,
             _NativeEventType.expired => CallEndReason.expired,
             _NativeEventType.providerRemoved ||
-            _NativeEventType.nativeFailure => CallEndReason.mediaFailed,
+            _NativeEventType.nativeFailure ||
+            _NativeEventType.orphaned => CallEndReason.mediaFailed,
             _ => null,
           };
     try {
@@ -1874,18 +1906,26 @@ final class AndroidCallLifecycleAdapter
     }
   }
 
-  /// No coordinator call or media ever owned this incoming terminal. Its
-  /// exact native acknowledgement can release it for a different call without
-  /// bypassing cleanup of an adopted call or relying on a local expiry guess.
+  /// Unadopted incoming terminals and native-proven process-loss journals have
+  /// no current Dart media owner. Other adopted calls retain their cleanup fence.
+  bool get _hasRetirableUnboundTerminal {
+    final descriptor = _descriptor;
+    final terminal = _pendingTerminal;
+    return recoverRetiredUnboundIncoming &&
+        _boundCallId == null &&
+        descriptor != null &&
+        terminal != null &&
+        ((descriptor.direction == _NativeCallDirection.incoming &&
+                descriptor.phase == _NativeDescriptorPhase.preStart) ||
+            (descriptor.phase == _NativeDescriptorPhase.journal &&
+                terminal.type == _NativeEventType.orphaned));
+  }
+
   Future<bool> _retireUnboundIncomingTerminal({String? successorHandle}) async {
     final previous = _descriptor;
-    if (!recoverRetiredUnboundIncoming ||
-        _boundCallId != null ||
+    if (!_hasRetirableUnboundTerminal ||
         previous == null ||
-        previous.direction != _NativeCallDirection.incoming ||
-        previous.phase != _NativeDescriptorPhase.preStart ||
-        previous.callHandle == successorHandle ||
-        _pendingTerminal == null) {
+        previous.callHandle == successorHandle) {
       return false;
     }
     final active = _coordinator.activeSession;
@@ -1903,6 +1943,7 @@ final class AndroidCallLifecycleAdapter
       'throughSequence': _highestObservedSequence,
       'disposition': _AcknowledgementDisposition.terminal.wireName,
     });
+    if (!retired) _recordNativeLifecycleFailure('receipt_missing');
     if (!retired || _closed || _invalid) return false;
     _rememberRetiredHandle(previous.callHandle, _highestObservedSequence);
     _resetPerCallState();
@@ -1943,12 +1984,8 @@ final class AndroidCallLifecycleAdapter
     }
     final descriptor = batch.descriptor;
     final previous = _descriptor;
-    if (recoverRetiredUnboundIncoming &&
-        _boundCallId == null &&
+    if (_hasRetirableUnboundTerminal &&
         previous != null &&
-        previous.direction == _NativeCallDirection.incoming &&
-        previous.phase == _NativeDescriptorPhase.preStart &&
-        _pendingTerminal != null &&
         descriptor != null &&
         descriptor.direction == _NativeCallDirection.incoming &&
         descriptor.callHandle != previous.callHandle &&
@@ -1973,7 +2010,10 @@ final class AndroidCallLifecycleAdapter
     }
     if (descriptor != null) {
       if (descriptor.phase == _NativeDescriptorPhase.preStart &&
-          !_clock().isBefore(descriptor.expiresAt)) {
+          !_clock().isBefore(descriptor.expiresAt) &&
+          !(recoverRetiredUnboundIncoming &&
+              descriptor.direction == _NativeCallDirection.incoming &&
+              batch.events.any((event) => event.type.isTerminal))) {
         throw const FormatException('expired native descriptor');
       }
       final current = _descriptor;
@@ -2056,6 +2096,13 @@ final class AndroidCallLifecycleAdapter
         (terminalSequences.isNotEmpty &&
             terminalSequences.single != _highestObservedSequence)) {
       throw const FormatException('terminal event must dominate batch tail');
+    }
+    if (_pendingTerminal?.type == _NativeEventType.orphaned &&
+        (!recoverRetiredUnboundIncoming ||
+            _descriptor?.phase != _NativeDescriptorPhase.journal)) {
+      throw const FormatException(
+        'orphan proof requires an adopted iOS journal',
+      );
     }
   }
 
@@ -2278,6 +2325,43 @@ final class AndroidCallLifecycleAdapter
     }
   }
 
+  /// Existing closed reason codes classify failure without exporting exception
+  /// text. For these snapshots, found/accepted mean descriptor present/adopted:
+  /// false/false = none, true/false = preStart, true/true = journal.
+  void _recordNativeLifecycleFailure(String reason) {
+    try {
+      CallDiagnostics.instance.record(
+        stage: 'runtime',
+        action: 'snapshot',
+        outcome: 'failed',
+        reason: reason,
+        values: <String, Object?>{
+          'found': _descriptor != null,
+          'accepted': _descriptor?.phase == _NativeDescriptorPhase.journal,
+          'terminal': _pendingTerminal != null,
+        },
+      );
+    } catch (_) {
+      // Observation cannot change lifecycle authority.
+    }
+  }
+
+  static String _nativeLifecycleFailureReason(Object error) {
+    if (error is! FormatException) return 'native_lifecycle_failed';
+    return switch (error.message) {
+      'native terminal receipt unavailable' ||
+      'native orphan terminal receipt unavailable' => 'receipt_missing',
+      'native descriptor changed' ||
+      'native call id mismatch' ||
+      'native descriptor direction mismatch' ||
+      'event handle mismatch' ||
+      'event sequence conflict' ||
+      'event id conflict' ||
+      'event follows terminal acknowledgement' => 'authority_invalid',
+      _ => 'malformed_response',
+    };
+  }
+
   void _queueInvalidation() {
     if (_closed) return;
     unawaited(_schedule<void>(_invalidate));
@@ -2449,6 +2533,7 @@ enum _NativeEventType {
   expired,
   providerRemoved,
   nativeFailure,
+  orphaned,
   muteChanged,
   routeChanged,
   audioActivated,
@@ -2460,7 +2545,8 @@ enum _NativeEventType {
     _NativeEventType.remoteCancelled ||
     _NativeEventType.expired ||
     _NativeEventType.providerRemoved ||
-    _NativeEventType.nativeFailure => true,
+    _NativeEventType.nativeFailure ||
+    _NativeEventType.orphaned => true,
     _ => false,
   };
 
@@ -2473,6 +2559,7 @@ enum _NativeEventType {
     'expired' => _NativeEventType.expired,
     'providerRemoved' => _NativeEventType.providerRemoved,
     'nativeFailure' => _NativeEventType.nativeFailure,
+    'orphaned' => _NativeEventType.orphaned,
     'muteChanged' => _NativeEventType.muteChanged,
     'routeChanged' => _NativeEventType.routeChanged,
     'audioActivated' => _NativeEventType.audioActivated,
