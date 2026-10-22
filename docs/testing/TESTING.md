@@ -71,6 +71,16 @@ configuration and signed artifact, not just the Dart revision or version label.
   Codex document recall for focused prior decisions and targeted source searches
   for code impact in Codex. Claude's separate navigation configuration is unchanged.
 
+When macOS swap pressure blocks host work, check for orphaned Dart VM workers
+from completed diagnostic runs. Plan 407 left 41 workers with parent PID 1 and
+the same diagnostic-source working directory; verified exact-PID cleanup freed
+about 4 GB of swap. Match UID, parent, start time and current working directory
+against the completed run's receipt, then recheck each PID before signalling.
+Preserve active campaigns and the diagnostic files: their directories can hold
+the only original xcresult and first-failure evidence. The [cleanup receipt](../../.codex-test-logs/plan407-step3/orphan-diagnostic-process-cleanup.redacted.json)
+records all identities, signals and the absence of remaining workers; it does
+not establish that a diagnostic directory is safe to delete.
+
 `docker-ws/run_sims_safe.py` lists the major inventory without device, relay or
 provider configuration. Execution is a filtered diagnostic: credential and
 physical-phone routes remain BLOCKED rather than becoming a passing full major
@@ -2836,6 +2846,18 @@ described in the microphone preflight guidance below. Focused verification and
 the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+On 2026-10-22 the owner accepted Thoughts completion with the three pre-existing
+skip-only host gaps documented. The original Step 1 affected selection remains
+122 PASS / 0 FAIL / 3 BLOCKED: identity completed with 751 passes and 13 skips,
+storage with 1,418 passes and one skip, and Go core with 1,943 passes and two
+skips. All nine skipped-test source files are byte-identical to the initial
+checkpoint. The contact-request/QR scenarios, native SQLCipher capability, and
+optional loopback hole-punch feasibility assertions remain unproven by those
+host runs. The [accepted baseline exception](../../.codex-test-logs/plan407-step3/baseline-exceptions-proposal.json)
+records source hashes and the owner's scope decision; it does not convert a
+SKIP or the wrapper's BLOCKED verdict to PASS. Unrelated fixes on main are not
+required for this scoped completion.
+
 Step 2 adds host coverage for the eligible newest-per-friend thought query,
 Thought Card media/retry and navigation, dense note collision geometry, and
 Orbit notification/expiry integration. Pairwise collision corrections can
@@ -2881,6 +2903,19 @@ encryption and media-recovery tests remain separate from real photo delivery.
 The [initial compilation failure](../../.codex-test-logs/plan407-step2/step3-orbit-and-media/)
 is retained separately from the [corrected focused run](../../.codex-test-logs/plan407-step2/step3-focused-fixed/).
 Broad selection and device acceptance use their own source-bound receipts.
+
+The [Step 3 device receipt](../../.codex-test-logs/plan407-step3/step3-device-summary.md)
+records four passing acceptance scenarios on clean source `d81655bf0`: the own
+node's plus entry, composer controls and lifetime text without audience
+controls, sharing text with a real photo, and the friend's note and card with
+the matching decrypted photo. A second distinctive photo also rendered
+correctly. Appium drove a physical Android sender and headless emulator
+receiver using the disposable `com.mknoon.sims.step3` debug build; APK SHA-256
+starts `fb133fb6bd6fc0ac`. Google services were disabled, so this proves the
+composer and real encrypted media path, not production push latency or a
+signed release candidate. Cleanup removed only the disposable packages and
+test photos. This acceptance result does not stand in for the separately
+selected general device regression campaigns.
 
 The canonical full planner still performs its global inventory census with
 `--only`. A scoped native row can pass while the overall report stays BLOCKED
@@ -3031,8 +3066,12 @@ before network-restoration gestures. An uncleared alert reports
 `local_network_alert_not_cleared`; it can otherwise swallow Control Center
 gestures and cause the private bootstrap's cleanup to fail before any push.
 The owner observed that alert on the iPhone after the [retained failed run](../../.codex-test-logs/plan407-step3/ios-final-device-summary.md).
-The follow-up's 23 host contracts and Swift syntax parse pass; they do not
-establish a successful physical campaign.
+The follow-up's 23 host contracts and Swift syntax parse passed. The subsequent
+[physical run](../../.codex-test-logs/plan407-step3/ios-late-network-device-summary.md)
+accepted the late alert and completed the private bootstrap, closing this
+permission-preparation finding. It later failed to locate the notification
+card after the airplane toggle. The complete iOS campaign remains unpassed;
+later test-only re-find changes need their own device result.
 
 Native notification tests on an iPhone must load the shared TC396 JSON from
 the test bundle. A compiled Mac `#filePath` is unavailable on the phone. Keep
