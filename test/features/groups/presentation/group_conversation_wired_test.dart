@@ -4260,6 +4260,8 @@ void main() {
           ..multipleMediaResult = [XFile(oversizedFile.path)];
         final qualityCalls = <int>[];
         final imageProcessor = ImageProcessor(
+          loadImageQualityPreference: () async =>
+              ImageQualityPreference.original,
           compressFile:
               ({
                 required path,

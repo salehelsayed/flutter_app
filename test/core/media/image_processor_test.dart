@@ -126,6 +126,105 @@ void main() {
     });
   });
 
+  group('live stored quality', () {
+    test(
+      'next image uses changed stored quality despite a stale route value',
+      () async {
+        var stored = ImageQualityPreference.compressed;
+        final qualities = <int>[];
+        final processor = ImageProcessor(
+          loadImageQualityPreference: () async => stored,
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                qualities.add(quality);
+                return XFile('${path}_processed.jpg');
+              },
+        );
+        await processor.processImage(
+          inputPath: '/tmp/photo.jpg',
+          quality: ImageQualityPreference.compressed,
+        );
+        stored = ImageQualityPreference.original;
+        await processor.processImage(
+          inputPath: '/tmp/photo.jpg',
+          quality: ImageQualityPreference.compressed,
+        );
+        stored = ImageQualityPreference.compressed;
+        await processor.processImage(
+          inputPath: '/tmp/photo.jpg',
+          quality: ImageQualityPreference.original,
+        );
+        expect(qualities, [85, 100, 85]);
+      },
+    );
+
+    test('explicit overflow compression overrides stored Original', () async {
+      var reads = 0;
+      int? requested;
+      final processor = ImageProcessor(
+        loadImageQualityPreference: () async {
+          reads++;
+          return ImageQualityPreference.original;
+        },
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async {
+              requested = quality;
+              return XFile('${path}_processed.jpg');
+            },
+      );
+      await processor.processImage(
+        inputPath: '/tmp/photo.jpg',
+        quality: ImageQualityPreference.compressed,
+        useStoredPreference: false,
+      );
+      expect(requested, 85);
+      expect(reads, 0);
+    });
+
+    test(
+      'next video uses changed stored quality and preserves explicit compression',
+      () async {
+        var stored = ImageQualityPreference.compressed;
+        final compressRequests = <bool>[];
+        final processor = ImageProcessor(
+          loadVideoQualityPreference: () async => stored,
+          compressVideo:
+              ({required path, required compress, onProgress}) async {
+                compressRequests.add(compress);
+                return VideoProcessResult(path: '${path}_processed.mp4');
+              },
+        );
+        await processor.processVideo(
+          inputPath: '/tmp/video.mp4',
+          quality: ImageQualityPreference.compressed,
+        );
+        stored = ImageQualityPreference.original;
+        await processor.processVideo(
+          inputPath: '/tmp/video.mp4',
+          quality: ImageQualityPreference.compressed,
+        );
+        await processor.processVideo(
+          inputPath: '/tmp/video.mp4',
+          quality: ImageQualityPreference.compressed,
+          useStoredPreference: false,
+        );
+        expect(compressRequests, [true, false, true]);
+      },
+    );
+  });
+
   group('isProcessableImage', () {
     late ImageProcessor processor;
 

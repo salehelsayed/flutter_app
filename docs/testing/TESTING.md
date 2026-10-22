@@ -3622,6 +3622,20 @@ do not count `test(...)` strings as executions. Runner listings took about
   relay addresses retain permanent peerstore custody; the Go address-expiry test
   covers expiry of transient connected-address TTLs. This does not establish
   that every internal Go relay task is suspended.
+- The production image processor reads the saved photo/video quality when each
+  new file is prepared. Route-constructor quality values are fallbacks for
+  processors without storage loaders. A failed store read emits one content-free
+  diagnostic and retains that fallback so preparation can complete. Cached Orbit
+  values and default-only
+  notification, post-contact, first-time and linked entry points cannot replace
+  a saved Original selection. Explicit composer overflow compression bypasses
+  the saved choice; avatars retain their separate fixed-quality path.
+  `quality_preference_routes_test.dart` exercises real MyApp notification direct
+  and group route construction with the shared processor; the Orbit widget
+  regression changes the actual Settings sheet in both directions without
+  remounting Orbit. Encoder calls are host substitutes, not native/device proof.
+  Processor, pending-media and group overflow tests preserve forced Compressed
+  behavior. Evidence is in ignored `build/kayan-safe/quality-pref-live/`.
 - Original photo processing requests source resolution from the native encoder;
   Compressed retains the 1920×1080 minimum-size resize contract and JPEG quality
   85. Original still re-encodes to JPEG at quality 100 with EXIF retention off;
@@ -5596,6 +5610,13 @@ visible and cannot become an ordinary first-attempt PASS.
   resume/adapter fingerprints and the unique historical notification callback
   stay unchanged. Preserve that proof before refreshing the three explained pins
   (`.codex-test-logs/groupAB-align/pin-chain-proof.json`).
+  The live-quality loader wiring changes only the two bootstrap fingerprints;
+  exact reconstruction against `886b49d66` reproduces both prior pins with all
+  25 URI rewrites and the single historical callback unchanged. The real-root
+  quality regression fixture adds one explicit test importer to each Posts
+  adapter census. Those reviewed changes move no production owner or adapter;
+  retain `quality-pref-live/pin-chain-proof.json` and the exact owner diff.
+
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now

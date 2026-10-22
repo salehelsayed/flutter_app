@@ -292,6 +292,8 @@ const _applicationRootNormalizedSha256 =
 // controls through this app-owned composition; ordinary callbacks stay null.
 // Group B adds the existing contact-request presentation gate as a Listenable
 // at the same listener construction; no bootstrap owner or adapter moves.
+// Live quality loaders add only app-owned preference reads. The exact owner
+// diff reconstructs both prior pins; see quality-pref-live/pin-chain-proof.json.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -395,7 +397,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '3ee1a5dc46e323207c3cf3293aa64144349f2884acaf9d06c997694ce9a9a939';
+    '4a893b761ddb5c7110bd075cce1ee8196616404c26ac633fb3b3e49cd044ea10';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -418,7 +420,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same Group B gate callback changes this remainder; the historical
 // notification proof injection remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'c5b6cc7719d3dc478b1b89b8385d9ff35d087a55e738b5e9cf7c45a54b49470e';
+    '2c84ce34827c26336092621c6b33096a3bc3e8c91f8e0154c5943852571ec33b';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -656,12 +658,14 @@ void main() {
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/contact_presence_snapshot_repository_test.dart',
       'test/app/call_back_feedback_test.dart',
+      'test/app/quality_preference_routes_test.dart',
     });
     expect(_directiveFiles(root, _newPrivacyUri), <String>{
       'lib/app/application_root.dart',
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/posts_privacy_settings_repository_test.dart',
       'test/app/call_back_feedback_test.dart',
+      'test/app/quality_preference_routes_test.dart',
     });
 
     expect(

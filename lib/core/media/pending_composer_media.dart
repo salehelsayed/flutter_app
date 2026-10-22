@@ -34,6 +34,7 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
   required ImageProcessor? imageProcessor,
   required ImageQualityPreference imageQualityPreference,
   required ImageQualityPreference videoQualityPreference,
+  bool useStoredPreferences = true,
   void Function(double progress)? onVideoProgress,
 }) async {
   final sourceFile = File(inputPath);
@@ -49,6 +50,7 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
     final result = await imageProcessor.processVideo(
       inputPath: inputPath,
       quality: videoQualityPreference,
+      useStoredPreference: useStoredPreferences,
       onProgress: onVideoProgress,
     );
     final processedFile = File(result.path);
@@ -69,6 +71,7 @@ Future<PendingComposerMedia> preparePendingComposerMedia({
     final processedPath = await imageProcessor.processImage(
       inputPath: inputPath,
       quality: imageQualityPreference,
+      useStoredPreference: useStoredPreferences,
     );
     final processedFile = File(processedPath);
     final budgetBytes = _resolvedBudgetBytesForFile(

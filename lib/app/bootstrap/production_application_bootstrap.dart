@@ -317,6 +317,7 @@ import 'package:flutter_app/core/local_discovery/native_mdns_resolver.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -5321,7 +5322,12 @@ final class ProductionApplicationBootstrap
     }
 
     // Create image processor (EXIF stripping + quality compression)
-    final imageProcessor = ImageProcessor();
+    final imageProcessor = ImageProcessor(
+      loadImageQualityPreference: () =>
+          loadImageQualityPreference(secureKeyStore: secureKeyStore),
+      loadVideoQualityPreference: () =>
+          loadVideoQualityPreference(secureKeyStore: secureKeyStore),
+    );
 
     // Create audio recorder service
     final audioRecorderService = RecordAudioRecorderService();

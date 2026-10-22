@@ -6,6 +6,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Function signature for image compression.
@@ -89,6 +90,8 @@ class ImageProcessor {
   bool get canProcessVideo =>
       _compressVideo != null || _unsettledDefaultVideoCompression == null;
 
+  final Future<ImageQualityPreference> Function()? _loadImageQualityPreference;
+  final Future<ImageQualityPreference> Function()? _loadVideoQualityPreference;
   final CompressFileFn _compressFile;
   final CompressVideoFn? _compressVideo;
   final CancelVideoCompressionFn _cancelVideoCompression;
@@ -98,27 +101,46 @@ class ImageProcessor {
   void Function()? _cancelActiveVideoProgress;
 
   ImageProcessor({
+    Future<ImageQualityPreference> Function()? loadImageQualityPreference,
+    Future<ImageQualityPreference> Function()? loadVideoQualityPreference,
     CompressFileFn? compressFile,
     CompressVideoFn? compressVideo,
     CancelVideoCompressionFn? cancelVideoCompression,
     this.videoStallTimeout = const Duration(minutes: 5),
     this.videoMaxDuration = const Duration(hours: 1),
     this.videoCancelTimeout = const Duration(seconds: 5),
-  }) : _compressFile = compressFile ?? _defaultCompress,
+  }) : _loadImageQualityPreference = loadImageQualityPreference,
+       _loadVideoQualityPreference = loadVideoQualityPreference,
+       _compressFile = compressFile ?? _defaultCompress,
        _compressVideo = compressVideo,
        _cancelVideoCompression =
            cancelVideoCompression ?? _cancelDefaultVideoCompression;
 
   /// Process image for sending: strip EXIF; Original keeps source resolution.
   ///
+  /// A configured stored preference is read for each preparation. [quality]
+  /// remains the fallback for standalone processors. Set [useStoredPreference]
+  /// to false only for an explicit quality override, such as overflow compression.
   /// Non-image files (videos, PDFs) pass through unchanged.
   /// Returns the path to the processed file.
   Future<String> processImage({
     required String inputPath,
     required ImageQualityPreference quality,
+    bool useStoredPreference = true,
   }) async {
     if (!isProcessableImage(inputPath)) return inputPath;
 
+    if (useStoredPreference && _loadImageQualityPreference != null) {
+      try {
+        quality = await _loadImageQualityPreference();
+      } catch (_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_QUALITY_PREFERENCE_READ_FAILED',
+          details: {'mediaType': 'image'},
+        );
+      }
+    }
     final compressionQuality = quality == ImageQualityPreference.original
         ? 100
         : 85;
@@ -170,6 +192,7 @@ class ImageProcessor {
   Future<VideoProcessResult> processVideo({
     required String inputPath,
     required ImageQualityPreference quality,
+    bool useStoredPreference = true,
     void Function(double progress)? onProgress,
   }) async {
     if (!isProcessableVideo(inputPath)) {
@@ -177,6 +200,17 @@ class ImageProcessor {
     }
     if (_compressVideo == null && _unsettledDefaultVideoCompression != null) {
       throw const VideoProcessingUnavailableException();
+    }
+    if (useStoredPreference && _loadVideoQualityPreference != null) {
+      try {
+        quality = await _loadVideoQualityPreference();
+      } catch (_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_QUALITY_PREFERENCE_READ_FAILED',
+          details: {'mediaType': 'video'},
+        );
+      }
     }
 
     Timer? stallTimer;

@@ -1977,6 +1977,9 @@ class _ConversationWiredState extends State<ConversationWired>
             imageQualityPreference ?? widget.qualityPreference,
         videoQualityPreference:
             videoQualityPreference ?? widget.videoQualityPreference,
+        // Explicit overflow compression must override the saved Original choice.
+        useStoredPreferences:
+            imageQualityPreference == null && videoQualityPreference == null,
         onVideoProgress: (progress) {
           if (mounted) {
             _updateComposerState(processingProgress: progress / 100.0);
