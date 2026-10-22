@@ -65,6 +65,8 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
   bool _callLive = false;
   bool _navigatorCanHandlePop = false;
   bool _publishedBlocking = false;
+  // Session-only escape hatch. A higher requirement must be shown again.
+  int? _dismissedMinBuild;
   bool _storeLaunchFailed = false;
 
   @override
@@ -151,7 +153,11 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
       child: ValueListenableBuilder<UpdateDecision>(
         valueListenable: widget.controller,
         builder: (context, decision, _) {
-          final hard = decision is UpdateDecisionHard && !_callLive
+          final hard =
+              decision is UpdateDecisionHard &&
+                  !_callLive &&
+                  (_dismissedMinBuild == null ||
+                      decision.minBuild > _dismissedMinBuild!)
               ? decision
               : null;
           final blocking = hard != null;
@@ -177,12 +183,18 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
               if (hard != null)
                 Positioned.fill(
                   child: BlockSemantics(
-                    child: UpdateRequiredScreen(
-                      decision: hard,
-                      installedBuildNumber:
-                          widget.controller.installedBuildNumber,
-                      onUpdate: _onUpdate,
-                      storeLaunchFailed: _storeLaunchFailed,
+                    // This builder-level surface is above the navigator, so
+                    // its close tooltip needs its own overlay (like calls).
+                    child: Overlay.wrap(
+                      child: UpdateRequiredScreen(
+                        decision: hard,
+                        installedBuildNumber:
+                            widget.controller.installedBuildNumber,
+                        onUpdate: _onUpdate,
+                        onClose: () =>
+                            setState(() => _dismissedMinBuild = hard.minBuild),
+                        storeLaunchFailed: _storeLaunchFailed,
+                      ),
                     ),
                   ),
                 ),
@@ -217,20 +229,22 @@ class _UpdateRequiredGateState extends State<UpdateRequiredGate>
   }
 }
 
-/// The blocking "update required" screen. No close button; the only action
-/// opens the store.
+/// The blocking "update required" screen, with a store action and a close
+/// button that dismisses the current requirement for this app session.
 class UpdateRequiredScreen extends StatelessWidget {
   const UpdateRequiredScreen({
     super.key,
     required this.decision,
     required this.installedBuildNumber,
     required this.onUpdate,
+    required this.onClose,
     this.storeLaunchFailed = false,
   });
 
   final UpdateDecisionHard decision;
   final String? installedBuildNumber;
   final VoidCallback onUpdate;
+  final VoidCallback onClose;
   final bool storeLaunchFailed;
 
   @override
@@ -242,88 +256,106 @@ class UpdateRequiredScreen extends StatelessWidget {
       key: const ValueKey('update-required-overlay'),
       color: theme.scaffoldBackgroundColor,
       child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Icon(
-                    Icons.system_update_rounded,
-                    size: 56,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(height: 24),
-                  Semantics(
-                    header: true,
-                    child: Text(
-                      l10n.update_required_title,
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.headlineSmall,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    updateRequiredBody(l10n, decision.reasonCode),
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyLarge,
-                  ),
-                  const SizedBox(height: 20),
-                  if (installed != null)
-                    Text(
-                      l10n.update_required_installed_build(installed),
-                      key: const ValueKey('update-required-installed'),
-                      textAlign: TextAlign.center,
-                      style: theme.textTheme.bodyMedium,
-                    ),
-                  Text(
-                    l10n.update_required_minimum_build(
-                      decision.minBuild.toString(),
-                    ),
-                    key: const ValueKey('update-required-minimum'),
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  if (storeLaunchFailed)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 16),
-                      child: Text(
-                        l10n.update_required_store_failed,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  const SizedBox(height: 28),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      key: const ValueKey('update-required-button'),
-                      // Keyboard focus moves into the overlay, so Tab starts
-                      // here; nothing behind it can take focus.
-                      autofocus: true,
-                      onPressed: onUpdate,
-                      // Large text sizes wrap the label; keep it centred and
-                      // clear of the rounded ends. Black on the green passes
-                      // WCAG AA; white on it would not.
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primaryAccent,
-                        foregroundColor: AppColors.background,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 12,
-                        ),
-                      ),
-                      child: Text(
-                        l10n.update_required_button,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ],
+        child: Column(
+          children: <Widget>[
+            Align(
+              alignment: AlignmentDirectional.topEnd,
+              child: IconButton(
+                key: const ValueKey('update-required-close'),
+                tooltip: l10n.direct_batch_forward_close,
+                onPressed: onClose,
+                icon: Icon(
+                  Icons.close,
+                  semanticLabel: l10n.direct_batch_forward_close,
+                ),
               ),
             ),
-          ),
+            Expanded(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 32),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          Icons.system_update_rounded,
+                          size: 56,
+                          color: theme.colorScheme.primary,
+                        ),
+                        const SizedBox(height: 24),
+                        Semantics(
+                          header: true,
+                          child: Text(
+                            l10n.update_required_title,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.headlineSmall,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          updateRequiredBody(l10n, decision.reasonCode),
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyLarge,
+                        ),
+                        const SizedBox(height: 20),
+                        if (installed != null)
+                          Text(
+                            l10n.update_required_installed_build(installed),
+                            key: const ValueKey('update-required-installed'),
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        Text(
+                          l10n.update_required_minimum_build(
+                            decision.minBuild.toString(),
+                          ),
+                          key: const ValueKey('update-required-minimum'),
+                          textAlign: TextAlign.center,
+                          style: theme.textTheme.bodyMedium,
+                        ),
+                        if (storeLaunchFailed)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 16),
+                            child: Text(
+                              l10n.update_required_store_failed,
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        const SizedBox(height: 28),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            key: const ValueKey('update-required-button'),
+                            // Keyboard focus moves into the overlay, so Tab starts
+                            // here; nothing behind it can take focus.
+                            autofocus: true,
+                            onPressed: onUpdate,
+                            // Large text sizes wrap the label; keep it centred and
+                            // clear of the rounded ends. Black on the green passes
+                            // WCAG AA; white on it would not.
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.primaryAccent,
+                              foregroundColor: AppColors.background,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 24,
+                                vertical: 12,
+                              ),
+                            ),
+                            child: Text(
+                              l10n.update_required_button,
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

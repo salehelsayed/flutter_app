@@ -1255,6 +1255,19 @@ unsupported. Wrong values, other owners, comment decoys, unused constants and
 quoted tokens are rejected. All 21 inventory cases and the repository check
 passed in `.codex-test-logs/S2-baseline-fixes-20261018/F3/`.
 
+The SE-41 hard-update gate's close action remembers the dismissed `minBuild`
+only in gate state: resume, reason changes and lower/equal requirements keep it
+hidden, while a higher requirement or fresh gate shows it again. Dismissal must
+release Back, focus and semantics blocking without changing the controller's
+decision or writing the soft-banner dismissal. The gate sits above the navigator
+in `MaterialApp.builder`, so its close tooltip needs a local `Overlay.wrap`, as
+the call surface does; keep an explicit localized icon semantics label too.
+Reserve the close row without consuming the scroll body's previous vertical
+padding, so German store-failure copy keeps its retry button reachable. The
+existing gate and text-scale widget tests cover these boundaries; focused raw
+failure and passing evidence is under `.codex-test-logs/update-x/`. This is host
+evidence, not a signed-candidate or native-notification result.
+
 The SE-41 production notification parser recognizes package-grouped Android
 PendingIntent headers (`#N: PendingIntentRecord{...}`) as well as legacy
 bare/asterisk headers. It still requires exactly one record for the active
