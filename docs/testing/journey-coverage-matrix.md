@@ -1,8 +1,8 @@
 # Mknoon journey coverage matrix
 
-Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
+Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
-295 representative journeys: **35 strong, 250 partial, 9 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+295 representative journeys: **35 strong, 254 partial, 5 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
 ## Interpretation and execution
 
@@ -24,14 +24,16 @@ Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-2
 
 - Scoped Group C host update on base f14f7d369646b9877bc80c71f517494628f4fe2b, tests commit 6ce42d583 (2026-10-22): MEDIA-002/003/014, DC-011, VC-015 and CR-009 partial. Three focused files: 28 passed, one pre-existing mixed-relay KNOWN GAP skip; eight new cases passed. First full camera attempt 005 resource-aborted at swapouts +37768 pages with zero completed cases; final 006 passed at unchanged swapouts. Evidence: .codex-test-logs/astra-groupCD. Appium runbook supplied, all actual cross-platform journeys remain not_run; CR-009 native fresh-add route waits for UI-Update. No native build/device/audio/manual proof, broad affected lanes or full host-all run.
 
+- Scoped Group D host update on base f14f7d369, following Group C commit 0ee837d5d, with test commits 7ebe0608c / 4365c0ae3 / 063aa72e2 (2026-10-22): DC-002, GC-005, MEDIA-018, MEDIA-010, CONTACT-001 and TRANSFER-011 partial. Focused direct probes: 9 passed, one new case-scoped ASTRA-D-1 KNOWN GAP skip; 6 new cases passed and one existing migration chain now decodes a real imported photo. Desired camera feedback was causally RED in 011 and routed to Codex after release 126; no app code fixed here. Test setup failures 010/012/015/017 are retained separately. Evidence: .codex-test-logs/astra-groupCD. Actual Android kills, OS grant/deny, live relay/crypto, mobile video/voice/PDF/viewers and signed-candidate evidence remain not_run. Android Appium steps supplied; broader lanes, analyzer and full host-all not run.
+
 ## Feature coverage
 
 | Feature | Strong | Partial | Missing | Unknown | Biggest gap |
 | --- | ---: | ---: | ---: | ---: | --- |
 | IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. |
-| CONTACT — QR, contact requests, profiles and contact management | 7 | 28 | 1 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
-| CHAT — Direct text and conversation state | 2 | 10 | 1 | 0 | No qualifying 100-message both-restart preservation journey or actual full iPhone/Android text/media parity; some restart labels reconstruct objects over retained memory. |
-| MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 40 | 2 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
+| CONTACT — QR, contact requests, profiles and contact management | 7 | 29 | 0 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
+| CHAT — Direct text and conversation state | 2 | 11 | 0 | 0 | Actual native both-peer process death and deployed relay preservation for 100 messages remain unrun; host SQL/runtime reopen now proves the exact transcript. Full iPhone/Android native text/media interoperability remains separate. |
+| MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 41 | 1 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
 | GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. |
 | CALL — Voice calls, lifecycle, privacy and history | 9 | 26 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
 | INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
@@ -39,7 +41,7 @@ Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-2
 | NAV — Feed, Orbit, rings, search and navigation | 0 | 10 | 0 | 1 | Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency membership and sculpt geometry must not imply that shipped editor. |
 | SHARE — External share and received-media forwarding | 0 | 11 | 0 | 0 | Native share URI lifetime/permission/cancel and actual recipient full decode/play across selected targets are not joined by fake ingress/forwarding tests. |
 | SETTINGS — Profile, preferences and support | 2 | 10 | 0 | 0 | Preference/profile host boundaries do not prove native picker/clipboard/mail, actual peer avatar convergence or auto-download policy on received full media. |
-| TRANSFER — Move Account between phones | 1 | 14 | 1 | 0 | Host loopback transfer uses reversible crypto/plain FFI SQL substitutes; migrated full photo/video/voice/PDF open/play and native authority cutover are incomplete. |
+| TRANSFER — Move Account between phones | 1 | 15 | 0 | 0 | Host loopback transfer now opens a real imported photo through the host codec. Native mobile video/voice/PDF/viewers, secure keychain/SQLCipher and complete candidate cutover remain unverified. |
 | LINKED — Flag-gated linked devices and durable linked state | 1 | 12 | 0 | 0 | Default OFF authoring flags, durable authority and actual multi-installation native media delivery must be separated; full phrase-restore group convergence is unfinished. |
 | UPDATE — Signed update checks and update-required UI | 2 | 6 | 1 | 0 | Real signed verification/cache policy exists; actual OS background wake/store launch and failed/cancelled store recovery on exact candidate are incomplete. |
 | TRANSPORT — Cross-cutting discovery, reconnect and local/offline routing | 0 | 8 | 0 | 0 | Real host Go transport checks do not prove actual native local discovery/airplane/radio handover and recipient media continuity under OS lifecycle. |
@@ -1199,7 +1201,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CONTACT-001 — Cancel the QR camera or deny camera permission without adding a contact
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** CR-001, CR-021.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-001, CR-021.
 
 **Steps**
 
@@ -1213,12 +1215,23 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Inspected test evidence**
 
-No qualifying active automated test found for this scoped journey.
-
+- [test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart](../../test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart) — `CONTACT-001 cancelled camera admits no code; grant and reopen admits a fresh code once` (widget).
+  - Real: real QRScannerScreen route and MobileScannerController; cancel/denial closes without admission callback; grant/reopen accepts one fresh barcode despite duplicate native-stream events.
+  - Faked: MobileScannerPlatform permission/camera/view/stream; downstream contact handler replaced by admission recorder; no real QR payload authentication, contact/request repository mutation, OS Settings or full Orbit/root handoff.
+  - Proves / registration: test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart:15: Fresh file014:2 passed,0 skipped/failed,exit0. Only callback admission is proved; native zero-contact/request and accepted add require device/root journey. Evidence .codex-test-logs/astra-groupCD/014-D-qr-permission-summary.json/receipt. Registered: affected-identity, host-all.
+- [test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart](../../test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart) — `CONTACT-001 denied camera admits no code; grant and reopen admits a fresh code once` (widget).
+  - Real: real QRScannerScreen route and MobileScannerController; cancel/denial closes without admission callback; grant/reopen accepts one fresh barcode despite duplicate native-stream events.
+  - Faked: MobileScannerPlatform permission/camera/view/stream; downstream contact handler replaced by admission recorder; no real QR payload authentication, contact/request repository mutation, OS Settings or full Orbit/root handoff.
+  - Proves / registration: test/features/qr_code/presentation/screens/qr_camera_permission_journey_test.dart:15: Fresh file014:2 passed,0 skipped/failed,exit0. Only callback admission is proved; native zero-contact/request and accepted add require device/root journey. Evidence .codex-test-logs/astra-groupCD/014-D-qr-permission-summary.json/receipt. Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- No qualifying camera deny/grant/retry or pre-scan native-cancel zero-contact journey found. Accepted scan auto-closing then completing is explicitly a different supported handoff.
+- Host proves scanner admission remains zero on cancel/denial and resumes once after modeled grant; native permissions and complete contact/request mutation counts are not established.
+- Full contact/Orbit route may wait for UI-Update; Android device runbook retains real cancel/deny/grant/add/consent and zero-effect oracles without changing UI-owned files.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### CONTACT-002 — Scan continuously or double-submit one QR without duplicate side effects
 
@@ -1539,7 +1552,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### DC-002 — 100 messages in order, no duplicates
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-002.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-002.
 
 **Steps**
 
@@ -1553,18 +1566,19 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
-- [test/features/conversation/integration/two_user_message_exchange_test.dart](../../test/features/conversation/integration/two_user_message_exchange_test.dart) — `Rapid five-round burst preserves delivered state and full order for both users` (integration).
-  - Real: actual send/receive listeners/status and conversation ordering.
-  - Faked: FakeP2PNetwork and in-memory relay; PassthroughCryptoBridge; in-memory contact/message repositories.
-  - Proves / registration: test/features/conversation/integration/two_user_message_exchange_test.dart:1351: Five alternating rounds produce ten correctly ordered messages on each endpoint and five exact incoming events per user; no100-message burst/restart or real socket. Registered: affected-conversation, direct-chat, host-all.
-- [test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart](../../test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart) — `ACK loss after recipient commit then inbox fallback displays one identity` (integration).
-  - Real: actual send/receive/inbox-drain dedup orchestration.
-  - Faked: FakeP2PNetwork and in-memory relay; PassthroughCryptoBridge; in-memory contact/message repositories.
-  - Proves / registration: test/features/conversation/integration/concurrent_durable_fallback_roundtrip_test.dart:61: Lost live ACK followed by inbox replay yields one exact recipient row/ID/text while sender remains inboxed until receipt; no real deployed relay/SQL durability. Registered: affected-conversation, host-all, quiet-recovery.
+- [test/features/conversation/integration/group_a_text_journeys_test.dart](../../test/features/conversation/integration/group_a_text_journeys_test.dart) — `DC-002 DC-014 one hundred numbered messages survive both SQL/runtime restarts and inbox replay` (integration).
+  - Real: production send/receive/loadConversation with two current-schema file databases; both runtime/SQL graphs rebuilt every 25 messages; all 100 IDs, exact text/order/direction and one-copy rows checked on both; offline custody and retained duplicate wire replay.
+  - Faked: FakeP2PNetwork/relay, passthrough crypto and memory contact/key boundaries; no OS process kill.
+  - Proves / registration: test/features/conversation/integration/group_a_text_journeys_test.dart:54: Fresh exact case 009: 1 passed, 0 skipped/failed, exit 0. Existing Group A case reused unchanged; real SQL/runtime reopen is meaningful but not native kill or actual relay delivery. Evidence .codex-test-logs/astra-groupCD/009-D-numbered-restarts-summary.json/receipt. Registered: affected-conversation, host-all.
 
 **Remaining gaps**
 
-- No qualifying100-message both-restart completeness assertion found. Host burst is5rounds/10total; routing S13 explicitly accepts5of10 receipts at production_routing_criteria.dart:246, so it cannot prove completeness.
+- Real two-file SQL/runtime restarts now prove the complete100-message host transcript and duplicate replay; actual Android process kills, real relay/crypto and native durability are not run.
+- Android Appium runbook supplies both-peer kill checkpoints025/050/075/100, offline custody and exact full transcript/count oracles.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### DC-003 — Recipient offline for a long time, then catches up once
 
@@ -2462,7 +2476,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### MEDIA-010 — Deny camera/photo permission and retry after granting permission
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2476,16 +2490,27 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
-No qualifying active automated test found for this scoped journey.
-
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `ConversationWired media props MEDIA-010 camera denial then grant keeps draft and sends one staged image once` (widget).
+  - Real: real ConversationWired composer and picker-error/retry/admission/send orchestration; draft preserved, no upload/send on denial; grant/retry stages one image and invokes upload/send once.
+  - Faked: PlatformException at existing picker seam; image preparation/upload/send and repositories are test boundaries; no OS Settings/native permission dialog, real transport, remote decode or complete file suite run.
+  - Proves / registration: test/features/conversation/presentation/screens/conversation_wired_test.dart:10233: Fresh focused 013: both camera/photos controls passed,0 failures,one separate KNOWN GAP feedback case skipped. Evidence .codex-test-logs/astra-groupCD/013-D-media-permission-final-summary.json/receipt. Registered: affected-conversation, host-all.
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `ConversationWired media props MEDIA-010 photos denial then grant keeps draft and sends one staged image once` (widget).
+  - Real: real ConversationWired composer and picker-error/retry/admission/send orchestration; draft preserved, no upload/send on denial; grant/retry stages one image and invokes upload/send once.
+  - Faked: PlatformException at existing picker seam; image preparation/upload/send and repositories are test boundaries; no OS Settings/native permission dialog, real transport, remote decode or complete file suite run.
+  - Proves / registration: test/features/conversation/presentation/screens/conversation_wired_test.dart:10233: Fresh focused 013: both camera/photos controls passed,0 failures,one separate KNOWN GAP feedback case skipped. Evidence .codex-test-logs/astra-groupCD/013-D-media-permission-final-summary.json/receipt. Registered: affected-conversation, host-all.
+- [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `ConversationWired media props KNOWN GAP ASTRA-D-1: camera permission failure is silent MEDIA-010 denied camera exposes visible failure feedback` (widget).
+  - Real: production camera catch/error presentation branch.
+  - Faked: denied picker result injected; native OS unrun.
+  - Proves / registration: test/features/conversation/presentation/screens/conversation_wired_test.dart:10394: ASTRA-D-1 desired feedback causally RED in 011:0 visible failure notices; _pickFromCamera only logs at lib/features/conversation/presentation/screens/conversation_wired.dart:5850/5862-5867. Final013 retains the exact assertion under a case-scoped KNOWN GAP, not PASS. Routed to Codex for post-126 app fix; no app change here. Evidence .codex-test-logs/astra-groupCD/011-D-media-permission.log and 013 summary.
 
 **Remaining gaps**
 
-- No qualifying camera/photo permission deny->grant->retry journey assertion found in inspected media picker/composer tests; microphone permission tests are a different boundary.
+- ASTRA-D-1 remains a required app feedback fix: denied camera errors are silently logged; desired assertion stays KNOWN GAP until Codex lifts it with the post-126 patch.
+- Real camera/photo authorization, OS Settings grant, actual peer content and full candidate journey remain NOT RUN; picker cancellation is not permission denial.
 
 **Open questions**
 
-- What visible camera/photo denial guidance is required for the selected plugin/platform?
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### MEDIA-011 — PDF sending with document flag enabled; recipient receives and opens the document
 
@@ -2727,10 +2752,14 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
+- [test/features/conversation/integration/ordinary_media_receiver_restart_test.dart](../../test/features/conversation/integration/ordinary_media_receiver_restart_test.dart) — `MEDIA-018 interrupted ordinary download survives receiver SQL/runtime reopen and commits one fully decodable image plus caption` (integration).
+  - Real: default legacy upload/send/receive/recovery owners, current SQL/files and key references across receiver reopen; partial ciphertext cannot be done; recovered full bytes/hash, host Flutter image frame, exact caption and replay one-copy/no-extra-download.
+  - Faked: XOR crypto, controlled native truncated/EOF burst, fake relay/P2P and OS directory lookup; partial prefix reconstructed at a persisted retry checkpoint; no actual process kill, camera, mobile viewer or interrupted in-flight SQL commit.
+  - Proves / registration: test/features/conversation/integration/ordinary_media_receiver_restart_test.dart:36: Fresh file 018:1 passed,0 skipped/failed,exit0; final host frame 128x96. Sender source is real JPEG. Evidence .codex-test-logs/astra-groupCD/018-D-receiver-restart-summary.json/receipt. Registered: affected-conversation, host-all.
 - [test/features/share/integration/external_share_media_custody_recovery_test.dart](../../test/features/share/integration/external_share_media_custody_recovery_test.dart) — `TC-348-03 committed external share survives unusable preview and restart` (integration).
   - Real: DefaultShareBatchDeliveryCoordinator; production current FFI SQLite repos; real files/reopen and strict custody/retry owners.
   - Faked: strict bridge crypto/upload and P2P/inbox; image processing and identity/contact repos; strict feature flag enabled.
-  - Proves / registration: test/features/share/integration/external_share_media_custody_recovery_test.dart:36: Committed parent/attachment custody survives lost/unusable preview and DB reopen, retries authoritative bytes once, then records one inbox store. Synthetic JPEG bytes/no recipient decoder and default-off cohort limits apply. Registered: affected-media, host-all.
+  - Proves / registration: test/features/share/integration/external_share_media_custody_recovery_test.dart:36: Committed parent/attachment custody survives lost/unusable preview and DB reopen, retries authoritative bytes once, then records one inbox store. Synthetic JPEG bytes/no recipient decoder and default-off cohort limits apply. Registered: affected-media, host-all. Fresh exact support case020 passed once,0skips,exit0 (.codex-test-logs/astra-groupCD/020-D-sender-custody-support-summary.json/receipt); strict cohort remains explicit, not legacy sender proof.
 - [test/features/conversation/integration/media_retry_smoke_test.dart](../../test/features/conversation/integration/media_retry_smoke_test.dart) — `photo message stuck in sending is recovered and retried with media intact` (integration).
   - Real: actual stuck-send/media retry orchestration.
   - Faked: fake network/bridge/repositories and fixture image.
@@ -2742,7 +2771,12 @@ No qualifying active automated test found for this scoped journey.
 
 **Remaining gaps**
 
-- Real SQLite/file reopen tests are meaningful but process death/native codec/network are seams; private state restart is not ordinary media-transfer restart. No legacy camera original-to-recipient full-open proof.
+- Host receiver covers persisted retry/reopen/residual-prefix recovery and full image/caption; it does not kill an OS process during native transfer or uncommitted SQL.
+- Strict committed-share sender recovery is a separate explicitly enabled cohort with synthetic bytes. Default legacy sender mid-upload kill, mobile decode and all native cut evidence remain NOT RUN.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### MEDIA-019 — Recipient sees unavailable media; retry restores full content or reports terminal expiry honestly
 
@@ -3622,6 +3656,10 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
+- [test/features/groups/integration/group_text_custody_restart_test.dart](../../test/features/groups/integration/group_text_custody_restart_test.dart) — `GC-005 accepted text and membership survive both SQL/runtime restarts; replayed custody keeps one identity` (integration).
+  - Real: production sendGroupMessage accepts fake inbox custody before receiver delivery; both current-schema SQL/repository/listener graphs recreated; production signed-envelope decoder and GroupMessageListener replay into SQL once; member roles/key epoch and removal/re-add persist.
+  - Faked: ZeroPeerPublishBridge/FakeBridge native relay and signatures/encryption; fake secure keychain survives outside recreated graphs; clean SQL close/reopen models a checkpoint, not abrupt OS termination; full revoked-key isolation not claimed.
+  - Proves / registration: test/features/groups/integration/group_text_custody_restart_test.dart:30: Fresh file 016:1 passed,0 skipped/failed,exit0. Same accepted message ID/text survives sender reopen and reaches recreated receiver once after duplicate replay; roster removal is not resurrected and fresh re-add retains writer role. Evidence .codex-test-logs/astra-groupCD/016-D-group-custody-summary.json/receipt. Registered: affected-groups, host-all.
 - [integration_test/scripts/run_production_group_process_death.dart](../../integration_test/scripts/run_production_group_process_death.dart) — `production.group_catalog.private_process_death_matrix` (sims).
   - Real: production app UI flows and real transport/database observations; exact run/role/message membership criteria.
   - Faked: disposable test identities and catalog fixture/control/observation adapter.
@@ -3633,7 +3671,12 @@ No qualifying active automated test found for this scoped journey.
 
 **Remaining gaps**
 
-- Verified production kills cover membership add/removal/re-add only. Accepted-text sender checkpoint and same-ID delivery after actual process death remain missing; modeled restart reuses in-memory stores.
+- Actual native accepted-text sender kill and live relay/candidate delivery remain NOT RUN; clean SQL reopen is not an abrupt OS kill.
+- Host removal/re-add checks durable roster/roles, not full revoked-key transport isolation. Existing registered membership-only device cuts remain separate from the accepted-text cut.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### GC-008 — Leave, delete and supported admin changes preserve access rules
 
@@ -7609,7 +7652,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### TRANSFER-011 — Open migrated photos/videos/voice/documents on the receiver, not only message metadata
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7623,18 +7666,23 @@ No qualifying active automated test found for this scoped journey.
 
 **Inspected test evidence**
 
-- [test/features/account_migration/application/account_migration_end_to_end_test.dart](../../test/features/account_migration/application/account_migration_end_to_end_test.dart) — `TC-347-07 moves the full account and exact blob custody row file binding` (unit).
-  - Real: real production bundle-source/local-transfer/receiver/import/cutover composition; actual loopback HTTP/WS; real FFI SQLite snapshot/import and files/hash checks.
-  - Faked: SQLCipher adapter replaced by plain FFI SQLite using constructed schema; deterministic reversible ML-KEM crypto model; fake secure stores/discovery/authority repositories.
-  - Proves / registration: test/features/account_migration/application/account_migration_end_to_end_test.dart:151: Source-to-wire-to-import moves rows, group key/media references and exact retained blob custody file binding. Not a signed binary upgrade, actual SQLCipher encryption/native keychain or recipient media decoder. Registered: affected-storage, host-all.
+- [test/features/account_migration/application/account_migration_end_to_end_test.dart](../../test/features/account_migration/application/account_migration_end_to_end_test.dart) — `TC-347-07 moves the full account and exact blob custody row file binding` (integration).
+  - Real: production bundle source/local transfer/receiver/import/cutover, actual loopback HTTP/WS and file/hash preservation; real portrait JPEG opens from imported authoritative row/path through host Flutter codec;192x256 frame, red/blue pixel content and exact caption.
+  - Faked: constructed matching schema and plain FFI SQLite in place of SQLCipher; deterministic reversible crypto; fake secure stores/discovery/authority; host image engine only; no actual mobile app viewer, native keychain/crypto or video/voice/PDF open.
+  - Proves / registration: test/features/account_migration/application/account_migration_end_to_end_test.dart:154: Fresh focused019:1 passed,0 skipped/failed,exit0. Existing full-chain preservation assertions remain, source fixture is now a decodable JPEG rather than opaque image-named bytes. Evidence .codex-test-logs/astra-groupCD/019-D-migrated-photo-summary.json/receipt. Registered: affected-storage, host-all.
 - [test/features/account_migration/application/account_migration_end_to_end_test.dart](../../test/features/account_migration/application/account_migration_end_to_end_test.dart) — `moves a realistic ~12 MB media account across many segments` (unit).
   - Real: same real bundle/wire/FFI SQLite/files composition; six actual2MiB deterministic files.
   - Faked: fake segment crypto/secure stores/discovery/authority; media bytes are generated .bin data.
-  - Proves / registration: test/features/account_migration/application/account_migration_end_to_end_test.dart:675: Many verified segments retain all generated files/content hashes and account data; volume tests are not native photo/video/audio open tests. Registered: affected-storage, host-all.
+  - Proves / registration: test/features/account_migration/application/account_migration_end_to_end_test.dart:739: Many verified segments retain all generated files/content hashes and account data; volume tests are not native photo/video/audio open tests. Registered: affected-storage, host-all. This volume case was not rerun in the scoped Group D packet.
 
 **Remaining gaps**
 
-- No qualifying post-migration native photo/video/voice/document open/play assertion found. Host chain checks rows/files/hashes; scale fixtures are generated binary data, so they cannot prove media usability.
+- Receiver host codec now opens a real migrated photo with content/caption, but native Android video/voice/PDF/viewer and native crypto/keychain/authority are NOT RUN.
+- Historical12MB .bin fixtures remain volume/hash tests, not usable media. Device runbook requires valid source-opened photo/video/voice/PDF and receiver open/play again after restart.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available pinned Android targets and all native evidence.
 
 #### TRANSFER-012 — Migrated direct/group unread, drafts, history and pending outgoing retries remain coherent
 

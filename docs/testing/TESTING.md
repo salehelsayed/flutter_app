@@ -3497,11 +3497,11 @@ Representative assertions were inspected; the entire inventory was not audited.
 | Boundary | Verified assertion scope | Remaining device/artifact proof |
 | --- | --- | --- |
 | Bootstrap/returning identity | Phase order, error propagation, identity routing and awaited direct/group recovery | Actual launch, secure storage, preserved contacts/groups/history |
-| Contact and direct chat | Mutual contact rows without reciprocal loop; received content, status, order, duplicate counts in both directions | Real QR/camera, real crypto/transport path, disk persistence after restart |
-| Offline/group | Fake inbox drain/deduplication; selected three-member fanout, truthful sent state, route-away persistence and fallback recovery | Physical disconnection, live group offline catch-up and path evidence |
-| Media | Transformed ciphertext differs; receiver file bytes equal original; separate widget test opens typed received-media viewer | Received transfer and native decode/open in the same real peer journey |
+| Contact and direct chat | Mutual contact rows without reciprocal loop; received content/status; exact 100-message transcript across both current-SQL/runtime restarts and duplicate replay | Real QR/camera, native crypto/transport and actual OS process-kill recovery |
+| Offline/group | Fake inbox drain/deduplication; selected fanout/truthful sent state; accepted group text and membership retained across both current-SQL/runtime restarts | Physical process death, live group offline catch-up, revoked-key isolation and actual path evidence |
+| Media | Transformed ciphertext differs; full receiver bytes/hash/frame/caption after persisted interruption and SQL/runtime reopen; typed viewer widgets separately tested | Actual native transfer kills, camera/compression and mobile decode/open in the same real peer journey |
 | Notifications | Foreground/background policy and warm/cold payload route callbacks | OS tray/effect, muted conversation, real tap navigation and platform background limits |
-| Migration | Real host SQLite FFI schema/data preservation and post-migration writes | Actual previous-published signed build upgraded in place with native secure storage |
+| Migration | Real host SQLite FFI snapshot/data/files and post-migration writes; imported JPEG opens through host codec with pixel/caption assertions | Native SQLCipher/keychain, previous-published signed upgrade and mobile video/voice/PDF/viewer proof |
 | Bridge/call | Dart method/event channel contracts and signaling/mailbox convergence | Native binding, actual bidirectional audible audio and end-call cleanup |
 
 Exact selectors and paths are in the manifest. Useful assertion anchors include
@@ -3510,6 +3510,24 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `conversation_received_media_actions_test.dart` (typed viewer opening), and
 `full_migration_chain_test.dart` (seeded data preservation). The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
+
+The exact numbered transcript is in
+`group_a_text_journeys_test.dart`: both database handles and runtime graphs are
+rebuilt every 25 messages, with exact IDs/text/order/direction checked before and
+after replay. `group_text_custody_restart_test.dart` cuts after the real group
+send use case accepts a fake relay's custody, recreates both current-SQL owners,
+then verifies/decrypts/replays the retained envelope into one received identity.
+Its removal/re-add checks durable roster/roles; clean close/reopen and fake
+native crypto/relay/keychain do not establish an Android kill or complete revoked
+transport access. Scoped evidence is in `.codex-test-logs/astra-groupCD/`
+(`009-D-numbered-restarts`, `016-D-group-custody`).
+
+`qr_camera_permission_journey_test.dart` replaces only MobileScanner's native
+platform interface: the real scanner/controller route admits no code after
+cancel/denial, then admits one fresh code after modeled grant/reopen despite
+duplicate events. It does not observe real OS Settings, authenticate the QR
+payload or count full-root contact/request mutations. The remaining Android
+steps are in the [Group D runbook](astra-group-d-device-runbook.md).
 
 Initial static discovery found 1,959 candidate test files across Flutter
 host/device, Go modules, Python unittest, shell contracts, Node JavaScript, JVM
@@ -4034,6 +4052,35 @@ visible and cannot become an ordinary first-attempt PASS.
    video/voice/open and audible calls remain separate obligations in the
    [Group C Appium runbook](astra-group-c-device-runbook.md); no device run or
    broad affected lane/full host-all result is implied by these host checks.
+
+   `ordinary_media_receiver_restart_test.dart` covers the default legacy lane
+   with current SQL/files: a native EOF burst leaves retryable durable work,
+   a residual ciphertext prefix is reconstructed at that persisted checkpoint,
+   and a new receiver graph recovers a full hash-identical, host-decodable image
+   and exact caption once. This models a checkpoint; it does not abruptly kill
+   a process during native I/O or an uncommitted SQL operation. The existing
+   committed-share sender recovery case is separate and explicitly enables the
+   strict-custody cohort with synthetic media bytes. Fresh scoped passes are
+   `018-D-receiver-restart` and `020-D-sender-custody-support` under the same
+   evidence directory; do not combine them into a native legacy sender proof.
+
+   Camera/photos deny-then-grant widget controls preserve the draft and invoke
+   upload/send once through the existing picker boundary. Camera denial still
+   has case-scoped **ASTRA-D-1**: `_pickFromCamera` only logs the caught error
+   (`conversation_wired.dart:5850`, catch at 5862), leaving no visible failure
+   notice. The desired-feedback assertion is retained as KNOWN GAP; causal RED
+   `011-D-media-permission` and final two-pass/one-skip `013` remain separate.
+   Native permissions and actual recipient delivery are not proved by these
+   stubbed picker/upload/send controls. Codex owns the post-126 app fix.
+
+   Migration's existing `TC-347-07` end-to-end case now seeds a real portrait
+   JPEG, transfers/imports it through the full loopback chain and opens the
+   receiver's authoritative imported row/path with the host Flutter codec.
+   Frame dimensions, colored pixel regions and the persisted caption are
+   checked alongside the existing custody/file/authority assertions
+   (`019-D-migrated-photo`). Its schema/SQLCipher adapter, crypto and secure
+   stores remain test boundaries; native mobile video/voice/PDF opening and
+   signed-candidate cutover stay separate device obligations.
 
   Current [relay store source](../../go-relay-server/media.go) persists blob
   metadata in disk sidecars and loads it on restart. The June reliability
