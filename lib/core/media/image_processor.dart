@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
@@ -75,6 +76,11 @@ const kProtectedPhotoInlineThumbnailJpegQuality = 60;
 ///
 /// Injectable [CompressFileFn] and [CompressVideoFn] allow faking in tests.
 class ImageProcessor {
+  // Both native encoders clamp their resize scale to avoid upscaling. The
+  // largest signed native int disables downscaling without decoding the full
+  // source in Dart just to discover its dimensions (including HEIC inputs).
+  static const _originalMinDimension = 0x7fffffff;
+
   // video_compress uses one native worker and one process-wide Dart busy flag.
   // A timed-out MethodChannel call can remain blocked in eglSwapBuffers. Do not
   // submit another job until that exact native call has actually settled.
@@ -103,7 +109,7 @@ class ImageProcessor {
        _cancelVideoCompression =
            cancelVideoCompression ?? _cancelDefaultVideoCompression;
 
-  /// Process image for sending: strip EXIF, apply quality.
+  /// Process image for sending: strip EXIF; Original keeps source resolution.
   ///
   /// Non-image files (videos, PDFs) pass through unchanged.
   /// Returns the path to the processed file.
@@ -121,6 +127,12 @@ class ImageProcessor {
       path: inputPath,
       quality: compressionQuality,
       keepExif: false,
+      minWidth: quality == ImageQualityPreference.original
+          ? _originalMinDimension
+          : 1920,
+      minHeight: quality == ImageQualityPreference.original
+          ? _originalMinDimension
+          : 1080,
     );
 
     return result?.path ?? inputPath;
@@ -280,32 +292,41 @@ class ImageProcessor {
 
   /// Generates the bounded protected-photo inline thumbnail (plan 301).
   ///
-  /// Pure Dart via package:image — exact longest-side bound, no platform
-  /// channel, no hang risk. Returns null on any read/decode failure or when
-  /// the encoded result exceeds [kProtectedPhotoInlineThumbnailMaxRawBytes];
-  /// callers treat null as "omit the field" (best-effort, never fails a send).
+  /// Decode at thumbnail size before JPEG encoding, so a full-resolution send
+  /// does not also allocate a full-size Dart raster for this preview. Returns
+  /// null on read/decode failure or oversized output (best-effort, never fails
+  /// a send). The native codec may still use transient decode working memory.
   static Future<Uint8List?> generateInlineThumbnailBytes({
     required String inputPath,
   }) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.Image? image;
     try {
-      final file = File(inputPath);
-      if (!await file.exists()) return null;
-      final decoded = img.decodeImage(await file.readAsBytes());
-      if (decoded == null) return null;
-      final longestSide = decoded.width > decoded.height
-          ? decoded.width
-          : decoded.height;
-      final resized = longestSide <= kProtectedPhotoInlineThumbnailMaxSidePx
-          ? decoded
-          : (decoded.width >= decoded.height
-                ? img.copyResize(
-                    decoded,
-                    width: kProtectedPhotoInlineThumbnailMaxSidePx,
-                  )
-                : img.copyResize(
-                    decoded,
-                    height: kProtectedPhotoInlineThumbnailMaxSidePx,
-                  ));
+      buffer = await ui.ImmutableBuffer.fromFilePath(inputPath);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final longestSide = descriptor.width > descriptor.height
+          ? descriptor.width
+          : descriptor.height;
+      final scale = longestSide > kProtectedPhotoInlineThumbnailMaxSidePx
+          ? kProtectedPhotoInlineThumbnailMaxSidePx / longestSide
+          : 1.0;
+      codec = await descriptor.instantiateCodec(
+        targetWidth: (descriptor.width * scale).round().clamp(
+          1,
+          kProtectedPhotoInlineThumbnailMaxSidePx,
+        ),
+        targetHeight: (descriptor.height * scale).round().clamp(
+          1,
+          kProtectedPhotoInlineThumbnailMaxSidePx,
+        ),
+      );
+      image = (await codec.getNextFrame()).image;
+      final pixels = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (pixels == null) return null;
+      final resized = img.decodePng(pixels.buffer.asUint8List());
+      if (resized == null) return null;
       final encoded = Uint8List.fromList(
         img.encodeJpg(
           resized,
@@ -319,6 +340,11 @@ class ImageProcessor {
       return encoded;
     } catch (_) {
       return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
     }
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -12,6 +13,119 @@ import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  group('photo resolution through the default encoder', () {
+    for (final extension in ['jpg', 'png']) {
+      for (final portrait in [false, true]) {
+        for (final quality in ImageQualityPreference.values) {
+          test(
+            '${quality.name} ${portrait ? 'portrait' : 'landscape'} $extension photo',
+            () async {
+              final directory = await Directory.systemTemp.createTemp(
+                'photo-resolution-',
+              );
+              addTearDown(() => directory.delete(recursive: true));
+              final source = img.Image(
+                width: portrait ? 2400 : 3200,
+                height: portrait ? 3200 : 2400,
+              );
+              // Camera JPEG and large PNG use the same metadata-stripping pipeline.
+              final input = File('${directory.path}/source.$extension');
+              await input.writeAsBytes(
+                extension == 'png'
+                    ? img.encodePng(source)
+                    : img.encodeJpg(source),
+              );
+              final previous = FlutterImageCompressPlatform.instance;
+              final encoder = _DimensionImageCompressor();
+              FlutterImageCompressPlatform.instance = encoder;
+              addTearDown(
+                () => FlutterImageCompressPlatform.instance = previous,
+              );
+
+              final output = await ImageProcessor().processImage(
+                inputPath: input.path,
+                quality: quality,
+              );
+              final decoded = img.decodeJpg(await File(output).readAsBytes())!;
+              if (quality == ImageQualityPreference.original) {
+                expect(
+                  (decoded.width, decoded.height),
+                  (source.width, source.height),
+                );
+                expect(encoder.quality, 100);
+              } else {
+                expect((
+                  decoded.width,
+                  decoded.height,
+                ), portrait ? (1920, 2560) : (1920, 1440));
+                expect(encoder.quality, 85);
+              }
+              expect(encoder.keepExif, isFalse);
+              expect(encoder.autoCorrectionAngle, isTrue);
+            },
+          );
+        }
+      }
+    }
+  });
+
+  group('inline photo thumbnail', () {
+    for (final portrait in [false, true]) {
+      test(
+        'bounds a large ${portrait ? 'portrait' : 'landscape'} photo to 320px',
+        () async {
+          final directory = await Directory.systemTemp.createTemp(
+            'inline-thumbnail-',
+          );
+          addTearDown(() => directory.delete(recursive: true));
+          final source = img.Image(
+            width: portrait ? 2400 : 3200,
+            height: portrait ? 3200 : 2400,
+          );
+          final input = File('${directory.path}/source.png');
+          final sourceBytes = img.encodePng(source);
+          await input.writeAsBytes(sourceBytes);
+          final bytes = await ImageProcessor.generateInlineThumbnailBytes(
+            inputPath: input.path,
+          );
+          expect(bytes, isNotNull);
+          expect(
+            bytes!.length,
+            lessThanOrEqualTo(kProtectedPhotoInlineThumbnailMaxRawBytes),
+          );
+          final thumbnail = img.decodeJpg(bytes)!;
+          expect((
+            thumbnail.width,
+            thumbnail.height,
+          ), portrait ? (240, 320) : (320, 240));
+          expect(await input.readAsBytes(), sourceBytes);
+        },
+      );
+    }
+    test('missing and invalid image bytes omit the thumbnail', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'invalid-thumbnail-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      expect(
+        await ImageProcessor.generateInlineThumbnailBytes(
+          inputPath: '${directory.path}/absent.jpg',
+        ),
+        isNull,
+      );
+      final input = File('${directory.path}/invalid.jpg');
+      await input.writeAsString('not an image');
+      expect(
+        await ImageProcessor.generateInlineThumbnailBytes(
+          inputPath: input.path,
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('isProcessableImage', () {
     late ImageProcessor processor;
 
@@ -887,4 +1001,49 @@ Future<VideoProcessResult?> _noOpVideoCompress({
   void Function(double progress)? onProgress,
 }) async {
   return VideoProcessResult(path: '${path}_out.mp4');
+}
+
+// Host replacement for the native raster encoder. Match the plugin's no-upscale
+// sizing contract, then inspect real encoded output dimensions. Native codecs,
+// orientation and metadata removal still need device proof.
+class _DimensionImageCompressor extends FlutterImageCompressPlatform {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+
+  int? quality;
+  bool? keepExif;
+  bool? autoCorrectionAngle;
+
+  @override
+  Future<XFile?> compressAndGetFile(
+    String path,
+    String targetPath, {
+    int minWidth = 1920,
+    int minHeight = 1080,
+    int inSampleSize = 1,
+    int quality = 95,
+    int rotate = 0,
+    bool autoCorrectionAngle = true,
+    CompressFormat format = CompressFormat.jpeg,
+    bool keepExif = false,
+    int numberOfRetries = 5,
+  }) async {
+    this.quality = quality;
+    this.keepExif = keepExif;
+    this.autoCorrectionAngle = autoCorrectionAngle;
+    final source = img.decodeImage(await File(path).readAsBytes())!;
+    final scale = math.max(
+      1.0,
+      math.min(source.width / minWidth, source.height / minHeight),
+    );
+    final resized = img.copyResize(
+      source,
+      width: (source.width / scale).toInt(),
+      height: (source.height / scale).toInt(),
+    );
+    await File(
+      targetPath,
+    ).writeAsBytes(img.encodeJpg(resized, quality: quality));
+    return XFile(targetPath);
+  }
 }

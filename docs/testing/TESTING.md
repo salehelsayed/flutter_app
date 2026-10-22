@@ -3622,6 +3622,20 @@ do not count `test(...)` strings as executions. Runner listings took about
   relay addresses retain permanent peerstore custody; the Go address-expiry test
   covers expiry of transient connected-address TTLs. This does not establish
   that every internal Go relay task is suspended.
+- Original photo processing requests source resolution from the native encoder;
+  Compressed retains the 1920×1080 minimum-size resize contract and JPEG quality
+  85. Original still re-encodes to JPEG at quality 100 with EXIF retention off;
+  it does not promise byte-identical or lossless input preservation.
+  `image_processor_test.dart` inspects encoded JPEG dimensions for portrait and
+  landscape JPEG/PNG sources using a host raster-encoder substitute. It also
+  exercises the real Flutter thumbnail codec: inline output stays within 320 px
+  and 49,152 bytes, and a decode failure omits the best-effort thumbnail. The
+  thumbnail codec receives bounded decode dimensions before the small Dart JPEG
+  encode; this bounds the returned raster, not native transient peak memory.
+  Native HEIC decoding, sensor orientation/EXIF removal and Android's existing
+  lower-resolution OOM retries require device evidence; these host tests do not
+  certify them. Ignored patch/results/limit analysis are under
+  `build/kayan-safe/original-full-res/` in the delivering checkout.
 - Original-quality images and videos still undergo metadata stripping, which
   can change their byte length. Composer budgets also become authored attachment
   sizes and must use the processed file's length. Using the raw input length
