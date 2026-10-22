@@ -240,6 +240,100 @@ void main() {
     bob.dispose();
   });
 
+  for (final reverse in [false, true]) {
+    test(
+      'CR-009/DC-011 shared protocol scanner ${reverse ? 'B' : 'A'} '
+      'accepts reciprocal keys before exact bidirectional Unicode chat',
+      () async {
+        // Logical endpoints only: no native QR capture, OS, or real ML-KEM.
+        final scanner = reverse ? bob : alice;
+        final recipient = reverse ? alice : bob;
+        scanner.scanContactWithoutMlKem(recipient);
+        expect(await recipient.contactRepo.getContact(scanner.peerId), isNull);
+        final before = await scanner.contactRepo.getContact(recipient.peerId);
+        final (refused, premature) = await sendChatMessage(
+          p2pService: scanner.p2p,
+          messageRepo: scanner.messageRepo,
+          targetPeerId: recipient.peerId,
+          text: 'Pending consent',
+          senderPeerId: scanner.peerId,
+          senderUsername: scanner.username,
+          bridge: scanner.bridge,
+          recipientMlKemPublicKey: before!.mlKemPublicKey,
+        );
+        expect(refused, SendChatMessageResult.encryptionRequired);
+        expect(premature, isNull);
+        expect(
+          await recipient.messageRepo.getMessagesForContact(scanner.peerId),
+          isEmpty,
+        );
+
+        final pending = recipient.contactRequestListener.requestStream.first;
+        expect(
+          await sendContactRequest(
+            p2pService: scanner.p2p,
+            identityRepo: scanner.identityRepo,
+            bridge: scanner.bridge,
+            targetPeerId: recipient.peerId,
+          ),
+          SendContactRequestResult.success,
+        );
+        final request = await pending.timeout(const Duration(seconds: 2));
+        expect(request.peerId, scanner.peerId);
+        expect(request.status, ContactRequestStatus.pending);
+        expect(await recipient.contactRepo.getContact(scanner.peerId), isNull);
+        final reciprocal =
+            scanner.contactRequestListener.contactKeyUpdatedStream.first;
+        expect(
+          await acceptAndReciprocateContactRequest(
+            requestRepo: recipient.requestRepo,
+            contactRepo: recipient.contactRepo,
+            peerId: scanner.peerId,
+            p2pService: recipient.p2p,
+            identityRepo: recipient.identityRepo,
+            bridge: recipient.bridge,
+          ),
+          AcceptContactRequestResult.success,
+        );
+        expect(
+          (await reciprocal.timeout(const Duration(seconds: 2))).mlKemPublicKey,
+          recipient.mlKemPublicKey,
+        );
+
+        for (final (sender, receiver, text) in [
+          (scanner, recipient, 'مرحبا — café 👋\nLine 2'),
+          (recipient, scanner, '返信 — Grüße 🌍\nLine 2'),
+        ]) {
+          final contact = await sender.contactRepo.getContact(receiver.peerId);
+          expect(contact!.mlKemPublicKey, receiver.mlKemPublicKey);
+          final incoming = receiver.chatListener.incomingMessageStream.first;
+          final (sent, outbound) = await sendChatMessage(
+            p2pService: sender.p2p,
+            messageRepo: sender.messageRepo,
+            targetPeerId: receiver.peerId,
+            text: text,
+            senderPeerId: sender.peerId,
+            senderUsername: sender.username,
+            bridge: sender.bridge,
+            recipientMlKemPublicKey: contact.mlKemPublicKey,
+          );
+          expect(sent, SendChatMessageResult.success);
+          final received = await incoming.timeout(const Duration(seconds: 2));
+          expect(received.id, outbound!.id);
+          expect(received.text, text);
+          expect(received.senderPeerId, sender.peerId);
+          final stored = await receiver.messageRepo.getMessagesForContact(
+            sender.peerId,
+          );
+          expect(stored.where((m) => m.isIncoming).map((m) => m.text), [text]);
+          expect(sender.bridge.commandLog, contains('message.encrypt'));
+          expect(receiver.bridge.commandLog, contains('message.decrypt'));
+        }
+      },
+      timeout: const Timeout(Duration(seconds: 15)),
+    );
+  }
+
   test(
     'contact-request roundtrip exchanges ML-KEM key, then a v2 message decrypts',
     () async {

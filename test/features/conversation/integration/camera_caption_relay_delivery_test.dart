@@ -66,6 +66,7 @@ void main() {
   setUp(installFakeJustAudioPlatform);
   late Uint8List cameraJpeg;
   late Uint8List preparedJpeg;
+  late Uint8List compressedJpeg;
 
   setUpAll(() {
     // A real 12 MP JPEG, not a magic prefix or a small thumbnail padded to 4 MB.
@@ -85,6 +86,11 @@ void main() {
     final prepared = img.bakeOrientation(image);
     prepared.exif.clear();
     preparedJpeg = img.encodeJpg(prepared, quality: 85);
+    compressedJpeg = img.encodeJpg(
+      img.copyResize(prepared, width: 1512, height: 2016),
+      quality: 85,
+    );
+    expect(compressedJpeg.length, lessThan(preparedJpeg.length));
     expect(
       cameraJpeg.length,
       inInclusiveRange(3 * 1024 * 1024, 6 * 1024 * 1024),
@@ -108,6 +114,52 @@ void main() {
           () => h.deliver(offline: offline),
         );
         await h.expectFullImage(tester, received!);
+      },
+    );
+    testWidgets(
+      'MEDIA-002/014 compressed camera JPEG + caption opens full recipient '
+      'image once over ${offline ? 'offline inbox catch-up' : 'online relay'}',
+      (tester) async {
+        final h = (await tester.runAsync(
+          () => _Journey.open(cameraJpeg, compressedJpeg),
+        ))!;
+        addTearDown(() => tester.runAsync(h.close));
+        final received = (await tester.runAsync(
+          () => h.deliver(
+            offline: offline,
+            imageQuality: ImageQualityPreference.compressed,
+          ),
+        ))!;
+        await h.expectFullImage(tester, received, width: 1512, height: 2016);
+        await tester.runAsync(h.expectSingleCopyAfterReplay);
+      },
+    );
+  }
+
+  for (final quality in ImageQualityPreference.values) {
+    testWidgets(
+      'MEDIA-003/DC-011 reverse logical sender preserves ${quality.name} '
+      'full camera image and caption',
+      (tester) async {
+        final compressed = quality == ImageQualityPreference.compressed;
+        final h = (await tester.runAsync(
+          () => _Journey.open(
+            cameraJpeg,
+            compressed ? compressedJpeg : preparedJpeg,
+            reversePeers: true,
+          ),
+        ))!;
+        addTearDown(() => tester.runAsync(h.close));
+        final received = (await tester.runAsync(
+          () => h.deliver(offline: false, imageQuality: quality),
+        ))!;
+        await h.expectFullImage(
+          tester,
+          received,
+          width: compressed ? 1512 : 3024,
+          height: compressed ? 2016 : 4032,
+        );
+        await tester.runAsync(h.expectSingleCopyAfterReplay);
       },
     );
   }
@@ -836,16 +888,23 @@ class _Journey {
   final EncryptedMediaTestBridge sender;
   final _ReceiverBridge receiver;
   final MediaFileManager files;
+  late final TestEd25519Identity senderIdentity;
+  late final TestEd25519Identity receiverIdentity;
   late final ChatMessageListener listener;
   late final P2PServiceImpl service;
   late Uint8List expectedBytes;
   String? messageId;
+  String? deliveredWire;
   late Completer<void> firstDownloadFailureCommitted;
   Completer<void>? recoveryPageLoaded;
   ConversationMessage? latestPublished;
   StreamSubscription<ConversationMessage>? _publication;
 
-  static Future<_Journey> open(Uint8List camera, Uint8List prepared) async {
+  static Future<_Journey> open(
+    Uint8List camera,
+    Uint8List prepared, {
+    bool reversePeers = false,
+  }) async {
     final root = await Directory.systemTemp.createTemp('camera_caption_relay_');
     // OS directory lookup only; all file work still uses MediaFileManager.
     final previousPaths = PathProviderPlatform.instance;
@@ -878,14 +937,16 @@ class _Journey {
     final files = MediaFileManager();
     MediaFileManager.cacheDocumentsDir(root.path);
     final h = _Journey(root, alice, bob, sender, receiver, files)
+      ..senderIdentity = reversePeers ? _bob : _alice
+      ..receiverIdentity = reversePeers ? _alice : _bob
       ..expectedBytes = prepared
       ..firstDownloadFailureCommitted = firstFailureCommitted;
     final contacts = buildWidgetContactRepository(bob.db);
     await contacts.addContact(
       ContactModel(
-        peerId: _alice.peerId,
+        peerId: h.senderIdentity.peerId,
         username: 'Alice',
-        publicKey: _alice.publicKey,
+        publicKey: h.senderIdentity.publicKey,
         rendezvous: 'test-rendezvous',
         signature: 'test-contact-signature',
         scannedAt: DateTime.now().toUtc().toIso8601String(),
@@ -932,7 +993,10 @@ class _Journey {
     return h;
   }
 
-  Future<MediaAttachment> deliver({required bool offline}) async {
+  Future<MediaAttachment> deliver({
+    required bool offline,
+    ImageQualityPreference imageQuality = ImageQualityPreference.original,
+  }) async {
     final pending = await preparePendingComposerMedia(
       inputPath: '${root.path}/camera.jpg',
       imageProcessor: ImageProcessor(
@@ -947,8 +1011,9 @@ class _Journey {
               expect(path, '${root.path}/camera.jpg');
               expect(
                 quality,
-                100,
-                reason: 'Original requests full encoder quality',
+                imageQuality == ImageQualityPreference.original ? 100 : 85,
+                reason:
+                    'selected quality reaches the native compressor boundary',
               );
               expect(
                 keepExif,
@@ -960,7 +1025,7 @@ class _Journey {
               return XFile(output);
             },
       ),
-      imageQualityPreference: ImageQualityPreference.original,
+      imageQualityPreference: imageQuality,
       videoQualityPreference: ImageQualityPreference.original,
     );
     expect(pending.budgetBytes, expectedBytes.length);
@@ -970,7 +1035,7 @@ class _Journey {
       bridge: sender,
       localFilePath: pending.file.path,
       mime: 'image/jpeg',
-      recipientPeerId: _bob.peerId,
+      recipientPeerId: receiverIdentity.peerId,
       mediaFileManager: files,
     )).attachmentOrNull;
     expect(uploaded, isNotNull);
@@ -981,16 +1046,16 @@ class _Journey {
       isNot(equals(expectedBytes)),
     );
     final p2p = FakeP2PService(
-      initialState: NodeState(isStarted: true, peerId: _alice.peerId),
+      initialState: NodeState(isStarted: true, peerId: senderIdentity.peerId),
     );
     addTearDown(p2p.dispose);
     String? inboxEnvelope;
     final (result, _) = await sendChatMessage(
       p2pService: p2p,
       messageRepo: alice.messageRepo,
-      targetPeerId: _bob.peerId,
+      targetPeerId: receiverIdentity.peerId,
       text: _caption,
-      senderPeerId: _alice.peerId,
+      senderPeerId: senderIdentity.peerId,
       senderUsername: 'Alice',
       bridge: sender,
       recipientMlKemPublicKey: 'test-mlkem-bob',
@@ -998,7 +1063,7 @@ class _Journey {
       mediaAttachmentRepo: alice.repo,
       storeInAckCustodyInboxDetailed:
           (peer, wire, {required custodyKind, timeoutMs}) async {
-            expect(peer, _bob.peerId);
+            expect(peer, receiverIdentity.peerId);
             inboxEnvelope = wire;
             return InboxStoreOutcome(
               status: InboxStoreStatus.stored,
@@ -1012,11 +1077,12 @@ class _Journey {
     );
     expect(result, SendChatMessageResult.success);
     final sent = (await alice.messageRepo.getMessagesForContact(
-      _bob.peerId,
+      receiverIdentity.peerId,
     )).single;
     messageId = sent.id;
     final wire = inboxEnvelope ?? p2p.lastSendMessageContent;
     expect(wire, isNotNull);
+    deliveredWire = wire;
     expect(await bob.messageRepo.getMessage(sent.id), isNull);
     // Wait for actual completion, excluding parent persist and active loading
     // emissions. A deferred/terminal failure also completes one bounded burst.
@@ -1034,11 +1100,14 @@ class _Journey {
     if (offline) {
       receiver.pending.add({
         'id': 'camera-inbox-entry',
-        'from': _alice.peerId,
+        'from': senderIdentity.peerId,
         'message': wire,
         'timestamp': DateTime.now().toUtc().toIso8601String(),
       });
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', _bob.peerId);
+      await service.startNodeCore(
+        'cHJpdmF0ZWtleXRlc3Q=',
+        receiverIdentity.peerId,
+      );
       final drained = await service.drainOfflineInboxFully();
       expect(drained.isSuccessful, isTrue);
       expect(receiver.acked, contains('camera-inbox-entry'));
@@ -1046,8 +1115,8 @@ class _Journey {
     } else {
       final outcome = await listener.processIncomingMessage(
         ChatMessage(
-          from: _alice.peerId,
-          to: _bob.peerId,
+          from: senderIdentity.peerId,
+          to: receiverIdentity.peerId,
           content: wire!,
           timestamp: DateTime.now().toUtc().toIso8601String(),
           isIncoming: true,
@@ -1062,6 +1131,32 @@ class _Journey {
     return completed.media.single;
   }
 
+  Future<void> expectSingleCopyAfterReplay() async {
+    final downloadsBefore = receiver.downloadAttempts.length;
+    await listener.processIncomingMessage(
+      ChatMessage(
+        from: senderIdentity.peerId,
+        to: receiverIdentity.peerId,
+        content: deliveredWire!,
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        isIncoming: true,
+        transport: 'relay',
+      ),
+    );
+    final messages = await bob.messageRepo.getMessagesForContact(
+      senderIdentity.peerId,
+    );
+    expect(messages.map((m) => m.id).toList(), [messageId]);
+    expect(messages.single.text, _caption);
+    final attachments = await bob.repo.getAttachmentsForMessage(
+      messageId!,
+      owner: MediaOwnerLane.direct,
+    );
+    expect(attachments, hasLength(1));
+    expect(attachments.single.downloadStatus, kMediaDownloadStatusDone);
+    expect(receiver.downloadAttempts.length, downloadsBefore);
+  }
+
   Widget wrap(Widget child) => MaterialApp(
     locale: const Locale('en'),
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -1071,8 +1166,10 @@ class _Journey {
 
   Future<void> expectFullImage(
     WidgetTester tester,
-    MediaAttachment attachment,
-  ) async {
+    MediaAttachment attachment, {
+    int width = 3024,
+    int height = 4032,
+  }) async {
     final persisted = await tester.runAsync(
       () => bob.repo.getAttachmentsForMessage(
         messageId!,
@@ -1089,7 +1186,7 @@ class _Journey {
     final bytes = await tester.runAsync(() => File(path).readAsBytes());
     expect(sha256.convert(bytes!), sha256.convert(expectedBytes));
     final decoded = img.decodeJpg(bytes)!;
-    expect((decoded.width, decoded.height), (3024, 4032));
+    expect((decoded.width, decoded.height), (width, height));
     final message = await tester.runAsync(
       () => bob.messageRepo.getMessage(messageId!),
     );
@@ -1147,7 +1244,7 @@ class _Journey {
     expect(
       tester
           .widgetList<RawImage>(find.byType(RawImage))
-          .any((w) => w.image?.width == 3024 && w.image?.height == 4032),
+          .any((w) => w.image?.width == width && w.image?.height == height),
       isTrue,
     );
     expect(tester.takeException(), isNull);

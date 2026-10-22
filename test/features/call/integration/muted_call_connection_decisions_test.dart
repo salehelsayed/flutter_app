@@ -62,6 +62,27 @@ void main() {
     flowEventLoggingEnabled = false;
     addTearDown(() => flowEventLoggingEnabled = previous);
   });
+  for (final reverse in [false, true]) {
+    test('VC-015 shared protocol caller ${reverse ? 'B' : 'A'} negotiates '
+        'both owners and callee hangup releases both', () async {
+      final pair = await _Pair.open();
+      addTearDown(pair.close);
+      await pair.negotiate(reverse: reverse);
+      await pair.connect();
+      for (final endpoint in [pair.a, pair.b]) {
+        expect(endpoint.coordinator.activeSession?.callId, _callId);
+        expect(endpoint.coordinator.activeSession?.state, CallState.connected);
+        expect((await endpoint.engine.snapshot()).isMediaReady, isTrue);
+        expect(endpoint.native.createCalls, 1);
+        expect(endpoint.native.closeCalls, 0);
+        expect(endpoint.native.localDescriptions, hasLength(1));
+        expect(endpoint.native.remoteDescriptions, hasLength(1));
+      }
+      // Reverse the terminator as well: the answerer's terminal crosses the
+      // real envelope/router path and must release both native-bound owners.
+      await pair.hangup(fromB: !reverse);
+    }, timeout: const Timeout(Duration(seconds: 45)));
+  }
   for (final muteBeforeReady in [false, true]) {
     test(
       'VC-012 host two-peer mute preserves connected receive ownership (mute before ready=$muteBeforeReady)',
@@ -229,26 +250,31 @@ class _Pair {
     }
   }
 
-  Future<void> negotiate() async {
-    await a.coordinator.placeCall(
-      contactPeerId: b.account,
-      localAccountPeerId: a.account,
-      localDeviceId: a.device,
+  Future<void> negotiate({bool reverse = false}) async {
+    final caller = reverse ? b : a;
+    final callee = reverse ? a : b;
+    await caller.coordinator.placeCall(
+      contactPeerId: callee.account,
+      localAccountPeerId: caller.account,
+      localDeviceId: caller.device,
     );
     await flush();
     expect(a.coordinator.activeSession?.state, CallState.ringing);
     expect(b.coordinator.activeSession?.state, CallState.ringing);
     expect(a.native.createCalls, 0);
     expect(b.native.createCalls, 0);
-    await b.coordinator.dispatch(b.event(CallEventType.answer));
+    await callee.coordinator.dispatch(callee.event(CallEventType.answer));
     await flush();
     await a.waitForState(CallState.negotiating);
     await b.waitForState(CallState.negotiating);
     expect(a.coordinator.activeSession?.state, CallState.negotiating);
     expect(b.coordinator.activeSession?.state, CallState.negotiating);
-    expect(a.native.localDescriptions.single, CallSessionDescriptionType.offer);
     expect(
-      b.native.localDescriptions.single,
+      caller.native.localDescriptions.single,
+      CallSessionDescriptionType.offer,
+    );
+    expect(
+      callee.native.localDescriptions.single,
       CallSessionDescriptionType.answer,
     );
   }
@@ -271,8 +297,10 @@ class _Pair {
     }
   }
 
-  Future<void> hangup() async {
-    await a.coordinator.dispatch(a.event(CallEventType.end));
+  Future<void> hangup({bool fromB = false}) async {
+    final ending = fromB ? b : a;
+    final remote = fromB ? a : b;
+    await ending.coordinator.dispatch(ending.event(CallEventType.end));
     await flush();
     for (final endpoint in [a, b]) {
       expect(endpoint.coordinator.activeSession, isNull);
@@ -283,13 +311,13 @@ class _Pair {
     }
     expect(
       (await CallHistoryRepositoryImpl(
-        a.db,
+        ending.db,
       ).getByCallId(_callId))?.terminalReason,
       CallEndReason.localHangup,
     );
     expect(
       (await CallHistoryRepositoryImpl(
-        b.db,
+        remote.db,
       ).getByCallId(_callId))?.terminalReason,
       CallEndReason.remoteHangup,
     );
