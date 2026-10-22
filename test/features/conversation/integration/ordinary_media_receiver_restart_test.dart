@@ -230,7 +230,7 @@ void main() {
 }
 
 class _PartialReceiver extends EncryptedMediaTestBridge {
-  _PartialReceiver(RelayMediaStore store) : super(store, seedSalt: 80);
+  _PartialReceiver(super.relayStore) : super(seedSalt: 80);
   bool failDownloads = false;
   int attempts = 0;
   String? partialPath;

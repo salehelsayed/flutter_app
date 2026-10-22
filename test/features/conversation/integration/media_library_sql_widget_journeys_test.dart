@@ -85,8 +85,9 @@ void main() {
   tearDown(() async {
     await fixture.dispose();
     MediaFileManager.debugResetDocumentsDirCache();
-    if (previousCache != null)
+    if (previousCache != null) {
       MediaFileManager.cacheDocumentsDir(previousCache!);
+    }
     root.deleteSync(recursive: true);
   });
 

@@ -17275,8 +17275,9 @@ void main() {
         addTearDown(() {
           PathProviderPlatform.instance = previousPaths;
           MediaFileManager.debugResetDocumentsDirCache();
-          if (previousCache != null)
+          if (previousCache != null) {
             MediaFileManager.cacheDocumentsDir(previousCache);
+          }
         });
         final nativeRequests = <Map<Object?, Object?>>[];
         const channel = MethodChannel('mknoon/received_media_egress');

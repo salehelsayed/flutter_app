@@ -208,7 +208,7 @@ void main() {
               whereArgs: ['contact-a'],
             ),
           );
-          contactGate!.complete();
+          contactGate.complete();
           await tester.runAsync(() => db.query('contacts'));
           await tester.pump();
           expect(owner.starts, ['contact-a']);

@@ -83,8 +83,9 @@ void main() {
           await fixture.dispose();
           PathProviderPlatform.instance = previousPaths;
           MediaFileManager.debugResetDocumentsDirCache();
-          if (previousCache != null)
+          if (previousCache != null) {
             MediaFileManager.cacheDocumentsDir(previousCache);
+          }
           root.deleteSync(recursive: true);
         });
         const messageId = 'private-parent';
