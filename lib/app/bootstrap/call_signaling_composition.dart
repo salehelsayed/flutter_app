@@ -202,6 +202,9 @@ final class CallSignalingComposition
   CallId? _presentedIncomingCallId;
   int _foregroundGeneration = 0;
   Future<void>? _startInFlight;
+  Timer? _foregroundStartRetryTimer;
+  int _foregroundStartRetryAttempt = 0;
+  bool _foregroundStartRetryInvalidated = false;
   Future<void>? _withdrawalInFlight;
   _CallSignalingStartStage? _lastStartStage;
   String? _lastStartOutcome;
@@ -609,6 +612,9 @@ final class CallSignalingComposition
       }
       await _withdrawGraph(graph);
     } finally {
+      if (outcome == 'advertisement_unavailable' || outcome == 'failed') {
+        _scheduleForegroundStartRetry();
+      }
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_RECONCILE_RESULT',
         outcome: outcome,
@@ -630,6 +636,39 @@ final class CallSignalingComposition
     });
     _startInFlight = attempt;
     return attempt;
+  }
+
+  bool get _canRetryForegroundStart =>
+      isEnabled &&
+      !_terminal &&
+      !_started &&
+      !_withdrawalFailed &&
+      !_foregroundStartRetryInvalidated &&
+      _foregroundAllowed &&
+      _isForeground();
+
+  /// A relay reservation edge need not follow restored inbox reachability.
+  /// Retry the same authenticated startup path, without claiming callability
+  /// until its listener and capability advertisement both succeed.
+  void _scheduleForegroundStartRetry() {
+    if (_foregroundStartRetryTimer != null || !_canRetryForegroundStart) return;
+    final delay = switch (_foregroundStartRetryAttempt) {
+      0 => const Duration(seconds: 5),
+      1 => const Duration(seconds: 15),
+      2 => const Duration(seconds: 30),
+      _ => const Duration(seconds: 60),
+    };
+    if (_foregroundStartRetryAttempt < 3) _foregroundStartRetryAttempt++;
+    _foregroundStartRetryTimer = Timer(delay, () {
+      _foregroundStartRetryTimer = null;
+      if (_canRetryForegroundStart) unawaited(start());
+    });
+  }
+
+  void _cancelForegroundStartRetry() {
+    _foregroundStartRetryTimer?.cancel();
+    _foregroundStartRetryTimer = null;
+    _foregroundStartRetryAttempt = 0;
   }
 
   Future<void> _startInternal() async {
@@ -700,6 +739,8 @@ final class CallSignalingComposition
         return;
       }
       _started = true;
+      _foregroundStartRetryInvalidated = false;
+      _cancelForegroundStartRetry();
       outcome = 'ready';
       _publishOutgoingCallAvailability();
       _acceptForegroundProjection(
@@ -720,6 +761,11 @@ final class CallSignalingComposition
     } finally {
       _lastStartStage = stage;
       _lastStartOutcome = diagnosticOutcome ?? outcome;
+      if (outcome == 'advertisement_unavailable' ||
+          outcome == 'listener_unavailable' ||
+          outcome == 'failed') {
+        _scheduleForegroundStartRetry();
+      }
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_START_RESULT',
         outcome: outcome,
@@ -793,6 +839,7 @@ final class CallSignalingComposition
         return;
       }
       _foregroundAllowed = true;
+      _foregroundStartRetryInvalidated = false;
       await start();
       final graph = _graph;
       if (!_started || graph == null || _terminal) {
@@ -855,6 +902,9 @@ final class CallSignalingComposition
         outcome = 'failed';
       }
     } finally {
+      if (outcome == 'advertisement_unavailable' || outcome == 'failed') {
+        _scheduleForegroundStartRetry();
+      }
       _emitLifecycleResult(
         event: 'CALL_SIGNALING_RESUME_RESULT',
         outcome: outcome,
@@ -937,6 +987,7 @@ final class CallSignalingComposition
   Future<void> onBackgrounded() async {
     _outgoingReadinessLifecycleGeneration++;
     _foregroundAllowed = false;
+    _cancelForegroundStartRetry();
     _ringingPoller.onSession(_foregroundGraph?.current?.session);
     _presentedIncomingCallId = null;
     _publishForeground(null);
@@ -998,6 +1049,7 @@ final class CallSignalingComposition
     if (inFlight != null) return inFlight;
     if (_terminal) return Future<void>.value();
     _terminal = true;
+    _cancelForegroundStartRetry();
     // Stop polling before anything it reads can be torn down.
     _ringingPoller.dispose();
     _publishOutgoingCallAvailability();
@@ -1044,6 +1096,10 @@ final class CallSignalingComposition
     _callabilityInvalidationSubscription = callability?.callabilityInvalidations
         .listen((_) {
           if (identical(_graph, graph)) {
+            // A failed native owner is not a transport retry. Preserve its
+            // invalidation until explicit resume or a fresh successful start.
+            _foregroundStartRetryInvalidated = true;
+            _cancelForegroundStartRetry();
             final metadata = graph is CallSignalingDiagnosticInvalidations
                 ? graph as CallSignalingDiagnosticInvalidations
                 : null;

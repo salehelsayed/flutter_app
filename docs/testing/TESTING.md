@@ -7655,6 +7655,30 @@ visible and cannot become an ordinary first-attempt PASS.
   `.codex-test-logs/call-idle-poll-20261022/`. These are host scheduling and
   authenticated-admission proofs, not phone ringing latency, battery cost,
   native transport repair, provider delivery or signed-device certification.
+  **Foreground call startup recovery:** owner follow-up `m-0a8b23bd`
+  covers a withdrawn graph after startup/resume advertisement failure when no
+  positive healthy-relay edge arrives. The composition retries its existing
+  authenticated startup after five, 15 and 30 seconds, then every 60 seconds
+  after completed failures while foreground and enabled. Startup stays
+  single-flight; background, shutdown and successful startup cancel/reset the
+  timer. Failed native cleanup still blocks replacement. Current-graph
+  callability invalidation also cancels/suppresses this automatic retry until
+  explicit resume or a fresh successful authenticated start, so a late failed
+  advertisement cannot retry a permanently invalidated native owner. Existing
+  native-wake and healthy-relay-edge recovery remain available; no adapter,
+  authority gate, wake-distribution or pending-slot policy changed.
+  Twelve focused host cases pass without skips: Android/iOS startup/resume
+  recovery restores four-second idle polling, failure intervals stay bounded,
+  slow startup coalesces wakes, background/shutdown cancel, native invalidation
+  suppresses a late retry, failed cleanup stays closed, and terminal/idle
+  transitions keep their eligible polling. Seven missing-retry RED assertions,
+  the native-invalidation race RED and first clock/stream-retirement fixture
+  failures are retained under `.codex-test-logs/call-start-retry-20261022/`.
+  The device read-only correlation found call-control unavailability followed
+  by graph withdrawal in the two reduced-poll windows; why their healthy relay
+  count remained zero is unestablished and may be investigated separately.
+  These host proofs do not certify native transport repair, the underlying iOS
+  adapter failure, real-device recovery latency or a signed candidate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
