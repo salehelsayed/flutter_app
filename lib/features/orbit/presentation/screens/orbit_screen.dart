@@ -309,6 +309,7 @@ class OrbitScreen extends StatefulWidget {
   /// 206 — non-null when the host wires the Inner-Circle center self-avatar to
   /// open Settings. Threaded down to [InnerCircleInteractiveSurface].
   final VoidCallback? onSelfAvatarTap;
+  final VoidCallback? onComposeThought;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
@@ -388,6 +389,7 @@ class OrbitScreen extends StatefulWidget {
     this.onInnerCircleEditSessionChanged,
     this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.onComposeThought,
     this.thoughtsByPeerId = const {},
     this.onThoughtTap,
     this.onThoughtsExpired,
@@ -498,6 +500,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     secureKeyStore: widget.secureKeyStore,
     innerCircleResetListenable: widget.innerCircleResetListenable,
     onSelfAvatarTap: widget.onSelfAvatarTap,
+    onComposeThought: widget.onComposeThought,
     thoughtsByPeerId: widget.thoughtsByPeerId,
     onThoughtTap: widget.onThoughtTap,
     onThoughtsExpired: widget.onThoughtsExpired,
@@ -570,6 +573,7 @@ class _OrbitScreenView extends StatelessWidget {
   final SecureKeyStore? secureKeyStore;
   final Listenable? innerCircleResetListenable;
   final VoidCallback? onSelfAvatarTap;
+  final VoidCallback? onComposeThought;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
@@ -655,6 +659,7 @@ class _OrbitScreenView extends StatelessWidget {
     required this.secureKeyStore,
     required this.innerCircleResetListenable,
     this.onSelfAvatarTap,
+    this.onComposeThought,
     this.thoughtsByPeerId = const {},
     this.onThoughtTap,
     this.onThoughtsExpired,
@@ -1136,6 +1141,7 @@ class _OrbitScreenView extends StatelessWidget {
           findOpenSignal: _showsPersistentNav ? ringsFindSignal : null,
           onFindSessionActiveChanged: onRingsFindOpenChanged,
           onSelfAvatarTap: onSelfAvatarTap,
+          onComposeThought: onComposeThought,
           thoughtsByPeerId: thoughtsByPeerId,
           onThoughtTap: onThoughtTap,
           onThoughtsExpired: onThoughtsExpired,

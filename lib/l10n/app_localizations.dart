@@ -430,6 +430,30 @@ abstract class AppLocalizations {
   /// **'Yesterday'**
   String get posts_time_yesterday;
 
+  /// No description provided for @thought_compose_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Share a thought'**
+  String get thought_compose_title;
+
+  /// No description provided for @thought_compose_share.
+  ///
+  /// In en, this message translates to:
+  /// **'Share'**
+  String get thought_compose_share;
+
+  /// No description provided for @thought_compose_lifetime.
+  ///
+  /// In en, this message translates to:
+  /// **'Your friends see this for 24 hours'**
+  String get thought_compose_lifetime;
+
+  /// No description provided for @thought_compose_open.
+  ///
+  /// In en, this message translates to:
+  /// **'Share a thought'**
+  String get thought_compose_open;
+
   /// No description provided for @compose_title.
   ///
   /// In en, this message translates to:

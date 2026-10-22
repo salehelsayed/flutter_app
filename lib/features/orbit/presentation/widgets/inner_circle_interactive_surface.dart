@@ -50,6 +50,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// 206 — non-null when the host wires the center self-avatar to open Settings.
   /// The surface gates it on modal state (edit/find) before invoking the host.
   final VoidCallback? onSelfAvatarTap;
+  final VoidCallback? onComposeThought;
 
   /// Persists the five geometry knobs. Null ⇒ no persistence (bare-screen pumps).
   final SecureKeyStore? secureKeyStore;
@@ -96,6 +97,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.onThoughtsExpired,
     this.nowProvider,
     this.onSelfAvatarTap,
+    this.onComposeThought,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
@@ -569,6 +571,18 @@ class _InnerCircleInteractiveSurfaceState
     if (!_editing) _enterEdit();
   }
 
+  void _onComposeThought() {
+    if (_editing) {
+      setState(() => _setEditing(false));
+      return;
+    }
+    if (_findOpen || _findActive) {
+      setState(_closeFindInternal);
+      return;
+    }
+    widget.onComposeThought?.call();
+  }
+
   void _onBadgeTap() {
     if (_notesOut) {
       _setThoughtsVisible(false);
@@ -887,6 +901,10 @@ class _InnerCircleInteractiveSurfaceState
                                       widget.onSelfAvatarTap == null
                                       ? null
                                       : _onSelfAvatarLongPress,
+                                  onComposeThought:
+                                      widget.onComposeThought == null
+                                      ? null
+                                      : _onComposeThought,
                                   geometry: _geometry,
                                   overflowExpanded: _overflowExpanded,
                                   onBadgeTap: _onBadgeTap,

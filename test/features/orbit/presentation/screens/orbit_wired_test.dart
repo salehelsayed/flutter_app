@@ -83,6 +83,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -570,6 +571,83 @@ void main() {
       // profile-download retry; let it observe disposal before test teardown.
       await tester.pump(const Duration(seconds: 6));
     }
+
+    testWidgets(
+      'own-node plus shares with every current active unblocked friend',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([
+          testContact,
+          testContact.copyWith(peerId: 'blocked', isBlocked: true),
+          testContact.copyWith(peerId: 'archived', isArchived: true),
+        ]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(ComposePostSheet), findsOneWidget);
+        expect(find.byType(ChoiceChip), findsNothing);
+        // Recipient eligibility is resolved at Share, not when opening the sheet.
+        await contactRepo.addContact(
+          testContact.copyWith(peerId: 'new-friend', username: 'New Friend'),
+        );
+        await tester.enterText(
+          find.byType(TextField),
+          '  Hello all my friends  ',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+        await pumpOrbitFrames(tester, count: 10);
+        expect(find.byType(ComposePostSheet), findsNothing);
+        final sent = (await posts.loadFeed()).single;
+        expect(sent.text, 'Hello all my friends');
+        expect(sent.audience.kind, PostAudienceKind.allFriends);
+        expect(sent.isIncoming, isFalse);
+        expect(
+          DateTime.parse(
+            sent.expiresAt,
+          ).difference(DateTime.parse(sent.createdAt)),
+          const Duration(hours: 24),
+        );
+        expect(
+          (await posts.getRecipientDeliveries(
+            sent.id,
+          )).map((d) => d.recipientPeerId),
+          unorderedEquals([testContact.peerId, 'new-friend']),
+        );
+        expect(
+          p2pService.storeInInboxLog.map((d) => d.toPeerId),
+          unorderedEquals([testContact.peerId, 'new-friend']),
+        );
+        expect(messageRepo.count, 0);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets('no eligible recipients keeps the thought draft available', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
+      await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.enterText(find.byType(TextField), 'Keep my draft');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      await pumpOrbitFrames(tester, count: 6);
+      expect(find.byType(ComposePostSheet), findsOneWidget);
+      expect(find.text('Keep my draft'), findsOneWidget);
+      expect(await posts.loadFeed(), isEmpty);
+      expect(p2pService.storeInInboxCallCount, 0);
+      await finishThoughtCase(tester);
+    });
 
     testWidgets(
       'latest note opens current-name card, marks read, and Message and face open ordinary empty chat',

@@ -57,6 +57,7 @@ class OrbitalVisualization extends StatelessWidget {
   /// painted [Positioned] and 48px box are unchanged (geometry locks).
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onSelfAvatarLongPress;
+  final VoidCallback? onComposeThought;
 
   /// 198 — the five sculpt knobs (defaults ⇒ pre-198 geometry, INV-6).
   final OrbitGeometryPrefs geometry;
@@ -110,6 +111,7 @@ class OrbitalVisualization extends StatelessWidget {
     this.thoughtClock = 0,
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
+    this.onComposeThought,
     this.geometry = OrbitGeometryPrefs.defaults,
     this.overflowExpanded = false,
     this.onBadgeTap,
@@ -464,6 +466,29 @@ class OrbitalVisualization extends StatelessWidget {
                 ),
         ),
     ];
+
+    if (selfPeerId != null && onComposeThought != null) {
+      children.add(
+        Positioned(
+          left: cx + 4,
+          top: cy + 4,
+          width: 28,
+          height: 28,
+          child: IconButton(
+            key: const ValueKey('orbit-compose-thought'),
+            tooltip: l10n.thought_compose_open,
+            onPressed: onComposeThought,
+            padding: EdgeInsets.zero,
+            style: IconButton.styleFrom(
+              backgroundColor: const Color(0xFF262626),
+              foregroundColor: const Color(0xFFF5F5F5),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: const Icon(Icons.add, size: 20),
+          ),
+        ),
+      );
+    }
 
     // Seats — rings always; arcs only when expanded.
     for (final seat in layout.seats) {

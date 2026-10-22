@@ -183,6 +183,18 @@ class AppLocalizationsAr extends AppLocalizations {
   String get posts_time_yesterday => 'أمس';
 
   @override
+  String get thought_compose_title => 'شارك خاطرة';
+
+  @override
+  String get thought_compose_share => 'مشاركة';
+
+  @override
+  String get thought_compose_lifetime => 'يرى أصدقاؤك هذه الخاطرة لمدة 24 ساعة';
+
+  @override
+  String get thought_compose_open => 'شارك خاطرة';
+
+  @override
   String get compose_title => 'إنشاء منشور';
 
   @override

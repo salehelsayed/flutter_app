@@ -9,7 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -1047,30 +1047,7 @@ class _PostsWiredState extends State<PostsWired> {
     );
   }
 
-  Future<List<PostMediaDraft>> _pickMediaDrafts() async {
-    final picker = SystemMediaPicker();
-    final selections = await picker.pickMultipleMedia();
-    if (selections.isEmpty) {
-      return const <PostMediaDraft>[];
-    }
-
-    final firstMime = _mimeFromPath(selections.first.path);
-    final firstKind = _kindFromMime(firstMime);
-    final filtered = selections
-        .where((file) {
-          return _kindFromMime(_mimeFromPath(file.path)) == firstKind;
-        })
-        .toList(growable: false);
-    final limited = firstKind == 'image' ? filtered : filtered.take(1).toList();
-    return limited
-        .map(
-          (file) => PostMediaDraft(
-            localFilePath: file.path,
-            mime: _mimeFromPath(file.path),
-          ),
-        )
-        .toList(growable: false);
-  }
+  Future<List<PostMediaDraft>> _pickMediaDrafts() => pickPostMediaDrafts();
 
   @override
   Widget build(BuildContext context) {
@@ -1118,27 +1095,6 @@ class _PostsWiredState extends State<PostsWired> {
       );
     });
   }
-}
-
-String _mimeFromPath(String path) {
-  final lower = path.toLowerCase();
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-  if (lower.endsWith('.png')) return 'image/png';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.heic')) return 'image/heic';
-  if (lower.endsWith('.mp4')) return 'video/mp4';
-  if (lower.endsWith('.mov')) return 'video/quicktime';
-  if (lower.endsWith('.m4a')) return 'audio/mp4';
-  if (lower.endsWith('.mp3')) return 'audio/mpeg';
-  if (lower.endsWith('.ogg')) return 'audio/ogg';
-  return 'application/octet-stream';
-}
-
-String _kindFromMime(String mime) {
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('video/')) return 'video';
-  if (mime.startsWith('audio/')) return 'voice';
-  return 'other';
 }
 
 Future<Uint8List?> _loadAvatarFromDisk(String peerId) async {

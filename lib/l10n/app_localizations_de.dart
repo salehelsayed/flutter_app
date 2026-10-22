@@ -193,6 +193,19 @@ class AppLocalizationsDe extends AppLocalizations {
   String get posts_time_yesterday => 'Gestern';
 
   @override
+  String get thought_compose_title => 'Gedanken teilen';
+
+  @override
+  String get thought_compose_share => 'Teilen';
+
+  @override
+  String get thought_compose_lifetime =>
+      'Deine Freunde sehen diesen Gedanken 24 Stunden lang';
+
+  @override
+  String get thought_compose_open => 'Gedanken teilen';
+
+  @override
   String get compose_title => 'Beitrag erstellen';
 
   @override

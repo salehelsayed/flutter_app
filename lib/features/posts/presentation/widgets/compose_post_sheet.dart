@@ -30,6 +30,9 @@ class ComposePostResult {
 enum ComposePostSubmitOutcome { closeSheet, keepSheetOpen }
 
 class ComposePostSheet extends StatefulWidget {
+  /// The live Orbit composer shares only with friends. Dormant Posts callers
+  /// retain their existing controls until that UI is retired.
+  final bool thoughtsOnly;
   final List<ContactModel> eligibleContacts;
   final Future<void> Function(ComposePostResult result)? onSubmit;
   final Future<ComposePostSubmitOutcome> Function(ComposePostResult result)?
@@ -45,6 +48,7 @@ class ComposePostSheet extends StatefulWidget {
 
   const ComposePostSheet({
     super.key,
+    this.thoughtsOnly = false,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,
@@ -113,11 +117,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         _recordingState.isActive) {
       return false;
     }
-    if (_audienceKind == PostAudienceKind.pickPeople &&
+    if (!widget.thoughtsOnly &&
+        _audienceKind == PostAudienceKind.pickPeople &&
         _selectedPeerIds.isEmpty) {
       return false;
     }
-    if (_audienceKind == PostAudienceKind.peopleNearby &&
+    if (!widget.thoughtsOnly &&
+        _audienceKind == PostAudienceKind.peopleNearby &&
         _nearbyAvailability?.state != NearbyComposeAvailabilityState.ready) {
       return false;
     }
@@ -130,15 +136,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (!_canSubmit) return;
     setState(() => _isSubmitting = true);
     try {
-      final audience = switch (_audienceKind) {
-        PostAudienceKind.peopleNearby => PostAudience.peopleNearby(
-          radiusM: _nearbyRadiusM,
-        ),
-        PostAudienceKind.pickPeople => PostAudience.pickPeople(
-          _selectedPeerIds.toList(),
-        ),
-        _ => PostAudience.allFriends(),
-      };
+      final audience = widget.thoughtsOnly
+          ? PostAudience.allFriends()
+          : switch (_audienceKind) {
+              PostAudienceKind.peopleNearby => PostAudience.peopleNearby(
+                radiusM: _nearbyRadiusM,
+              ),
+              PostAudienceKind.pickPeople => PostAudience.pickPeople(
+                _selectedPeerIds.toList(),
+              ),
+              _ => PostAudience.allFriends(),
+            };
       final outcome = await _submitPost(
         ComposePostResult(
           text: _textController.text.trim(),
@@ -518,14 +526,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    AppLocalizations.of(context)!.compose_title,
+                    widget.thoughtsOnly
+                        ? AppLocalizations.of(context)!.thought_compose_title
+                        : AppLocalizations.of(context)!.compose_title,
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 20,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  if (widget.activePinCount > 0) ...[
+                  if (!widget.thoughtsOnly && widget.activePinCount > 0) ...[
                     const SizedBox(height: 14),
                     Container(
                       width: double.infinity,
@@ -594,48 +604,54 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     style: const TextStyle(color: Colors.white),
                   ),
                   const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 10,
-                    children: [
-                      ChoiceChip(
-                        label: Text(
-                          AppLocalizations.of(context)!.compose_audience_all,
+                  if (!widget.thoughtsOnly)
+                    Wrap(
+                      spacing: 10,
+                      children: [
+                        ChoiceChip(
+                          label: Text(
+                            AppLocalizations.of(context)!.compose_audience_all,
+                          ),
+                          selected:
+                              _audienceKind == PostAudienceKind.allFriends,
+                          onSelected: (_) {
+                            setState(() {
+                              _audienceKind = PostAudienceKind.allFriends;
+                              _selectedPeerIds.clear();
+                            });
+                          },
                         ),
-                        selected: _audienceKind == PostAudienceKind.allFriends,
-                        onSelected: (_) {
-                          setState(() {
-                            _audienceKind = PostAudienceKind.allFriends;
-                            _selectedPeerIds.clear();
-                          });
-                        },
-                      ),
-                      ChoiceChip(
-                        label: Text(
-                          AppLocalizations.of(context)!.compose_audience_nearby,
+                        ChoiceChip(
+                          label: Text(
+                            AppLocalizations.of(
+                              context,
+                            )!.compose_audience_nearby,
+                          ),
+                          selected:
+                              _audienceKind == PostAudienceKind.peopleNearby,
+                          onSelected: (_) {
+                            setState(() {
+                              _audienceKind = PostAudienceKind.peopleNearby;
+                              _selectedPeerIds.clear();
+                            });
+                          },
                         ),
-                        selected:
-                            _audienceKind == PostAudienceKind.peopleNearby,
-                        onSelected: (_) {
-                          setState(() {
-                            _audienceKind = PostAudienceKind.peopleNearby;
-                            _selectedPeerIds.clear();
-                          });
-                        },
-                      ),
-                      ChoiceChip(
-                        label: Text(
-                          AppLocalizations.of(context)!.compose_audience_pick,
+                        ChoiceChip(
+                          label: Text(
+                            AppLocalizations.of(context)!.compose_audience_pick,
+                          ),
+                          selected:
+                              _audienceKind == PostAudienceKind.pickPeople,
+                          onSelected: (_) {
+                            setState(() {
+                              _audienceKind = PostAudienceKind.pickPeople;
+                            });
+                          },
                         ),
-                        selected: _audienceKind == PostAudienceKind.pickPeople,
-                        onSelected: (_) {
-                          setState(() {
-                            _audienceKind = PostAudienceKind.pickPeople;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  if (_audienceKind == PostAudienceKind.peopleNearby) ...[
+                      ],
+                    ),
+                  if (!widget.thoughtsOnly &&
+                      _audienceKind == PostAudienceKind.peopleNearby) ...[
                     const SizedBox(height: 16),
                     Text(
                       AppLocalizations.of(context)!.compose_radius,
@@ -667,7 +683,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                           .toList(growable: false),
                     ),
                   ],
-                  if (_nearbyAvailability != null) ...[
+                  if (!widget.thoughtsOnly && _nearbyAvailability != null) ...[
                     const SizedBox(height: 16),
                     _NearbyComposeAvailabilityCard(
                       availability: _nearbyAvailability!,
@@ -778,7 +794,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       ),
                     ),
                   ],
-                  if (_audienceKind == PostAudienceKind.pickPeople) ...[
+                  if (!widget.thoughtsOnly &&
+                      _audienceKind == PostAudienceKind.pickPeople) ...[
                     const SizedBox(height: 16),
                     Text(
                       AppLocalizations.of(context)!.compose_pick_people,
@@ -836,12 +853,26 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     ),
                   ],
                   const SizedBox(height: 20),
+                  if (widget.thoughtsOnly) ...[
+                    Text(
+                      AppLocalizations.of(context)!.thought_compose_lifetime,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
+                      key: widget.thoughtsOnly
+                          ? const ValueKey('thought-composer-share')
+                          : null,
                       onPressed: _canSubmit ? _submit : null,
                       child: Text(
-                        _isSubmitting
+                        widget.thoughtsOnly
+                            ? AppLocalizations.of(
+                                context,
+                              )!.thought_compose_share
+                            : _isSubmitting
                             ? AppLocalizations.of(context)!.compose_posting
                             : AppLocalizations.of(context)!.compose_post,
                       ),

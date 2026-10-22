@@ -124,6 +124,14 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
+import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart'
+    show prepareCreatedLocalPostMedia;
+import 'package:flutter_app/features/posts/application/post_delivery_runner.dart'
+    show PostDeliveryRunner;
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
@@ -904,6 +912,89 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       (_) => unawaited(_reloadThoughts()),
       onError: (Object error) => _reportThoughtFailure(error),
     );
+  }
+
+  bool _composingThought = false;
+
+  Future<void> _composeThought() async {
+    final repository = widget.postRepository;
+    final identity = _identity;
+    if (_composingThought || repository == null || identity == null) return;
+    _composingThought = true;
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => ComposePostSheet(
+          thoughtsOnly: true,
+          eligibleContacts: const [],
+          audioRecorderService: widget.audioRecorderService,
+          onAttachMedia: () async {
+            try {
+              return await pickPostMediaDrafts();
+            } catch (error) {
+              _reportThoughtFailure(error);
+              if (mounted) {
+                _showSnackBar(AppLocalizations.of(context)!.post_send_failed);
+              }
+              return const [];
+            }
+          },
+          onSubmitWithOutcome: (draft) async {
+            try {
+              final (result, local) = await createLocalPost(
+                postRepo: repository,
+                contactRepo: widget.contactRepo,
+                senderPeerId: identity.peerId,
+                senderUsername: identity.username,
+                text: draft.text,
+                audience: PostAudience.allFriends(),
+                mediaDrafts: draft.mediaDrafts,
+              );
+              if (result == SendPostResult.success && local != null) {
+                unawaited(_deliverThought(repository, local));
+                return ComposePostSubmitOutcome.closeSheet;
+              }
+            } catch (error) {
+              _reportThoughtFailure(error);
+            }
+            if (mounted) {
+              _showSnackBar(AppLocalizations.of(context)!.post_send_failed);
+            }
+            return ComposePostSubmitOutcome.keepSheetOpen;
+          },
+        ),
+      );
+    } finally {
+      _composingThought = false;
+    }
+  }
+
+  Future<void> _deliverThought(
+    PostRepository repository,
+    CreatedLocalPost created,
+  ) async {
+    try {
+      final (result, prepared) = await prepareCreatedLocalPostMedia(
+        created: created,
+        postRepo: repository,
+        secureKeyStore: widget.secureKeyStore,
+        imageProcessor: widget.imageProcessor,
+        mediaFileManager: widget.mediaFileManager,
+        bridge: widget.bridge,
+      );
+      if (result != SendPostResult.success || prepared == null) return;
+      await PostDeliveryRunner(
+        p2pService: widget.p2pService,
+        postRepo: repository,
+        bridge: widget.bridge,
+      ).execute(prepared);
+    } catch (error) {
+      // Local creation and media recovery are durable; the existing retriers
+      // own a later attempt even when this route is no longer mounted.
+      _reportThoughtFailure(error);
+    }
   }
 
   LoadOrbitThoughtsUseCase _thoughtQuery(PostRepository repository) =>
@@ -3400,6 +3491,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onFriendTap: _onFriendTap,
       thoughtsByPeerId: _thoughtsByPeerId,
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onComposeThought: widget.postRepository == null || _identity == null
+          ? null
+          : () => unawaited(_composeThought()),
       onThoughtsExpired: () => unawaited(_reloadThoughts()),
       thoughtNowProvider: widget.thoughtNowProvider,
       onFriendAvatarTap: _onFriendAvatarTap,

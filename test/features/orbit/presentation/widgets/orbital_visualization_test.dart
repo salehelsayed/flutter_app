@@ -127,6 +127,53 @@ void main() {
       .whereType<AnimationController>()
       .toList();
 
+  testWidgets('thought plus and self-avatar have separate tap actions', (
+    tester,
+  ) async {
+    var shares = 0;
+    var settings = 0;
+    await tester.pumpWidget(
+      wrap(
+        OrbitalVisualization(
+          userPeerId: 'me',
+          items: const [],
+          onSelfAvatarTap: () => settings++,
+          onComposeThought: () => shares++,
+        ),
+      ),
+    );
+    await pumpBounded(tester);
+    await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+    expect(shares, 1);
+    expect(settings, 0);
+    await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+    expect(shares, 1);
+    expect(settings, 1);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('orbit-center-self-avatar'))),
+      const Size(48, 48),
+    );
+  });
+
+  testWidgets('thought plus is absent without the self identity or composer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        OrbitalVisualization(
+          userPeerId: null,
+          items: const [],
+          onComposeThought: () {},
+        ),
+      ),
+    );
+    expect(find.byKey(const ValueKey('orbit-compose-thought')), findsNothing);
+    await tester.pumpWidget(
+      wrap(const OrbitalVisualization(userPeerId: 'me', items: [])),
+    );
+    expect(find.byKey(const ValueKey('orbit-compose-thought')), findsNothing);
+  });
+
   testWidgets('UI25 replacing a seat during a press cannot open the new peer',
       (tester) async {
     final opened = <String>[];

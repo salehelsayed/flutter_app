@@ -54,6 +54,46 @@ void main() {
     ),
   );
 
+  testWidgets('thought plus dismisses edit/find before opening a composer', (
+    tester,
+  ) async {
+    var shared = 0;
+    final findSignal = ValueNotifier(0);
+    addTearDown(findSignal.dispose);
+    await tester.pumpWidget(
+      wrap(
+        InnerCircleInteractiveSurface(
+          userPeerId: 'self',
+          items: const [],
+          onFriendTap: (_) {},
+          onGroupTap: (_) {},
+          onSelfAvatarTap: () {},
+          onComposeThought: () => shared++,
+          findOpenSignal: findSignal,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await tester.longPress(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+    await tester.pump();
+    expect(shared, 0);
+    expect(find.byKey(const ValueKey('orbit-edit-banner')), findsNothing);
+    findSignal.value++;
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+    await tester.pump();
+    expect(shared, 0);
+    await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+    expect(shared, 1);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+  });
+
   testWidgets(
     'only eligible ring friends receive notes, with separate note/chat taps',
     (tester) async {
