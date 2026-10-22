@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -14,6 +17,7 @@ import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -82,6 +86,149 @@ void main() {
     createdAt: startedAt.add(const Duration(seconds: 11)),
     updatedAt: startedAt.add(const Duration(seconds: 11)),
   );
+
+  Future<void> waitForSql(WidgetTester tester, bool Function() ready) async {
+    for (var attempt = 0; attempt < 250 && !ready(); attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
+    expect(ready(), isTrue, reason: 'current SQL-backed page must settle');
+  }
+
+  for (final contactChanges in [false, true]) {
+    testWidgets(
+      contactChanges
+          ? 'CALL-008 SQL rename keeps callback identity; deletion refuses a stale visible row'
+          : 'VC-021 terminal projection survives SQL reopen and calls back from the real history page',
+      (tester) async {
+        final started = DateTime.utc(2026, 10, 22, 12);
+        final terminal = CallSessionSnapshot.active(
+          callId: CallId.parse('99999999-9999-4999-8999-999999999999'),
+          contactPeerId: 'contact-a',
+          callerAccountPeerId: 'local-account',
+          callerDeviceId: 'local-device',
+          direction: CallDirection.outgoing,
+          state: CallState.ended,
+          startedAt: started,
+          connectedAt: started.add(const Duration(seconds: 1)),
+          endedAt: started.add(const Duration(seconds: 11)),
+          endReason: CallEndReason.localHangup,
+        );
+        await tester.runAsync(() async {
+          await db.insert('contacts', {
+            'peer_id': 'contact-a',
+            'username': 'Alice',
+            'public_key': 'synthetic',
+            'rendezvous': 'synthetic',
+            'signature': 'synthetic',
+            'scanned_at': started.toIso8601String(),
+          });
+          await CallHistoryProjector(repository).projectTerminal(terminal);
+          await db.close();
+          db = await openDatabase(
+            p.join(tempDirectory.path, 'history.db'),
+            version: currentIdentityDatabaseVersion,
+            singleInstance: false,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+          );
+          repository = CallHistoryRepositoryImpl(db);
+          await CallHistoryProjector(repository).projectTerminal(terminal);
+        });
+        final owner = _CallbackCapability();
+        final preflights = <String>[];
+        Completer<void>? contactGate;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: CallsPage(
+              browser: repository as CallHistoryBrowser,
+              changes: const Stream.empty(),
+              redial: CallRedialController(
+                capability: () => owner,
+                contactAllowed: (id) async {
+                  preflights.add(id);
+                  await contactGate?.future;
+                  return (await db.query(
+                    'contacts',
+                    where: 'peer_id = ?',
+                    whereArgs: [id],
+                  )).isNotEmpty;
+                },
+              ),
+            ),
+          ),
+        );
+        await waitForSql(
+          tester,
+          () => find.text('Alice').evaluate().isNotEmpty,
+        );
+        expect(
+          find.byKey(ValueKey('history-${terminal.callId!.value}')),
+          findsOneWidget,
+        );
+        expect(find.text('All (1)'), findsOneWidget);
+
+        if (contactChanges) {
+          await tester.runAsync(
+            () => db.update(
+              'contacts',
+              {'username': 'Renamed'},
+              where: 'peer_id = ?',
+              whereArgs: ['contact-a'],
+            ),
+          );
+          // The visible snapshot is deliberately stale; its display name
+          // cannot become a routing address or override fresh SQL policy.
+          expect(find.text('Alice'), findsOneWidget);
+        }
+        await tester.tap(find.byTooltip('Call back'));
+        await waitForSql(tester, () => owner.starts.isNotEmpty);
+        expect(owner.starts, ['contact-a']);
+        expect(preflights, ['contact-a']);
+
+        if (contactChanges) {
+          await tester.tap(find.byTooltip('Refresh calls'));
+          await waitForSql(
+            tester,
+            () => find.text('Renamed').evaluate().isNotEmpty,
+          );
+          contactGate = Completer<void>();
+          await tester.tap(find.byTooltip('Call back'));
+          await waitForSql(tester, () => preflights.length == 2);
+          expect(owner.starts, ['contact-a']);
+          await tester.runAsync(
+            () => db.delete(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['contact-a'],
+            ),
+          );
+          contactGate!.complete();
+          await tester.runAsync(() => db.query('contacts'));
+          await tester.pump();
+          expect(owner.starts, ['contact-a']);
+          await tester.tap(find.byTooltip('Refresh calls'));
+          await waitForSql(
+            tester,
+            () => find.text('Unknown contact').evaluate().isNotEmpty,
+          );
+        }
+        await tester.runAsync(() async {
+          final stored = await repository.getByCallId(terminal.callId!);
+          expect(stored!.duration, const Duration(seconds: 10));
+          expect(stored.terminalReason, CallEndReason.localHangup);
+          expect(stored.transportRoute, isNull);
+          expect(await db.query(kCallHistoryTable), hasLength(1));
+        });
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
 
   test('one monotonic row is retained per call id', () async {
     final original = row(
