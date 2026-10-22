@@ -20,6 +20,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
@@ -50,6 +51,7 @@ import 'package:flutter_app/features/account_migration/domain/repositories/migra
 import 'package:flutter_app/features/account_migration/domain/models/migration_transfer_manifest.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -151,6 +153,30 @@ void main() {
     test(
       'TC-347-07 moves the full account and exact blob custody row file binding',
       () async {
+        // Actual decodable media rather than the ordinary chain's opaque
+        // bytes. Native iOS/Android video, voice and PDF opening remain
+        // device obligations, not claims made by this host image decoder.
+        final image = img.Image(width: 192, height: 256);
+        for (final pixel in image) {
+          pixel.setRgb(pixel.y < 128 ? 230 : 20, 20, pixel.y < 128 ? 20 : 230);
+        }
+        final jpeg = img.encodeJpg(image, quality: 95);
+        await File(
+          p.join(tempDir.path, 'media/peer-bob/blob-imported.jpg'),
+        ).writeAsBytes(jpeg, flush: true);
+        await sourceDb.update(
+          'media_attachments',
+          {'size': jpeg.length},
+          where: 'id = ?',
+          whereArgs: ['blob-imported'],
+        );
+        await sourceDb.update(
+          'messages',
+          {'text': 'Migration photo caption 👋'},
+          where: 'id = ?',
+          whereArgs: ['message-1'],
+        );
+
         const custodyCiphertext = 'exact-retained-custody-ciphertext';
         final custodyIdentityScope = migrationTransferSha256Hex(
           utf8.encode('old-peer'),
@@ -447,6 +473,43 @@ void main() {
           mediaRows.last['local_path'],
           'media/peer-bob/blob-imported.jpg',
         );
+
+        final parent = (await activeDb.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: [mediaRows.last['message_id']],
+        )).single;
+        expect(parent['text'], 'Migration photo caption 👋');
+        // Open from the receiver's imported authoritative row/path, after
+        // source export, loopback HTTP/WS transfer, file import and cutover.
+        final receivedPhoto = File(
+          p.join(
+            destinationDocumentsPath,
+            mediaRows.last['local_path']! as String,
+          ),
+        );
+        final codec = await ui.instantiateImageCodec(
+          await receivedPhoto.readAsBytes(),
+        );
+        try {
+          final frame = await codec.getNextFrame();
+          try {
+            expect((frame.image.width, frame.image.height), (192, 256));
+            final pixels = (await frame.image.toByteData(
+              format: ui.ImageByteFormat.rawRgba,
+            ))!.buffer.asUint8List();
+            final red = (64 * 192 + 96) * 4;
+            final blue = (192 * 192 + 96) * 4;
+            expect(pixels[red], greaterThan(180));
+            expect(pixels[red + 2], lessThan(60));
+            expect(pixels[blue], lessThan(60));
+            expect(pixels[blue + 2], greaterThan(180));
+          } finally {
+            frame.image.dispose();
+          }
+        } finally {
+          codec.dispose();
+        }
 
         final groupKeyRows = await activeDb.query('group_keys');
         expect(groupKeyRows, hasLength(1));
