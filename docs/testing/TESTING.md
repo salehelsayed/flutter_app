@@ -3638,6 +3638,15 @@ do not count `test(...)` strings as executions. Runner listings took about
   installed iOS artifact. Red and green evidence is retained in
   `.codex-test-logs/image-original-debug-20261014/` and
   `.codex-test-logs/image-original-regression-confirm-20261014/`.
+- Camera-picker exceptions must show the same bounded localized
+  `media_unavailable` notice as gallery failures, after checking the screen is
+  still mounted. Keep the draft and pending media intact; a refusal must not
+  upload or send. The conversation `MEDIA-010` widget cases check visible
+  camera-denial feedback and camera/photo denial, grant and retry with one
+  staged attachment and one send. Permission is faked at the picker boundary;
+  these cases do not prove OS Settings interaction. Astra's original failure
+  and focused reproduction/fix receipts are retained in
+  `.codex-test-logs/astra-d1/`.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired

@@ -10683,7 +10683,7 @@ void main() {
     }
 
     group(
-      'KNOWN GAP ASTRA-D-1: camera permission failure is silent',
+      'ASTRA-D-1: camera permission failure feedback',
       () {
         testWidgets('MEDIA-010 denied camera exposes visible failure feedback', (
           tester,
@@ -10723,8 +10723,6 @@ void main() {
           );
         });
       },
-      skip:
-          'KNOWN GAP: ConversationWired._pickFromCamera only logs camera errors at conversation_wired.dart:5862-5867; causal RED 011-D-media-permission.',
     );
 
     testWidgets('does not show AttachmentPreviewStrip initially', (
