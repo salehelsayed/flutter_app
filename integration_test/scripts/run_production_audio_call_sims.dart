@@ -174,6 +174,39 @@ final class AndroidProductionAudioCallSimsAdapterDependencies {
   final AndroidProductionAudioCallCentralSimsRunner runCentralSims;
 }
 
+/// A hand-driven campaign may keep the prepared fixture up for manual device
+/// legs. The hold ends when the operator deletes the hold file or the bound
+/// expires; normal teardown always follows.
+Duration? productionAudioCallManualHold(Map<String, String> environment) {
+  final file = environment['PLAN399_MANUAL_HOLD_FILE']?.trim() ?? '';
+  if (file.isEmpty) return null;
+  final minutes = int.tryParse(
+    environment['PLAN399_MANUAL_HOLD_MINUTES']?.trim() ?? '120',
+  );
+  if (minutes == null || minutes < 1 || minutes > 180) {
+    throw const FormatException(
+      'PLAN399_MANUAL_HOLD_MINUTES must be between 1 and 180.',
+    );
+  }
+  return Duration(minutes: minutes);
+}
+
+Future<void> waitForProductionAudioCallManualHold(
+  File holdFile,
+  Duration bound, {
+  Duration poll = const Duration(seconds: 5),
+}) async {
+  await holdFile.writeAsString(
+    'held ${DateTime.now().toUtc().toIso8601String()}\n',
+  );
+  stdout.writeln('PLAN399_MANUAL_HOLD_READY');
+  final deadline = DateTime.now().add(bound);
+  while (await holdFile.exists() && DateTime.now().isBefore(deadline)) {
+    await Future<void>.delayed(poll);
+  }
+  stdout.writeln('PLAN399_MANUAL_HOLD_RELEASED');
+}
+
 /// Runs the production-call adapter through injectable process boundaries.
 /// Both boundaries receive the exact Go 1.27.1 pin in their effective child
 /// environment, including the central Sims process that owns APK build work.
@@ -190,9 +223,7 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
   }
   if (excludedCohortIds.isNotEmpty) {
     if (!includeRegressions) {
-      throw const FormatException(
-        '--exclude needs --include-regressions.',
-      );
+      throw const FormatException('--exclude needs --include-regressions.');
     }
     final cohort = productionAudioCallCohort(environment, mode);
     for (final id in excludedCohortIds) {
@@ -289,8 +320,14 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
       ],
       environment: centralEnvironment,
     );
-    result = prepare == 0
-        ? await dependencies.runCentralSims(
+    final hold = productionAudioCallManualHold(environment);
+    final manualOnly =
+        hold != null && environment['PLAN399_MANUAL_ONLY'] == '1';
+    result = prepare != 0
+        ? prepare
+        : manualOnly
+        ? 0
+        : await dependencies.runCentralSims(
             dartExecutable: dartExecutable,
             arguments: <String>[
               'run',
@@ -300,8 +337,13 @@ Future<int> runAndroidProductionAudioCallSimsAdapter({
               if (continueOnFailure) '--continue-on-failure',
             ],
             environment: centralEnvironment,
-          )
-        : prepare;
+          );
+    if (prepare == 0 && hold != null) {
+      await waitForProductionAudioCallManualHold(
+        File(environment['PLAN399_MANUAL_HOLD_FILE']!.trim()),
+        hold,
+      );
+    }
   } finally {
     try {
       await fixture.stop();
@@ -324,10 +366,10 @@ List<String> productionAudioCallCohortExclusions(
   String mode,
 ) {
   final cohort = productionAudioCallCohort(environment, mode);
-  return _activeRows(environment, mode).keys
-      .where((id) => !cohort.contains(id))
-      .toList()
-    ..sort();
+  return _activeRows(
+    environment,
+    mode,
+  ).keys.where((id) => !cohort.contains(id)).toList()..sort();
 }
 
 /// The base proof, its call-profile KX rows, and their dependency closure.
