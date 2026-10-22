@@ -816,20 +816,6 @@ func directMediaFixturePendingProtectedCount(
 	return count
 }
 
-func validDirectMediaFixtureProbeID(value string) bool {
-	if value == "" || len(value) > 160 || strings.TrimSpace(value) != value {
-		return false
-	}
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || strings.ContainsRune("._:-", char) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 func assertDirectMediaFixtureProbe(t *testing.T, rawURL, attachmentID string, want int) {
 	t.Helper()
 	client := &http.Client{Timeout: 5 * time.Second}

@@ -3194,6 +3194,10 @@ blocked execution in `pilot-device-003/workflow-1.raw.log`.
   protected-runner subprocess and changed-owner refusal controls then passed;
   the first rejection and focused result remain under
   `.codex-test-logs/integrate-main-20261023/`.
+  Go fixture utilities used by ordinary tests must also compile without the
+  `integration` build tag. The relay fault controls initially referenced a probe
+  validator hidden behind that tag; moving its byte-identical predicate into the
+  existing shared helper restores both default and tagged fixture selections.
 The notification matrix's first attempt passed three warm cases, then failed
 to locate the group-image body while Springboard logged XPC interruptions.
 Later actual MCP inspection found the exact delivered card. Its focused native

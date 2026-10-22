@@ -8,9 +8,25 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
+
+// Default unit tests and integration fixtures share the same probe ID guard.
+func validDirectMediaFixtureProbeID(value string) bool {
+	if value == "" || len(value) > 160 || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:-", char) {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 // directMediaFixtureFaults is the H2 run-owned fault control for the disposable
 // Plan 347 device fixture. It only touches the fixture's own temporary media
