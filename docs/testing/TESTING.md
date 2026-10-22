@@ -2858,6 +2858,30 @@ Its skipped fixtures are unchanged from the Step 2 comparison base: eleven
 contact-request gaps, two QR timestamp gaps and one SQLCipher capability check
 assigned to native integration testing. Those skipped assertions remain unproven.
 
+The [Step 2 device receipt](../../.codex-test-logs/plan407-step3/step2-device-summary.md)
+separately proves real receipt, newest-only notes, the Thought Card and empty
+ordinary chat, pinch/spread and Reduce Motion. Its push-disabled disposable
+build received the two inbox copies after 7.8 and 13.1 seconds; that is an
+observation of periodic inbox draining, not a production push-latency guarantee.
+Moving a device's wall clock does not advance an already armed elapsed-time
+expiry timer, and disrupted VM-service discovery and relay reconnection in this
+fixture. Hiding an expired note after a clock jump proves filtering, not the
+live deadline or deletion; that complete device assertion remains unproven.
+
+Step 3 reuses `ComposePostSheet`'s recorder and media drafts with a Thoughts-only
+view, reached through the separate plus control on the center self-avatar.
+Recipient selection is resolved at Share using the existing all-friends send
+path; the live composer exposes no audience, nearby or pin controls. Composer
+tests cover empty/whitespace rejection, text and media-only sharing, pending
+submission, draft retention, the 24-hour explanation and Arabic. Orbit
+integration proves that a friend added after opening the sheet receives the
+thought while blocked/archived contacts do not, and no conversation message is
+written. Shared picker tests preserve photo/video selection rules; existing
+encryption and media-recovery tests remain separate from real photo delivery.
+The [initial compilation failure](../../.codex-test-logs/plan407-step2/step3-orbit-and-media/)
+is retained separately from the [corrected focused run](../../.codex-test-logs/plan407-step2/step3-focused-fixed/).
+Broad selection and device acceptance use their own source-bound receipts.
+
 The canonical full planner still performs its global inventory census with
 `--only`. A scoped native row can pass while the overall report stays BLOCKED
 by unrelated inventory gaps. Verify those gaps against the explicit checkpoint
@@ -3000,6 +3024,15 @@ prompts again: the original native permission-preparation selector must run
 before capture. An isolated probe that omitted this step timed out; granting the
 identified prompts through Appium allowed the unchanged identity check to pass.
 This fixture is host-only and does not change production identity recovery.
+On a fresh install, iOS can queue the Local Network alert behind Notifications.
+The payload fixture therefore accepts a late Local Network prompt after the
+notification grant, verifies that it is gone before READY, and checks for it
+before network-restoration gestures. An uncleared alert reports
+`local_network_alert_not_cleared`; it can otherwise swallow Control Center
+gestures and cause the private bootstrap's cleanup to fail before any push.
+The owner observed that alert on the iPhone after the [retained failed run](../../.codex-test-logs/plan407-step3/ios-final-device-summary.md).
+The follow-up's 23 host contracts and Swift syntax parse pass; they do not
+establish a successful physical campaign.
 
 Native notification tests on an iPhone must load the shared TC396 JSON from
 the test bundle. A compiled Mac `#filePath` is unavailable on the phone. Keep
