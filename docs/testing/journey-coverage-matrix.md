@@ -1,16 +1,19 @@
 # Mknoon journey coverage matrix
 
-Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
+Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
 295 representative journeys: **35 strong, 254 partial, 5 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
+
+Group C device evidence: source `0ee837d5d6b058977b22c09365fc706b38dfd1d3`, application base `f14f7d369646b9877bc80c71f517494628f4fe2b`, Pixel 6 debug / iPhone 13 release FLOW-log install-over builds. Evidence directory: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022`. Plain host rechecks on that source: contacts 3 PASS, camera 19 PASS / 1 pre-existing skip, calls 6 PASS, all exit 0 (`RESUME.md:50`; `focused.log` completion/rc markers 70/71, 12546/12547, 12562/12563; overall exit 0 at 12564). Astra performed no device work. First failed video download and text-entry harness correction remain visible. Audibility/native RTP and production-signed artifact proof remain unverified.
+
 ## Interpretation and execution
 
-- This is a host-only source/assertion/fake/registration audit at the exact commit above, not release certification. Worktree astra/journey-matrix; main checkout read-only. No production code changed, builds/devices/OS automation/publish/credentials used.
+- Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped Group C device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation. No production code or release publication was changed by this update.
 - 295 representative journeys in 19 logical families reconcile all 19 lib/features folders and all 103 catalog IDs. Not an exhaustive platform/network/state/format Cartesian product. Every test entry is scoped to its actual assertion and doubles; literal case index was navigation only.
 - Ratings describe coverage quality: strong means substantive causal assertions for the stated scoped contract (sometimes several complementary cases), partial means meaningful subset with material remaining seams, missing means no qualifying complete assertion for the defining boundary, unknown means reachability/policy unresolved or inactive future capability. Strong is not passed or end-to-end unless explicitly stated.
-- Execution is for the complete journey/conditions: all not_run here. One cited host file was freshly executed: one_to_one_media_encryption_round_trip_test.dart, 4 passed, 0 skipped, exit 0 (media-bytes.log). This passing subset uses synthetic bytes/fake crypto and cannot pass full named camera/native/cross-platform journeys. Test source and previously reported catalog outcomes are not fresh executions.
-- Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped test executions. No analyzer, host-all, native tests or device/manual campaign run in this audit.
+- Execution records the actual scoped legs: Group C MEDIA-002/003/014, DC-011 and VC-015 have device_run evidence; CR-009 fresh add is skipped_waiting_ui_update. Device_run is not a complete-journey or release PASS: per-row manual/content/artifact gaps remain. Initial synthetic host evidence and subsequent focused rechecks remain separate.
+- Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped test executions. No analyzer, host-all, native tests or device/manual campaign ran in the initial audit; later scoped device evidence is recorded separately.
 - The first static preview reported 34 fallback checks and unmapped YAML; preserve that initial result. Follow-up adds only the exact docs/testing/journey-coverage-matrix.yaml path to existing documentation_only rules; Markdown already matches *.md. Current explicit-base/local wrapper plan and metadata validation are retained with the handoff. No new check was added.
 - Initial ordinary change-plan attempts were held before launch (change-plan.log, change-plan-v2.log). Static preview omitted toolchain capture. The final metadata-only wrapper plan captures version information and selection without launching checks or device discovery; selected checks remain unexecuted.
 - The initial audit identified source-disabled CONTACT presentation and malformed/future QR cases. Group B now enables and passes the CR-003/005/014/025 host guards; other per-row known gaps remain separate. GIF manual default is overridden true by its registered media runner.
@@ -716,7 +719,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-009 — iPhone and Android can add each other
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-009.
+**Coverage:** partial. **Execution:** skipped_waiting_ui_update. **Catalog:** CR-009.
 
 **Steps**
 
@@ -724,9 +727,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Explicitly accept and finish reciprocal keys.
 3. Exchange first message without seeding contacts.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: real QR or supported manual entry; recovery: n/a.
+**Conditions:** platform: iPhone 13 and Pixel 6 existing identities/pairing preserved; fresh-add skipped; connectivity: n/a; offline: n/a; app state: foreground; input: real QR or supported manual entry; recovery: n/a.
 
 **Expected:** Supported platforms can add each other with genuine native identity/crypto/consent.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **SKIPPED_WAITING_UI_UPDATE**.
+- Fresh native iPhone/Android add was not run: the contact/Orbit route waits for UI-Update. Existing physical identities, pairing and chat survived install-over; this is not fresh-add evidence.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:6`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:30`.
 
 **Inspected test evidence**
 
@@ -741,12 +750,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Host QR scan is simulated; native scanning, real crypto/identity authority and cross-platform fresh add remain NOT RUN. Existing physical pairing is preserved, not counted as a fresh add.
-- Runbook chooses a disposable available iOS-simulator fresh-add leg against Pixel test package, waiting for UI-Update contact/Orbit route. No iPhone identity removal, uninstall or erase.
+- Native fresh add remains SKIPPED waiting for UI-Update. Preserved existing iPhone/Pixel pairing and host simulated QR/crypto cannot prove fresh scan/consent/identity authority.
+- Runbook keeps the disposable fresh-add leg separate from preserved physical identities; no iPhone uninstall, erase or identity removal was performed.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### CR-010 — Encrypted requests never fall back to plain text
 
@@ -1739,7 +1749,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### DC-011 — iPhone and Android chat with each other
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-011.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-011.
 
 **Steps**
 
@@ -1747,9 +1757,18 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Exchange text and full image/video/voice media both directions.
 3. Verify correct content/native open/play plus recovery on each platform.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: bidirectional text and real media; recovery: n/a.
+**Conditions:** platform: iPhone 13 and Pixel 6; actual owner-run debug/FLOW-log cross-platform candidate; connectivity: n/a; offline: n/a; app state: foreground; input: bidirectional text and real media; recovery: n/a.
 
 **Expected:** Supported cross-platform peers interoperate with correct full usable content in both directions.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **PASS_CONTENT_PLAYBACK_STRUCTURE_AUDIO_CONTENT_UNVERIFIED**.
+- Text passed both directions with exact content/order and one row; camera image evidence is in MEDIA-002/003/014. Voice and video delivered and replayed both directions, with one of each media row per side after both apps relaunched.
+- iPhone-to-Pixel voice: about 15 seconds to stored audio/mp4 and about five seconds AudioTrack playback. Reverse voice: direct delivery within 25 seconds and advancing iPhone player. Reverse video: cellular relay within 30 seconds and advancing player.
+- First iPhone-to-Pixel video download failed on cellular relay; visible download failure retained. Automatic retry recovered without a tap by 75 seconds after send; full file 255715 bytes, 7.17 seconds, 215 video frames at 320x568 with an audio track. Playback/replay activity was observed.
+- Initial text entry was truncated by WDA automation; runner added composer read-back and resent. This harness correction and the video first-attempt failure are retained, not silently counted as first-attempt success.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:13`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:42`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:44`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:46`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:49`.
 
 **Inspected test evidence**
 
@@ -1776,12 +1795,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Host reciprocal text and real SQLite/image compositions cover shared subsets separately; they do not establish full native iPhone/Android text+image/video/voice interoperability.
-- Runbook includes both actual text directions, camera image, video, voice, reopen and exact counts; native open/play and content/audio observations remain NOT RUN.
+- Voice/video playback structure was observed, but no human/acoustic observer verified audio content or intelligibility; native RTP counters were not captured.
+- iPhone image receiver has viewer/Info proof only, without exported full-file hash; controlled high-detail camera/orientation oracle was not available. The 75-second video auto-recovery is a pass with its initial cellular download failure retained.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### DC-012 — Over a mobile network
 
@@ -2218,7 +2238,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-002 — iPhone camera+caption to Android: Original/compressed quality over relay-only online delivery
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-011, DC-010.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008, DC-011, DC-010.
 
 **Steps**
 
@@ -2226,9 +2246,16 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Send image+caption to Android over relay-only while both are online.
 3. On B, fully decode/open the correct original image and verify exact caption.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: relay-only, both online; offline: none; app state: foreground baseline; input: actual in-app camera output+caption; Original/compressed; recovery: ordinary online delivery.
+**Conditions:** platform: iPhone 13 and Pixel 6; actual owner-run debug/FLOW-log cross-platform candidate; connectivity: relay-only, both online; offline: none; app state: foreground baseline; input: actual in-app camera output+caption; Original/compressed; recovery: ordinary online delivery.
 
 **Expected:** Android B fully decodes/opens the correct camera image and displays the exact caption for each selected quality over relay-only online delivery.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **PASS_REPORTED_DEVICE_LEGS**.
+- Actual iPhone camera plus caption reached online Pixel over per-message witnessed relay transport at both selected qualities; full exported JPEG/native viewer and exact caption checked, one row after reopen.
+- Original: 1920x2560, 801930 bytes. Compressed: 1920x2560, 792748 bytes. Both are JPEG; radio state alone was not the route oracle.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:10`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:14`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:15`.
 
 **Inspected test evidence**
 
@@ -2243,16 +2270,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Native iPhone camera/compression and actual Android full received-file decode over a witnessed relay-only route remain NOT RUN; prepared-image/XOR host results do not establish them.
-- Runbook supplies separate Original/compressed Appium cases and full-file/caption/duplicate oracles. Historical stock125 incident and real camera MIME remain unverified.
+- Both selected qualities yielded 1920x2560 JPEGs of similar size. This does not establish original sensor-resolution preservation or settle the Original-quality product-copy question; it is not classified as a confirmed app bug.
+- No controlled high-detail camera/orientation card was available; desk images, full exported file metadata and viewer decode bound the content oracle. Historical stock125 incident remains separate from this instrumented candidate.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### MEDIA-003 — Android camera photo plus caption to iPhone receiver
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-011.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008, DC-011.
 
 **Steps**
 
@@ -2260,9 +2288,17 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Send to an iPhone contact.
 3. Open/decode full received image and verify caption.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: direct/relay supported path; offline: n/a; app state: foreground; input: actual camera image+caption; recovery: n/a.
+**Conditions:** platform: iPhone 13 and Pixel 6; actual owner-run debug/FLOW-log cross-platform candidate; connectivity: direct/relay supported path; offline: n/a; app state: foreground; input: actual camera image+caption; recovery: n/a.
 
 **Expected:** The cross-platform recipient opens the actual Android camera image with exact caption.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **PASS_REPORTED_DEVICE_LEGS_IPHONE_FILE_EXPORT_UNVERIFIED**.
+- Actual Pixel camera plus caption reached the iPhone at Original and Compressed quality; iPhone full viewer decoded, Info reported JPEG and caption matched. Compressed Info was about 501 KB; Original about 2.9 MB.
+- Original upload took 92.8 seconds over cellular and delivered inside the 120-second deadline. Both quality rows were unique after the reboot-forced cold relaunch; the previously pending Original duplicate check passed.
+- iPhone receive proof is viewer decode/Info, not exported file/hash inspection; Save was avoided to preserve the owner photo library.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:19`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:23`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:41`.
 
 **Inspected test evidence**
 
@@ -2277,12 +2313,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Reverse logical identities exercise shared data ownership only; no native Android camera, iPhone decoder or cross-OS transport executed.
-- Runbook requires actual reverse camera capture, full file, exact caption and duplicate checks for both quality choices.
+- No exported received-file/hash proof on iPhone: native viewer/Info and exact caption were observed; Save was intentionally avoided. Controlled high-detail/orientation reference was unavailable.
+- The device result is for the stated instrumented source/build and both selected quality legs, not signed production-candidate or original sensor-resolution certification.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### MEDIA-004 — Gallery JPEG/PNG photo plus caption to the recipient
 
@@ -2609,7 +2646,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-014 — iPhone camera+caption to offline Android: Original/compressed quality, relay inbox catch-up
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-003, DC-008, DC-011.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-003, DC-008, DC-011.
 
 **Steps**
 
@@ -2617,9 +2654,16 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Keep Android B offline while sending through relay inbox custody.
 3. Bring B online/restart, catch up once, then fully decode/open correct image and verify exact caption.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: sender online relay; recipient offline then reconnects; offline: Android recipient offline during send; app state: recipient closed/restarted before catch-up; input: actual in-app camera output+caption; Original/compressed; recovery: relay inbox catch-up exactly once.
+**Conditions:** platform: iPhone 13 and Pixel 6; actual owner-run debug/FLOW-log cross-platform candidate; connectivity: sender online relay; recipient offline then reconnects; offline: Android recipient offline during send; app state: recipient closed/restarted before catch-up; input: actual in-app camera output+caption; Original/compressed; recovery: relay inbox catch-up exactly once.
 
 **Expected:** B receives exactly one complete correct camera image, fully decodes/opens it and shows the exact caption after relay inbox catch-up.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **PASS_REPORTED_DEVICE_LEGS**.
+- Pixel recipient was offline with Wi-Fi/data off and app stopped. Sender relay custody reached inboxed. Both selected qualities caught up automatically about 21 seconds after recipient relaunch, with one row after cold relaunch.
+- Full JPEG/native viewer and caption checks passed: Compressed 1920x2560, 734916 bytes; Original 1920x2560, 766032 bytes.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:16`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:17`.
 
 **Inspected test evidence**
 
@@ -2634,12 +2678,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Host uses real SQLite staging/drain and full files but fake transport/crypto/compressor; no actual offline Android process/candidate or native camera run.
-- Runbook preserves sender online relay custody, recipient offline/relaunch, automatic catch-up and exactly-once full-file/caption requirements; actual execution NOT RUN.
+- Both selected quality legs ran with real offline recipient/custody/catch-up, but a controlled high-detail/orientation card was unavailable and both encoded outputs were 1920x2560.
+- Historical stock125 behavior and exact production-signed candidate remain unverified; current run uses the stated debug/FLOW-log builds.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### MEDIA-015 — Local Wi-Fi without internet delivers media locally, separately from deferred internet delivery
 
@@ -4675,7 +4720,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### VC-015 — iPhone and Android can call each other both ways
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-015.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** VC-015.
 
 **Steps**
 
@@ -4683,9 +4728,16 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Verify intelligible bidirectional audio.
 3. End both directions and release resources.
 
-**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: actual audio in both call directions; recovery: n/a.
+**Conditions:** platform: iPhone 13 and Pixel 6; actual owner-run debug/FLOW-log cross-platform candidate; connectivity: n/a; offline: n/a; app state: foreground; input: actual audio in both call directions; recovery: n/a.
 
 **Expected:** The shipped iPhone and Android candidates each initiate and answer a call with the other platform, exchange audible audio and terminate cleanly.
+
+**Device execution (2026-10-22; flutter_app)**
+
+- Result: **PASS_STRUCTURAL_AUDIO_AND_RTP_UNVERIFIED**.
+- Both initiation/answer roles passed structurally on iPhone 13 and Pixel 6. iPhone-to-Pixel incoming was about two seconds, both Connected within eight seconds; reverse incoming about five seconds. Pixel Telecom ACTIVE, playback and mic activity were observed.
+- Each answering side ended its call; both UIs ended within five seconds, Pixel Telecom/playback/mic cleaned up, one history row on each side. This is structural call/cleanup evidence, not audibility or native RTP proof.
+- Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:47`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:48`; `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:49`.
 
 **Inspected test evidence**
 
@@ -4700,12 +4752,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Two real Dart call/signaling graphs with native/crypto/transport fakes prove role reversal and cleanup decisions, not actual iOS/Android calls, RTP packets or intelligible audio.
-- Runbook requires both initiation/answer directions, real call-bound RTP, audibility/content observation and native cleanup; actual device/manual execution NOT RUN.
+- Call setup/answer/end, native activity and cleanup passed structurally; bidirectional audio content/audibility remains unverified without a human or acoustic observer.
+- Native call-bound RTP counters were not captured. Connected state and native playback/mic activity do not prove audible media delivery.
 
 **Open questions**
 
-- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
+- Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
+- Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
 #### VC-016 — Declined, cancelled, unanswered and overlapping calls end cleanly
 
