@@ -4200,13 +4200,20 @@ visible and cannot become an ordinary first-attempt PASS.
    evidence directory; do not combine them into a native legacy sender proof.
 
    Camera/photos deny-then-grant widget controls preserve the draft and invoke
-   upload/send once through the existing picker boundary. Camera denial still
-   has case-scoped **ASTRA-D-1**: `_pickFromCamera` only logs the caught error
+   upload/send once through the existing picker boundary. At the tested f14
+   app base, case-scoped **ASTRA-D-1** means `_pickFromCamera` only logs the caught error
    (`conversation_wired.dart:5850`, catch at 5862), leaving no visible failure
    notice. The desired-feedback assertion is retained as KNOWN GAP; causal RED
    `011-D-media-permission` and final two-pass/one-skip `013` remain separate.
    Native permissions and actual recipient delivery are not proved by these
-   stubbed picker/upload/send controls. Codex owns the post-126 app fix.
+   stubbed picker/upload/send controls. The executor's saved Group D report
+   confirms this feedback failure on device source `62450cba4`, while draft and
+   single-send passed; its photo system picker had no permission boundary
+   (N/A), and cancel retained the draft
+   (`build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:5`). Codex owns
+   fix `6f7e11ed55e99bc85e8b00f8936f776979498ef8` for main integration. This
+   device candidate does not include it; this run supplies no post-fix native
+   validation.
 
    Migration's existing `TC-347-07` end-to-end case now seeds a real portrait
    JPEG, transfers/imports it through the full loopback chain and opens the

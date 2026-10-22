@@ -40,7 +40,7 @@ header:
   - git diff --check
   limitations:
   - Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped
-    Group C device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation.
+    Group C and D device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation.
     No production code or release publication was changed by this update.
   - 295 representative journeys in 19 logical families reconcile all 19 lib/features folders and all 103 catalog IDs.
     Not an exhaustive platform/network/state/format Cartesian product. Every test entry is scoped to its actual assertion
@@ -49,9 +49,10 @@ header:
     (sometimes several complementary cases), partial means meaningful subset with material remaining seams, missing
     means no qualifying complete assertion for the defining boundary, unknown means reachability/policy unresolved
     or inactive future capability. Strong is not passed or end-to-end unless explicitly stated.'
-  - 'Execution records the actual scoped legs: Group C MEDIA-002/003/014, DC-011 and VC-015 have device_run evidence;
-    CR-009 fresh add is skipped_waiting_ui_update. Device_run is not a complete-journey or release PASS: per-row manual/content/artifact
-    gaps remain. Initial synthetic host evidence and subsequent focused rechecks remain separate.'
+  - 'Execution records actual scoped legs: Group C has five device_run rows and CR-009 skipped_waiting_ui_update;
+    Group D has five device_run rows with explicit partial/failure limits and TRANSFER-011 blocked_environment. Nine
+    Lever1 shared contracts have host_run evidence. None is a complete release verdict: per-row native/content/artifact
+    gaps remain and focused host results stay separate.'
   - Offline enforced-lockfile dependency resolution exited 0. First pubget gate and update-verifier/safety-support
     test gates held with exit 75 before launch; preserve logs. Held gates are neither assertion failures nor skipped
     test executions. No analyzer, host-all, native tests or device/manual campaign ran in the initial audit; later
@@ -156,6 +157,37 @@ header:
       007 private fixture compile error. Preserved, diagnosed, corrected; no app bug/skip introduced.
     call_audio_constraint: 'Per m-17c52b26: Android-receiver no-hook energy proxy only; iPhone-receiver/content-proof
       needs a test-build audio hook (not approved now). No call-content rating upgraded here.'
+  group_d_device_run:
+    date_utc: '2026-10-22'
+    executor: flutter_app; relayed by Kayan m-f69e1bbe referencing m-0880d484
+    candidate_source: 62450cba434f6f718f52472db6807026fed00071
+    application_source_base: f14f7d369646b9877bc80c71f517494628f4fe2b
+    build: Disposable Android debug package com.mknoon.sims.groupd; Google services off; not a production-signed release
+      candidate
+    evidence_directory: /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022
+    summary: /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:2
+    saved_apk:
+      path: /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/groupd.apk
+      bytes: 348715669
+      sha256: 1bb4c9ab0f4141faf6d2d9f9ab5cb0f54a0d1ce5a55d4f5f2ff01f7c6336ac68
+      verification: Saved host artifact hashed by Astra read-only; actual installation/source attested by executor
+        SUMMARY.md, not independently inspected on devices.
+    results:
+      DC-002: PASS_REPORTED_ANDROID_DEBUG_PAIR
+      GC-005: PASS_MANUAL_TWO_PEER_UI_THREE_PEER_HARNESS_NOT_RUN
+      MEDIA-018: PASS_IMAGE_RECOVERY_WEAK_LOG_CUT_WITNESS_VIDEO_NOT_RUN
+      MEDIA-010: PASS_DRAFT_SINGLE_SEND_CAMERA_FEEDBACK_FAIL_ASTRA_D_1
+      CONTACT-001: PASS_PERMISSION_PASTE_PIPELINE_OPTICAL_SCAN_AND_DUPLICATE_NOT_RUN
+      TRANSFER-011: BLOCKED_ENVIRONMENT_LOCAL_PEER_UNAVAILABLE
+    limitations: No rating upgrades. Group three-peer harness, media byte-progress/throttled cut and video repeat,
+      optical/duplicate QR scan, camera post-fix feedback and completed migration proof are unrun/failed/blocked as
+      stated. No retrospective Lever2 byte/native oracle pass.
+    camera_feedback_fix:
+      commit: 6f7e11ed55e99bc85e8b00f8936f776979498ef8
+      owner: Codex; main integration per Kayan
+      validation: Not included in the tested device source; no post-fix native proof from this run.
+    availability_policy: Preserve actual environment failure; future unavailable alternate hardware/topology is N/A
+      and cannot be required for closure. Astra did not discover targets.
 features:
 - id: IDENTITY
   name: Onboarding, identity and recovery
@@ -2095,7 +2127,8 @@ journeys:
   - Return to prior surface without adding/sending contact.
   - Grant access/reopen and scan a fresh code.
   conditions:
-    platform: Android/iOS camera permission
+    platform: executor-reported Pixel6 physical plus available headless Android emulator; disposable Group D debug
+      package
     connectivity: n/a
     offline: n/a
     app_state: foreground
@@ -2130,18 +2163,31 @@ journeys:
       passed,0 skipped/failed,exit0. Only callback admission is proved; native zero-contact/request and accepted
       add require device/root journey. Evidence .codex-test-logs/astra-groupCD/014-D-qr-permission-summary.json/receipt.
       Registered: affected-identity, host-all.'
-  execution: not_run
+  execution: device_run
+  device_result:
+    status: PASS_PERMISSION_PASTE_PIPELINE_OPTICAL_SCAN_AND_DUPLICATE_NOT_RUN
+    summary:
+    - Scanner close had no effects; OS denial displayed Camera permission denied; grant via Settings recovered the
+      permission path.
+    - Actual camera scanning could not be exercised. Debug Paste QR was used for fixture entry; one request, one contact
+      and the exact first message passed. Duplicate scan was not exercised.
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:4
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/c001_2_after_close.png
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/c001_4_after_deny.png
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/c001_5_after_grant.png
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/c001_6_after_paste.png
   gaps:
-  - Host proves scanner admission remains zero on cancel/denial and resumes once after modeled grant; native permissions
-    and complete contact/request mutation counts are not established.
-  - Full contact/Orbit route may wait for UI-Update; Android device runbook retains real cancel/deny/grant/add/consent
-    and zero-effect oracles without changing UI-owned files.
+  - Paste QR entry is not camera recognition. Actual optical scan and duplicate scan remain unproven; permission/UI-to-request/contact/message
+    evidence is narrower. No complete fresh native camera-add journey is inferred.
   catalog_ids:
   - CR-001
   - CR-021
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: CONTACT-002
   feature: CONTACT
   title: Scan continuously or double-submit one QR without duplicate side effects
@@ -2669,7 +2715,8 @@ journeys:
   - Restart both peers and replay retained work.
   - Compare complete ordered transcript and exact one-copy rows on both sides.
   conditions:
-    platform: shared Android/iOS logic; host evidence only
+    platform: executor-reported Pixel6 physical plus available headless Android emulator; disposable Group D debug
+      package
     connectivity: n/a
     offline: n/a
     app_state: both peers restart
@@ -2692,17 +2739,33 @@ journeys:
       passed, 0 skipped/failed, exit 0. Existing Group A case reused unchanged; real SQL/runtime reopen is meaningful
       but not native kill or actual relay delivery. Evidence .codex-test-logs/astra-groupCD/009-D-numbered-restarts-summary.json/receipt.
       Registered: affected-conversation, host-all.'
-  execution: not_run
+  execution: device_run
+  device_result:
+    status: PASS_REPORTED_ANDROID_DEBUG_PAIR
+    summary:
+    - Executor reports 100/100 exact texts with five kill/relaunch checkpoints at25/50/75/100 and final reopen; no
+      loss or duplication. Offline item051 had custody confirmation and caught up.
+    - 'Saved JSONL independently inspected as redacted aggregates: both endpoint result maps have rows25/50/75/100/100,
+      exact=true, dups=0, missing=[], order_ok=true and nonexact_rows=0. No application text or device identifiers
+      were copied into this matrix.'
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:6
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/dc002_run.jsonl:26
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/dc002_run.jsonl:52
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/dc002_run.jsonl:80
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/dc002_run.jsonl:106
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/dc002_run.jsonl:108
   gaps:
-  - Real two-file SQL/runtime restarts now prove the complete100-message host transcript and duplicate replay; actual
-    Android process kills, real relay/crypto and native durability are not run.
-  - Android Appium runbook supplies both-peer kill checkpoints025/050/075/100, offline custody and exact full transcript/count
-    oracles.
+  - Rating retained as instructed. Native execution is scoped to the executor-reported Android disposable debug pair
+    and checkpoints; Astra did not operate devices or independently re-audit the kill actions. It is not signed-candidate
+    or whole-app release certification.
   catalog_ids:
   - DC-002
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: DC-003
   feature: CHAT
   title: Recipient offline for a long time, then catches up once
@@ -4380,7 +4443,8 @@ journeys:
   - Attempt pick/capture and inspect visible failure without losing draft.
   - Grant access in Settings and retry the same intended action.
   conditions:
-    platform: Android/iOS camera/photo permission
+    platform: executor-reported Pixel6 physical plus available headless Android emulator; disposable Group D debug
+      package
     connectivity: n/a
     offline: n/a
     app_state: foreground
@@ -4427,17 +4491,33 @@ journeys:
       feedback causally RED in 011:0 visible failure notices; _pickFromCamera only logs at lib/features/conversation/presentation/screens/conversation_wired.dart:5850/5862-5867.
       Final013 retains the exact assertion under a case-scoped KNOWN GAP, not PASS. Routed to Codex for post-126
       app fix; no app change here. Evidence .codex-test-logs/astra-groupCD/011-D-media-permission.log and 013 summary.'
-  execution: not_run
+  execution: device_run
+  device_result:
+    status: PASS_DRAFT_SINGLE_SEND_CAMERA_FEEDBACK_FAIL_ASTRA_D_1
+    summary:
+    - 'Camera denial/retry preserved draft and a valid image sent once, but desired visible camera failure feedback
+      FAILED: ASTRA-D-1 was confirmed on the device; only CONV_FL_PICK_CAMERA_ERROR was observed.'
+    - Photos used a system picker with no permission boundary (N/A); cancellation preserved the draft. This is not
+      photo-permission-denial proof.
+    - Kayan identifies Codex fix 6f7e11ed55e99bc85e8b00f8936f776979498ef8 for main integration. Its source exists,
+      but the tested device source predates it; this run is not post-fix native validation.
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:5
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/m010_cam_after_deny.png
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/shots/m010_gallery_cancel.png
   gaps:
-  - 'ASTRA-D-1 remains a required app feedback fix: denied camera errors are silently logged; desired assertion
-    stays KNOWN GAP until Codex lifts it with the post-126 patch.'
-  - Real camera/photo authorization, OS Settings grant, actual peer content and full candidate journey remain NOT
-    RUN; picker cancellation is not permission denial.
+  - ASTRA-D-1 visible camera error feedback is a confirmed failure on this candidate, not a complete permission-journey
+    PASS. Codex fix6f7e11ed5 is pending main integration/post-fix verification relative to this run; no app fix or
+    test unskip was made by Astra.
+  - System-picker photo permission boundary was N/A on the exercised target. Preserve that distinction from cancellation
+    and do not require unavailable hardware/OS permission behavior.
   catalog_ids:
   - DC-008
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: MEDIA-011
   feature: MEDIA
   title: PDF sending with document flag enabled; recipient receives and opens the document
@@ -4918,7 +4998,8 @@ journeys:
   - Reopen accepted durable work before trusting previews.
   - Complete/retry and open the full recipient content.
   conditions:
-    platform: shared Android/iOS logic; host evidence only
+    platform: executor-reported Pixel6 physical plus available headless Android emulator; disposable Group D debug
+      package
     connectivity: n/a
     offline: n/a
     app_state: sender/recipient process interruption represented by database reopen
@@ -4979,18 +5060,31 @@ journeys:
     proves: 'test/features/conversation/integration/private_media_restart_replay_test.dart:32: Reopen consumes interrupted
       opening, refuses replay and retains expiry high-water despite rollback; deadline then expires/cleans once.
       Not actual OS process kill/SQLCipher. Registered: affected-conversation, host-all.'
-  execution: not_run
+  execution: device_run
+  device_result:
+    status: PASS_IMAGE_RECOVERY_WEAK_LOG_CUT_WITNESS_VIDEO_NOT_RUN
+    summary:
+    - Image recovery passed for sender and receiver cuts with log-checkpoint witnesses.
+    - No byte-progress witness or throttling was available; the logs do not establish a causal mid-I/O interruption.
+      Video repeat was not performed.
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:7
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/m018_final_rows.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/m018_receiver_cut_recovery.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/m018_sender_cut3_recovery.txt:1
   gaps:
-  - Host receiver covers persisted retry/reopen/residual-prefix recovery and full image/caption; it does not kill
-    an OS process during native transfer or uncommitted SQL.
-  - Strict committed-share sender recovery is a separate explicitly enabled cohort with synthetic bytes. Default
-    legacy sender mid-upload kill, mobile decode and all native cut evidence remain NOT RUN.
+  - Log-triggered cuts are weaker than byte-progress/owned transfer cutpoints; actual in-flight transfer causality
+    remains unproven. Image-only result; video repeat NOT RUN.
+  - The processed-sent-source/receiver byte gate and native ledger added after this device source were not executed
+    by this run. No thumbnail-only/full-file or new oracle closure is inferred beyond the executor report.
   catalog_ids:
   - DC-004
   - DC-018
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: MEDIA-019
   feature: MEDIA
   title: Recipient sees unavailable media; retry restores full content or reports terminal expiry honestly
@@ -6630,7 +6724,8 @@ journeys:
   - Reopen and verify same-ID delivery once.
   - Repeat around add/removal/re-add without restoring revoked access.
   conditions:
-    platform: shared Android/iOS logic; host evidence only
+    platform: executor-reported Pixel6 physical plus available headless Android emulator; disposable Group D debug
+      package
     connectivity: n/a
     offline: n/a
     app_state: owned-process termination
@@ -6679,17 +6774,30 @@ journeys:
     proves: 'test/features/groups/integration/group_resume_recovery_test.dart:1921: Unsubscribes a fake network
       member, manually seeds signed replay into cursor bridge and invokes drain; missed message appears once. Background
       label does not represent real OS lifecycle/push. Registered: affected-groups, host-all.'
-  execution: not_run
+  execution: device_run
+  device_result:
+    status: PASS_MANUAL_TWO_PEER_UI_THREE_PEER_HARNESS_NOT_RUN
+    summary:
+    - Manual two-peer UI run passed accepted-text sender cut after inboxStored=true, remove/re-add with kill/reopen,
+      and removed-window exclusion.
+    - The SIMS three-peer process-death harness was not run; manual two-peer evidence does not stand in for it.
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:8
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/gc005_cut.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/gc005_recovery.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/gc005_remove.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/gc005_readd.txt:1
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/gc005_replay_check.txt:1
   gaps:
-  - Actual native accepted-text sender kill and live relay/candidate delivery remain NOT RUN; clean SQL reopen is
-    not an abrupt OS kill.
-  - Host removal/re-add checks durable roster/roles, not full revoked-key transport isolation. Existing registered
-    membership-only device cuts remain separate from the accepted-text cut.
+  - Three-peer process-death harness remains NOT RUN. Recorded manual two-peer actions are a narrower native witness;
+    no broad group topology, historical revoked-key isolation or signed-release pass is inferred.
   catalog_ids:
   - GC-005
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: GC-008
   feature: GROUP
   title: Leave, delete and supported admin changes preserve access rules
@@ -13371,7 +13479,7 @@ journeys:
   - Open each migrated attachment on receiver using native decoder/player/document viewer.
   - Compare full content/orientation/duration/caption and retry missing original honestly.
   conditions:
-    platform: receiver native decoders/external PDF viewer
+    platform: executor-reported Android emulator pair; attempted local migration
     connectivity: n/a
     offline: n/a
     app_state: foreground
@@ -13407,17 +13515,35 @@ journeys:
     proves: 'test/features/account_migration/application/account_migration_end_to_end_test.dart:739: Many verified
       segments retain all generated files/content hashes and account data; volume tests are not native photo/video/audio
       open tests. Registered: affected-storage, host-all. This volume case was not rerun in the scoped Group D packet.'
-  execution: not_run
+  execution: blocked_environment
+  device_result:
+    status: BLOCKED_ENVIRONMENT_LOCAL_PEER_UNAVAILABLE
+    summary:
+    - The launched Move Account attempt stopped at connecting with failureCode localPeerUnavailable between two emulators.
+      Executor attributes the block to separate netsim NATs.
+    - This is an actual attempted-run environment block, not migrated receiver/media preservation proof. Astra did
+      not diagnose networking or control either emulator.
+    - Use only a currently available, mutually reachable disposable migration pair for any follow-up. An unavailable
+      alternate hardware/topology leg is N/A by project policy; two absent physical LAN devices must not become a
+      mandatory closure condition.
+    evidence:
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:9
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_move_fail_log.txt:10
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_move_fail_log.txt:11
+    - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_source_media_hashes.txt:1
   gaps:
-  - Receiver host codec now opens a real migrated photo with content/caption, but native Android video/voice/PDF/viewer
-    and native crypto/keychain/authority are NOT RUN.
-  - Historical12MB .bin fixtures remain volume/hash tests, not usable media. Device runbook requires valid source-opened
-    photo/video/voice/PDF and receiver open/play again after restart.
+  - Attempt blocked before transfer completion, so native SQLCipher/keychain migration, cutover and received photo/video/voice
+    preservation were not proven. Source-only media artifacts do not prove migrated content.
+  - Local-network repair/next attempt is flutter_app-owned using available targets. The suggested two-device LAN diagnosis
+    was reported by the executor, not independently verified here; unavailable replacement topology is N/A rather
+    than a hardware wait/release blocker.
   catalog_ids:
   - DC-019
   open_questions:
-  - 'Device run instructions: docs/testing/astra-group-d-device-runbook.md; flutter_app owns currently available
-    pinned Android targets and all native evidence.'
+  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
+    provenance and scope.
+  - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
+    above are retained; no rating upgrade.'
 - id: TRANSFER-012
   feature: TRANSFER
   title: Migrated direct/group unread, drafts, history and pending outgoing retries remain coherent
