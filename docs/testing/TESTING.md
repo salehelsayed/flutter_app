@@ -2917,6 +2917,27 @@ signed release candidate. Cleanup removed only the disposable packages and
 test photos. This acceptance result does not stand in for the separately
 selected general device regression campaigns.
 
+The [Step 3 Mac receipt](../../.codex-test-logs/plan407-step3/retained-host-evidence/summary.redacted.json)
+records all 35 selected host components on clean `d81655bf0`: 32 PASS,
+0 FAIL and three skip-only BLOCKED results. The workflow/provider passes and
+the 33-component retry have identical source identities; the original lease
+blocks remain retained. The three completed suites contain exactly the 16
+owner-accepted baseline skips described above, with all nine test source hashes
+still unchanged. Both scoped wrapper verdicts remain BLOCKED. The separate
+`feature-host-all` gate completed with 11,974 passes, 14 baseline skips and no
+failures over 1,020 selected feature test files. Its one-worker command,
+complete footer, raw-log hash and unchanged before/after source are retained in
+the receipt. Current application production files match that tested source;
+later iOS test-fixture and documentation changes have separate proof.
+
+The generated-localization mapping also selected general audio, group-media,
+group-mute, media, Android notification, iOS notification and reconnect device
+campaigns. These seven campaigns were not rerun on `d81655bf0`; earlier Step 1/2
+device records and the Step 3 real-photo acceptance retain their own scopes.
+The general iPhone notification campaign remains unpassed, as described in the
+physical fixture guidance below. Release acceptance requires its own device
+and signed-artifact evidence.
+
 The canonical full planner still performs its global inventory census with
 `--only`. A scoped native row can pass while the overall report stays BLOCKED
 by unrelated inventory gaps. Verify those gaps against the explicit checkpoint
@@ -3070,8 +3091,11 @@ The follow-up's 23 host contracts and Swift syntax parse passed. The subsequent
 [physical run](../../.codex-test-logs/plan407-step3/ios-late-network-device-summary.md)
 accepted the late alert and completed the private bootstrap, closing this
 permission-preparation finding. It later failed to locate the notification
-card after the airplane toggle. The complete iOS campaign remains unpassed;
-later test-only re-find changes need their own device result.
+card after the airplane toggle. The complete iOS campaign remains unpassed.
+The later attempt 9 on `973b980fd` failed at the initial card lookup, before
+the airplane toggle, so the revised re-find was not exercised. Kayan confirmed
+that the `83f9c0a97` diagnostic candidate still awaits its physical run; those
+later test-only commits remain in the coordinator's iteration branch.
 
 Native notification tests on an iPhone must load the shared TC396 JSON from
 the test bundle. A compiled Mac `#filePath` is unavailable on the phone. Keep

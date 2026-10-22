@@ -1,6 +1,6 @@
 # 407 — Thoughts on the Posts engine
 
-Status: Steps 1–3 implemented; final validation in progress with owner-accepted baseline gaps (2026-10-22). Step 4 not started.
+Status: Steps 1–3 implemented and scoped verification recorded, with owner-accepted baseline gaps (2026-10-22). Step 4 not started.
 Branch: UI-Update
 Date: 2026-10-20 (line numbers checked after rebasing UI-Update on main 999a297ef). Scope cut to a first version the same day (owner decision).
 
@@ -193,7 +193,7 @@ Tests:
 
 Device check, same Android pair: write a thought with a photo on one phone and see it arrive on the other.
 
-Implementation and validation (2026-10-22): `d81655bf0` implements the own-node plus and Thoughts-only text/photo/video/voice composer, reusing encrypted all-friends delivery and media recovery. Focused runs passed 64 composer/preservation tests and 166 integration/media tests after the retained initial compilation failure was fixed. Four device acceptance scenarios passed on that exact source, including a real photo shared between peers and rendered after decryption on the receiver. The disposable debug build had Google services disabled; it does not certify production push latency. The final affected Mac selection and justified feature family are running separately. Receipts: `.codex-test-logs/plan407-step2/step3-focused-fixed/` and `.codex-test-logs/plan407-step3/step3-device-summary.md`.
+Implementation and validation (2026-10-22): `d81655bf0` implements the own-node plus and Thoughts-only text/photo/video/voice composer, reusing encrypted all-friends delivery and media recovery. Focused runs passed 64 composer/preservation tests and 166 integration/media tests after the retained initial compilation failure was fixed. Four device acceptance scenarios passed on that exact source, including a real photo shared between peers and rendered after decryption on the receiver. The disposable debug build had Google services disabled; it does not certify production push latency. The final Mac selection completed with 32 PASS / 0 FAIL / 3 baseline BLOCKED across reports with identical source identity; `feature-host-all` passed 11,974 tests with 14 baseline skips and no failures. The current app production files match that tested source. The accepted exceptions and unexecuted general device campaigns are detailed in `docs/testing/TESTING.md`; the general iPhone notification campaign remains unpassed. Receipts: `.codex-test-logs/plan407-step2/step3-focused-fixed/`, `.codex-test-logs/plan407-step3/step3-device-summary.md`, and `.codex-test-logs/plan407-step3/retained-host-evidence/summary.redacted.json`.
 
 ### Step 4 — Opening a chat from the orbit
 
