@@ -3636,20 +3636,45 @@ do not count `test(...)` strings as executions. Runner listings took about
   remounting Orbit. Encoder calls are host substitutes, not native/device proof.
   Processor, pending-media and group overflow tests preserve forced Compressed
   behavior. Evidence is in ignored `build/kayan-safe/quality-pref-live/`.
-- Original photo processing requests source resolution from the native encoder;
-  Compressed retains the 1920×1080 minimum-size resize contract and JPEG quality
-  85. Original still re-encodes to JPEG at quality 100 with EXIF retention off;
-  it does not promise byte-identical or lossless input preservation.
-  `image_processor_test.dart` inspects encoded JPEG dimensions for portrait and
-  landscape JPEG/PNG sources using a host raster-encoder substitute. It also
-  exercises the real Flutter thumbnail codec: inline output stays within 320 px
-  and 49,152 bytes, and a decode failure omits the best-effort thumbnail. The
-  thumbnail codec receives bounded decode dimensions before the small Dart JPEG
-  encode; this bounds the returned raster, not native transient peak memory.
-  Native HEIC decoding, sensor orientation/EXIF removal and Android's existing
-  lower-resolution OOM retries require device evidence; these host tests do not
-  certify them. Ignored patch/results/limit analysis are under
-  `build/kayan-safe/original-full-res/` in the delivering checkout.
+- Original now strips supported 8-bit baseline/progressive JPEG containers
+  without re-encoding the primary image: frame/tables/scan bytes stay unchanged.
+  Original APPn/COM metadata and bytes after the primary EOI are removed. The
+  exceptions are unchanged `ICC_PROFILE` APP2 colour segments and a newly built
+  EXIF IFD containing only display Orientation when it is not 1. No source GPS,
+  MakerNote, XMP/IPTC or thumbnail IFD is copied. ICC profiles are deliberately
+  retained as colour data; there is no ICC parser/rebuilder (owner decision
+  `m-e4771e73`). Unsupported/malformed JPEGs, Adobe colour-transform variants
+  and other existing image formats keep the native quality-100, source-resolution,
+  `keepExif: false` fallback. This supersedes the earlier native-only Original
+  implementation retained in `build/kayan-safe/original-full-res/`.
+  `image_processor_original_jpeg_test.dart` checks exact coded-byte and ICC
+  retention, metadata absence, all eight orientations through the real Flutter
+  codec, bounded TIFF/marker failures and a structural progressive scan fixture.
+  The progressive fixture tests marker traversal, not raster decoding. Pending
+  composer budget assertions use the stripped file length.
+- Photo preparation refuses a null native result for either quality instead of
+  returning raw input. The shared batch coordinator also skips failed photo
+  processing rather than reviving raw input in its generic catch; null and
+  throwing native ports are covered for both qualities. Its existing processing
+  failure summary is reused. Forwarding tests retain the original source and
+  assert exact sanitized JPEG bytes in fresh group copies and upload budgets.
+  Native-quality route tests use PNG and `tester.runAsync` for the processor's
+  real file probe; Original JPEG intentionally bypasses the native encoder.
+  Compressed keeps its existing 1920×1080/quality-85 policy.
+  `.heif` now follows `.heic`, including the Posts picker MIME classification;
+  their native routing/metadata flags are covered per quality with a host port
+  substitute and the real Posts picker callback. A maximum 32-byte signature
+  read recognizes existing JPEG/PNG/WebP/HEIC-HEIF files without a useful suffix.
+  Uppercase HEIC and WebP were already supported. No HEICS, AVIF or DNG codec or
+  MIME admission is added. GIF behaviour remains unchanged; its application/XMP
+  and comment metadata is a separate low-priority follow-up, explicitly outside
+  this packet (`m-b1fa2076`).
+  `image_processor_test.dart` preserves native fallback/Compressed dimensions
+  and exercises the real bounded Flutter thumbnail codec (320 px/49,152 bytes).
+  Bounded returned rasters do not certify native transient peak memory. Native
+  HEIC decode, real camera/picker metadata and Android's existing lower-resolution
+  OOM retries still need phone evidence. Host evidence and patch are under
+  `build/kayan-safe/original-lossless/` in the delivering checkout.
 - Original-quality images and videos still undergo metadata stripping, which
   can change their byte length. Composer budgets also become authored attachment
   sizes and must use the processed file's length. Using the raw input length
@@ -4080,8 +4105,12 @@ visible and cannot become an ordinary first-attempt PASS.
   uses a real multi-megabyte EXIF-oriented JPEG, actual legacy upload/send,
   online receive or real inbox staging/replay, current SQLite migrations and
   repositories, durable files, exact byte hash, grid decode/open gate, full
-  recipient frame and persisted caption. Its native compressor callback is a
-  prepared-image stub and its bridge crypto is XOR. Its closed-chat recovery case
+  recipient frame and persisted caption. Original uses the real lossless JPEG
+  metadata path with an independent fixture retaining the camera coding suffix
+  plus a minimal Orientation IFD; it asserts zero native compressor calls.
+  Only Compressed uses a prepared-image native port substitute, and bridge crypto
+  remains XOR. The active cases pass with the pre-existing mixed-relay known-gap
+  skip retained separately. Its closed-chat recovery case
   mirrors the native errors from the first four interrupted/reconnecting attempts,
   exhausts two bounded transport bursts without consuming the generic budget,
   then emits relay readiness and completes on attempt seven without a tap or

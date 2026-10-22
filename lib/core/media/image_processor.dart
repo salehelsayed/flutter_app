@@ -6,6 +6,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/media/jpeg_metadata.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
@@ -116,7 +117,10 @@ class ImageProcessor {
        _cancelVideoCompression =
            cancelVideoCompression ?? _cancelDefaultVideoCompression;
 
-  /// Process image for sending: strip EXIF; Original keeps source resolution.
+  /// Process image for sending: strip metadata; Original preserves JPEG coding.
+  /// Other formats and unsupported JPEG variants use the native encoder at
+  /// source resolution. Only display orientation and ICC colour data survive
+  /// the JPEG metadata path. A failed encoder never exposes an unprocessed photo.
   ///
   /// A configured stored preference is read for each preparation. [quality]
   /// remains the fallback for standalone processors. Set [useStoredPreference]
@@ -141,6 +145,10 @@ class ImageProcessor {
         );
       }
     }
+    if (quality == ImageQualityPreference.original) {
+      final strippedPath = await _tryStripOriginalJpeg(inputPath);
+      if (strippedPath != null) return strippedPath;
+    }
     final compressionQuality = quality == ImageQualityPreference.original
         ? 100
         : 85;
@@ -157,7 +165,10 @@ class ImageProcessor {
           : 1080,
     );
 
-    return result?.path ?? inputPath;
+    if (result == null) {
+      throw StateError('Photo processing failed');
+    }
+    return result.path;
   }
 
   /// Process avatar: compress to a ≥512px jpeg (quality 80, EXIF stripped), then
@@ -385,7 +396,33 @@ class ImageProcessor {
   /// Returns true for image extensions that can be processed.
   bool isProcessableImage(String path) {
     final ext = path.split('.').last.toLowerCase();
-    return const {'jpg', 'jpeg', 'png', 'webp', 'heic'}.contains(ext);
+    if (const {'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'}.contains(ext)) {
+      return true;
+    }
+    // Shared/temporary files can omit an extension. Recognize only the existing
+    // formats, from a bounded header; this does not add another codec or MIME.
+    try {
+      final handle = File(path).openSync();
+      final Uint8List header;
+      try {
+        header = handle.readSync(32);
+      } finally {
+        handle.closeSync();
+      }
+      final bytes = String.fromCharCodes(header);
+      if (bytes.startsWith('\xff\xd8') ||
+          bytes.startsWith('\x89PNG\r\n\x1a\n')) {
+        return true;
+      }
+      if (bytes.length < 12) return false;
+      if (bytes.startsWith('RIFF') && bytes.substring(8, 12) == 'WEBP') {
+        return true;
+      }
+      return bytes.substring(4, 8) == 'ftyp' &&
+          const {'heic', 'heix', 'mif1'}.contains(bytes.substring(8, 12));
+    } on FileSystemException {
+      return false;
+    }
   }
 
   /// Returns true for video extensions that can be processed.
@@ -434,6 +471,32 @@ Future<String> _squareCropAvatar(String compressedPath) async {
     return squaredPath;
   } catch (_) {
     return compressedPath;
+  }
+}
+
+Future<String?> _tryStripOriginalJpeg(String path) async {
+  try {
+    final input = File(path);
+    final handle = await input.open();
+    final Uint8List signature;
+    try {
+      signature = await handle.read(2);
+    } finally {
+      await handle.close();
+    }
+    // Avoid loading PNG/HEIC/WebP data before their existing native decode.
+    if (signature.length != 2 || signature[0] != 0xff || signature[1] != 0xd8) {
+      return null;
+    }
+    final stripped = stripJpegMetadata(await input.readAsBytes());
+    if (stripped == null) return null;
+    final target = File('${path}_compressed.jpg');
+    await target.writeAsBytes(stripped);
+    return target.path;
+  } on FileSystemException {
+    // The native encoder remains the fallback for inaccessible/unsupported
+    // sources or an output write failure; its failure must not expose raw input.
+    return null;
   }
 }
 

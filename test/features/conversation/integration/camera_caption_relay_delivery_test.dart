@@ -1,5 +1,6 @@
 // MEDIA-002/014: post-preparation Dart delivery, not an iOS/Android device proof.
-// Native FlutterImageCompress is stubbed with a prepared, real large JPEG.
+// Original JPEG uses the real lossless metadata path; only Compressed stubs
+// FlutterImageCompress with a prepared, real large JPEG.
 // EncryptedMediaTestBridge uses XOR test crypto, not production Go AES-GCM.
 // Native capture/compression, real cryptography, and a live relay circuit remain
 // unproven here. Repositories/migrations, files, send/receive/download decisions,
@@ -82,10 +83,30 @@ void main() {
     }
     image.exif.imageIfd.orientation = 6;
     cameraJpeg = img.encodeJpg(image, quality: 85);
-    // Fixture preparation ONLY: native compression is explicitly not executed.
+    // Independent fixture oracle: the encoder emits initial APP blocks followed
+    // by coding tables/frame/scans. Keep that entire coded suffix and prepend
+    // the standard minimal Orientation=6 IFD; do not rotate or re-encode it.
+    var firstCodedMarker = 2;
+    while (cameraJpeg[firstCodedMarker + 1] >= 0xe0 &&
+        cameraJpeg[firstCodedMarker + 1] <= 0xef) {
+      final length =
+          (cameraJpeg[firstCodedMarker + 2] << 8) |
+          cameraJpeg[firstCodedMarker + 3];
+      firstCodedMarker += 2 + length;
+    }
+    preparedJpeg = Uint8List.fromList([
+      0xff, 0xd8,
+      0xff, 0xe1, 0, 34,
+      0x45, 0x78, 0x69, 0x66, 0, 0, // Exif signature.
+      0x4d, 0x4d, 0, 42, 0, 0, 0, 8, // Big-endian TIFF, IFD0 at8.
+      0, 1, // One entry: Orientation SHORT count1 value6.
+      1, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0,
+      0, 0, 0, 0, // No thumbnail/next IFD.
+      ...cameraJpeg.sublist(firstCodedMarker),
+    ]);
+    // Compressed fixture preparation ONLY: native compression is not executed.
     final prepared = img.bakeOrientation(image);
     prepared.exif.clear();
-    preparedJpeg = img.encodeJpg(prepared, quality: 85);
     compressedJpeg = img.encodeJpg(
       img.copyResize(prepared, width: 1512, height: 2016),
       quality: 85,
@@ -96,7 +117,8 @@ void main() {
       inInclusiveRange(3 * 1024 * 1024, 6 * 1024 * 1024),
     );
     expect(img.decodeJpgExif(cameraJpeg)!.imageIfd.orientation, 6);
-    expect(img.decodeJpgExif(preparedJpeg)?.imageIfd.orientation, isNot(6));
+    expect(img.decodeJpgExif(preparedJpeg)?.imageIfd.orientation, 6);
+    expect(preparedJpeg.length, lessThan(cameraJpeg.length));
     final rawInfo = img.JpegDecoder().startDecode(cameraJpeg)!;
     expect((rawInfo.width, rawInfo.height), (4032, 3024));
   });
@@ -997,6 +1019,7 @@ class _Journey {
     required bool offline,
     ImageQualityPreference imageQuality = ImageQualityPreference.original,
   }) async {
+    var nativeCalls = 0;
     final pending = await preparePendingComposerMedia(
       inputPath: '${root.path}/camera.jpg',
       imageProcessor: ImageProcessor(
@@ -1008,6 +1031,7 @@ class _Journey {
               int minWidth = 1920,
               int minHeight = 1080,
             }) async {
+              nativeCalls++;
               expect(path, '${root.path}/camera.jpg');
               expect(
                 quality,
@@ -1027,6 +1051,10 @@ class _Journey {
       ),
       imageQualityPreference: imageQuality,
       videoQualityPreference: ImageQualityPreference.original,
+    );
+    expect(
+      nativeCalls,
+      imageQuality == ImageQualityPreference.original ? 0 : 1,
     );
     expect(pending.budgetBytes, expectedBytes.length);
     expect(await pending.file.readAsBytes(), expectedBytes);

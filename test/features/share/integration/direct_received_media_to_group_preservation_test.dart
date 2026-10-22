@@ -123,6 +123,25 @@ void main() {
       currentCanonicalSource.parent.createSync(recursive: true);
       fixture.copySync(currentCanonicalSource.path);
       final sourcePlaintext = currentCanonicalSource.readAsBytesSync();
+      // This checked-in baseline JPEG starts with JFIF, EXIF and IPTC blocks.
+      // Original forwarding removes those while preserving every coded byte.
+      var metadataEnd = 2;
+      if (mediaCase.mediaType == 'image') {
+        for (final marker in [0xe0, 0xe1, 0xed]) {
+          expect(sourcePlaintext[metadataEnd], 0xff);
+          expect(sourcePlaintext[metadataEnd + 1], marker);
+          final length =
+              (sourcePlaintext[metadataEnd + 2] << 8) |
+              sourcePlaintext[metadataEnd + 3];
+          metadataEnd += 2 + length;
+        }
+      }
+      final forwardedPlaintext = mediaCase.mediaType == 'image'
+          ? <int>[
+              ...sourcePlaintext.take(2),
+              ...sourcePlaintext.skip(metadataEnd),
+            ]
+          : sourcePlaintext;
       final sourcePlaintextHash = sha256.convert(sourcePlaintext).toString();
       final sourceRelayCiphertext = <int>[
         ...sourcePlaintext,
@@ -357,7 +376,7 @@ void main() {
         expect(projectedAttachment.messageId, projectedMessage.id);
         expect(projectedAttachment.mime, mediaCase.mime);
         expect(projectedAttachment.mediaType, mediaCase.mediaType);
-        expect(projectedAttachment.size, sourcePlaintext.length);
+        expect(projectedAttachment.size, forwardedPlaintext.length);
         expect(projectedAttachment.durationMs, mediaCase.durationMs);
         expect(
           projectedAttachment.encryptionScheme,
@@ -385,7 +404,7 @@ void main() {
         final uploadedCiphertextHash = sha256
             .convert(uploadedCiphertext)
             .toString();
-        expect(uploadedCiphertext.length, sourcePlaintext.length + 16);
+        expect(uploadedCiphertext.length, forwardedPlaintext.length + 16);
         expect(uploadedCiphertext, isNot(sourcePlaintext));
         expect(projectedAttachment.contentHash, uploadedCiphertextHash);
         expect(projectedAttachment.contentHash, isNot(sourcePlaintextHash));
@@ -406,7 +425,7 @@ void main() {
           await mediaFileManager.resolveStoredPath(storedGroupPath),
         );
         expect(canonicalGroupCopy.existsSync(), isTrue);
-        expect(canonicalGroupCopy.readAsBytesSync(), sourcePlaintext);
+        expect(canonicalGroupCopy.readAsBytesSync(), forwardedPlaintext);
         expect(
           canonicalGroupCopy.path,
           startsWith(path.join(documentsDir.path, 'media', group.id)),

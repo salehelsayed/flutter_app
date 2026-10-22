@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
@@ -462,7 +463,7 @@ void main() {
               minHeight = 1080,
             }) async {
               requested.add(quality);
-              return null;
+              return XFile(path);
             },
       );
       await tester.pumpWidget(buildOrbitWired(appShellController: shell));
@@ -497,9 +498,11 @@ void main() {
         final route = tester.widget<ConversationWired>(
           find.byType(ConversationWired),
         );
-        await route.imageProcessor!.processImage(
-          inputPath: '/tmp/next-photo.jpg',
-          quality: route.qualityPreference,
+        await tester.runAsync(
+          () => route.imageProcessor!.processImage(
+            inputPath: '/tmp/next-photo.png',
+            quality: route.qualityPreference,
+          ),
         );
         Navigator.of(tester.element(find.byType(ConversationWired))).pop();
         await pumpOrbitFrames(tester, count: 5);

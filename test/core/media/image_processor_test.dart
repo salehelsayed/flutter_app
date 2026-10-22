@@ -30,7 +30,7 @@ void main() {
                 width: portrait ? 2400 : 3200,
                 height: portrait ? 3200 : 2400,
               );
-              // Camera JPEG and large PNG use the same metadata-stripping pipeline.
+              // JPEG stripping and native PNG encoding retain the size contract.
               final input = File('${directory.path}/source.$extension');
               await input.writeAsBytes(
                 extension == 'png'
@@ -54,7 +54,15 @@ void main() {
                   (decoded.width, decoded.height),
                   (source.width, source.height),
                 );
-                expect(encoder.quality, 100);
+                if (extension == 'jpg') {
+                  expect(encoder.quality, isNull);
+                  expect(
+                    await File(output).length(),
+                    lessThanOrEqualTo(await input.length()),
+                  );
+                } else {
+                  expect(encoder.quality, 100);
+                }
               } else {
                 expect((
                   decoded.width,
@@ -62,8 +70,11 @@ void main() {
                 ), portrait ? (1920, 2560) : (1920, 1440));
                 expect(encoder.quality, 85);
               }
-              expect(encoder.keepExif, isFalse);
-              expect(encoder.autoCorrectionAngle, isTrue);
+              if (extension != 'jpg' ||
+                  quality != ImageQualityPreference.original) {
+                expect(encoder.keepExif, isFalse);
+                expect(encoder.autoCorrectionAngle, isTrue);
+              }
             },
           );
         }
@@ -368,30 +379,28 @@ void main() {
       expect(capturedKeepExif, false);
     });
 
-    test(
-      'returns original path when compress returns null (graceful fallback)',
-      () async {
-        final processor = ImageProcessor(
-          compressFile:
-              ({
-                required String path,
-                required int quality,
-                required bool keepExif,
-                int minWidth = 1920,
-                int minHeight = 1080,
-              }) async {
-                return null;
-              },
-        );
+    test('refuses the raw photo when compression returns null', () async {
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required String path,
+              required int quality,
+              required bool keepExif,
+              int minWidth = 1920,
+              int minHeight = 1080,
+            }) async {
+              return null;
+            },
+      );
 
-        final result = await processor.processImage(
+      await expectLater(
+        processor.processImage(
           inputPath: '/tmp/photo.jpg',
           quality: ImageQualityPreference.compressed,
-        );
-
-        expect(result, '/tmp/photo.jpg');
-      },
-    );
+        ),
+        throwsStateError,
+      );
+    });
 
     test('returns original path unchanged for .gif files', () async {
       var compressCalled = false;

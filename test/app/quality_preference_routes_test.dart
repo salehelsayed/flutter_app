@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_app/features/update_check/application/update_check_controller.dart';
 import '../features/update_check/support/fake_update_check_service.dart';
 import 'package:flutter_app/app/application_root.dart';
@@ -178,7 +179,7 @@ void main() {
                 minHeight = 1080,
               }) async {
                 requested.add(quality);
-                return null;
+                return XFile(path);
               },
         );
         final updates = UpdateCheckController(
@@ -281,18 +282,22 @@ void main() {
               find.byType(GroupConversationWired),
             );
             expect(route.imageProcessor, same(processor));
-            await route.imageProcessor!.processImage(
-              inputPath: '/tmp/notification.jpg',
-              quality: route.qualityPreference,
+            await tester.runAsync(
+              () => route.imageProcessor!.processImage(
+                inputPath: '/tmp/notification.png',
+                quality: route.qualityPreference,
+              ),
             );
           } else {
             final route = tester.widget<ConversationWired>(
               find.byType(ConversationWired),
             );
             expect(route.imageProcessor, same(processor));
-            await route.imageProcessor!.processImage(
-              inputPath: '/tmp/notification.jpg',
-              quality: route.qualityPreference,
+            await tester.runAsync(
+              () => route.imageProcessor!.processImage(
+                inputPath: '/tmp/notification.png',
+                quality: route.qualityPreference,
+              ),
             );
           }
           expect(requested, [100]);
