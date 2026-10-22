@@ -22,6 +22,7 @@ date | marketing version | build | platform | commit SHA | tag | ASC build ID or
 <FAJR:date> | <FAJR:version> | <FAJR:build> | iOS | UNKNOWN | none | <FAJR:asc-build-id> | backfill, VALID
 <FAJR:date> | <FAJR:version> | <FAJR:build> | iOS | UNKNOWN | none | <FAJR:asc-build-id> | backfill, VALID
 <FAJR:date> | <FAJR:version> | 123 | iOS | UNKNOWN | none | <FAJR:asc-build-id> | backfill, VALID, newest
+2026-10-22 | 1.0.1 | 126 | iOS | 9ec2091a3 | none | PENDING | store build from origin/main f14f7d369, not uploaded yet
 
 (Rows oldest first. The only known fact is that the newest build is 123. Fill nothing else in.)
 
