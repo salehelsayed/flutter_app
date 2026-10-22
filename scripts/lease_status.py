@@ -6,9 +6,12 @@ Finds each lease lock file the same way device_campaign_preflight.device_leases 
 only lsof and ps. It never opens the lock for writing and never calls flock, so it can
 not take or disturb a lease.
 
-    python3 scripts/lease_status.py                      # mknoon.shared-native-build
-    python3 scripts/lease_status.py <lease-name> ...      # other leases too
+    python3 scripts/lease_status.py                      # native lease line, then host-test slots line
+    python3 scripts/lease_status.py <lease-name> ...      # only the named leases
     python3 scripts/lease_status.py --json
+
+Host-test slots (mknoon.host-tests.slot-1/2) are reported as N/2 used, plus any live
+native-wanted marker, which pauses new host slots.
 """
 import argparse
 import hashlib
@@ -16,8 +19,12 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 DEFAULT_LEASE = 'mknoon.shared-native-build'
+HOST_TESTS_LEASE = 'mknoon.host-tests'
+HOST_TEST_SLOTS = 2
+NATIVE_WANTED_TTL = 120
 
 
 def lease_dir():
@@ -65,6 +72,56 @@ def status(name, directory, lsof='lsof', ps='ps'):
             'lockFileExists': True, 'holders': holders}
 
 
+def native_wanted(directory, now=None):
+    """Read-only copy of device_campaign_preflight.native_wanted (no lease dir creation)."""
+    now = time.time() if now is None else now
+    wanted = []
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return wanted
+    for name in names:
+        if not name.startswith('native-wanted.') or name.endswith('.tmp'):
+            continue
+        try:
+            with open(os.path.join(directory, name)) as f:
+                entry = json.load(f)
+            pid, state, stamp = int(entry['pid']), entry['state'], float(entry['time'])
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            pass
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if state == 'holding' or (state == 'waiting' and now - stamp < NATIVE_WANTED_TTL):
+            wanted.append({'pid': pid, 'state': state, 'age_seconds': int(now - stamp)})
+    return wanted
+
+
+def host_status(directory, lsof='lsof', ps='ps'):
+    slots = []
+    for n in range(1, HOST_TEST_SLOTS + 1):
+        slot = status('%s.slot-%d' % (HOST_TESTS_LEASE, n), directory, lsof, ps)
+        slot['slot'] = n
+        slots.append(slot)
+    used = sum(1 for s in slots if s['state'] == 'HELD')
+    return {'lease': HOST_TESTS_LEASE, 'state': '%d/%d' % (used, HOST_TEST_SLOTS), 'used': used,
+            'slots': slots, 'nativeWanted': native_wanted(directory)}
+
+
+def host_summary(result):
+    line = '%s: %s slots used' % (result['lease'], result['state'])
+    held = ['slot-%d pid %d age %s cwd %s' % (s['slot'], h['pid'], h['age'] or '?', h['cwd'] or '?')
+            for s in result['slots'] for h in s['holders']]
+    if held:
+        line += ' (' + '; '.join(held) + ')'
+    if result['nativeWanted']:
+        line += ' [native priority: new slots paused, %s]' % ', '.join(
+            'pid %d %s' % (w['pid'], w['state']) for w in result['nativeWanted'])
+    return line
+
+
 def summary(result):
     if result['state'] == 'FREE':
         return '%s: FREE' % result['lease']
@@ -75,17 +132,19 @@ def summary(result):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Read-only lease status (never takes a lease).')
-    parser.add_argument('leases', nargs='*', default=[DEFAULT_LEASE])
+    parser.add_argument('leases', nargs='*')
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
     lsof = os.environ.get('LEASE_STATUS_LSOF', 'lsof')
     ps = os.environ.get('LEASE_STATUS_PS', 'ps')
-    results = [status(n, lease_dir(), lsof, ps) for n in args.leases]
+    results = [status(n, lease_dir(), lsof, ps) for n in (args.leases or [DEFAULT_LEASE])]
+    if not args.leases:
+        results.append(host_status(lease_dir(), lsof, ps))
     if args.json:
         print(json.dumps(results, indent=2))
     else:
         for r in results:
-            print(summary(r))
+            print(host_summary(r) if r['lease'] == HOST_TESTS_LEASE else summary(r))
     return 0
 
 

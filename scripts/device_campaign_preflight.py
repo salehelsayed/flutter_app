@@ -11,6 +11,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+import time
 
 
 # These entry points return before device work with --list-scenarios. Keeping
@@ -126,33 +128,177 @@ def validate_metadata(check):
     return errors
 
 
-@contextmanager
-def device_leases(targets, directory=None):
-    """Serialize cooperating launchers across checkouts, without device actions."""
+NATIVE_LEASE = 'mknoon.shared-native-build'
+HOST_TESTS_LEASE = 'mknoon.host-tests'
+HOST_TEST_SLOTS = 2
+# A waiter refreshes its marker on every attempt. A holder's marker lives as long
+# as its process, so a crashed owner never blocks host slots.
+NATIVE_WANTED_TTL = 120
+
+
+class HostSlotBusy(DeviceLeaseBusy):
+    pass
+
+
+def lease_directory(directory=None):
     directory = Path(directory) if directory else Path('/tmp') / f'mknoon-device-leases-{os.getuid()}'
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise DeviceLeaseBusy('Device lease directory must be private and owned by the current user')
-    handles = []
+    return directory
+
+
+def host_slot_names():
+    return [f'{HOST_TESTS_LEASE}.slot-{n}' for n in range(1, HOST_TEST_SLOTS + 1)]
+
+
+def _open_lock(directory, name):
+    path = directory / (hashlib.sha256(name.encode()).hexdigest() + '.lock')
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    handle = os.fdopen(fd, 'r+')
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        handle.close()
+        raise DeviceLeaseBusy('Device lease file must be private and owned by the current user')
+    return handle
+
+
+def _try_flock(handle):
     try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except BlockingIOError:
+        return False
+
+
+def _marker(directory, pid):
+    return directory / f'native-wanted.{pid}'
+
+
+def _write_marker(directory, state):
+    path = _marker(directory, os.getpid())
+    temp = path.with_name(path.name + '.tmp')
+    temp.write_text(json.dumps({'pid': os.getpid(), 'state': state, 'time': time.time()}))
+    os.chmod(temp, 0o600)
+    os.replace(temp, path)
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def native_wanted(directory=None, now=None, alive=_pid_alive):
+    """Live native holders or recent waiters, excluding this process."""
+    directory = lease_directory(directory)
+    now = time.time() if now is None else now
+    wanted = []
+    for path in sorted(directory.glob('native-wanted.*')):
+        if path.name.endswith('.tmp'):
+            continue
+        try:
+            entry = json.loads(path.read_text())
+            pid, state, stamp = int(entry['pid']), entry['state'], float(entry['time'])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if pid == os.getpid() or not alive(pid):
+            continue
+        if state == 'holding' or (state == 'waiting' and now - stamp < NATIVE_WANTED_TTL):
+            wanted.append({'pid': pid, 'state': state, 'age_seconds': int(now - stamp)})
+    return wanted
+
+
+@contextmanager
+def device_leases(targets, directory=None):
+    """Serialize cooperating launchers across checkouts, without device actions."""
+    directory = lease_directory(directory)
+    native = NATIVE_LEASE in targets
+    handles, acquired = [], False
+    try:
+        if native:
+            _write_marker(directory, 'waiting')
         for target in sorted(set(targets)):
-            path = directory / (hashlib.sha256(target.encode()).hexdigest() + '.lock')
-            fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-            handle = os.fdopen(fd, 'r+')
+            handle = _open_lock(directory, target)
             handles.append(handle)
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
-                raise DeviceLeaseBusy('Device lease file must be private and owned by the current user')
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise DeviceLeaseBusy('Another campaign owns a selected device; let its cleanup finish') from None
+            if not _try_flock(handle):
+                raise DeviceLeaseBusy('Another campaign owns a selected device; let its cleanup finish')
+        acquired = True
+        if native:
+            _write_marker(directory, 'holding')
         yield
     finally:
         for handle in reversed(handles):
             handle.close()
         # Do not unlink lock files: replacing an inode can admit two owners.
+        if native and acquired:
+            _marker(directory, os.getpid()).unlink(missing_ok=True)
+
+
+_guard_passed_at = 0.0
+
+
+def default_host_guard():
+    """Reuse the SIMS launcher host gate (free memory > 25%, no swap growth)."""
+    global _guard_passed_at
+    if time.time() - _guard_passed_at < NATIVE_WANTED_TTL:
+        return True
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'run_sims_safe', Path(__file__).resolve().parents[1] / 'docker-ws' / 'run_sims_safe.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        passed = module.host_gate()['passed']
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # No macOS pressure tools (for example the Linux container): do not block.
+        passed = True
+    if passed:
+        _guard_passed_at = time.time()
+    return passed
+
+
+@contextmanager
+def host_test_slot(directory=None, guard=None, wait_seconds=None, poll_seconds=15, sleep=time.sleep, clock=time.monotonic):
+    """Hold one of the host-test slots for a Mac-only Flutter/Dart check.
+
+    New slots wait while a native build holds or wants the native lease, while the
+    memory guard fails, or while both slots are busy. Running holders are never
+    interrupted.
+    """
+    directory = lease_directory(directory)
+    guard = guard or default_host_guard
+    if wait_seconds is None:
+        wait_seconds = int(os.environ.get('MKNOON_HOST_SLOT_WAIT_SECONDS', '1800'))
+    deadline = clock() + wait_seconds
+    while True:
+        handle = None
+        if native_wanted(directory):
+            reason = 'native build priority'
+        elif not guard():
+            reason = 'host memory or swap guard'
+        else:
+            reason = 'both host-test slots busy'
+            for name in host_slot_names():
+                candidate = _open_lock(directory, name)
+                if _try_flock(candidate):
+                    handle = candidate
+                    break
+                candidate.close()
+        if handle is not None:
+            try:
+                yield
+            finally:
+                handle.close()
+            return
+        if clock() >= deadline:
+            raise HostSlotBusy(f'No host-test slot: {reason}')
+        sleep(poll_seconds)
 
 
 def instrumentation_state(output):
