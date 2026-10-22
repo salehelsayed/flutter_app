@@ -1,8 +1,8 @@
 # Mknoon journey coverage matrix
 
-Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
+Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
-295 representative journeys: **35 strong, 244 partial, 15 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+295 representative journeys: **35 strong, 250 partial, 9 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
 ## Interpretation and execution
 
@@ -22,16 +22,18 @@ Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-2
 
 - Scoped Group B host update at f4005fbfa66391500dce2c2b82a6f325cc65934f (2026-10-21): CR-003/005/014/025 strong; VC-013 partial with capability still planned; NAV-011 remains partial for unproven invite/recovery surfaces. Focused validation: 14 files, 200 passed, 0 skipped; first failures and one resource-aborted run retained under .codex-test-logs/groupB-fixes/. Full journey execution remains not_run; broad affected lanes, native/device, analyzer and full host-all were not run.
 
+- Scoped Group C host update on base f14f7d369646b9877bc80c71f517494628f4fe2b, tests commit 6ce42d583 (2026-10-22): MEDIA-002/003/014, DC-011, VC-015 and CR-009 partial. Three focused files: 28 passed, one pre-existing mixed-relay KNOWN GAP skip; eight new cases passed. First full camera attempt 005 resource-aborted at swapouts +37768 pages with zero completed cases; final 006 passed at unchanged swapouts. Evidence: .codex-test-logs/astra-groupCD. Appium runbook supplied, all actual cross-platform journeys remain not_run; CR-009 native fresh-add route waits for UI-Update. No native build/device/audio/manual proof, broad affected lanes or full host-all run.
+
 ## Feature coverage
 
 | Feature | Strong | Partial | Missing | Unknown | Biggest gap |
 | --- | ---: | ---: | ---: | ---: | --- |
 | IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. |
-| CONTACT — QR, contact requests, profiles and contact management | 7 | 27 | 2 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
-| CHAT — Direct text and conversation state | 2 | 9 | 2 | 0 | No qualifying 100-message both-restart preservation journey or actual full iPhone/Android text/media parity; some restart labels reconstruct objects over retained memory. |
-| MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 37 | 5 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
+| CONTACT — QR, contact requests, profiles and contact management | 7 | 28 | 1 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
+| CHAT — Direct text and conversation state | 2 | 10 | 1 | 0 | No qualifying 100-message both-restart preservation journey or actual full iPhone/Android text/media parity; some restart labels reconstruct objects over retained memory. |
+| MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 40 | 2 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
 | GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. |
-| CALL — Voice calls, lifecycle, privacy and history | 9 | 25 | 2 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
+| CALL — Voice calls, lifecycle, privacy and history | 9 | 26 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
 | INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
 | NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. |
 | NAV — Feed, Orbit, rings, search and navigation | 0 | 10 | 0 | 1 | Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency membership and sculpt geometry must not imply that shipped editor. |
@@ -712,7 +714,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CR-009 — iPhone and Android can add each other
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** CR-009.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** CR-009.
 
 **Steps**
 
@@ -720,20 +722,29 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 2. Explicitly accept and finish reciprocal keys.
 3. Exchange first message without seeding contacts.
 
-**Conditions:** platform: available iPhone+Android parity targets; connectivity: n/a; offline: n/a; app state: foreground; input: real QR or supported manual entry; recovery: n/a.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: real QR or supported manual entry; recovery: n/a.
 
 **Expected:** Supported platforms can add each other with genuine native identity/crypto/consent.
 
 **Inspected test evidence**
 
-- [test/features/contacts/contact_request_roundtrip_test.dart](../../test/features/contacts/contact_request_roundtrip_test.dart) — `contact-request roundtrip exchanges ML-KEM key, then a v2 message decrypts` (unit).
-  - Real: actual scan/contact request/accept+reciprocal/key hydration/chat send/receive composition.
-  - Faked: passthrough message and contact-request crypto; FakeP2PNetwork/in-memory repositories; native camera bypassed.
-  - Proves / registration: test/features/contacts/contact_request_roundtrip_test.dart:243: Initial no-key message refuses; accepted reciprocal installs the missing key then an exact v2 chat reaches recipient. Crypto/ML-KEM primitive is explicitly faked, not native authenticated wire. Registered: affected-identity, host-all.
+- [test/features/contacts/contact_request_roundtrip_test.dart](../../test/features/contacts/contact_request_roundtrip_test.dart) — `CR-009/DC-011 shared protocol scanner A accepts reciprocal keys before exact bidirectional Unicode chat` (integration).
+  - Real: production request listener, explicit accept/reciprocate, persisted peer-key lookup and v2 send/receive composition; both logical initiating roles; keyless send refused; exact bidirectional Unicode text and one incoming copy.
+  - Faked: QR scan/contact insertion simulated; in-memory repositories and FakeP2PNetwork; passthrough crypto and fake native signatures/ML-KEM, not authenticated native transport.
+  - Proves / registration: test/features/contacts/contact_request_roundtrip_test.dart:245: Scanner A begins without the recipient ML-KEM key; receiver remains unlinked before acceptance, reciprocal key unlocks both v2 chat directions. Fresh full file: 3 passed, 0 skipped, exit 0 (003-contact-roundtrip-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-identity, host-all.
+- [test/features/contacts/contact_request_roundtrip_test.dart](../../test/features/contacts/contact_request_roundtrip_test.dart) — `CR-009/DC-011 shared protocol scanner B accepts reciprocal keys before exact bidirectional Unicode chat` (integration).
+  - Real: production request listener, explicit accept/reciprocate, persisted peer-key lookup and v2 send/receive composition; both logical initiating roles; keyless send refused; exact bidirectional Unicode text and one incoming copy.
+  - Faked: QR scan/contact insertion simulated; in-memory repositories and FakeP2PNetwork; passthrough crypto and fake native signatures/ML-KEM, not authenticated native transport.
+  - Proves / registration: test/features/contacts/contact_request_roundtrip_test.dart:245: Scanner B begins without the recipient ML-KEM key; receiver remains unlinked before acceptance, reciprocal key unlocks both v2 chat directions. Fresh full file: 3 passed, 0 skipped, exit 0 (003-contact-roundtrip-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-identity, host-all.
 
 **Remaining gaps**
 
-- No qualifying actual iPhone/Android add-contact parity journey established; host fake-network handshake is supporting logic only. Catalog has no selector; no targets inspected/executed here.
+- Host QR scan is simulated; native scanning, real crypto/identity authority and cross-platform fresh add remain NOT RUN. Existing physical pairing is preserved, not counted as a fresh add.
+- Runbook chooses a disposable available iOS-simulator fresh-add leg against Pixel test package, waiting for UI-Update contact/Orbit route. No iPhone identity removal, uninstall or erase.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### CR-010 — Encrypted requests never fall back to plain text
 
@@ -1714,7 +1725,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### DC-011 — iPhone and Android chat with each other
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-011.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-011.
 
 **Steps**
 
@@ -1722,19 +1733,41 @@ No qualifying active automated test found for this scoped journey.
 2. Exchange text and full image/video/voice media both directions.
 3. Verify correct content/native open/play plus recovery on each platform.
 
-**Conditions:** platform: available iPhone+Android parity targets; connectivity: n/a; offline: n/a; app state: foreground; input: bidirectional text and real media; recovery: n/a.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: bidirectional text and real media; recovery: n/a.
 
 **Expected:** Supported cross-platform peers interoperate with correct full usable content in both directions.
 
 **Inspected test evidence**
 
-No qualifying active automated test found for this scoped journey.
-
+- [test/features/contacts/contact_request_roundtrip_test.dart](../../test/features/contacts/contact_request_roundtrip_test.dart) — `CR-009/DC-011 shared protocol scanner A accepts reciprocal keys before exact bidirectional Unicode chat` (integration).
+  - Real: production request listener, explicit accept/reciprocate, persisted peer-key lookup and v2 send/receive composition; both logical initiating roles; keyless send refused; exact bidirectional Unicode text and one incoming copy.
+  - Faked: QR scan/contact insertion simulated; in-memory repositories and FakeP2PNetwork; passthrough crypto and fake native signatures/ML-KEM, not authenticated native transport.
+  - Proves / registration: test/features/contacts/contact_request_roundtrip_test.dart:245: Scanner A begins without the recipient ML-KEM key; receiver remains unlinked before acceptance, reciprocal key unlocks both v2 chat directions. Fresh full file: 3 passed, 0 skipped, exit 0 (003-contact-roundtrip-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-identity, host-all.
+- [test/features/contacts/contact_request_roundtrip_test.dart](../../test/features/contacts/contact_request_roundtrip_test.dart) — `CR-009/DC-011 shared protocol scanner B accepts reciprocal keys before exact bidirectional Unicode chat` (integration).
+  - Real: production request listener, explicit accept/reciprocate, persisted peer-key lookup and v2 send/receive composition; both logical initiating roles; keyless send refused; exact bidirectional Unicode text and one incoming copy.
+  - Faked: QR scan/contact insertion simulated; in-memory repositories and FakeP2PNetwork; passthrough crypto and fake native signatures/ML-KEM, not authenticated native transport.
+  - Proves / registration: test/features/contacts/contact_request_roundtrip_test.dart:245: Scanner B begins without the recipient ML-KEM key; receiver remains unlinked before acceptance, reciprocal key unlocks both v2 chat directions. Fresh full file: 3 passed, 0 skipped, exit 0 (003-contact-roundtrip-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-identity, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-003/DC-011 reverse logical sender preserves compressed full camera image and caption` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:141: Reverse sender/recipient identities at compressed quality; correct full prepared image and exact caption; duplicate replay leaves one durable copy. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-003/DC-011 reverse logical sender preserves original full camera image and caption` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:141: Reverse sender/recipient identities at original quality; correct full prepared image and exact caption; duplicate replay leaves one durable copy. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-002/014 compressed camera JPEG + caption opens full recipient image once over online relay` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:120: Compressed quality 85 carries the smaller 1512x2016 prepared image to full viewer/caption; replay retains exactly one message/attachment and no second download. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
 
 **Remaining gaps**
 
-- No qualifying automated full Android/iPhone text+media parity journey established. Catalog DC011 has no test selector; generic manual signed-chat-group-media requirement is not actual evidence.
-- No targets were discovered/accessed by this host-only session. Unavailable target bands are N/A under policy, not assumed blockers.
+- Host reciprocal text and real SQLite/image compositions cover shared subsets separately; they do not establish full native iPhone/Android text+image/video/voice interoperability.
+- Runbook includes both actual text directions, camera image, video, voice, reopen and exact counts; native open/play and content/audio observations remain NOT RUN.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### DC-012 — Over a mobile network
 
@@ -2171,7 +2204,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### MEDIA-002 — iPhone camera+caption to Android: Original/compressed quality over relay-only online delivery
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-008, DC-011, DC-010.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-011, DC-010.
 
 **Steps**
 
@@ -2179,39 +2212,33 @@ No qualifying active automated test found for this scoped journey.
 2. Send image+caption to Android over relay-only while both are online.
 3. On B, fully decode/open the correct original image and verify exact caption.
 
-**Conditions:** platform: iPhone store1.0.1(125) -> Android125 incident; audited source a502c06; connectivity: relay-only, both online; offline: none; app state: foreground baseline; input: actual in-app camera output+caption; Original/compressed; recovery: ordinary online delivery.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: relay-only, both online; offline: none; app state: foreground baseline; input: actual in-app camera output+caption; Original/compressed; recovery: ordinary online delivery.
 
 **Expected:** Android B fully decodes/opens the correct camera image and displays the exact caption for each selected quality over relay-only online delivery.
 
 **Inspected test evidence**
 
-- [integration_test/media_message_journey_e2e_test.dart](../../integration_test/media_message_journey_e2e_test.dart) — `real compose journeys render media for sender and receiver in 1:1 and group threads` (e2e).
-  - Real: real direct/group compose/send/listener/widget projection; real PNG fixture/grid decode.
-  - Faked: fake picker/bridge/network/in-memory repositories; two logical users in one widget graph.
-  - Proves / registration: integration_test/media_message_journey_e2e_test.dart:1093: Recipient caption text IS asserted by _expectVisibleMediaMessage:942 and grid has no broken-image icon. Main PNG case does not open full original viewer or establish real camera/cross-OS transport. Registered original runner is run_test_gates.sh:1113/full regression:403. Registered: registered legacy full inventory (exact dispatch must be inspected).
-- [test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart](../../test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart) — `sender encrypts, key rides the v2 envelope, receiver decrypts to byte-identical media` (integration).
-  - Real: production upload/send/hydrate/download use cases; actual files/byte equality.
-  - Faked: prefix/reverse fake crypto; in-memory relay/P2P/repositories; synthetic512-byte JPEG-named data.
-  - Proves / registration: test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart:232: Ciphertext differs from input, key metadata rides the v2 envelope and receiver output equals original bytes. Caption is supplied but not asserted; no real image decode/camera. Fresh audit run: all4 cases passed. Registered: affected-conversation, host-all, media-bytes.
-- [test/core/media/image_processor_test.dart](../../test/core/media/image_processor_test.dart) — `calls compress with quality 100 when preference is original` (unit).
-  - Real: actual quality argument selection.
-  - Faked: compressor callback.
-  - Proves / registration: test/core/media/image_processor_test.dart:83: Original passes quality100; neighboring compressed case passes85 and both strip EXIF. Native output format/codec, real camera MIME/bytes and recipient readability are not established. Registered: affected-media, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `Original camera JPEG + caption opens full recipient image over online relay` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:106: Original quality 100 and EXIF removal request reach compression boundary; recipient opens 3024x4032 prepared image with exact bytes and caption. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-002/014 compressed camera JPEG + caption opens full recipient image once over online relay` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:120: Compressed quality 85 carries the smaller 1512x2016 prepared image to full viewer/caption; replay retains exactly one message/attachment and no second download. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
 
 **Remaining gaps**
 
-- No qualifying assertion found joining actual iPhone camera output/quality to Android full correct image decode/open AND caption over relay-only online delivery.
-- Existing fake PNG compose assertion DOES check received caption/grid; it does not open the full original. Byte equality and native quality arguments are separate narrower tests.
-- Store1.0.1(125) Original-quality incident/default-quality non-reproduction are owner reports, not execution results against audited source.
+- Native iPhone camera/compression and actual Android full received-file decode over a witnessed relay-only route remain NOT RUN; prepared-image/XOR host results do not establish them.
+- Runbook supplies separate Original/compressed Appium cases and full-file/caption/duplicate oracles. Historical stock125 incident and real camera MIME remain unverified.
 
 **Open questions**
 
-- What are the actual Original camera MIME and encoded bytes? Do not assume HEIC.
-- Which registered assertion joins actual iPhone camera output to Android full correct decode/open and exact caption?
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### MEDIA-003 — Android camera photo plus caption to iPhone receiver
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-008, DC-011.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-011.
 
 **Steps**
 
@@ -2219,24 +2246,29 @@ No qualifying active automated test found for this scoped journey.
 2. Send to an iPhone contact.
 3. Open/decode full received image and verify caption.
 
-**Conditions:** platform: Android camera sender -> iPhone receiver; connectivity: direct/relay supported path; offline: n/a; app state: foreground; input: actual camera image+caption; recovery: n/a.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: direct/relay supported path; offline: n/a; app state: foreground; input: actual camera image+caption; recovery: n/a.
 
 **Expected:** The cross-platform recipient opens the actual Android camera image with exact caption.
 
 **Inspected test evidence**
 
-- [integration_test/media_message_journey_e2e_test.dart](../../integration_test/media_message_journey_e2e_test.dart) — `real compose journeys render media for sender and receiver in 1:1 and group threads` (e2e).
-  - Real: real direct/group compose/send/listener/widget projection; real PNG fixture/grid decode.
-  - Faked: fake picker/bridge/network/in-memory repositories; two logical users in one widget graph.
-  - Proves / registration: integration_test/media_message_journey_e2e_test.dart:1093: Recipient caption text IS asserted by _expectVisibleMediaMessage:942 and grid has no broken-image icon. Main PNG case does not open full original viewer or establish real camera/cross-OS transport. Registered original runner is run_test_gates.sh:1113/full regression:403. Registered: registered legacy full inventory (exact dispatch must be inspected).
-- [test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart](../../test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart) — `sender encrypts, key rides the v2 envelope, receiver decrypts to byte-identical media` (integration).
-  - Real: production upload/send/hydrate/download use cases; actual files/byte equality.
-  - Faked: prefix/reverse fake crypto; in-memory relay/P2P/repositories; synthetic512-byte JPEG-named data.
-  - Proves / registration: test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart:232: Ciphertext differs from input, key metadata rides the v2 envelope and receiver output equals original bytes. Caption is supplied but not asserted; no real image decode/camera. Fresh audit run: all4 cases passed. Registered: affected-conversation, host-all, media-bytes.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-003/DC-011 reverse logical sender preserves compressed full camera image and caption` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:141: Reverse sender/recipient identities at compressed quality; correct full prepared image and exact caption; duplicate replay leaves one durable copy. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-003/DC-011 reverse logical sender preserves original full camera image and caption` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:141: Reverse sender/recipient identities at original quality; correct full prepared image and exact caption; duplicate replay leaves one durable copy. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
 
 **Remaining gaps**
 
-- No qualifying Android-camera-to-iPhone full-original+caption assertion found. Fake logical users on one platform and synthetic byte roundtrip do not establish parity.
+- Reverse logical identities exercise shared data ownership only; no native Android camera, iPhone decoder or cross-OS transport executed.
+- Runbook requires actual reverse camera capture, full file, exact caption and duplicate checks for both quality choices.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### MEDIA-004 — Gallery JPEG/PNG photo plus caption to the recipient
 
@@ -2552,7 +2584,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### MEDIA-014 — iPhone camera+caption to offline Android: Original/compressed quality, relay inbox catch-up
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** DC-003, DC-008, DC-011.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-003, DC-008, DC-011.
 
 **Steps**
 
@@ -2560,39 +2592,29 @@ No qualifying active automated test found for this scoped journey.
 2. Keep Android B offline while sending through relay inbox custody.
 3. Bring B online/restart, catch up once, then fully decode/open correct image and verify exact caption.
 
-**Conditions:** platform: iPhone store1.0.1(125) -> Android125 incident; source a502c06; connectivity: sender online relay; recipient offline then reconnects; offline: Android recipient offline during send; app state: recipient closed/restarted before catch-up; input: actual in-app camera output+caption; Original/compressed; recovery: relay inbox catch-up exactly once.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: sender online relay; recipient offline then reconnects; offline: Android recipient offline during send; app state: recipient closed/restarted before catch-up; input: actual in-app camera output+caption; Original/compressed; recovery: relay inbox catch-up exactly once.
 
 **Expected:** B receives exactly one complete correct camera image, fully decodes/opens it and shows the exact caption after relay inbox catch-up.
 
 **Inspected test evidence**
 
-- [test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart](../../test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart) — `sender encrypts, key rides the v2 envelope, receiver decrypts to byte-identical media` (integration).
-  - Real: production upload/send/hydrate/download use cases; actual files/byte equality.
-  - Faked: prefix/reverse fake crypto; in-memory relay/P2P/repositories; synthetic512-byte JPEG-named data.
-  - Proves / registration: test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart:232: Ciphertext differs from input, key metadata rides the v2 envelope and receiver output equals original bytes. Caption is supplied but not asserted; no real image decode/camera. Fresh audit run: all4 cases passed. Registered: affected-conversation, host-all, media-bytes.
-- [integration_test/media_message_journey_e2e_test.dart](../../integration_test/media_message_journey_e2e_test.dart) — `real compose journeys render media for sender and receiver in 1:1 and group threads` (e2e).
-  - Real: real direct/group compose/send/listener/widget projection; real PNG fixture/grid decode.
-  - Faked: fake picker/bridge/network/in-memory repositories; two logical users in one widget graph.
-  - Proves / registration: integration_test/media_message_journey_e2e_test.dart:1093: Recipient caption text IS asserted by _expectVisibleMediaMessage:942 and grid has no broken-image icon. Main PNG case does not open full original viewer or establish real camera/cross-OS transport. Registered original runner is run_test_gates.sh:1113/full regression:403. Registered: registered legacy full inventory (exact dispatch must be inspected).
-- [test/features/share/integration/external_share_media_custody_recovery_test.dart](../../test/features/share/integration/external_share_media_custody_recovery_test.dart) — `TC-348-03 committed external share survives unusable preview and restart` (integration).
-  - Real: DefaultShareBatchDeliveryCoordinator; production current FFI SQLite repos; real files/reopen and strict custody/retry owners.
-  - Faked: strict bridge crypto/upload and P2P/inbox; image processing and identity/contact repos; strict feature flag enabled.
-  - Proves / registration: test/features/share/integration/external_share_media_custody_recovery_test.dart:36: Committed parent/attachment custody survives lost/unusable preview and DB reopen, retries authoritative bytes once, then records one inbox store. Synthetic JPEG bytes/no recipient decoder and default-off cohort limits apply. Registered: affected-media, host-all.
-- [test/core/media/image_processor_test.dart](../../test/core/media/image_processor_test.dart) — `calls compress with quality 100 when preference is original` (unit).
-  - Real: actual quality argument selection.
-  - Faked: compressor callback.
-  - Proves / registration: test/core/media/image_processor_test.dart:83: Original passes quality100; neighboring compressed case passes85 and both strip EXIF. Native output format/codec, real camera MIME/bytes and recipient readability are not established. Registered: affected-media, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `Original camera JPEG + caption opens full recipient image over offline inbox catch-up` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:106: Real durable inbox staging/drain at Original quality 100 and EXIF removal request reach compression boundary; recipient opens 3024x4032 prepared image with exact bytes and caption. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
+- [test/features/conversation/integration/camera_caption_relay_delivery_test.dart](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart) — `MEDIA-002/014 compressed camera JPEG + caption opens full recipient image once over offline inbox catch-up` (integration).
+  - Real: ImageProcessor quality/EXIF argument selection; production upload/send/receive and inbox staging/replay; current SQLite repositories and real files; hash equality; grid admission and full received-image decode/caption.
+  - Faked: native compressor returns a prepared real JPEG; no camera or platform execution; XOR bridge crypto, fake relay/P2P; endpoint reversal changes identities, not operating systems.
+  - Proves / registration: test/features/conversation/integration/camera_caption_relay_delivery_test.dart:120: Real durable inbox staging/drain at compressed quality 85 carries the smaller 1512x2016 prepared image to full viewer/caption; replay retains exactly one message/attachment and no second download. Fresh final file: 19 passed, one pre-existing mixed-relay KNOWN GAP skipped, exit 0; 006-camera-final-summary.json/receipt under .codex-test-logs/astra-groupCD. Registered: media-bytes, affected-conversation, host-all.
 
 **Remaining gaps**
 
-- No qualifying assertion found combining actual iPhone Original/compressed camera bytes, recipient-offline relay inbox catch-up, Android full correct decode/open AND caption/exactly once.
-- Strict local custody restart tests explicitly enable a newer cohort and use fake crypto/network; they cannot certify legacy store125 camera behavior.
-- Default-quality non-reproduction is owner-reported, not an audit test result or proof for Original quality.
+- Host uses real SQLite staging/drain and full files but fake transport/crypto/compressor; no actual offline Android process/candidate or native camera run.
+- Runbook preserves sender online relay custody, recipient offline/relaunch, automatic catch-up and exactly-once full-file/caption requirements; actual execution NOT RUN.
 
 **Open questions**
 
-- Actual Original camera MIME/encoded bytes remain unknown; do not assume HEIC.
-- Which exact artifact/quality pair reproduces or disproves full decode/open plus caption after inbox catch-up?
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### MEDIA-015 — Local Wi-Fi without internet delivers media locally, separately from deferred internet delivery
 
@@ -4610,7 +4632,7 @@ No qualifying active automated test found for this scoped journey.
 
 #### VC-015 — iPhone and Android can call each other both ways
 
-**Coverage:** missing. **Execution:** not_run. **Catalog:** VC-015.
+**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-015.
 
 **Steps**
 
@@ -4618,20 +4640,29 @@ No qualifying active automated test found for this scoped journey.
 2. Verify intelligible bidirectional audio.
 3. End both directions and release resources.
 
-**Conditions:** platform: available iOS+Android parity pair; connectivity: n/a; offline: n/a; app state: foreground; input: actual audio in both call directions; recovery: n/a.
+**Conditions:** platform: available iPhone/Android parity targets; current evidence is shared Dart host only; connectivity: n/a; offline: n/a; app state: foreground; input: actual audio in both call directions; recovery: n/a.
 
 **Expected:** The shipped iPhone and Android candidates each initiate and answer a call with the other platform, exchange audible audio and terminate cleanly.
 
 **Inspected test evidence**
 
-- [integration_test/scripts/android_production_audio_call_campaign.dart](../../integration_test/scripts/android_production_audio_call_campaign.dart) — `android.production_1to1_audio_call` (sims).
-  - Real: production app semantic start/native answer and real Android WebRTC RTP; same APK; physical Android+emulator; exact call-bound observers; actual native cleanup and bounded evidence validation.
-  - Faked: disposable local relay/coturn and fresh contacts; separate host Pion known-Opus oracle; this does not substitute for app RTP.
-  - Proves / registration: integration_test/scripts/android_production_audio_call_campaign.dart:539: executeAndroidProductionAudioCallCampaign exercises mute/speaker/emulator hangup and verifies both native calls released. integration_test/support/android_production_audio_call_evidence.dart:448 requires all controls, :465 cleanup, :487 both app RTP directions plus independent Pion fixture. Registered android.production_1to1_audio_call; no human audibility/content fidelity claim or run here. Registered: see cited native runner/manifest.
+- [test/features/call/integration/muted_call_connection_decisions_test.dart](../../test/features/call/integration/muted_call_connection_decisions_test.dart) — `VC-015 shared protocol caller A negotiates both owners and callee hangup releases both` (integration).
+  - Real: two production CallCoordinators, real envelope codec/router/control/negotiation adapters and FlutterWebRtcCallEngine; SQLite history; both offer/answer directions; callee terminal releases both call/session owners once.
+  - Faked: native WebRTC snapshots/SDP/RTP flags, audio-session ownership and crypto primitive; in-process transport queue and trusted endpoint/roster authority; no actual platform or audio.
+  - Proves / registration: test/features/call/integration/muted_call_connection_decisions_test.dart:66: Caller A negotiates through reciprocal signaling to two structurally ready connected owners; answerer hangup crosses the envelope path and leaves one native close and correct local/remote terminal history each. Fresh full file: 6 passed, 0 skipped, exit 0 (004-call-roles-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-calls, host-all.
+- [test/features/call/integration/muted_call_connection_decisions_test.dart](../../test/features/call/integration/muted_call_connection_decisions_test.dart) — `VC-015 shared protocol caller B negotiates both owners and callee hangup releases both` (integration).
+  - Real: two production CallCoordinators, real envelope codec/router/control/negotiation adapters and FlutterWebRtcCallEngine; SQLite history; both offer/answer directions; callee terminal releases both call/session owners once.
+  - Faked: native WebRTC snapshots/SDP/RTP flags, audio-session ownership and crypto primitive; in-process transport queue and trusted endpoint/roster authority; no actual platform or audio.
+  - Proves / registration: test/features/call/integration/muted_call_connection_decisions_test.dart:66: Caller B negotiates through reciprocal signaling to two structurally ready connected owners; answerer hangup crosses the envelope path and leaves one native close and correct local/remote terminal history each. Fresh full file: 6 passed, 0 skipped, exit 0 (004-call-roles-summary.json/receipt under .codex-test-logs/astra-groupCD). Registered: affected-calls, host-all.
 
 **Remaining gaps**
 
-- Android-to-Android RTP campaign is adjacent only. No qualifying actual cross-platform bidirectional call/audio journey found; unavailable topology N/A by policy.
+- Two real Dart call/signaling graphs with native/crypto/transport fakes prove role reversal and cleanup decisions, not actual iOS/Android calls, RTP packets or intelligible audio.
+- Runbook requires both initiation/answer directions, real call-bound RTP, audibility/content observation and native cleanup; actual device/manual execution NOT RUN.
+
+**Open questions**
+
+- Device run instructions: docs/testing/astra-group-c-device-runbook.md; execute only through flutter_app on currently available pinned targets.
 
 #### VC-016 — Declined, cancelled, unanswered and overlapping calls end cleanly
 

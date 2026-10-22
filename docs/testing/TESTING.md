@@ -2304,6 +2304,14 @@ Focused causal failures and verified host results are retained under
 `.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
 native cryptography proofs.
 
+The shared contact-request roundtrip also reverses the initiating logical peer,
+requires the receiver to remain unlinked before explicit acceptance, and uses
+the reciprocal key for exact Unicode/multiline text in both directions. Its QR
+scan is simulated and its repositories/network/native crypto are faked; this
+does not certify a physical iPhone/Android fresh add. Preserve the existing
+physical pairing; the [Group C device runbook](astra-group-c-device-runbook.md)
+defines a separate disposable available-simulator leg after UI-Update lands.
+
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release
@@ -2360,6 +2368,11 @@ two production Dart call graphs and SQL histories through native/WebRTC/transpor
 fakes (`.codex-test-logs/astra-it4/VC-012-final.log`, four passing cases).
 Actual bidirectional RTP, microphone privacy and acoustic behavior remain device
 obligations; simulated native snapshots cannot certify them.
+The same paired call fixture reverses caller/answerer roles through the real
+envelope/router/negotiation adapters, then ends from the answering side. Both
+native-bound owners close once and both SQLite histories retain the correct
+local/remote terminal reason. This is shared protocol/ownership evidence for
+VC-015, with native WebRTC, transport, authority, crypto and audio still faked.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
@@ -4006,6 +4019,21 @@ visible and cannot become an ordinary first-attempt PASS.
   Raw first attempts and final check receipts are retained in
   `build/kayan-safe/media-unavailable/logs/`; fixture/setup failures must stay
   distinguished from product regression failures and passing scenarios.
+
+   The camera fixture now joins both Original (quality 100) and Compressed
+   (quality 85) argument selection to separate prepared real JPEG dimensions,
+   full recipient decode/caption and replay deduplication. Reversed logical
+   sender identities cover the other data-owner direction; they are not an OS
+   simulation. Group C focused validation on base `f14f7d369` / tests
+   `6ce42d583` passed 28 cases across the camera, contact-roundtrip and paired
+   call files, with the one existing mixed-relay KNOWN GAP skip. The first full
+   camera attempt was resource-aborted at swapouts +37,768 pages before any
+   completed case and is not a pass; its later complete 19-pass/one-skip run had
+   zero swap-out delta. Keep both under `.codex-test-logs/astra-groupCD/`.
+   Native capture/compression, witnessed relay-only delivery, actual platform
+   video/voice/open and audible calls remain separate obligations in the
+   [Group C Appium runbook](astra-group-c-device-runbook.md); no device run or
+   broad affected lane/full host-all result is implied by these host checks.
 
   Current [relay store source](../../go-relay-server/media.go) persists blob
   metadata in disk sidecars and loads it on restart. The June reliability
