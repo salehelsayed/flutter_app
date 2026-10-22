@@ -397,11 +397,17 @@ final class NotificationTapUITests: XCTestCase {
   /// intentionally idempotent so the next Sims row never inherits airplane
   /// mode from an interrupted run.
   func testRestorePayloadFastPathNetwork() throws {
+    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
+    let app = XCUIApplication(bundleIdentifier: bundleId)
+    // A Local Network alert left on screen swallows the Control Center gesture.
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: XCUIApplication(bundleIdentifier: "com.apple.springboard"),
+      timeout: 3
+    )
     guard try setAirplaneMode(false) else {
       return
     }
-    let bundleId = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_BUNDLE_ID"] ?? "com.mknoon.app"
-    let app = XCUIApplication(bundleIdentifier: bundleId)
     app.terminate()
     guard app.wait(for: .notRunning, timeout: 5) else {
       XCTFail("Payload fast-path cleanup app did not terminate")
@@ -1461,11 +1467,19 @@ final class NotificationTapUITests: XCTestCase {
       springboard: springboard,
       timeout: max(preBackgroundWait, 15)
     )
+    // On a fresh install iOS can queue Local Network behind Notifications, so
+    // it only appears once the Notifications alert closes.
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 8
+    )
     RunLoop.current.run(until: Date().addingTimeInterval(2))
     XCUIDevice.shared.press(.home)
     XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 10))
     unlockSpringboardIfNeeded(springboard)
     settleOnSpringboard()
+    requireLocalNetworkAlertCleared(app: app, springboard: springboard)
     emitReadyMarker(mode: "warm", title: title)
   }
 
@@ -1605,6 +1619,35 @@ final class NotificationTapUITests: XCTestCase {
       permission: "local_network",
       timeout: timeout
     )
+  }
+
+  /// Fails with a named reason instead of letting a Local Network alert block
+  /// the later bootstrap launches and Control Center gestures.
+  private func requireLocalNetworkAlertCleared(
+    app: XCUIApplication,
+    springboard: XCUIApplication
+  ) {
+    allowLocalNetworkPromptIfPresent(
+      in: app,
+      springboard: springboard,
+      timeout: 3
+    )
+    if localNetworkAlertVisible(in: [app, springboard]) {
+      XCTFail("local_network_alert_not_cleared: the iOS Local Network alert is still on screen")
+    }
+  }
+
+  private func localNetworkAlertVisible(in applications: [XCUIApplication]) -> Bool {
+    let predicate = NSPredicate(
+      format: "label CONTAINS[c] %@ OR value CONTAINS[c] %@",
+      "Local Network",
+      "Local Network"
+    )
+    return applications.contains { application in
+      let alert = application.alerts.firstMatch
+      return alert.exists
+        && alert.descendants(matching: .staticText).matching(predicate).firstMatch.exists
+    }
   }
 
   /// Grants only the iOS "Would Like to Send You Notifications" alert.

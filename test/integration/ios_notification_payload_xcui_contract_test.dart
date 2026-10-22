@@ -1177,6 +1177,63 @@ void main() {
     expect(cleanup, contains('if (!_uiCleanupComplete && lastFailure != null) throw lastFailure;'));
   });
 
+  test('a late Local Network alert is accepted or named before the bootstrap', () {
+    final source = File(
+      'ios/RunnerUITests/NotificationTapUITests.swift',
+    ).readAsStringSync();
+    final prepare = _between(
+      source,
+      'private func prepareWarmNotificationTap()',
+      'private func prepareColdNotificationTap()',
+    );
+    final notifications = prepare.indexOf('allowNotificationPromptIfPresent(');
+    final lateLocalNetwork = prepare.lastIndexOf('allowLocalNetworkPromptIfPresent(');
+    expect(
+      lateLocalNetwork,
+      greaterThan(notifications),
+      reason: 'iOS can raise Local Network after the Notifications alert closes',
+    );
+    expect(
+      prepare.indexOf('requireLocalNetworkAlertCleared('),
+      greaterThan(prepare.indexOf('XCUIDevice.shared.press(.home)')),
+    );
+    expect(
+      prepare.indexOf('requireLocalNetworkAlertCleared('),
+      lessThan(prepare.indexOf('emitReadyMarker(')),
+    );
+    final guardHelper = _between(
+      source,
+      'private func requireLocalNetworkAlertCleared(',
+      'private func localNetworkAlertVisible(',
+    );
+    expect(guardHelper, contains('allowLocalNetworkPromptIfPresent('));
+    expect(guardHelper, contains('XCTFail("local_network_alert_not_cleared'));
+    final restore = _between(
+      source,
+      'func testRestorePayloadFastPathNetwork()',
+      'func testReactionNotificationTap()',
+    );
+    expect(
+      restore.indexOf('allowLocalNetworkPromptIfPresent('),
+      lessThan(restore.indexOf('setAirplaneMode(false)')),
+      reason: 'a Local Network alert swallows the Control Center gesture',
+    );
+
+    final driver = File(
+      'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+    ).readAsStringSync();
+    final runXcui = _between(
+      driver,
+      'Future<String> _runXcui(String selector, String label)',
+      'Future<Map<String, Object?>> _runProviderSetup()',
+    );
+    expect(runXcui, contains("combined.contains('local_network_alert_not_cleared')"));
+    expect(
+      runXcui,
+      contains('The iOS Local Network alert could not be cleared (local_network_alert_not_cleared).'),
+    );
+  });
+
   test('airplane switch automation is exact, localized, and tri-state', () {
     final source = File(
       'ios/RunnerUITests/NotificationTapUITests.swift',

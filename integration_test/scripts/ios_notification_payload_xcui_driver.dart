@@ -2322,6 +2322,13 @@ final class _IosPayloadDriver {
     final log = File('${options.captureDirectory.path}/$label.xcode.log')
       ..writeAsStringSync(_redactUiText(combined), flush: true);
     _uiLogs.add(log);
+    if (result.exitCode != 0 &&
+        combined.contains('local_network_alert_not_cleared')) {
+      throw _DriverFailure(
+        'The iOS Local Network alert could not be cleared (local_network_alert_not_cleared).',
+        _assertionsAttempted,
+      );
+    }
     if (result.exitCode != 0) {
       throw _xcodeFailure(
         'Physical XCUITest selector $selector failed.',
