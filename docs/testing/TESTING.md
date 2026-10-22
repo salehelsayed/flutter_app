@@ -3188,6 +3188,12 @@ and `proposed-notification-readiness-probe-001.log`. Preserve the initial five
 timeout errors in `pilot-device-002/workflow-1.raw.log`. The protected legacy
 registry must bind the approved harness bytes; its former digest correctly
 blocked execution in `pilot-device-003/workflow-1.raw.log`.
+  Shared fixture-helper changes likewise invalidate each protected route that
+  pins that helper. The bounded direct-media fixture timeout update required
+  four reviewed invite-reliability source hashes to be refreshed. Exact-selection,
+  protected-runner subprocess and changed-owner refusal controls then passed;
+  the first rejection and focused result remain under
+  `.codex-test-logs/integrate-main-20261023/`.
 The notification matrix's first attempt passed three warm cases, then failed
 to locate the group-image body while Springboard logged XPC interruptions.
 Later actual MCP inspection found the exact delivered card. Its focused native
