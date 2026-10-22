@@ -7,6 +7,7 @@ import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/handle_incoming_call_signal.dart';
+import 'package:flutter_app/features/call/application/ringing_call_mailbox_poller.dart';
 import 'package:flutter_app/features/call/application/call_signaling_context_store.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
@@ -295,7 +296,9 @@ _runtimeWithRealHandler({
   required _RuntimeCrypto crypto,
   CallEffectExecutor effects = const NoopCallEffectExecutor(),
   PrepareCallMailboxSettlement? prepareMailboxSettlement,
+  FutureOr<bool> Function()? networkEffectsAllowed,
 }) async {
+  final canUseNetwork = networkEffectsAllowed ?? () => true;
   final coordinator = _coordinator(effects: effects);
   final presenter = _RuntimePresenter();
   final signalingContexts = CallSignalingContextStore();
@@ -314,7 +317,7 @@ _runtimeWithRealHandler({
       mlKemSecretKey: 'recipient-mlkem-secret',
     ),
     incomingCallPresenter: presenter,
-    networkEffectsAllowed: () => true,
+    networkEffectsAllowed: canUseNetwork,
     signalingContextObserver: signalingContexts,
   );
   return (
@@ -334,7 +337,7 @@ _runtimeWithRealHandler({
       prepareMailboxSettlement: prepareMailboxSettlement,
       peekIncoming: handler.peek,
       coordinator: coordinator,
-      networkEffectsAllowed: () => true,
+      networkEffectsAllowed: canUseNetwork,
     ),
     coordinator: coordinator,
     presenter: presenter,
@@ -483,6 +486,103 @@ void _queueEvent(_Mailbox mailbox, CallMailboxEvent event) => mailbox.pages.add(
 );
 
 void main() {
+  for (final scenario in [
+    'store-only',
+    'expired',
+    'cancelled',
+    'network denied',
+  ]) {
+    test(
+      'foreground idle poll authenticates $scenario mailbox invite without wake',
+      () async {
+        final stream = StreamController<ChatMessage>.broadcast();
+        final mailbox = _Mailbox();
+        final crypto = _RuntimeCrypto();
+        var allowed = true;
+        final built = await _runtimeWithRealHandler(
+          directStream: stream.stream,
+          mailbox: mailbox,
+          crypto: crypto,
+          networkEffectsAllowed: () => allowed,
+        );
+        addTearDown(() async {
+          await built.runtime.shutdown();
+          await stream.close();
+          await built.coordinator.dispose();
+        });
+        await built.runtime.start();
+        expect(mailbox.retrieves, 1);
+        expect(built.coordinator.activeSession, isNull);
+        var signal = _runtimeSignal(
+          messageId: '11111111-1111-4111-8111-111111111111',
+          event: CallSignalType.invite,
+          sequence: 1,
+        );
+        if (scenario == 'expired') {
+          signal = CallSignal.fromMap({
+            ...signal.toMap(),
+            'created_at_ms': _runtimeNowMs - 45001,
+            'expires_at_ms': _runtimeNowMs - 1,
+          });
+        }
+        final events = [
+          CallMailboxEvent(
+            callHandle: '33333333-3333-4333-8333-333333333333',
+            messageId: signal.messageId,
+            authenticatedSenderDevicePeerId: 'sender-device',
+            recipientDevicePeerId: 'recipient-device',
+            envelopeJson: await _runtimeEncodeUnchecked(crypto, signal),
+            receiptAtMs: _runtimeNowMs,
+            expiresAtMs: signal.expiresAtMs,
+          ),
+          if (scenario == 'cancelled') await _terminalMailboxEvent(built.codec),
+        ];
+        mailbox.pages.add(
+          CallMailboxRetrieveResult(
+            events: events,
+            receiptAtMs: _runtimeNowMs,
+            expiresAtMs: signal.expiresAtMs,
+            hasMore: false,
+          ),
+        );
+        late void Function() tick;
+        Future<void>? drain;
+        final poller = RingingCallMailboxPoller(
+          drain: () => drain = built.runtime.onResume(),
+          schedule: (interval, onTick) {
+            expect(interval, const Duration(seconds: 4));
+            tick = onTick;
+            return RingingCallMailboxPollHandle(() {});
+          },
+        );
+        addTearDown(poller.dispose);
+        poller.onSession(null, foreground: true);
+        if (scenario == 'network denied') {
+          allowed = false;
+          tick();
+          await drain;
+          await Future<void>.delayed(Duration.zero);
+          expect(mailbox.retrieves, 1);
+          expect(mailbox.pages, hasLength(1));
+          expect(built.presenter.presentations, 0);
+          allowed = true;
+        }
+        tick();
+        await drain;
+        expect(mailbox.retrieves, 2);
+        expect(mailbox.pages, isEmpty);
+        if (scenario == 'expired' || scenario == 'cancelled') {
+          expect(built.presenter.presentations, 0);
+          expect(built.coordinator.activeSession, isNull);
+        } else {
+          expect(built.presenter.presentations, 1);
+          expect(built.coordinator.activeSession?.state, CallState.ringing);
+          expect(mailbox.acks, 1);
+        }
+      },
+    );
+  }
+
   test(
     'active call renews exact mailbox routing and still drains new invites',
     () async {

@@ -24,7 +24,8 @@ RingingCallMailboxPollHandle _defaultSchedule(
   return RingingCallMailboxPollHandle(timer.cancel);
 }
 
-/// Drains throughout the canonical call lifecycle. The relay suppresses iOS
+/// Discovers stored invites while idle in the foreground, and drains
+/// throughout the canonical call lifecycle. The relay suppresses iOS
 /// wakes after the first acknowledgement, including for SDP, ICE and hang-up.
 /// Keeping one non-overlapping poll alive preserves that fallback even when
 /// direct signaling fails after ringing or the native call hides the app UI.
@@ -32,6 +33,7 @@ final class RingingCallMailboxPoller {
   RingingCallMailboxPoller({
     required Future<void> Function() drain,
     this.interval = const Duration(seconds: 2),
+    this.foregroundIdleInterval = const Duration(seconds: 4),
     RingingCallMailboxPollSchedule? schedule,
   }) : _drain = drain,
        _schedule = schedule ?? _defaultSchedule;
@@ -39,25 +41,31 @@ final class RingingCallMailboxPoller {
   final Future<void> Function() _drain;
   final RingingCallMailboxPollSchedule _schedule;
   final Duration interval;
+  final Duration foregroundIdleInterval;
 
   RingingCallMailboxPollHandle? _handle;
+  Duration? _scheduledInterval;
   bool _draining = false;
+  bool _disposed = false;
 
   /// Feed canonical snapshots independently of foreground presentation.
-  void onSession(CallSessionSnapshot? snapshot) {
+  void onSession(CallSessionSnapshot? snapshot, {bool foreground = false}) {
+    if (_disposed) return;
     final live = snapshot != null && !snapshot.isIdle && !snapshot.isTerminal;
-    if (live) {
-      // Already polling this call: restarting would reset the interval on
-      // every unrelated snapshot and could starve the drain entirely.
-      _handle ??= _schedule(interval, _onTick);
-      return;
-    }
+    final nextInterval = live
+        ? interval
+        : (foreground ? foregroundIdleInterval : null);
+    // Unrelated snapshots must not reset the interval and starve retrieval.
+    if (_scheduledInterval == nextInterval) return;
     _stop();
+    if (nextInterval == null) return;
+    _scheduledInterval = nextInterval;
+    _handle = _schedule(nextInterval, _onTick);
   }
 
   void _onTick() {
     // A slow drain must never stack: the next tick is simply skipped.
-    if (_draining) return;
+    if (_handle == null || _draining) return;
     _draining = true;
     unawaited(
       _drain()
@@ -72,8 +80,12 @@ final class RingingCallMailboxPoller {
   void _stop() {
     final handle = _handle;
     _handle = null;
+    _scheduledInterval = null;
     handle?.cancel();
   }
 
-  void dispose() => _stop();
+  void dispose() {
+    _disposed = true;
+    _stop();
+  }
 }

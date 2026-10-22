@@ -107,6 +107,7 @@ final class _Graph
   final bool throwOnStart;
   final bool throwOnAdvertise;
   Future<bool> Function()? onAdvertise;
+  Future<void> Function()? onMailboxDrain;
   final StreamController<void> callabilityInvalidationsController =
       StreamController<void>.broadcast(sync: true);
 
@@ -240,6 +241,7 @@ final class _Graph
   @override
   Future<void> drainCallMailbox() async {
     events.add('call_mailbox_drain');
+    await onMailboxDrain?.call();
   }
 
   @override
@@ -1400,6 +1402,90 @@ void main() {
       );
     },
   );
+
+  for (final platform in CallEndpointPlatform.values) {
+    test(
+      'foreground idle mailbox polling respects ${platform.name} lifecycle',
+      () {
+        fakeAsync((time) {
+          final events = <String>[];
+          var foreground = true;
+          final graph = _Graph(events);
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: platform,
+            isForeground: () => foreground,
+            awaitReadiness: () async {},
+            buildGraph: () async => graph,
+          );
+          unawaited(composition.start());
+          time.flushMicrotasks();
+          expect(composition.isStarted, isTrue);
+          expect(composition.current, isNull);
+          events.clear();
+          time.elapse(const Duration(seconds: 3));
+          expect(events, isEmpty);
+          time.elapse(const Duration(seconds: 1));
+          expect(events, ['call_mailbox_drain']);
+
+          foreground = false;
+          unawaited(composition.onBackgrounded());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 12));
+          expect(events, isEmpty);
+          expect(time.periodicTimerCount, 0);
+
+          foreground = true;
+          unawaited(composition.onResume());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 4));
+          expect(events, ['call_mailbox_drain']);
+          expect(time.periodicTimerCount, 1);
+          unawaited(composition.shutdown());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 20));
+          expect(events, isEmpty);
+          expect(time.periodicTimerCount, 0);
+        });
+      },
+    );
+  }
+
+  test('foreground idle mailbox polling follows graph replacement', () async {
+    final oldEvents = <String>[];
+    final newEvents = <String>[];
+    final oldGraph = _Graph(oldEvents, advertisementResults: [true, false]);
+    final newGraph = _Graph(newEvents);
+    final drained = Completer<void>();
+    newGraph.onMailboxDrain = () async {
+      if (!drained.isCompleted) drained.complete();
+    };
+    var builds = 0;
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.android,
+      isForeground: () => true,
+      awaitReadiness: () async {},
+      buildGraph: () async => builds++ == 0 ? oldGraph : newGraph,
+    );
+    addTearDown(composition.shutdown);
+    await composition.start();
+    await composition.onContactEligibilityChanged();
+    expect(composition.isStarted, isFalse);
+    expect(oldEvents, contains('call_shutdown'));
+    await composition.start();
+    expect(composition.isStarted, isTrue);
+    expect(builds, 2);
+    oldEvents.clear();
+    newEvents.clear();
+    oldGraph.emitForeground(_projection(state: CallState.connected));
+    await drained.future.timeout(const Duration(seconds: 8));
+    expect(oldEvents, isEmpty);
+    expect(newEvents, ['call_mailbox_drain']);
+  });
 
   test(
     'mailbox polling follows native calls through hidden and background states',

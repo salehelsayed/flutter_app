@@ -7635,6 +7635,26 @@ visible and cannot become an ordinary first-attempt PASS.
   for unrelated changes and device/release obligations. The original red probe
   and first cleanup-ordering regression remain preserved. These are host
   queue/custody proofs, not audible-media or signed-device certification.
+  **Foreground idle call discovery:** a stored call invite could remain unread
+  after the callee's startup drain when direct delivery failed and no wake
+  arrived. Owner task `m-a51a5832`, with cadence approval `m-568058b5`,
+  extends the existing canonical mailbox poller to foreground idle time every
+  four seconds. Its live-call interval stays two seconds, including hidden or
+  background native calls. Idle polling stops on background, graph withdrawal
+  and shutdown; unrelated snapshots do not restart the interval, and a slow
+  drain stays single across cadence changes. This adds at most 15 idle drain
+  attempts per minute; an empty pending mailbox normally takes one client
+  retrieve, with existing relay routing and pagination unchanged.
+  The existing runtime still owns network/migration readiness, authenticated
+  admission, expiry, superseded invites, bounded ingress and ACK custody.
+  The full poller/composition/runtime host files pass 213 active cases with
+  zero skips, including store-only discovery without direct traffic or wake,
+  denied-network recovery, expired/cancelled refusal, lifecycle stop/resume,
+  graph replacement and slow-drain coalescing. Three missing-drain RED
+  assertions and the first graph-replacement fixture failure remain in
+  `.codex-test-logs/call-idle-poll-20261022/`. These are host scheduling and
+  authenticated-admission proofs, not phone ringing latency, battery cost,
+  native transport repair, provider delivery or signed-device certification.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

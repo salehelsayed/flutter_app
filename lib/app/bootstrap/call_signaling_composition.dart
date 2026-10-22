@@ -195,9 +195,9 @@ final class CallSignalingComposition
   final Completer<void> _terminalSignal = Completer<void>();
   ForegroundCallProjection? _foregroundCurrent;
 
-  /// Native calls keep receiving mailbox control even with no visible overlay.
+  /// Idle foreground discovery shares the native call's canonical drain.
   late final RingingCallMailboxPoller _ringingPoller = RingingCallMailboxPoller(
-    drain: _drainCallMailboxForLiveCall,
+    drain: _drainCallMailbox,
   );
   CallId? _presentedIncomingCallId;
   int _foregroundGeneration = 0;
@@ -937,6 +937,7 @@ final class CallSignalingComposition
   Future<void> onBackgrounded() async {
     _outgoingReadinessLifecycleGeneration++;
     _foregroundAllowed = false;
+    _ringingPoller.onSession(_foregroundGraph?.current?.session);
     _presentedIncomingCallId = null;
     _publishForeground(null);
     final graph = _graph;
@@ -1118,7 +1119,11 @@ final class CallSignalingComposition
     final callId = session?.callId;
     // The graph carries canonical state even when native presentation or
     // backgrounding hides it from Flutter. Visibility must not stop delivery.
-    _ringingPoller.onSession(_started && !_terminal ? session : null);
+    _ringingPoller.onSession(
+      _started && !_terminal ? session : null,
+      foreground:
+          _started && !_terminal && _foregroundAllowed && _isForeground(),
+    );
     if (!_started ||
         !_foregroundAllowed ||
         projection == null ||
@@ -1164,8 +1169,11 @@ final class CallSignalingComposition
   }
 
   /// Unlike [onCallWake], polling never starts a graph or changes visibility.
-  Future<void> _drainCallMailboxForLiveCall() async {
+  Future<void> _drainCallMailbox() async {
     if (!isEnabled || _terminal || !_started) return;
+    if (!_hasLiveForegroundCall && (!_foregroundAllowed || !_isForeground())) {
+      return;
+    }
     final graph = _graph;
     if (graph is! CallSignalingWakeDrain) return;
     await (graph as CallSignalingWakeDrain).drainCallMailbox();
