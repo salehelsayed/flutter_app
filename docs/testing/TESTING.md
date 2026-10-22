@@ -3499,10 +3499,10 @@ Representative assertions were inspected; the entire inventory was not audited.
 | Bootstrap/returning identity | Phase order, error propagation, identity routing and awaited direct/group recovery | Actual launch, secure storage, preserved contacts/groups/history |
 | Contact and direct chat | Mutual contact rows without reciprocal loop; received content/status; exact 100-message transcript across both current-SQL/runtime restarts and duplicate replay | Real QR/camera, native crypto/transport and actual OS process-kill recovery |
 | Offline/group | Fake inbox drain/deduplication; selected fanout/truthful sent state; accepted group text and membership retained across both current-SQL/runtime restarts | Physical process death, live group offline catch-up, revoked-key isolation and actual path evidence |
-| Media | Transformed ciphertext differs; full receiver bytes/hash/frame/caption after persisted interruption and SQL/runtime reopen; typed viewer widgets separately tested | Actual native transfer kills, camera/compression and mobile decode/open in the same real peer journey |
+| Media | Transformed ciphertext differs; full receiver bytes/hash/frame/caption after persisted interruption and SQL/runtime reopen; current SQL libraries now join real files, typed viewer identity, guarded batch egress/retry and private open admission | Actual native transfer kills, camera/compression and mobile decode/open in the same real peer journey |
 | Notifications | Foreground/background policy and warm/cold payload route callbacks | OS tray/effect, muted conversation, real tap navigation and platform background limits |
 | Migration | Real host SQLite FFI snapshot/data/files and post-migration writes; imported JPEG opens through host codec with pixel/caption assertions | Native SQLCipher/keychain, previous-published signed upgrade and mobile video/voice/PDF/viewer proof |
-| Bridge/call | Dart method/event channel contracts and signaling/mailbox convergence | Native binding, actual bidirectional audible audio and end-call cleanup |
+| Bridge/call | Dart method/event channel contracts and signaling/mailbox convergence; terminal SQL reopen joins CallsPage/current redial identity and contact-deletion refusal | Native binding, actual bidirectional audible audio and end-call cleanup |
 
 Exact selectors and paths are in the manifest. Useful assertion anchors include
 `two_user_message_exchange_test.dart` (bidirectional exchange),
@@ -3510,6 +3510,27 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `conversation_received_media_actions_test.dart` (typed viewer opening), and
 `full_migration_chain_test.dart` (seeded data preservation). The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
+
+The [Lever 1 host joins](astra-lever1-host-quickwins.md) connect system-picker
+cancel/result adaptation to draft/removal behavior, flag-off received PDF to
+the actual egress service, and current SQL library/history/private authority to
+their presentation/action consumers. Actual over-limit image/PDF file lengths
+replace invented budget metadata in the new controls. PDF fixtures used for
+the open join are complete documents; the app's signature check is not a full
+PDF parser. Native picker/protection/export/call-start ports remain replaced
+and are named per case. The focused evidence is
+`.codex-test-logs/astra-levers12/` (final runs 009–015); these tests do not prove
+native OS process death, audible calls, mobile viewer rendering or a signed
+candidate. Existing current-SQL expiry/hide/late-write download races and sparse
+forward retry are complementary preservation, not duplicate new test counts.
+
+Real-file image widget fixtures must precache with a bounded timeout before a
+grid/viewer first resolves FileImage under fake async. Precache after the grid
+can await its already-pending fake-clock resolution indefinitely. Group fixtures
+also need canonical owner/item paths and complete persisted encryption metadata
+to cross the actual display gate. Do not disable that gate or replace all frame
+waits with an unbounded `pumpAndSettle`; unrelated pending thumbnails can keep
+animating after a route closes. Wait for the exact route/item state instead.
 
 The exact numbered transcript is in
 `group_a_text_journeys_test.dart`: both database handles and runtime graphs are

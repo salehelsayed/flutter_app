@@ -2,10 +2,12 @@
 
 Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
-295 representative journeys: **35 strong, 254 partial, 5 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+295 representative journeys: **44 strong, 245 partial, 5 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
 
 Group C device evidence: source `0ee837d5d6b058977b22c09365fc706b38dfd1d3`, application base `f14f7d369646b9877bc80c71f517494628f4fe2b`, Pixel 6 debug / iPhone 13 release FLOW-log install-over builds. Evidence directory: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022`. Plain host rechecks on that source: contacts 3 PASS, camera 19 PASS / 1 pre-existing skip, calls 6 PASS, all exit 0 (`RESUME.md:50`; `focused.log` completion/rc markers 70/71, 12546/12547, 12562/12563; overall exit 0 at 12564). Astra performed no device work. First failed video download and text-entry harness correction remain visible. Audibility/native RTP and production-signed artifact proof remain unverified.
+
+Lever 1 host joins: source `7572deae51a9acd19f9ff8c4a85724931b0c7f41`, nine shared-logic journeys now strong with actual host_run evidence; 43 distinct final cases PASS, zero skips, including 14 new and two strengthened cases. Separate bootstrap wrapper subset: 22 PASS across three files, child exit0; outer exit3/NOT RUN with28selected checks omitted. Native and signed-release boundaries remain explicit. See [host packet/runbook](astra-lever1-host-quickwins.md) and `header.lever1_host_run` in YAML. iPhone-receiver/content proof still needs a test-build audio hook (not approved now); the approved Android-receiver energy proxy is narrower than content proof.
 
 ## Interpretation and execution
 
@@ -36,9 +38,9 @@ Group C device evidence: source `0ee837d5d6b058977b22c09365fc706b38dfd1d3`, appl
 | IDENTITY — Onboarding, identity and recovery | 1 | 9 | 0 | 0 | Native secure-store/bridge failure and actual offline cold-start continuity are split from route/identity tests; phrase restore is not historical group/media recovery. |
 | CONTACT — QR, contact requests, profiles and contact management | 7 | 29 | 0 | 0 | Actual scanner cancellation/permission recovery and iPhone/Android reciprocal contact creation remain unproven; declined-envelope replay is still a separate known gap. |
 | CHAT — Direct text and conversation state | 2 | 11 | 0 | 0 | Actual native both-peer process death and deployed relay preservation for 100 messages remain unrun; host SQL/runtime reopen now proves the exact transcript. Full iPhone/Android native text/media interoperability remains separate. |
-| MEDIA — Direct/group media, voice, private viewing and libraries | 3 | 41 | 1 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
+| MEDIA — Direct/group media, voice, private viewing and libraries | 10 | 34 | 1 | 0 | Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains missing for online relay and offline inbox; real camera bytes/MIME are unknown. |
 | GROUP — Group membership, messaging and management | 2 | 22 | 2 | 0 | Accepted-text sender process death, complete cross-platform media/membership parity and eight simultaneous app actors are not supplied by membership-only kills or small fake fanout. |
-| CALL — Voice calls, lifecycle, privacy and history | 9 | 26 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
+| CALL — Voice calls, lifecycle, privacy and history | 11 | 24 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
 | INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
 | NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. |
 | NAV — Feed, Orbit, rings, search and navigation | 0 | 10 | 0 | 1 | Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency membership and sculpt geometry must not imply that shipped editor. |
@@ -2488,7 +2490,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-009 — Cancel camera/gallery selection or remove a draft attachment before sending
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2500,6 +2502,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Expected:** Cancellation/removal retains the intended draft and sends no removed item.
 
+**Fresh host join (2026-10-22)**
+
+- test/core/media/media_picker_test.dart:42: Real SystemMediaPicker/ImagePicker adapters handle native-port null/empty cancellation, fresh next results and no cached stale pick. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: ImagePickerPlatform native port.
+- test/features/conversation/presentation/screens/conversation_wired_test.dart:10169: Actual conversation keeps draft after null camera and empty gallery/document picks; removed and actual over-cap files never upload; exactly the retained image uploads/sends once. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native picker/compressor/upload/send/repository ports.
+
 **Inspected test evidence**
 
 - [test/features/conversation/presentation/screens/conversation_wired_test.dart](../../test/features/conversation/presentation/screens/conversation_wired_test.dart) — `Signal attachment sheet uses warm semantic roles and Cancel preserves draft` (widget).
@@ -2509,7 +2516,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Attachment sheet Cancel retains text; actual native picker/camera cancellation and remove-then-send exact attachment set are not proven by this case.
+- OS camera/gallery dialogs were not operated; strong coverage is the shared cancellation/removal contract at the real system adapter and conversation boundary, not signed-device picker certification.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-010 — Deny camera/photo permission and retry after granting permission
 
@@ -2584,7 +2595,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-012 — Document sending flag off while receiving/opening an existing PDF remains supported
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2595,6 +2606,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: document flag off; incoming existing PDF; recovery: no installed viewer.
 
 **Expected:** Send flag hides new composition only; qualified received PDFs can still use the supported open action.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/conversation/presentation/screens/conversation_wired_test.dart:17265: Actual received PDF tile with send flag false calls default real egress/path/PDF service and MethodChannel adapter; complete PDF/request path/digest/identity are exact; noViewer then presented retain source, row and unsent draft. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: message/media repositories; PathProvider directory and native egress MethodChannel.
 
 **Inspected test evidence**
 
@@ -2609,11 +2624,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Composition flag and open service are separate tests; received PDF despite flag off and native noViewer/cancel is not a complete app journey.
+- Actual native PDF page rendering and OS viewer lifetime remain unrun; presented is not a decoder assertion. The shared flag-off receiving/open contract is now joined.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-013 — Reject unsupported document types, oversize files and malformed picker results
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008, DC-018.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008, DC-018.
 
 **Steps**
 
@@ -2624,6 +2643,12 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: non-PDF/fake PDF/oversize/malformed picker values; recovery: n/a.
 
 **Expected:** Rejected items never enter successful media dispatch or silently erase valid siblings.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/conversation/presentation/screens/conversation_wired_test.dart:10169: Actual >25MiB image file, rather than invented budget metadata, blocks dispatch while keeping draft; removal permits exactly one valid sibling send. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native compressor/upload/send/repository ports.
+- test/features/conversation/presentation/screens/conversation_wired_test.dart:10420: Complete PDF survives mixed non-PDF, empty, short-signature, mislabeled, missing and empty-path inputs; actual >100MiB PDF stays invalid and blocks Send without a message; removing it preserves valid PDF/draft. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native document picker and repositories.
+- test/core/media/media_picker_test.dart:82: Real file-picker MethodChannel and SystemMediaPicker conversion drop pathless entries and return empty after cancellation without stale selection. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native file-picker channel result.
 
 **Inspected test evidence**
 
@@ -2642,7 +2667,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Causal signature/size/hash boundaries exist with fixture inputs; native malformed picker result/unknown URI and complete recipient no-side-effects are not joined.
+- PDF validation is the supported signature/type/size contract; no full PDF parser or native recipient decoder was exercised. A malformed file with a valid PDF header is not declared rejected by these tests.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-014 — iPhone camera+caption to offline Android: Original/compressed quality, relay inbox catch-up
 
@@ -2920,7 +2949,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-022 — Received image full-screen zoom/swipe/navigation and correct selection across a batch
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2931,6 +2960,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: multi-item image/GIF pages with same-path siblings; recovery: n/a.
 
 **Expected:** Viewer selection remains exact despite same-path siblings and cross-message paging.
+
+**Fresh host join (2026-10-22)**
+
+- test/shared/widgets/media/full_screen_image_viewer_test.dart:14: Existing real two-pointer pinch, swipes and Back retain exact path/index; host engine decodes 64x32 original and a viewport change preserves selected duplicate-path batch position. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: temporary local receive fixtures; no live transport.
 
 **Inspected test evidence**
 
@@ -2945,7 +2978,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Identity/swipe assertions are causal; full zoom gesture/pixel-quality/remote-original verification and all orientation transitions are not covered by these cases.
+- Host viewport resize is not OS rotation. Real transferred full-resolution detail/orientation and device renderer remain separate packet-2 proof. No duplicate gesture test added.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-023 — Received video pause/seek/resume/rotate and supported picture-in-picture lifecycle
 
@@ -3015,7 +3052,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-025 — Open direct/group shared-media library; search/filter, paginate and select the correct parent
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** source-derived.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** source-derived.
 
 **Steps**
 
@@ -3026,6 +3063,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: direct/group scope, filters, pages, same-path siblings; recovery: n/a.
 
 **Expected:** Library scope/cursor/parent identity remains exact with truthful unavailable items.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:165: Current production SQL file reopen, real canonical group/local direct PNGs, tied 50+2 pages, scope/deleted/sibling isolation, durable bookmark filter, exact typed viewer owner/parent/item and Back join for direct and group libraries. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: synthetic persisted group crypto metadata; no native transfer.
 
 **Inspected test evidence**
 
@@ -3044,11 +3085,15 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Direct strict fake repository tests cover UI/cursor identity; real SQL direct/group query scope exists separately, but group/search/all native original-open behavior is not one journey.
+- SQL is host FFI, not native SQLCipher; group encryption metadata is seeded, not authenticated in a live transfer. Mobile original decode/renderer and native delivery remain unrun.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-026 — Bookmark, bulk forward, bulk export or bulk local-delete selected library items
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** source-derived.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** source-derived.
 
 **Steps**
 
@@ -3059,6 +3104,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: up to ten selected items, per-item outcomes; recovery: failed-only retry.
 
 **Expected:** Bulk operations preserve exact owner/parent identities and refuse private/stale sources independently.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:412: Actual widget selection -> real current SQL qualification -> batch coordinator -> real owned-file egress service rejects a privacy race before dispatch, hashes exact selected files and retries only failed eligible items. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native export destination.
+- test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:281: SQL reopen preserves independent forward captions/tokens/full-file hashes and guarded bookmark; actual local delete targets exact parent/attachment only; deleted source fails dispatch-time qualification. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native forward delivery absent; local database delete has no file-manager/export owner.
 
 **Inspected test evidence**
 
@@ -3077,7 +3127,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Real batch policy/matrix tests use native/delivery callbacks; private cleanup is not ordinary UI delete. Full real export/forward recipient/open plus cross-group library selection is not joined.
+- Existing sparse source-target forward coordinator preservation passed; actual recipient delivery/save/share and native deletion/export lifetime remain separate. Forward-source snapshots are not sent messages.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-027 — Voice hold-record/release-send and record-lock review/send preserve playable recipient audio
 
@@ -3316,7 +3370,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-034 — Private-media cancel-before-open, unavailable-download retry and delete/read races preserve policy
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-021.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** DC-021.
 
 **Steps**
 
@@ -3327,6 +3381,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: private unavailable item and changed parent/lease; recovery: cancel/pause/download completion/delete race.
 
 **Expected:** Late download/open cannot bypass private policy or reopen consumed/deleted content.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/conversation/integration/private_media_sql_open_races_test.dart:29: Four actual SQL/files/lifecycle/viewer cases hold native protection admission then race consume, delete or owner change; no stale byte-bearing grant/re-entry, one valid first frame/close control and sibling file preserved. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native protection port only.
+- test/features/conversation/application/download_media_use_case_test.dart:6241: Existing current-SQL private expiry, relay-failure/hide and timeout late-write cleanup cases freshly pass; existing card single-flight/route/pause guards also freshly pass. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: native bridge/crypto transfer; controlled clock/path adapter.
 
 **Inspected test evidence**
 
@@ -3349,7 +3408,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Real controller single-flight/order assertions use download/native/lane doubles; full real transfer/delete race and OS route interruption are separate.
+- Native secure-window/capture behavior and actual transfer process death remain unrun. New open-race cases start with a completed file; separate existing SQL download races establish no late commit/resurrection.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### MEDIA-035 — Group camera photo/caption reaches every authorized member as a usable full image
 
@@ -4935,7 +4998,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### VC-021 — Call history is kept after a restart and calls back the right person
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-021.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** VC-021.
 
 **Steps**
 
@@ -4946,6 +5009,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: as described; recovery: n/a.
 
 **Expected:** Call outcomes produce the supported privacy-safe status and duration without duplicate terminal rows; history survives restart and its callback reaches the correct contact.
+
+**Fresh host join (2026-10-22)**
+
+- test/features/call/data/call_history_repository_test.dart:104: Terminal projector -> real current SQL file reopen/replay -> actual CallsPage -> real redial controller admits exact current account once, retaining one privacy-safe row with original duration/reason. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: constructed terminal snapshot; outgoing call-start capability port.
 
 **Inspected test evidence**
 
@@ -4968,7 +5035,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Real SQL reopen and current-history binding are substantive. Calls widget and dial capability are faked; complete real call-to-persist-to-restart-to-history callback journey unexecuted.
+- Native call completion/audio and OS process death were not exercised. Strong is the shared durable-history/page/callback identity contract, not remote ringing or signed-call certification.
+
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### VC-022 — Fake or old call signals cannot take over a call
 
@@ -5442,7 +5513,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### CALL-008 — Peer renaming/contact deletion during call history and callback keeps exact account identity
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** VC-004, VC-021.
+**Coverage:** strong. **Execution:** host_run. **Catalog:** VC-004, VC-021.
 
 **Steps**
 
@@ -5453,6 +5524,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: as described; recovery: n/a.
 
 **Expected:** Peer renaming/contact deletion during call history and callback keeps exact account identity
+
+**Fresh host join (2026-10-22)**
+
+- test/features/call/data/call_history_repository_test.dart:103: Real SQL rename preserves stale-page callback account; deletion while callback contact preflight awaits refuses before call-start port; refresh shows Unknown contact, terminal row remains unique. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all. Replaced: outgoing call-start capability port; contact preflight timing gate.
 
 **Inspected test evidence**
 
@@ -5475,9 +5550,11 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- SQL/current-policy and widget stale completion covered using fake dial owner/contact load; native notification/current active call during real contact deletion not joined.
+- Native provider display-name rendering remains a separate VC-004/VC-010 boundary; no native call/audio proof is inferred from exact logical admission.
 
-### INTRO — Introductions and mutual consent
+**Open questions**
+
+- Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
 #### IN-001 — The introducer is notified when an introduction is accepted
 

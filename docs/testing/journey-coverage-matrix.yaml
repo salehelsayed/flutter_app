@@ -122,6 +122,40 @@ header:
     limitations: No human/acoustic audibility/content proof or native RTP counters; iPhone received image not exported;
       no controlled high-detail/orientation card; not a production-signed release certification. First video failure
       and harness text-entry correction retained.
+  lever1_host_run:
+    date_utc: '2026-10-22'
+    executor: codex-astra; host only
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    base: 5e1821e231185ca35a25873124fda16eff291fd5
+    journeys:
+    - MEDIA-009
+    - MEDIA-012
+    - MEDIA-013
+    - MEDIA-022
+    - MEDIA-025
+    - MEDIA-026
+    - MEDIA-034
+    - VC-021
+    - CALL-008
+    focused_runs:
+      009-private-sql: 4
+      010-library-final: 4
+      011-picker-platform: 2
+      012-call-history-final: 13
+      013-composer-final: 6
+      014-preservation: 8
+      015-viewer-final: 6
+    total_distinct_final_completed_cases: 43
+    new_cases: 14
+    bootstrap_subset: 22 PASS across3files; child exit0; outer exit3/NOT RUN because28other selected checks omitted
+    wrapper_receipt: .codex-test-logs/astra-levers12/bootstrap-wrapper/results.json
+    strengthened_cases: 2
+    skips: 0
+    proof: Real shared-logic joins and complementary causal preservation; not native OS/device or signed release certification.
+    first_attempts: 005 stopped incomplete precache despite exit0; 006/008 library fixture timing/admission failures;
+      007 private fixture compile error. Preserved, diagnosed, corrected; no app bug/skip introduced.
+    call_audio_constraint: 'Per m-17c52b26: Android-receiver no-hook energy proxy only; iPhone-receiver/content-proof
+      needs a test-build audio hook (not approved now). No call-content rating upgraded here.'
 features:
 - id: IDENTITY
   name: Onboarding, identity and recovery
@@ -154,8 +188,8 @@ features:
 - id: MEDIA
   name: Direct/group media, voice, private viewing and libraries
   summary:
-    strong: 3
-    partial: 41
+    strong: 10
+    partial: 34
     missing: 1
     unknown: 0
   biggest_gap: Actual iPhone store 125 Original camera image plus caption to Android 125 full decode/open remains
@@ -172,8 +206,8 @@ features:
 - id: CALL
   name: Voice calls, lifecycle, privacy and history
   summary:
-    strong: 9
-    partial: 26
+    strong: 11
+    partial: 24
     missing: 1
     unknown: 0
   biggest_gap: Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery,
@@ -4289,7 +4323,7 @@ journeys:
     input: cancelled picker or removed attachment
     recovery: continue draft
   expected: Cancellation/removal retains the intended draft and sends no removed item.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
     name: Signal attachment sheet uses warm semantic roles and Cancel preserves draft
@@ -4301,13 +4335,43 @@ journeys:
     proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:16037: Cancel dismisses
       the chooser and retains entered draft; this does not exercise native camera/gallery cancellation. Registered:
       affected-conversation, host-all.'
-  execution: not_run
+  - path: test/core/media/media_picker_test.dart
+    name: MEDIA-009 system adapter
+    kind: host journey
+    real:
+    - Real SystemMediaPicker/ImagePicker adapters handle native-port null/empty cancellation, fresh next results and
+      no cached stale pick.
+    faked:
+    - ImagePickerPlatform native port
+    proves: 'test/core/media/media_picker_test.dart:42: Real SystemMediaPicker/ImagePicker adapters handle native-port
+      null/empty cancellation, fresh next results and no cached stale pick. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
+    name: MEDIA-009/MEDIA-013 cancelled picks
+    kind: host journey
+    real:
+    - Actual conversation keeps draft after null camera and empty gallery/document picks; removed and actual over-cap
+      files never upload; exactly the retained image uploads/sends once.
+    faked:
+    - native picker/compressor/upload/send/repository ports
+    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:10169: Actual conversation
+      keeps draft after null camera and empty gallery/document picks; removed and actual over-cap files never upload;
+      exactly the retained image uploads/sends once. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused
+      completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Attachment sheet Cancel retains text; actual native picker/camera cancellation and remove-then-send exact attachment
-    set are not proven by this case.
+  - OS camera/gallery dialogs were not operated; strong coverage is the shared cancellation/removal contract at the
+    real system adapter and conversation boundary, not signed-device picker certification.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-010
   feature: MEDIA
   title: Deny camera/photo permission and retry after granting permission
@@ -4451,7 +4515,7 @@ journeys:
     input: document flag off; incoming existing PDF
     recovery: no installed viewer
   expected: Send flag hides new composition only; qualified received PDFs can still use the supported open action.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
     name: the Document row is hidden while the switch is off
@@ -4460,9 +4524,9 @@ journeys:
     - actual attachment-sheet feature gating
     faked:
     - repositories/services
-    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:10188: Flag off hides
-      Document while Media Library remains; receiving/opening capability requires separate egress evidence. Registered:
-      affected-conversation, host-all.'
+    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:10188: Flag off hides Document
+      while Media Library remains; receiving/opening capability requires separate egress evidence. Registered: affected-conversation,
+      host-all.'
   - path: test/core/media/received_media_egress_service_test.dart
     name: open sends one real PDF under its own clean name
     kind: unit
@@ -4474,13 +4538,33 @@ journeys:
     proves: 'test/core/media/received_media_egress_service_test.dart:359: A signature-valid PDF gets a clean filename
       and open destination; companion malformed PDF never leaves app. Actual document viewer rendering is separate.
       Registered: affected-media, host-all.'
-  execution: not_run
+  - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
+    name: MEDIA-012 sending switch off
+    kind: host journey
+    real:
+    - Actual received PDF tile with send flag false calls default real egress/path/PDF service and MethodChannel adapter;
+      complete PDF/request path/digest/identity are exact; noViewer then presented retain source, row and unsent draft.
+    faked:
+    - message/media repositories
+    - PathProvider directory and native egress MethodChannel
+    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:17265: Actual received PDF
+      tile with send flag false calls default real egress/path/PDF service and MethodChannel adapter; complete PDF/request
+      path/digest/identity are exact; noViewer then presented retain source, row and unsent draft. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Composition flag and open service are separate tests; received PDF despite flag off and native noViewer/cancel
-    is not a complete app journey.
+  - Actual native PDF page rendering and OS viewer lifetime remain unrun; presented is not a decoder assertion. The
+    shared flag-off receiving/open contract is now joined.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-013
   feature: MEDIA
   title: Reject unsupported document types, oversize files and malformed picker results
@@ -4496,7 +4580,7 @@ journeys:
     input: non-PDF/fake PDF/oversize/malformed picker values
     recovery: n/a
   expected: Rejected items never enter successful media dispatch or silently erase valid siblings.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
     name: a picked PDF is staged and a fake PDF is refused
@@ -4533,14 +4617,56 @@ journeys:
     proves: 'test/features/conversation/application/download_media_use_case_test.dart:4342: Hash mismatch rejects
       before blob:decrypt, publishes no local path, deletes bad bytes and does not ACK-delete relay data. Registered:
       affected-conversation, group-media-storage-preservation, host-all, strict-group-media-manifest.'
-  execution: not_run
+  - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
+    name: MEDIA-009/MEDIA-013 cancelled picks
+    kind: host journey
+    real:
+    - Actual >25MiB image file, rather than invented budget metadata, blocks dispatch while keeping draft; removal
+      permits exactly one valid sibling send.
+    faked:
+    - native compressor/upload/send/repository ports
+    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:10169: Actual >25MiB image
+      file, rather than invented budget metadata, blocks dispatch while keeping draft; removal permits exactly one
+      valid sibling send. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run.
+      Registered under owning affected lane and host-all.'
+  - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
+    name: MEDIA-013 complete PDF
+    kind: host journey
+    real:
+    - Complete PDF survives mixed non-PDF, empty, short-signature, mislabeled, missing and empty-path inputs; actual
+      >100MiB PDF stays invalid and blocks Send without a message; removing it preserves valid PDF/draft.
+    faked:
+    - native document picker and repositories
+    proves: 'test/features/conversation/presentation/screens/conversation_wired_test.dart:10420: Complete PDF survives
+      mixed non-PDF, empty, short-signature, mislabeled, missing and empty-path inputs; actual >100MiB PDF stays invalid
+      and blocks Send without a message; removing it preserves valid PDF/draft. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  - path: test/core/media/media_picker_test.dart
+    name: MEDIA-009/MEDIA-013 native document cancel
+    kind: host journey
+    real:
+    - Real file-picker MethodChannel and SystemMediaPicker conversion drop pathless entries and return empty after
+      cancellation without stale selection.
+    faked:
+    - native file-picker channel result
+    proves: 'test/core/media/media_picker_test.dart:82: Real file-picker MethodChannel and SystemMediaPicker conversion
+      drop pathless entries and return empty after cancellation without stale selection. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Causal signature/size/hash boundaries exist with fixture inputs; native malformed picker result/unknown URI
-    and complete recipient no-side-effects are not joined.
+  - PDF validation is the supported signature/type/size contract; no full PDF parser or native recipient decoder was
+    exercised. A malformed file with a valid PDF header is not declared rejected by these tests.
   catalog_ids:
   - DC-008
   - DC-018
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-014
   feature: MEDIA
   title: 'iPhone camera+caption to offline Android: Original/compressed quality, relay inbox catch-up'
@@ -5051,7 +5177,7 @@ journeys:
     input: multi-item image/GIF pages with same-path siblings
     recovery: n/a
   expected: Viewer selection remains exact despite same-path siblings and cross-message paging.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart
     name: library opens cross-message typed viewer at exact attachment identity
@@ -5062,8 +5188,8 @@ journeys:
     - strict fake library repo
     - fixture media/file/action seams
     proves: 'test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart:111: Opening
-      second tile selects exact attachment/message, including same-path siblings. Does not prove remote original
-      authenticity or zoom/pixel quality. Registered: affected-conversation, host-all.'
+      second tile selects exact attachment/message, including same-path siblings. Does not prove remote original authenticity
+      or zoom/pixel quality. Registered: affected-conversation, host-all.'
   - path: test/shared/widgets/media/full_screen_image_viewer_test.dart
     name: swipes between GIF and JPEG pages
     kind: widget
@@ -5075,13 +5201,32 @@ journeys:
     proves: 'test/shared/widgets/media/full_screen_image_viewer_test.dart:92: Swipe changes GIF/JPEG page with correct
       branches; no real camera-to-recipient content or exhaustive zoom/orientation gestures. Registered: affected-media,
       host-all.'
-  execution: not_run
+  - path: test/shared/widgets/media/full_screen_image_viewer_test.dart
+    name: MEDIA-022 received batch zoom
+    kind: host journey
+    real:
+    - Existing real two-pointer pinch, swipes and Back retain exact path/index; host engine decodes 64x32 original
+      and a viewport change preserves selected duplicate-path batch position.
+    faked:
+    - temporary local receive fixtures; no live transport
+    proves: 'test/shared/widgets/media/full_screen_image_viewer_test.dart:14: Existing real two-pointer pinch, swipes
+      and Back retain exact path/index; host engine decodes 64x32 original and a viewport change preserves selected
+      duplicate-path batch position. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in
+      header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Identity/swipe assertions are causal; full zoom gesture/pixel-quality/remote-original verification and all orientation
-    transitions are not covered by these cases.
+  - Host viewport resize is not OS rotation. Real transferred full-resolution detail/orientation and device renderer
+    remain separate packet-2 proof. No duplicate gesture test added.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-023
   feature: MEDIA
   title: Received video pause/seek/resume/rotate and supported picture-in-picture lifecycle
@@ -5207,7 +5352,7 @@ journeys:
     input: direct/group scope, filters, pages, same-path siblings
     recovery: n/a
   expected: Library scope/cursor/parent identity remains exact with truthful unavailable items.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/conversation_shared_media_library_test.dart
     name: filters bind direct scope cursor signature and preserve stable paged order
@@ -5228,8 +5373,8 @@ journeys:
     - strict fake library repo
     - fixture media/file/action seams
     proves: 'test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart:111: Opening
-      second tile selects exact attachment/message, including same-path siblings. Does not prove remote original
-      authenticity or zoom/pixel quality. Registered: affected-conversation, host-all.'
+      second tile selects exact attachment/message, including same-path siblings. Does not prove remote original authenticity
+      or zoom/pixel quality. Registered: affected-conversation, host-all.'
   - path: test/features/conversation/application/direct_private_media_boundary_test.dart
     name: Forward denies every private terminal unsupported hidden or missing parent before side effects
     kind: unit
@@ -5240,12 +5385,32 @@ journeys:
     proves: 'test/features/conversation/application/direct_private_media_boundary_test.dart:368: Current private/terminal/unsupported/deleted
       source refuses Forward before token/file side effects; other tests guard egress/PiP independently. Registered:
       affected-conversation, host-all.'
-  execution: not_run
+  - path: test/features/conversation/integration/media_library_sql_widget_journeys_test.dart
+    name: 'MEDIA-025 ${group ? ''group'' : ''direct''}'
+    kind: host journey
+    real:
+    - Current production SQL file reopen, real canonical group/local direct PNGs, tied 50+2 pages, scope/deleted/sibling
+      isolation, durable bookmark filter, exact typed viewer owner/parent/item and Back join for direct and group
+      libraries.
+    faked:
+    - synthetic persisted group crypto metadata; no native transfer
+    proves: 'test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:165: Current production
+      SQL file reopen, real canonical group/local direct PNGs, tied 50+2 pages, scope/deleted/sibling isolation, durable
+      bookmark filter, exact typed viewer owner/parent/item and Back join for direct and group libraries. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Direct strict fake repository tests cover UI/cursor identity; real SQL direct/group query scope exists separately,
-    but group/search/all native original-open behavior is not one journey.
+  - SQL is host FFI, not native SQLCipher; group encryption metadata is seeded, not authenticated in a live transfer.
+    Mobile original decode/renderer and native delivery remain unrun.
   catalog_ids: []
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-026
   feature: MEDIA
   title: Bookmark, bulk forward, bulk export or bulk local-delete selected library items
@@ -5261,7 +5426,7 @@ journeys:
     input: up to ten selected items, per-item outcomes
     recovery: failed-only retry
   expected: Bulk operations preserve exact owner/parent identities and refuse private/stale sources independently.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/application/direct_media_library_batch_actions_test.dart
     name: batch external share is one qualified native request with failed-only retry state
@@ -5282,9 +5447,9 @@ journeys:
     - source revalidator
     - contact repository
     - strict deliver callback
-    proves: 'test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart:504: Only
-      failed source-target cells retry with original token/latest source caption; settled sent/queued cells remain
-      unchanged. Registered: affected-media, host-all.'
+    proves: 'test/features/share/application/direct_media_batch_forward_delivery_coordinator_test.dart:504: Only failed
+      source-target cells retry with original token/latest source caption; settled sent/queued cells remain unchanged.
+      Registered: affected-media, host-all.'
   - path: test/features/conversation/application/private_media_cleanup_race_test.dart
     name: terminal cleanup removes every exact direct artifact and preserves siblings
     kind: unit
@@ -5294,14 +5459,45 @@ journeys:
     faked:
     - fixture secure key store
     proves: 'test/features/conversation/application/private_media_cleanup_race_test.dart:131: Deletes exact direct
-      owned artifacts/key references/row, preserves group/unresolved/external siblings; secure-store platform is
-      fake. Registered: affected-conversation, host-all.'
-  execution: not_run
+      owned artifacts/key references/row, preserves group/unresolved/external siblings; secure-store platform is fake.
+      Registered: affected-conversation, host-all.'
+  - path: test/features/conversation/integration/media_library_sql_widget_journeys_test.dart
+    name: MEDIA-026 real SQL selection
+    kind: host journey
+    real:
+    - Actual widget selection -> real current SQL qualification -> batch coordinator -> real owned-file egress service
+      rejects a privacy race before dispatch, hashes exact selected files and retries only failed eligible items.
+    faked:
+    - native export destination
+    proves: 'test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:412: Actual widget
+      selection -> real current SQL qualification -> batch coordinator -> real owned-file egress service rejects a
+      privacy race before dispatch, hashes exact selected files and retries only failed eligible items. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  - path: test/features/conversation/integration/media_library_sql_widget_journeys_test.dart
+    name: MEDIA-026 SQL forward snapshots
+    kind: host journey
+    real:
+    - SQL reopen preserves independent forward captions/tokens/full-file hashes and guarded bookmark; actual local
+      delete targets exact parent/attachment only; deleted source fails dispatch-time qualification.
+    faked:
+    - native forward delivery absent; local database delete has no file-manager/export owner
+    proves: 'test/features/conversation/integration/media_library_sql_widget_journeys_test.dart:281: SQL reopen preserves
+      independent forward captions/tokens/full-file hashes and guarded bookmark; actual local delete targets exact
+      parent/attachment only; deleted source fails dispatch-time qualification. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Real batch policy/matrix tests use native/delivery callbacks; private cleanup is not ordinary UI delete. Full
-    real export/forward recipient/open plus cross-group library selection is not joined.
+  - Existing sparse source-target forward coordinator preservation passed; actual recipient delivery/save/share and
+    native deletion/export lifetime remain separate. Forward-source snapshots are not sent messages.
   catalog_ids: []
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-027
   feature: MEDIA
   title: Voice hold-record/release-send and record-lock review/send preserve playable recipient audio
@@ -5731,7 +5927,7 @@ journeys:
     input: private unavailable item and changed parent/lease
     recovery: cancel/pause/download completion/delete race
   expected: Late download/open cannot bypass private policy or reopen consumed/deleted content.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/conversation/presentation/screens/direct_private_media_continuity_test.dart
     name: rapid double tap downloads then auto-continues under one single-flight
@@ -5753,8 +5949,8 @@ journeys:
     - native channel completion
     - fake lifecycle lane/path authority
     proves: 'test/features/conversation/presentation/screens/direct_private_media_viewer_test.dart:864: No byte-bearing
-      grant before protection succeeds; first-frame admitted once, close consumes/cleans once even before first
-      frame. Actual native capture prevention is not tested. Registered: affected-conversation, host-all.'
+      grant before protection succeeds; first-frame admitted once, close consumes/cleans once even before first frame.
+      Actual native capture prevention is not tested. Registered: affected-conversation, host-all.'
   - path: test/features/conversation/application/direct_private_media_boundary_test.dart
     name: Forward denies every private terminal unsupported hidden or missing parent before side effects
     kind: unit
@@ -5774,15 +5970,47 @@ journeys:
     - controlled clock
     - fixture attachment/key store and app files
     proves: 'test/features/conversation/integration/private_media_restart_replay_test.dart:32: Reopen consumes interrupted
-      opening, refuses replay and retains expiry high-water despite rollback; deadline then expires/cleans once.
-      Not actual OS process kill/SQLCipher. Registered: affected-conversation, host-all.'
-  execution: not_run
+      opening, refuses replay and retains expiry high-water despite rollback; deadline then expires/cleans once. Not
+      actual OS process kill/SQLCipher. Registered: affected-conversation, host-all.'
+  - path: test/features/conversation/integration/private_media_sql_open_races_test.dart
+    name: MEDIA-034 real SQL $race
+    kind: host journey
+    real:
+    - Four actual SQL/files/lifecycle/viewer cases hold native protection admission then race consume, delete or owner
+      change; no stale byte-bearing grant/re-entry, one valid first frame/close control and sibling file preserved.
+    faked:
+    - native protection port only
+    proves: 'test/features/conversation/integration/private_media_sql_open_races_test.dart:29: Four actual SQL/files/lifecycle/viewer
+      cases hold native protection admission then race consume, delete or owner change; no stale byte-bearing grant/re-entry,
+      one valid first frame/close control and sibling file preserved. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41;
+      actual focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  - path: test/features/conversation/application/download_media_use_case_test.dart
+    name: private download losing to expiry
+    kind: host journey
+    real:
+    - Existing current-SQL private expiry, relay-failure/hide and timeout late-write cleanup cases freshly pass; existing
+      card single-flight/route/pause guards also freshly pass.
+    faked:
+    - native bridge/crypto transfer
+    - controlled clock/path adapter
+    proves: 'test/features/conversation/application/download_media_use_case_test.dart:6241: Existing current-SQL private
+      expiry, relay-failure/hide and timeout late-write cleanup cases freshly pass; existing card single-flight/route/pause
+      guards also freshly pass. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions in header.lever1_host_run.
+      Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Real controller single-flight/order assertions use download/native/lane doubles; full real transfer/delete race
-    and OS route interruption are separate.
+  - Native secure-window/capture behavior and actual transfer process death remain unrun. New open-race cases start
+    with a completed file; separate existing SQL download races establish no late commit/resurrection.
   catalog_ids:
   - DC-021
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-035
   feature: MEDIA
   title: Group camera photo/caption reaches every authorized member as a usable full image
@@ -8488,7 +8716,7 @@ journeys:
     recovery: n/a
   expected: Call outcomes produce the supported privacy-safe status and duration without duplicate terminal rows;
     history survives restart and its callback reaches the correct contact.
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/call/data/call_history_repository_test.dart
     name: fresh projector preserves one terminal row after SQLite reopen
@@ -8507,9 +8735,8 @@ journeys:
     - FFI SQLite history/contact data and production history consumers
     faked:
     - constructed rows and callback owner
-    proves: 'test/features/call/data/call_history_repository_test.dart:178: Actual SQL paging/order/search joins
-      current contact names; real callback capability is replaced with recording starts. Registered: affected-calls,
-      host-all.'
+    proves: 'test/features/call/data/call_history_repository_test.dart:178: Actual SQL paging/order/search joins current
+      contact names; real callback capability is replaced with recording starts. Registered: affected-calls, host-all.'
   - path: test/features/call/presentation/calls_page_test.dart
     name: paging renders each call once; refresh reflects rename/removal without clearing unread elsewhere
     kind: widget
@@ -8519,8 +8746,8 @@ journeys:
     - scripted native WebRTC/audio/permission/route ports
     - controlled clock and modeled signaling/history seams
     proves: 'test/features/call/presentation/calls_page_test.dart:146: Actual Calls widget paging/refresh reflects
-      renamed/removed fixture contact while unrelated unread retained; repository/callback fake, no native call.
-      Registered: affected-calls, call-signaling, host-all.'
+      renamed/removed fixture contact while unrelated unread retained; repository/callback fake, no native call. Registered:
+      affected-calls, call-signaling, host-all.'
   - path: test/features/call/application/call_redial_controller_test.dart
     name: new callback supersedes A at $stage before canonical admission
     kind: unit
@@ -8532,13 +8759,33 @@ journeys:
     proves: 'test/features/call/application/call_redial_controller_test.dart:288: Seven async stages parameterize
       cancellation/supersession; latest history/contact/preflight bound before canonical admission. Controlled readiness/history/endpoint/gateway
       ports. Registered: affected-calls, call-signaling, host-all.'
-  execution: not_run
+  - path: test/features/call/data/call_history_repository_test.dart
+    name: VC-021 terminal projection
+    kind: host journey
+    real:
+    - Terminal projector -> real current SQL file reopen/replay -> actual CallsPage -> real redial controller admits
+      exact current account once, retaining one privacy-safe row with original duration/reason.
+    faked:
+    - constructed terminal snapshot
+    - outgoing call-start capability port
+    proves: 'test/features/call/data/call_history_repository_test.dart:104: Terminal projector -> real current SQL
+      file reopen/replay -> actual CallsPage -> real redial controller admits exact current account once, retaining
+      one privacy-safe row with original duration/reason. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual
+      focused completions in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - Real SQL reopen and current-history binding are substantive. Calls widget and dial capability are faked; complete
-    real call-to-persist-to-restart-to-history callback journey unexecuted.
+  - Native call completion/audio and OS process death were not exercised. Strong is the shared durable-history/page/callback
+    identity contract, not remote ringing or signed-call certification.
   catalog_ids:
   - VC-021
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: VC-022
   feature: CALL
   title: Fake or old call signals cannot take over a call
@@ -9423,7 +9670,7 @@ journeys:
     input: as described
     recovery: n/a
   expected: Peer renaming/contact deletion during call history and callback keeps exact account identity
-  rating: partial
+  rating: strong
   tests:
   - path: test/features/call/data/call_history_repository_test.dart
     name: global history pages have one row per call, stable equal-time order, local search and current names
@@ -9432,9 +9679,8 @@ journeys:
     - FFI SQLite history/contact data and production history consumers
     faked:
     - constructed rows and callback owner
-    proves: 'test/features/call/data/call_history_repository_test.dart:178: Actual SQL paging/order/search joins
-      current contact names; real callback capability is replaced with recording starts. Registered: affected-calls,
-      host-all.'
+    proves: 'test/features/call/data/call_history_repository_test.dart:178: Actual SQL paging/order/search joins current
+      contact names; real callback capability is replaced with recording starts. Registered: affected-calls, host-all.'
   - path: test/features/call/presentation/calls_page_test.dart
     name: paging renders each call once; refresh reflects rename/removal without clearing unread elsewhere
     kind: widget
@@ -9444,8 +9690,8 @@ journeys:
     - scripted native WebRTC/audio/permission/route ports
     - controlled clock and modeled signaling/history seams
     proves: 'test/features/call/presentation/calls_page_test.dart:146: Actual Calls widget paging/refresh reflects
-      renamed/removed fixture contact while unrelated unread retained; repository/callback fake, no native call.
-      Registered: affected-calls, call-signaling, host-all.'
+      renamed/removed fixture contact while unrelated unread retained; repository/callback fake, no native call. Registered:
+      affected-calls, call-signaling, host-all.'
   - path: test/features/call/application/call_redial_controller_test.dart
     name: new callback supersedes A at $stage before canonical admission
     kind: unit
@@ -9468,14 +9714,34 @@ journeys:
     proves: 'test/features/call/presentation/foreground_call_overlay_test.dart:163: Unresolved UI fallback cannot
       enter authenticated native name projection; fake contact lookup/capability, real overlay policy. Registered:
       affected-calls, host-all, ui-approved-recovery-readability.'
-  execution: not_run
+  - path: test/features/call/data/call_history_repository_test.dart
+    name: CALL-008 SQL rename
+    kind: host journey
+    real:
+    - Real SQL rename preserves stale-page callback account; deletion while callback contact preflight awaits refuses
+      before call-start port; refresh shows Unknown contact, terminal row remains unique.
+    faked:
+    - outgoing call-start capability port
+    - contact preflight timing gate
+    proves: 'test/features/call/data/call_history_repository_test.dart:103: Real SQL rename preserves stale-page callback
+      account; deletion while callback contact preflight awaits refuses before call-start port; refresh shows Unknown
+      contact, terminal row remains unique. Source 7572deae51a9acd19f9ff8c4a85724931b0c7f41; actual focused completions
+      in header.lever1_host_run. Registered under owning affected lane and host-all.'
+  execution: host_run
+  host_result:
+    status: PASS_FOCUSED_SHARED_LOGIC
+    source: 7572deae51a9acd19f9ff8c4a85724931b0c7f41
+    evidence_directory: .codex-test-logs/astra-levers12
+    runbook: docs/testing/astra-lever1-host-quickwins.md
   gaps:
-  - SQL/current-policy and widget stale completion covered using fake dial owner/contact load; native notification/current
-    active call during real contact deletion not joined.
+  - Native provider display-name rendering remains a separate VC-004/VC-010 boundary; no native call/audio proof is
+    inferred from exact logical admission.
   catalog_ids:
   - VC-004
   - VC-021
-  open_questions: []
+  open_questions:
+  - 'Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md.
+    No actual device, signed-candidate or whole affected-lane verdict.'
 - id: IN-001
   feature: INTRO
   title: The introducer is notified when an introduction is accepted
