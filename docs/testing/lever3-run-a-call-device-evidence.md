@@ -58,3 +58,23 @@ Observer obs.py: telecom live calls for the package, package notification ids, o
 ## Finding: call invite misses an online callee (intermittent)
 
 4 of 36 attempts with an online, foreground callee never rang. Caller log each time: direct_send false, mailbox_store true, wake none. Callee log: no call event, no inbox delivery. A text sent right after one of them reached the callee within seconds. The other 20 controlled retries (chat, Orbit, after a network change, 150 s idle) all rang. Without push wake, a call invite left only in the relay mailbox is not delivered live to an online callee, while messages are. Possible app or relay gap, not judged.
+
+## Run B (release profile, 2026-10-22)
+
+Build 251b93a67 with the voice-call release defines (force-relay off, always-relay toggle, production TURN) on both phones. Android peer: a headless emulator. iOS: the iPhone 13 (install over, identity kept).
+
+- VC-023: PASS for "the real toggle governs the route" (both off: direct, one side on: relay on that side, media verified both ways). INCOMPLETE: relay loss without direct fallback, and restore (the production TURN cannot be cut, no root for a firewall).
+- VC-028: PASS for direct, TURN UDP and TURN TCP profiles, media both ways, clean end. A forced TCP-only fallback was not controllable.
+- VC-025 Android: PASS with a temporary credential-free swipe lock (only call controls while locked, Back returns to the lock screen, app content only after unlock). iOS: INCOMPLETE (the automation could not lock the iPhone, no passcode was set or changed).
+- VC-004 and VC-010 iOS: PASS. The CallKit banner shows the app label and the contact name, never a raw identity. The revoked or unknown contact leg was not run (it would need deleting a contact on a protected phone).
+- VC-020 iOS: PASS (microphone off shows "Microphone permission is needed to make calls." and the peer never rings).
+- VC-026 iOS: FAIL, app bug, 2 of 2. After the iPhone app is killed while ringing or during a call, the next incoming call fails (native_lifecycle_failed) and the app switches calling off ("Voice calling is unavailable right now", no recovery in 5 min). A reinstall over it restores calling.
+- kx0006 retry: not run.
+
+## Idle-poll fix check (456674551)
+
+The Run A "never rang" condition (invite stored only in the relay mailbox, no wake) rang 11 of 11 times with the fix, in 2.6-6.3 s (median 4.8 s), across callee restarts, callee network changes and resumes. The callee polls every 4 s while in the foreground and idle, and makes zero polls in the background. Cancelled and expired invites did not ring.
+
+## Lever 4 (known-content audio): needs the test-build audio hook
+
+Owner decision 2026-10-22: option (a). VC-009, VC-011, VC-014, VC-015, VC-017, VC-018, VC-019 and CALL-007 are recorded as "needs the test-build audio hook (not approved)". The no-hook energy option is not feasible for the production flow: the call stats sampler (lib/features/call/infrastructure/call_stats_sampler.dart) keeps only packet and byte counters and route fields, so no inbound audio level is readable without app code, and Android has no app-free way to read a playback signal level. Emulator peers must start with audio input off, since an AVD with hw.audioInput=yes captures the host microphone.
