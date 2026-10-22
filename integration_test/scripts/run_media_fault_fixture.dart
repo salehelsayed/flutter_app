@@ -99,6 +99,22 @@ Future<int> _fault(File state, String wire) async {
     return 64;
   }
   final client = _client(state);
+  if (op == DirectMediaFixtureFaultOp.expire) {
+    final pending = await client.pending();
+    if (pending.isNotEmpty && pending.last.lane == 'legacy') {
+      final target = pending.last;
+      final status = await client.apply(
+        op,
+        recipientPeerId: target.recipientPeerId,
+        attachmentId: target.attachmentId,
+      );
+      stdout.writeln(
+        'fault=expire lane=legacy present=${status['present']} '
+        '(backdated and swept)',
+      );
+      return 0;
+    }
+  }
   if (!op.targeted) {
     await client.apply(op);
     stdout.writeln('fault=$wire applied');

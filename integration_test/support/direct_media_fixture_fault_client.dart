@@ -38,10 +38,17 @@ final class DirectMediaFixtureFaultClient {
     if (op.targeted && (recipientPeerId == null || attachmentId == null)) {
       throw ArgumentError('${op.wire} needs recipientPeerId and attachmentId');
     }
+    // expire may name a target: a legacy-lane blob is backdated and swept,
+    // while an untargeted expire moves the custody store clock.
+    final withTarget =
+        op.targeted ||
+        (op == DirectMediaFixtureFaultOp.expire &&
+            recipientPeerId != null &&
+            attachmentId != null);
     final body = <String, String>{
       'op': op.wire,
-      if (op.targeted) 'recipientPeerId': recipientPeerId!,
-      if (op.targeted) 'attachmentId': attachmentId!,
+      if (withTarget) 'recipientPeerId': recipientPeerId!,
+      if (withTarget) 'attachmentId': attachmentId!,
     };
     final response = await _send('POST', _faultUrl, jsonEncode(body));
     if (response.status != HttpStatus.ok) {

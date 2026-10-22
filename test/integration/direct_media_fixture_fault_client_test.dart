@@ -69,6 +69,20 @@ void main() {
     ]);
   });
 
+  test('expire may name a legacy target', () async {
+    await client().apply(
+      DirectMediaFixtureFaultOp.expire,
+      recipientPeerId: 'peer-1',
+      attachmentId: 'att-9',
+    );
+
+    expect(jsonDecode(seen.single.body), {
+      'op': 'expire',
+      'recipientPeerId': 'peer-1',
+      'attachmentId': 'att-9',
+    });
+  });
+
   test('targeted ops without a target are refused before any request', () {
     expect(
       () => client().apply(DirectMediaFixtureFaultOp.corrupt),
