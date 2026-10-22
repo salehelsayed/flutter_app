@@ -47,6 +47,7 @@ void main() {
               kMediaDownloadStatusPending,
               kMediaDownloadStatusDownloading,
             }.contains(status) ||
+            GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment) ||
             GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment);
         if (retryable) {
           expect(

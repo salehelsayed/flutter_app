@@ -150,7 +150,8 @@ class GroupMediaInfoSheet extends StatelessWidget {
       return l10n.group_media_info_state_available;
     }
     if (attachment.downloadStatus == kMediaDownloadStatusPending ||
-        attachment.downloadStatus == kMediaDownloadStatusDownloading) {
+        attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment)) {
       return l10n.group_media_info_state_pending;
     }
     return l10n.group_media_info_state_unavailable;

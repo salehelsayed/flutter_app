@@ -634,6 +634,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           kMediaDownloadStatusPending,
           kMediaDownloadStatusDownloading,
           kMediaDownloadStatusFailed,
+          ...kMediaDownloadNotFoundRetryStatuses,
         }.contains(widget.attachment.downloadStatus)) {
       return const Padding(
         padding: EdgeInsets.all(12),

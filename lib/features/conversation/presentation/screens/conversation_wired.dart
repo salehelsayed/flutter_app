@@ -2511,6 +2511,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
     return attachment.downloadStatus == kMediaDownloadStatusPending ||
         attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment) ||
         // A transient `failed` row is recoverable only while under the bounded
         // retry budget; the terminal `download_failed` is never re-recovered
         // (INV-DL-1) — mirrors the group recovery path.

@@ -64,7 +64,13 @@ final _bob = TestEd25519Identity.fromSeedByte(72);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUp(installFakeJustAudioPlatform);
+  Future<void> Function(Duration)? previousNotFoundWait;
+  setUp(() {
+    installFakeJustAudioPlatform();
+    previousNotFoundWait = debugRelayNotFoundRetryWait;
+    debugRelayNotFoundRetryWait = (_) async {};
+  });
+  tearDown(() => debugRelayNotFoundRetryWait = previousNotFoundWait);
   late Uint8List cameraJpeg;
   late Uint8List preparedJpeg;
   late Uint8List compressedJpeg;
@@ -183,62 +189,6 @@ void main() {
         );
         await tester.runAsync(h.expectSingleCopyAfterReplay);
       },
-    );
-  }
-
-  Future<void> expectTransientRecovery(
-    WidgetTester tester, {
-    bool aggregate = false,
-  }) async {
-    final h = (await tester.runAsync(
-      () => _Journey.open(cameraJpeg, preparedJpeg),
-    ))!;
-    addTearDown(() => tester.runAsync(h.close));
-    if (aggregate) {
-      // Go mediaDownloadAcrossRelays reports only the last error: a relay
-      // holding the blob can be temporarily unreachable before an empty one
-      // answers not-found. This does not establish the store125 incident cause.
-      h.receiver.nextDownloadError =
-          'all 2 relays failed, last error: download failed: not found';
-    } else {
-      h.receiver.failMediaDownload = true;
-    }
-    final failed = (await tester.runAsync(() => h.deliver(offline: false)))!;
-    expect(h.sender.relayStore.blobIds, contains(failed.id));
-    expect(
-      failed.downloadStatus,
-      isNot(
-        anyOf(
-          kMediaDownloadStatusDownloadFailed,
-          kMediaDownloadStatusUnavailable,
-        ),
-      ),
-      reason:
-          'One temporary transport failure must retain recovery, not terminal unavailability',
-    );
-    expect(failed.downloadStatus, kMediaDownloadStatusFailed);
-    expect(failed.downloadRetryCount, 1);
-    expect(
-      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(failed),
-      isTrue,
-    );
-    h.receiver.failMediaDownload = false;
-    final recovered = await tester.runAsync(
-      () => downloadMedia(
-        bridge: h.receiver,
-        mediaAttachmentRepo: h.bob.repo,
-        mediaFileManager: h.files,
-        attachment: failed,
-        contactPeerId: _alice.peerId,
-        owner: MediaOwnerLane.direct,
-        messageRepo: h.bob.messageRepo,
-      ),
-    );
-    expect(recovered, isNotNull);
-    await h.expectFullImage(tester, recovered!);
-    expect(
-      h.receiver.commandLog.where((c) => c == 'media:download'),
-      hasLength(2),
     );
   }
 
@@ -529,10 +479,17 @@ void main() {
         () => _Journey.open(cameraJpeg, preparedJpeg),
       ))!;
       addTearDown(() => tester.runAsync(h.close));
-      h.receiver.nextDownloadError = error;
+      final attempts = error.contains('not found') ? 4 : 1;
+      h.receiver.transportErrors.addAll(List.filled(attempts, error));
       final failed = (await tester.runAsync(() => h.deliver(offline: false)))!;
       expect(failed.downloadStatus, kMediaDownloadStatusUnavailable);
-      expect(h.receiver.downloadAttempts, hasLength(1));
+      expect(h.receiver.downloadAttempts, hasLength(attempts));
+      await tester.runAsync(h.listener.retryIncompleteMediaDownloads);
+      expect(
+        h.receiver.downloadAttempts,
+        hasLength(attempts),
+        reason: 'confirmed absence stays excluded from automatic recovery',
+      );
       await tester.pumpWidget(
         h.wrap(
           MediaGridCell(attachment: failed, onRetryUnavailableMedia: () {}),
@@ -880,18 +837,43 @@ void main() {
     );
   }
 
-  group(
-    'KNOWN GAP: mixed-relay temporary failure is mistaken for terminal not-found',
-    () {
-      testWidgets(
-        'aggregate relay error preserves retry and eventual full image plus caption',
-        (tester) => expectTransientRecovery(tester, aggregate: true),
+  testWidgets(
+    'mixed-relay not-found recovers automatically without Retry and retains full image plus caption',
+    (tester) async {
+      final h = (await tester.runAsync(
+        () => _Journey.open(cameraJpeg, preparedJpeg),
+      ))!;
+      addTearDown(() => tester.runAsync(h.close));
+      h.receiver.nextDownloadError =
+          'all 2 relays failed, last error: download failed: not found';
+      MediaAttachment? waiting;
+      final delays = <Duration>[];
+      debugRelayNotFoundRetryWait = (delay) async {
+        delays.add(delay);
+        waiting = (await h.bob.repo.getAttachmentsForMessage(
+          h.messageId!,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(
+          GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(waiting!),
+          isTrue,
+        );
+      };
+      final done = (await tester.runAsync(() => h.deliver(offline: false)))!;
+      expect(h.receiver.downloadAttempts, hasLength(2));
+      expect(delays, [const Duration(seconds: 15)]);
+      await tester.pumpWidget(
+        h.wrap(
+          MediaGridCell(attachment: waiting!, onRetryUnavailableMedia: () {}),
+        ),
       );
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('No longer available'), findsNothing);
+      expect(find.byTooltip('Retry'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await h.expectFullImage(tester, done);
+      await tester.runAsync(h.expectSingleCopyAfterReplay);
     },
-    skip:
-        'KNOWN GAP: download_media_use_case.dart substring-matches not found inside the '
-        'multi-relay aggregate, terminalizes a recoverable failure, and removes Retry. '
-        'Run with --run-skipped to retain the desired-retry failure.',
   );
 }
 

@@ -10,6 +10,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_media_info_sheet.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import '../../fakes/fake_just_audio.dart';
@@ -38,6 +39,9 @@ void main() {
     'retry-pending': kMediaDownloadStatusPending,
     'retryable-failed': kMediaDownloadStatusFailed,
     'deferred': kMediaDownloadStatusRetryWaiting,
+    'notfound-wait-1': kMediaDownloadStatusNotFoundRetry1,
+    'notfound-wait-2': kMediaDownloadStatusNotFoundRetry2,
+    'notfound-wait-3': kMediaDownloadStatusNotFoundRetry3,
     'gone': kMediaDownloadStatusUnavailable,
     'cannot-open': kMediaDownloadStatusIntegrityFailed,
   };
@@ -53,6 +57,9 @@ void main() {
               'loading',
               'retry-pending',
               'retryable-failed',
+              'notfound-wait-1',
+              'notfound-wait-2',
+              'notfound-wait-3',
             ].contains(state.key);
             final attachment = MediaAttachment(
               id: id,
@@ -108,6 +115,17 @@ void main() {
               }
               expect(find.byType(CircularProgressIndicator), findsOneWidget);
               expect(find.text('Media unavailable'), findsNothing);
+              if (state.key.startsWith('notfound-wait')) {
+                expect(
+                  find.byKey(DocumentAttachmentTile.retryKey(id)),
+                  findsNothing,
+                );
+                expect(
+                  find.byKey(ValueKey('unavailable-media-retry-message-$id')),
+                  findsNothing,
+                );
+                expect(retries, 0);
+              }
             } else {
               final index = state.key == 'deferred'
                   ? 0
@@ -139,6 +157,55 @@ void main() {
       }
     }
   }
+  for (final language in copy.keys) {
+    for (final status in kMediaDownloadNotFoundRetryStatuses) {
+      testWidgets(
+        '$language absence window group info stays pending without internals',
+        (tester) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: Locale(language),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: GroupMediaInfoSheet(
+                  attachment: MediaAttachment(
+                    id: 'absence-info',
+                    messageId: 'message',
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                    size: 4096,
+                    ownerLane: MediaOwnerLane.group,
+                    downloadStatus: status,
+                    createdAt: '2026-10-20T00:00:00Z',
+                  ),
+                  senderDisplayName: 'Sender',
+                  sentAt: DateTime.utc(2026, 10, 20),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          final l10n = AppLocalizations.of(
+            tester.element(find.byKey(GroupMediaInfoSheet.sheetKey)),
+          )!;
+          expect(
+            find.text(l10n.group_media_info_state_pending),
+            findsOneWidget,
+          );
+          expect(
+            find.text(l10n.group_media_info_state_unavailable),
+            findsNothing,
+          );
+          expect(find.text(status), findsNothing);
+          expect(find.byTooltip(l10n.btn_retry), findsNothing);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+  }
+
   testWidgets('a real decoder failure says cannot open, not gone', (
     tester,
   ) async {

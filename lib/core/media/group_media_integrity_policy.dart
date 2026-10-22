@@ -19,7 +19,19 @@ const String kMediaDownloadStatusFailed = 'failed';
 /// A direct transport retry burst ended; another trigger or tap may retry.
 const String kMediaDownloadStatusRetryWaiting = 'retry_waiting';
 
-/// The relay explicitly answered that this item is absent or unauthorized.
+/// Three durable automatic waits after an initial relay absence. Progress is
+/// separate from the existing generic failure counter, so unrelated earlier
+/// failures cannot shorten or reset this bounded four-request window.
+const String kMediaDownloadStatusNotFoundRetry1 = 'not_found_retry_1';
+const String kMediaDownloadStatusNotFoundRetry2 = 'not_found_retry_2';
+const String kMediaDownloadStatusNotFoundRetry3 = 'not_found_retry_3';
+const kMediaDownloadNotFoundRetryStatuses = [
+  kMediaDownloadStatusNotFoundRetry1,
+  kMediaDownloadStatusNotFoundRetry2,
+  kMediaDownloadStatusNotFoundRetry3,
+];
+
+/// Confirmed relay absence after ordinary retries, or authorization denial.
 const String kMediaDownloadStatusUnavailable = 'unavailable';
 const String kMediaDownloadStatusIntegrityFailed = 'integrity_failed';
 const String kMediaDownloadStatusUploadPending = 'upload_pending';
@@ -117,6 +129,11 @@ class GroupMediaIntegrityPolicy {
   static bool isQuarantinedGroupMedia(MediaAttachment attachment) {
     return attachment.downloadStatus == kMediaDownloadStatusIntegrityFailed;
   }
+
+  /// A missing relay blob is waiting for its next automatic attempt. These
+  /// states intentionally do not offer manual Retry while the window is open.
+  static bool isPendingRelayNotFoundRetry(MediaAttachment attachment) =>
+      kMediaDownloadNotFoundRetryStatuses.contains(attachment.downloadStatus);
 
   /// Whether a failed download should still be auto/UI-retried.
   ///

@@ -18,6 +18,48 @@ const _validHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 void main() {
+  for (final status in kMediaDownloadNotFoundRetryStatuses) {
+    test(
+      'bounded absence group recovery resumes $status independently of generic retries',
+      () async {
+        final candidate = _candidate(
+          index: 1,
+          id: 'absence-window',
+          status: status,
+          retryCount: 3,
+        );
+        var current = candidate.attachment;
+        final events = <String>[];
+        final decider = _RecordingDecider(events);
+        var transfers = 0;
+        final recovery = RetryIncompleteGroupDownloadsUseCase(
+          loadPage: ({required after, required limit}) async =>
+              after == null ? [candidate] : [],
+          loadCurrentAttachment: (_) async => current,
+          loadCurrentParent: (_) async => _parent(candidate),
+          loadCurrentGroup: (_) async =>
+              _group(candidate.groupId, type: GroupType.chat),
+          autoDownloadDecider: decider,
+          transfer:
+              ({required attachment, required parent, required group}) async {
+                transfers++;
+                current = attachment.copyWith(
+                  downloadStatus: kMediaDownloadStatusDone,
+                  localPath: 'group_media/${attachment.id}',
+                  downloadRetryCount: 0,
+                );
+                return current;
+              },
+        );
+        expect(await recovery(), 1);
+        expect(transfers, 1);
+        expect(decider.requests.single.downloadStatus, status);
+        expect(await recovery(), 0);
+        expect(transfers, 1);
+      },
+    );
+  }
+
   test(
     'P269 group download recovery pages past denied rows and converges eligible durable media exactly once',
     () async {
@@ -728,11 +770,9 @@ void main() {
     );
 
     expect(await recovery(), 1);
-    expect(
-      legacyTransfers,
-      <String>[ordinaryCandidate.attachment.id],
-      reason: 'an ACK failure must not starve the next bounded candidate',
-    );
+    expect(legacyTransfers, <String>[
+      ordinaryCandidate.attachment.id,
+    ], reason: 'an ACK failure must not starve the next bounded candidate');
     expect(
       await recovery(),
       0,
@@ -744,11 +784,9 @@ void main() {
       'relay-source-tc365',
     ]);
     expect(ackDrainCalls, 3);
-    expect(
-      legacyTransfers,
-      <String>[ordinaryCandidate.attachment.id],
-      reason: 'restart recovery retries strict ownership, never legacy',
-    );
+    expect(legacyTransfers, <String>[
+      ordinaryCandidate.attachment.id,
+    ], reason: 'restart recovery retries strict ownership, never legacy');
 
     attachments[strictCandidate.attachment.id] = strictCandidate.attachment
         .copyWith(groupMediaBlobCustodyFingerprint: _validHash);
@@ -765,11 +803,9 @@ void main() {
       'relay-source-tc365',
       'relay-source-tc365',
     ]);
-    expect(
-      legacyTransfers,
-      <String>[ordinaryCandidate.attachment.id],
-      reason: 'the restricted drain never invokes the legacy transfer owner',
-    );
+    expect(legacyTransfers, <String>[
+      ordinaryCandidate.attachment.id,
+    ], reason: 'the restricted drain never invokes the legacy transfer owner');
   });
 }
 

@@ -382,6 +382,9 @@ class ChatMessageListener {
               kMediaDownloadStatusPending,
               kMediaDownloadStatusDownloading,
             }.contains(attachment.downloadStatus) &&
+            !GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+              attachment,
+            ) &&
             !GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment)) {
           downloadedMedia.add(attachment);
           continue;

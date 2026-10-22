@@ -3976,6 +3976,33 @@ visible and cannot become an ordinary first-attempt PASS.
   tap, app resume, OS restore or relay-ready event can start another bounded burst.
   Older `failed` rows retain their original bounded counter.
 
+  Ordinary legacy direct/group relay `not found` now starts an independent,
+  bounded absence window, superseding the first-response terminal rule by owner
+  decision `m-ff569538`. There are at most four Dart `media:download` invocations:
+  the initial request and three further requests after 15 s, 45 s and 120 s
+  (three minutes of backoff). Native address/dial fallback within one command
+  remains unchanged. Three persisted waiting stages track this window without
+  consuming or resetting the generic retry counter, adding a database column,
+  or creating another recovery service. Reopen re-evaluates the stored stage
+  and only its remaining requests; pending wire replay cannot reset it or revive
+  the final `unavailable` row. Existing direct/group queries, policy gates and
+  exact ordinary-group failure/claim qualifiers own recovery. The incumbent
+  in-flight map also covers the waits, so concurrent callers join one window.
+  Waiting image/video/voice/document UI uses its existing loading state without
+  Retry; the group Info sheet uses its existing Pending label and never shows
+  the stored stage name. Authorization denial and integrity/hash rejection
+  remain terminal.
+  Private/strict transfer owners retain their separate paths. A truly expired
+  relay blob ends at the same unavailable state after the bounded window.
+  Verified host coverage includes real SQLite interruption/reopen and replay,
+  direct/group return/exhaustion, coalescing, corruption, group SQL admission,
+  and EN/DE/AR loading/no-Retry cases. The wait seam substitutes scheduling,
+  while asserting the declared intervals; it does not measure three real minutes.
+  Evicted direct/group/announcement widget regressions retain zero transfers
+  on open/reopen, allow one explicit action to exhaust four absence requests,
+  assert all three delays, and prove final expiry stays quiet on another reopen.
+  Evidence is retained in `build/kayan-safe/media-notfound-retry/`.
+
   Existing primary app-level recovery uses a paged direct-owner query across all
   media types, even without a mounted chat, and reuses the normal policy and UI
   stream. A restore edge during active work is coalesced into a follow-up pass
@@ -4118,9 +4145,12 @@ visible and cannot become an ordinary first-attempt PASS.
   These host fixtures do not certify iOS camera/compression, Go AES-GCM,
   a live relay/circuit or a signed build. The
   first causal baseline fails on `pending` versus `failed`; online/offline
-  image controls pass. Explicit mixed-multi-relay aggregate-not-found retry
-  remains a case-scoped KNOWN GAP because Go reports only its final error;
-  the default single-peer configuration does not establish that scenario.
+  image controls pass. The former mixed-multi-relay aggregate-not-found KNOWN
+  GAP is superseded by the bounded absence window above. Its active camera
+  regression observes the persisted waiting state without Retry, recovers on
+  the second request, and preserves the full image, caption and replay dedup.
+  The default single-peer configuration alone does not establish a real
+  multi-relay device topology; controlled native replies prove this host leg.
   Raw first attempts and final check receipts are retained in
   `build/kayan-safe/media-unavailable/logs/`; fixture/setup failures must stay
   distinguished from product regression failures and passing scenarios.

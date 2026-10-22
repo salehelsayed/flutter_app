@@ -12,4 +12,16 @@ const mediaDownloadRecoveryOwners = <String, Set<MediaOwnerLane>>{
   },
   kMediaDownloadStatusFailed: {MediaOwnerLane.direct, MediaOwnerLane.group},
   kMediaDownloadStatusRetryWaiting: {MediaOwnerLane.direct},
+  kMediaDownloadStatusNotFoundRetry1: {
+    MediaOwnerLane.direct,
+    MediaOwnerLane.group,
+  },
+  kMediaDownloadStatusNotFoundRetry2: {
+    MediaOwnerLane.direct,
+    MediaOwnerLane.group,
+  },
+  kMediaDownloadStatusNotFoundRetry3: {
+    MediaOwnerLane.direct,
+    MediaOwnerLane.group,
+  },
 };

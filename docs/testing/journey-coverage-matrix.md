@@ -2872,10 +2872,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
   - Real: real conversation explicit retry/terminal UI.
   - Faked: expired relay bridge; fake network/in-memory repositories.
   - Proves / registration: test/features/conversation/integration/media_eviction_redownload_test.dart:118: Evicted media does not auto-loop and explicit action reaches a truthful terminal download failure; no real provider expiry. Registered: affected-conversation, host-all.
-- [test/features/conversation/application/download_media_use_case_test.dart](../../test/features/conversation/application/download_media_use_case_test.dart) — `relay not found short-circuits to download_failed without burning the retry budget (INV-DL-4)` (unit).
-  - Real: download terminal classification/retry budget.
-  - Faked: bridge not-found response; attachment repository/file manager.
-  - Proves / registration: test/features/conversation/application/download_media_use_case_test.dart:1745: Not-found becomes download_failed without incrementing retries, no done result; actual relay TTL and visible viewer feedback are separate. Registered: affected-conversation, group-media-storage-preservation, host-all, strict-group-media-manifest.
+- [test/features/conversation/application/download_media_use_case_test.dart](../../test/features/conversation/application/download_media_use_case_test.dart) — `bounded relay not-found stops after four total attempts` and `bounded relay not-found resumes the remaining budget after real SQLite reopen` (unit).
+  - Real: bounded absence classification, independent generic counter, production SQLite interruption/reopen, pending-replay preservation and final recovery exclusion.
+  - Faked: bridge responses and retry wait; key-store port and file-manager seam.
+  - Proves / registration: The initial not-found plus three further requests use 15/45/120-second declared waits. A real SQL checkpoint after two failures resumes only the remaining two after reopen; replay cannot restart progress or the final unavailable state. This supersedes the immediate first-not-found terminal rule per owner m-ff569538. Actual relay TTL/device timing remains separate. The existing file remains registered in the affected-conversation and media-preservation/strict-manifest selections, and host-all for the later wave. See docs/testing/TESTING.md for verified scope and evidence.
 - [test/features/conversation/application/download_media_use_case_test.dart](../../test/features/conversation/application/download_media_use_case_test.dart) — `content hash mismatch on encrypted direct blob fails before decrypt` (unit).
   - Real: actual SHA256/content admission and file removal.
   - Faked: download/crypto bridge; repositories.
@@ -3545,10 +3545,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
   - Real: actual listener/download/hash status and filesystem cleanup.
   - Faked: fake group network/bridge/repositories; four synthetic bytes.
   - Proves / registration: test/features/groups/integration/group_media_fanout_test.dart:2107: Tampered group attachment reaches integrity_failed, no localPath/file and one download; no native codec or actual cryptographic authentication. Registered: affected-groups, host-all.
-- [test/features/conversation/application/download_media_use_case_test.dart](../../test/features/conversation/application/download_media_use_case_test.dart) — `relay not found short-circuits to download_failed without burning the retry budget (INV-DL-4)` (unit).
-  - Real: download terminal classification/retry budget.
-  - Faked: bridge not-found response; attachment repository/file manager.
-  - Proves / registration: test/features/conversation/application/download_media_use_case_test.dart:1745: Not-found becomes download_failed without incrementing retries, no done result; actual relay TTL and visible viewer feedback are separate. Registered: affected-conversation, group-media-storage-preservation, host-all, strict-group-media-manifest.
+- [test/features/conversation/application/download_media_use_case_test.dart](../../test/features/conversation/application/download_media_use_case_test.dart) — `bounded relay not-found stops after four total attempts` and `bounded relay not-found resumes the remaining budget after real SQLite reopen` (unit).
+  - Real: bounded absence classification, independent generic counter, production SQLite interruption/reopen, pending-replay preservation and final recovery exclusion.
+  - Faked: bridge responses and retry wait; key-store port and file-manager seam.
+  - Proves / registration: The initial not-found plus three further requests use 15/45/120-second declared waits. A real SQL checkpoint after two failures resumes only the remaining two after reopen; replay cannot restart progress or the final unavailable state. This supersedes the immediate first-not-found terminal rule per owner m-ff569538. Actual relay TTL/device timing remains separate. The existing file remains registered in the affected-conversation and media-preservation/strict-manifest selections, and host-all for the later wave. See docs/testing/TESTING.md for verified scope and evidence.
 - [test/features/conversation/application/direct_private_media_boundary_test.dart](../../test/features/conversation/application/direct_private_media_boundary_test.dart) — `Forward denies every private terminal unsupported hidden or missing parent before side effects` (unit).
   - Real: actual current-parent action authority.
   - Faked: permissive file/token/action seams.

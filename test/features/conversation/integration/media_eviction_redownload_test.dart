@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
@@ -67,7 +68,7 @@ int _downloadCount(FakeBridge bridge) =>
     bridge.commandLog.where((command) => command == 'media:download').length;
 
 /// Bridge whose relay copy has expired: every media:download answers the
-/// honest "not found" that must settle a terminal `download_failed`.
+/// honest "not found" that becomes unavailable after the bounded window.
 FakeBridge _expiredRelayBridge() => FakeBridge(
   initialResponses: {
     'media:download': {'ok': false, 'errorMessage': 'blob not found'},
@@ -91,14 +92,22 @@ Future<void> _pumpWithRealIo(
 }
 
 void main() {
+  Future<void> Function(Duration)? previousNotFoundWait;
+  final retryDelays = <Duration>[];
   setUp(() {
+    previousNotFoundWait = debugRelayNotFoundRetryWait;
+    retryDelays.clear();
+    debugRelayNotFoundRetryWait = (delay) async => retryDelays.add(delay);
     installFakeJustAudioPlatform();
     setGroupExitIntentAccessSinks(
       forGroup: (_) async => null,
       all: () async => const <GroupExitIntent>[],
     );
   });
-  tearDown(setGroupExitIntentAccessSinks);
+  tearDown(() {
+    debugRelayNotFoundRetryWait = previousNotFoundWait;
+    setGroupExitIntentAccessSinks();
+  });
 
   MediaAttachment evictedAttachment(String id, String messageId) =>
       MediaAttachment(
@@ -201,8 +210,8 @@ void main() {
       reason: 'reopening the lane must not re-arm the evicted row',
     );
 
-    // Explicit user action transfers exactly once; the expired relay answer
-    // settles the honest terminal state.
+    // One explicit action starts the bounded absence window; expiry settles
+    // terminal after the initial request plus three automatic retries.
     const retryKey = ValueKey(
       'evicted-media-retry-msg-evict-direct-att-evict-direct',
     );
@@ -221,9 +230,14 @@ void main() {
     );
     expect(
       _downloadCount(bridge),
-      1,
-      reason: 'the explicit retry transfers exactly once',
+      4,
+      reason: 'one explicit action exhausts exactly four bounded requests',
     );
+    expect(retryDelays, const [
+      Duration(seconds: 15),
+      Duration(seconds: 45),
+      Duration(seconds: 120),
+    ]);
     final persisted = await mediaRepo.getAttachmentsForMessage(
       messageId,
       owner: MediaOwnerLane.direct,
@@ -240,7 +254,7 @@ void main() {
     await pumpScreen();
     expect(
       _downloadCount(bridge),
-      1,
+      4,
       reason: 'a terminal row must never re-arm recovery',
     );
   });
@@ -260,6 +274,7 @@ void main() {
         ),
       ];
       for (final lane in lanes) {
+        retryDelays.clear();
         final network = FakeP2PNetwork();
         final mediaRepo = InMemoryMediaAttachmentRepository();
         final user = TestUser.create(
@@ -356,7 +371,7 @@ void main() {
         );
 
         // Explicit retry (reachable even for a read-only announcement member)
-        // transfers exactly once and settles the honest terminal state.
+        // starts one bounded absence window and settles terminal on expiry.
         final retryKey = ValueKey(
           'evicted-media-retry-$messageId-$attachmentId',
         );
@@ -380,9 +395,14 @@ void main() {
         );
         expect(
           _downloadCount(bridge),
-          1,
-          reason: '${lane.kind}: one action, one transfer',
+          4,
+          reason: '${lane.kind}: one action, four bounded requests',
         );
+        expect(retryDelays, const [
+          Duration(seconds: 15),
+          Duration(seconds: 45),
+          Duration(seconds: 120),
+        ]);
         final persisted = await mediaRepo.getAttachmentsForMessage(
           messageId,
           owner: MediaOwnerLane.group,
@@ -399,7 +419,7 @@ void main() {
         await pumpGroupScreen();
         expect(
           _downloadCount(bridge),
-          1,
+          4,
           reason: '${lane.kind}: no auto loop after terminal expiry',
         );
         await tester.pumpWidget(const SizedBox.shrink());

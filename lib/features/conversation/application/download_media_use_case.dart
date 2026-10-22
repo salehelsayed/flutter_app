@@ -40,6 +40,16 @@ final Map<
 >
 _inFlightMediaDownloads = {};
 
+const _relayNotFoundRetryDelays = [
+  Duration(seconds: 15),
+  Duration(seconds: 45),
+  Duration(minutes: 2),
+];
+
+/// Test scheduling seam; production uses the bounded delays above.
+@visibleForTesting
+Future<void> Function(Duration)? debugRelayNotFoundRetryWait;
+
 // Private operation keys are resolved only through the collector's protected
 // local alias index. Event records contain only closed milestones and codes.
 class _MediaDiagnosticAttempt {
@@ -48,6 +58,7 @@ class _MediaDiagnosticAttempt {
   String failureReason = 'unknown';
   bool hasFailure = false;
   bool retryTransport = false;
+  _MediaDownloadInFlightKey? relayNotFoundRetryKey;
   String stage = 'preflight';
 
   void record(
@@ -737,7 +748,9 @@ Future<MediaAttachment?> downloadMedia({
   StrictGroupMediaBlobVerifiedCiphertext? strictGroupMediaVerifiedCiphertext,
 }) async {
   final diagnostics = AppDiagnostics.instance;
-  return diagnostics.runWithAttempt(
+  final ownedRetryKeys = <_MediaDownloadInFlightKey>{};
+  late final Future<MediaAttachment?> operation;
+  operation = diagnostics.runWithAttempt(
     feature: 'media',
     traceId: diagnostics.traceForOperation('media:${attachment.id}'),
     body: (traceId) async {
@@ -750,8 +763,10 @@ Future<MediaAttachment?> downloadMedia({
         // Transport interruption is not proof that the relay lost the blob.
         // Bound each active burst; retained pending rows can retry on the next
         // foreground/connectivity/user trigger without a terminal retry cap.
-        for (var attempt = 0; attempt < 3; attempt++) {
+        var transportAttempt = 0;
+        while (true) {
           diagnosticAttempt.retryTransport = false;
+          diagnosticAttempt.relayNotFoundRetryKey = null;
           result = await _downloadMediaDiagnosed(
             bridge: bridge,
             mediaAttachmentRepo: mediaAttachmentRepo,
@@ -776,8 +791,58 @@ Future<MediaAttachment?> downloadMedia({
                 strictGroupMediaVerifiedCiphertext,
             diagnosticAttempt: diagnosticAttempt,
           );
-          if (result != null ||
-              owner != MediaOwnerLane.direct ||
+          if (result != null) {
+            break;
+          }
+          final retryKey = diagnosticAttempt.relayNotFoundRetryKey;
+          if (retryKey != null) {
+            final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+              attachment.messageId,
+              owner: owner,
+            );
+            final matches = rows.where((row) => row.id == attachment.id);
+            if (matches.isEmpty ||
+                !GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+                  matches.single,
+                )) {
+              break;
+            }
+            final pending = matches.single;
+            // Keep the incumbent transfer coalescer across the wait. Another
+            // caller joins this window instead of starting another retry loop.
+            // Never overwrite another transfer that claimed the tiny handoff gap.
+            if (!_inFlightMediaDownloads.containsKey(retryKey)) {
+              _inFlightMediaDownloads[retryKey] = (
+                future: operation,
+                diagnostics: diagnosticAttempt,
+              );
+              ownedRetryKeys.add(retryKey);
+            }
+            final index = kMediaDownloadNotFoundRetryStatuses.indexOf(
+              pending.downloadStatus,
+            );
+            final delay = _relayNotFoundRetryDelays[index];
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'MEDIA_DOWNLOAD_NOT_FOUND_RETRY_SCHEDULED',
+              details: {'attempt': index + 2, 'delayMs': delay.inMilliseconds},
+            );
+            await (debugRelayNotFoundRetryWait?.call(delay) ??
+                Future<void>.delayed(delay));
+            final freshRows = await mediaAttachmentRepo
+                .getAttachmentsForMessage(attachment.messageId, owner: owner);
+            final fresh = freshRows.where((row) => row.id == attachment.id);
+            if (fresh.isEmpty ||
+                (!GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+                      fresh.single,
+                    ) &&
+                    fresh.single.downloadStatus != kMediaDownloadStatusDone)) {
+              break;
+            }
+            currentAttachment = fresh.single;
+            continue;
+          }
+          if (owner != MediaOwnerLane.direct ||
               !diagnosticAttempt.retryTransport) {
             break;
           }
@@ -789,7 +854,7 @@ Future<MediaAttachment?> downloadMedia({
           if (matches.isEmpty) break;
           final pending = matches.single;
           if (pending.downloadStatus != kMediaDownloadStatusPending) break;
-          if (attempt == 2) {
+          if (transportAttempt == 2) {
             await mediaAttachmentRepo.saveAttachment(
               pending.copyWith(
                 downloadStatus: kMediaDownloadStatusRetryWaiting,
@@ -798,12 +863,12 @@ Future<MediaAttachment?> downloadMedia({
             );
             break;
           }
-          final delay = Duration(seconds: 1 << attempt);
+          final delay = Duration(seconds: 1 << transportAttempt);
           emitFlowEvent(
             layer: 'FL',
             event: 'MEDIA_DOWNLOAD_TRANSPORT_RETRY_SCHEDULED',
             details: {
-              'burstAttempt': attempt + 2,
+              'burstAttempt': transportAttempt + 2,
               'delayMs': delay.inMilliseconds,
             },
           );
@@ -823,6 +888,7 @@ Future<MediaAttachment?> downloadMedia({
             break;
           }
           currentAttachment = fresh.single;
+          transportAttempt++;
         }
         diagnostics.finishAttempt(
           feature: 'media',
@@ -853,6 +919,15 @@ Future<MediaAttachment?> downloadMedia({
       }
     },
   );
+  try {
+    return await operation;
+  } finally {
+    for (final key in ownedRetryKeys) {
+      if (identical(_inFlightMediaDownloads[key]?.future, operation)) {
+        _inFlightMediaDownloads.remove(key);
+      }
+    }
+  }
 }
 
 Future<MediaAttachment?> _downloadMediaDiagnosed({
@@ -1443,7 +1518,8 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
     return null;
   }
   final inFlight = _inFlightMediaDownloads[inFlightKey];
-  if (inFlight != null) {
+  if (inFlight != null && !identical(inFlight.diagnostics, diagnosticAttempt)) {
+    // A retry-window owner may advance its own wait; other invocations join it.
     // This invocation waits for the same transfer; it is not a second
     // download or a discarded duplicate. Keep its own attempt/authority,
     // while carrying the transfer owner's failure into its terminal report.
@@ -1685,9 +1761,9 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       return status;
     }
 
-    // Honest "expired / unavailable on the relay" terminal state, reached
-    // immediately on a relay "not found" / "not authorized" response,
-    // WITHOUT consuming the bounded retry budget (INV-DL-4).
+    // Ordinary relay absence is terminal after its bounded window. Private
+    // relay absence and authorization denial keep their immediate terminal
+    // path. This never consumes the separate generic failure budget.
     Future<void> markRelayUnavailableDownloadFailed() async {
       if (requiresDirectPrivateCommit) {
         await directPrivateDownloadRepo!
@@ -1723,6 +1799,43 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
           owner: owner,
         );
       } catch (_) {}
+    }
+
+    Future<void> persistRelayNotFoundFailure() async {
+      final nextStage =
+          kMediaDownloadNotFoundRetryStatuses.indexOf(
+            attachment.downloadStatus,
+          ) +
+          1;
+      if (nextStage == kMediaDownloadNotFoundRetryStatuses.length) {
+        await markRelayUnavailableDownloadFailed();
+        return;
+      }
+      final status = kMediaDownloadNotFoundRetryStatuses[nextStage];
+      bool changed;
+      if (ordinaryGroupDownloadFailureRepo != null) {
+        changed = await recordOrdinaryGroupDownloadFailure(
+          incrementRetryCount: false,
+          failureStatus: status,
+          expectedDownloadStatus: kMediaDownloadStatusDownloading,
+          expectedLocalPath: ordinaryGroupExpectedLocalPath,
+          clearLocalPath: false,
+        );
+      } else {
+        try {
+          await mediaAttachmentRepo.updateDownloadStatus(attachment.id, status);
+          await mediaAttachmentRepo.saveAttachment(
+            attachment.copyWith(downloadStatus: status),
+            owner: owner,
+          );
+          changed = true;
+        } catch (_) {
+          changed = false;
+        }
+      }
+      if (changed) {
+        diagnosticAttempt.relayNotFoundRetryKey = inFlightKey;
+      }
     }
 
     bool isRelayUnavailableError(Object? errorMessage) {
@@ -3258,11 +3371,20 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
 
         await reportPreservedDownloadArtifacts(reason: 'download_failed');
 
-        // INV-DL-4: a relay "not found"/"not authorized" is an honest
-        // terminal "expired on server" state — flip straight to
-        // download_failed without burning the retry budget. Any other relay
-        // error is a bounded transient failure.
-        if (!TransientTransportError.matches(
+        final errorText =
+            result['errorMessage']?.toString().toLowerCase() ?? '';
+        if (errorText.contains('not authorized')) {
+          await markRelayUnavailableDownloadFailed();
+        } else if (!requiresDirectPrivateCommit &&
+            (errorText.contains('not found') ||
+                GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+                  attachment,
+                ))) {
+          // Ordinary legacy media gets exactly three further attempts. Keep
+          // authorization and integrity failures final; private/strict owners
+          // retain their existing, separate policy.
+          await persistRelayNotFoundFailure();
+        } else if (!TransientTransportError.matches(
               result['errorMessage'],
               code: result['errorCode'],
             ) &&
@@ -3883,11 +4005,17 @@ Future<MediaAttachment?> _downloadMediaDiagnosed({
       } catch (_) {}
 
       try {
-        await persistTransientDownloadFailure(
-          keepPending:
-              diagnosticAttempt.stage == 'download' &&
-              TransientTransportError.matches(e),
-        );
+        if (!requiresDirectPrivateCommit &&
+            diagnosticAttempt.stage == 'download' &&
+            GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment)) {
+          await persistRelayNotFoundFailure();
+        } else {
+          await persistTransientDownloadFailure(
+            keepPending:
+                diagnosticAttempt.stage == 'download' &&
+                TransientTransportError.matches(e),
+          );
+        }
       } catch (_) {}
 
       final localAttachment = await useCompletedLocalAttachmentIfAvailable(
