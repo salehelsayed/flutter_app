@@ -1714,6 +1714,7 @@
   "@private_media_use_mode_cta": {"placeholders": {"mode": {"type": "String"}}},
   "private_media_summary_change": "تغيير",
   "private_media_summary_ordinary_detail": "صورة عادية · يمكن حفظها أو مشاركتها",
+  "private_media_summary_ordinary_video_detail": "فيديو عادي · يمكن حفظه أو مشاركته",
   "private_media_summary_protected_detail": "يمكن عرضها مجددًا · بلا حفظ أو مشاركة",
   "private_media_summary_view_once_detail": "عرض واحد لـ {name}",
   "@private_media_summary_view_once_detail": {"placeholders": {"name": {"type": "String"}}},

@@ -5822,6 +5822,12 @@ abstract class AppLocalizations {
   /// **'Normal photo · can be saved or shared'**
   String get private_media_summary_ordinary_detail;
 
+  /// No description provided for @private_media_summary_ordinary_video_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'Normal video · can be saved or shared'**
+  String get private_media_summary_ordinary_video_detail;
+
   /// No description provided for @private_media_summary_protected_detail.
   ///
   /// In en, this message translates to:

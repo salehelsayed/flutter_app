@@ -1854,6 +1854,7 @@
   "@private_media_use_mode_cta": {"placeholders": {"mode": {"type": "String"}}},
   "private_media_summary_change": "Change",
   "private_media_summary_ordinary_detail": "Normal photo · can be saved or shared",
+  "private_media_summary_ordinary_video_detail": "Normal video · can be saved or shared",
   "private_media_summary_protected_detail": "Viewable again · no saving or sharing",
   "private_media_summary_view_once_detail": "One view for {name}",
   "@private_media_summary_view_once_detail": {"placeholders": {"name": {"type": "String"}}},

@@ -3550,6 +3550,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'صورة عادية · يمكن حفظها أو مشاركتها';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'فيديو عادي · يمكن حفظه أو مشاركته';
+
+  @override
   String get private_media_summary_protected_detail =>
       'يمكن عرضها مجددًا · بلا حفظ أو مشاركة';
 

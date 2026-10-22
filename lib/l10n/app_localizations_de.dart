@@ -3573,6 +3573,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Normales Foto · kann gespeichert oder geteilt werden';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'Normales Video · kann gespeichert oder geteilt werden';
+
+  @override
   String get private_media_summary_protected_detail =>
       'Erneut ansehbar · kein Speichern oder Teilen';
 

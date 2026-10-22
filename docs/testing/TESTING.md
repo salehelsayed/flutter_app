@@ -3742,6 +3742,12 @@ do not count `test(...)` strings as executions. Runner listings took about
   lane but did not launch it because another campaign owned the shared
   native-build lease; the direct host result is retained in ignored
   `.codex-test-logs/r2-5-affected-media.log`.
+  Ordinary pending-video summaries and picker disclosure use the existing
+  selected media kind and say “Normal video”; photo wording stays unchanged.
+  The full private-media composer widget file passes 14 cases, including one
+  photo/video distinction case across English, German and Arabic. This is copy
+  and kind-wiring proof, not native video preparation or device certification.
+  Group composers do not enable this private-media chip.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.

@@ -3490,6 +3490,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Normal photo · can be saved or shared';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'Normal video · can be saved or shared';
+
+  @override
   String get private_media_summary_protected_detail =>
       'Viewable again · no saving or sharing';
 

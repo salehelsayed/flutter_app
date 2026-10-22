@@ -1714,6 +1714,7 @@
   "@private_media_use_mode_cta": {"placeholders": {"mode": {"type": "String"}}},
   "private_media_summary_change": "Ändern",
   "private_media_summary_ordinary_detail": "Normales Foto · kann gespeichert oder geteilt werden",
+  "private_media_summary_ordinary_video_detail": "Normales Video · kann gespeichert oder geteilt werden",
   "private_media_summary_protected_detail": "Erneut ansehbar · kein Speichern oder Teilen",
   "private_media_summary_view_once_detail": "Eine Ansicht für {name}",
   "@private_media_summary_view_once_detail": {"placeholders": {"name": {"type": "String"}}},
