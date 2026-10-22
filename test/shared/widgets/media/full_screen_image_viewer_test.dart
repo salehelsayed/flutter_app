@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,13 @@ void main() {
     final first = File('${directory.path}/first.png')..writeAsBytesSync(pixels);
     final second = File('${directory.path}/second.png')
       ..writeAsBytesSync(pixels);
+    await tester.runAsync(() async {
+      final codec = await ui.instantiateImageCodec(second.readAsBytesSync());
+      final frame = await codec.getNextFrame();
+      expect((frame.image.width, frame.image.height), (64, 32));
+      frame.image.dispose();
+      codec.dispose();
+    });
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -99,6 +107,28 @@ void main() {
     await tester.fling(find.byType(PageView), const Offset(600, 0), 1500);
     await tester.pumpAndSettle();
     expect(find.text('2 / 3'), findsOneWidget);
+    // A viewport change must keep the exact batch item, including when two
+    // entries share a path. This extends the existing gesture proof.
+    tester.view.physicalSize = const Size(900, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpAndSettle();
+    expect(find.text('2 / 3'), findsOneWidget);
+    expect(
+      (tester
+                  .widget<Image>(
+                    find.descendant(
+                      of: find.byType(InteractiveViewer).hitTestable(),
+                      matching: find.byType(Image),
+                    ),
+                  )
+                  .image
+              as FileImage)
+          .file
+          .path,
+      second.path,
+    );
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.byType(FullScreenImageViewer), findsNothing);

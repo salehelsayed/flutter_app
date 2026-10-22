@@ -105,7 +105,10 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import '../../../../core/bridge/fake_bridge.dart';
+import '../../../../shared/fixtures/complete_pdf.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_just_audio.dart';
 import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
@@ -10162,8 +10165,223 @@ void main() {
       },
     );
 
+    testWidgets(
+      'MEDIA-009/MEDIA-013 cancelled picks and real oversized file preserve draft; removal sends only the valid sibling',
+      (tester) async {
+        final dir = Directory.systemTemp.createTempSync('picker_cancel_');
+        addTearDown(() => dir.deleteSync(recursive: true));
+        final first = File('${dir.path}/removed.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final second = File('${dir.path}/retained.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final oversized = File('${dir.path}/oversized.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final handle = oversized.openSync(mode: FileMode.append);
+        handle.truncateSync(25 * 1024 * 1024 + 1);
+        handle.closeSync();
+        expect(oversized.lengthSync(), greaterThan(25 * 1024 * 1024));
+        final picker = FakeMediaPicker();
+        final repo = FakeMessageRepository();
+        final uploaded = <String>[];
+        var processed = 0;
+        var sends = 0;
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: repo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: repo,
+            contactRepo: FakeContactRepository(),
+          ),
+          initialText: 'Retained draft',
+          mediaPicker: picker,
+          documentAttachmentsEnabled: true,
+          bridge: FakeBridge(),
+          directMediaBlobCustodyClientEnabled: false,
+          imageProcessor: ImageProcessor(
+            compressFile:
+                ({
+                  required path,
+                  required quality,
+                  required keepExif,
+                  minWidth = 1920,
+                  minHeight = 1080,
+                }) async {
+                  processed++;
+                  return XFile(path);
+                },
+          ),
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                uploaded.add(localFilePath);
+                return MediaAttachment(
+                  id: 'retained-upload',
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: 'image',
+                  localPath: localFilePath,
+                  downloadStatus: 'done',
+                  createdAt: '2026-10-22T12:00:00Z',
+                );
+              },
+          sendFn:
+              ({
+                required p2pService,
+                required messageRepo,
+                required targetPeerId,
+                required text,
+                required senderPeerId,
+                required senderUsername,
+                messageId,
+                required preassignedMessageIdIsFresh,
+                timestamp,
+                bridge,
+                recipientMlKemPublicKey,
+                quotedMessageId,
+                mediaAttachments,
+                privateMediaPolicy,
+                mediaAttachmentRepo,
+                transportMetrics,
+                directEventFanout,
+              }) async {
+                sends++;
+                expect(text, 'Retained draft');
+                expect(mediaAttachments!.map((a) => a.id), ['retained-upload']);
+                return _instantSuccessSendFn(
+                  p2pService: p2pService,
+                  messageRepo: messageRepo,
+                  targetPeerId: targetPeerId,
+                  text: text,
+                  senderPeerId: senderPeerId,
+                  senderUsername: senderUsername,
+                  messageId: messageId,
+                  preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+                  timestamp: timestamp,
+                );
+              },
+        );
+        Future<void> pick(String label) async {
+          await tester.tap(find.byIcon(Icons.add_rounded));
+          await tester.pump(const Duration(milliseconds: 500));
+          tester
+              .widget<ListTile>(find.widgetWithText(ListTile, label))
+              .onTap!();
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 100)),
+          );
+          await tester.pump(const Duration(milliseconds: 500));
+        }
+
+        // Null camera and empty gallery/document results model cancellation
+        // at the existing system-picker port, after the sheet has closed.
+        for (final label in ['Take Photo', 'Media Library', 'Document']) {
+          await pick(label);
+          expect(find.byType(AttachmentPreviewStrip), findsNothing);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Retained draft',
+          );
+          expect((processed, uploaded.length, sends), (0, 0, 0));
+        }
+        expect(
+          (
+            picker.pickImageCalls,
+            picker.pickMultipleMediaCalls,
+            picker.pickDocumentsCalls,
+          ),
+          (1, 1, 1),
+        );
+        picker.multipleMediaResult = [
+          XFile(first.path),
+          XFile(second.path),
+          XFile(oversized.path),
+        ];
+        await pick('Media Library');
+        expect(
+          tester
+              .widget<AttachmentPreviewStrip>(
+                find.byType(AttachmentPreviewStrip),
+              )
+              .attachments,
+          hasLength(3),
+        );
+        expect(
+          find.byKey(const ValueKey('attachment-invalid-2')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect((uploaded.length, sends), (0, 0));
+        expect(repo.store, isEmpty);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'Retained draft',
+        );
+        // Remove the rejected actual file before the deliberately removed
+        // valid image. Neither may reach upload or the message send port.
+        await tester.tap(
+          find
+              .descendant(
+                of: find.byType(AttachmentPreviewStrip),
+                matching: find.byIcon(Icons.close),
+              )
+              .last,
+        );
+        await tester.pump();
+        await tester.tap(
+          find
+              .descendant(
+                of: find.byType(AttachmentPreviewStrip),
+                matching: find.byIcon(Icons.close),
+              )
+              .first,
+        );
+        await tester.pump();
+        expect(
+          tester
+              .widget<AttachmentPreviewStrip>(
+                find.byType(AttachmentPreviewStrip),
+              )
+              .attachments
+              .single
+              .path,
+          second.path,
+        );
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        for (var attempt = 0; attempt < 100 && sends == 0; attempt++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(uploaded, [second.path]);
+        expect(sends, 1);
+        await tester.pump(const Duration(milliseconds: 500));
+        expect((uploaded.length, sends), (1, 1));
+        expect(first.readAsBytesSync(), _tinyPngBytes);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
     group('documents (414)', () {
-      Future<void> pumpDocumentScreen(
+      Future<FakeMessageRepository> pumpDocumentScreen(
         WidgetTester tester, {
         required bool enabled,
         FakeMediaPicker? mediaPicker,
@@ -10184,6 +10402,7 @@ void main() {
         );
         await tester.tap(find.byIcon(Icons.add_rounded));
         await tester.pump(const Duration(milliseconds: 500));
+        return messageRepo;
       }
 
       testWidgets('the Document row is hidden while the switch is off', (
@@ -10197,35 +10416,108 @@ void main() {
         );
       });
 
-      testWidgets('a picked PDF is staged and a fake PDF is refused', (
-        tester,
-      ) async {
-        final tempDir = Directory.systemTemp.createTempSync('doc_pick_');
-        addTearDown(() => tempDir.deleteSync(recursive: true));
-        final real = File('${tempDir.path}/Invoice.pdf')
-          ..writeAsStringSync('%PDF-1.7\n');
-        final fake = File('${tempDir.path}/fake.pdf')
-          ..writeAsStringSync('<html>');
-        final picker = FakeMediaPicker()
-          ..documentsResult = [XFile(real.path), XFile(fake.path)];
+      testWidgets(
+        'MEDIA-013 complete PDF is staged while malformed empty missing and spoofed documents are refused',
+        (tester) async {
+          final tempDir = Directory.systemTemp.createTempSync('doc_pick_');
+          addTearDown(() => tempDir.deleteSync(recursive: true));
+          final real = File('${tempDir.path}/Invoice.pdf')
+            ..writeAsBytesSync(completePdfFixtureBytes());
+          final fake = File('${tempDir.path}/fake.pdf')
+            ..writeAsStringSync('<html>');
+          final empty = File('${tempDir.path}/empty.pdf')
+            ..writeAsStringSync('');
+          final short = File('${tempDir.path}/short.pdf')
+            ..writeAsStringSync('%PD');
+          final spoofed = File('${tempDir.path}/wrong.txt')
+            ..writeAsBytesSync(completePdfFixtureBytes());
+          final oversized = File('${tempDir.path}/oversized.pdf')
+            ..writeAsBytesSync(completePdfFixtureBytes());
+          final oversizedHandle = oversized.openSync(mode: FileMode.append);
+          oversizedHandle.truncateSync(100 * 1024 * 1024 + 1);
+          oversizedHandle.closeSync();
+          final picker = FakeMediaPicker()
+            ..documentsResult = [
+              XFile(real.path),
+              XFile(fake.path),
+              XFile(empty.path),
+              XFile(short.path),
+              XFile(spoofed.path),
+              XFile('${tempDir.path}/missing.pdf'),
+              XFile(''),
+              XFile(oversized.path),
+            ];
 
-        await pumpDocumentScreen(tester, enabled: true, mediaPicker: picker);
-        final row = find.byKey(ConversationWired.attachSheetDocumentKey);
-        expect(row, findsOneWidget);
-        await tester.runAsync(() async {
-          tester.widget<ListTile>(row).onTap!();
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-        });
-        await tester.pump(const Duration(milliseconds: 500));
+          final messages = await pumpDocumentScreen(
+            tester,
+            enabled: true,
+            mediaPicker: picker,
+          );
+          final row = find.byKey(ConversationWired.attachSheetDocumentKey);
+          expect(row, findsOneWidget);
+          await tester.runAsync(() async {
+            tester.widget<ListTile>(row).onTap!();
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+          });
+          await tester.pump(const Duration(milliseconds: 500));
 
-        expect(picker.pickDocumentsCalls, 1);
-        expect(
-          find.byKey(const ValueKey('pending-document-0')),
-          findsOneWidget,
-        );
-        expect(find.byKey(const ValueKey('pending-document-1')), findsNothing);
-        expect(find.text('Only PDF files can be sent.'), findsOneWidget);
-      });
+          expect(picker.pickDocumentsCalls, 1);
+          expect(
+            find.byKey(const ValueKey('pending-document-0')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('pending-document-1')),
+            findsOneWidget,
+          );
+          expect(
+            find.byKey(const ValueKey('attachment-invalid-1')),
+            findsOneWidget,
+          );
+          expect(
+            tester
+                .widget<AttachmentPreviewStrip>(
+                  find.byType(AttachmentPreviewStrip),
+                )
+                .attachments
+                .map((file) => file.path),
+            [real.path, oversized.path],
+          );
+          expect(real.readAsBytesSync(), completePdfFixtureBytes());
+          expect(tester.takeException(), isNull);
+          expect(find.text('Only PDF files can be sent.'), findsOneWidget);
+          await tester.enterText(
+            find.byType(TextField),
+            'Keep valid PDF draft',
+          );
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(messages.store, isEmpty);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Keep valid PDF draft',
+          );
+          await tester.tap(
+            find
+                .descendant(
+                  of: find.byType(AttachmentPreviewStrip),
+                  matching: find.byIcon(Icons.close),
+                )
+                .last,
+          );
+          await tester.pump();
+          expect(
+            tester
+                .widget<AttachmentPreviewStrip>(
+                  find.byType(AttachmentPreviewStrip),
+                )
+                .attachments
+                .single
+                .path,
+            real.path,
+          );
+        },
+      );
     });
 
     for (final camera in [true, false]) {
@@ -16969,6 +17261,135 @@ void main() {
       return tempDir;
     }
 
+    testWidgets(
+      'MEDIA-012 sending switch off still opens a complete received PDF through the real egress service',
+      (tester) async {
+        final temp = createMediaTempDir(tester);
+        final media = Directory('${temp.path}/media/contact')
+          ..createSync(recursive: true);
+        final pdf = File('${media.path}/received.pdf')
+          ..writeAsBytesSync(completePdfFixtureBytes());
+        final sourceHash = sha256.convert(pdf.readAsBytesSync()).toString();
+        final previousPaths = PathProviderPlatform.instance;
+        final previousCache = MediaFileManager.cachedDocumentsDir;
+        PathProviderPlatform.instance = _AstraDocumentsPath(temp.path);
+        MediaFileManager.cacheDocumentsDir(temp.path);
+        addTearDown(() {
+          PathProviderPlatform.instance = previousPaths;
+          MediaFileManager.debugResetDocumentsDirCache();
+          if (previousCache != null)
+            MediaFileManager.cacheDocumentsDir(previousCache);
+        });
+        final nativeRequests = <Map<Object?, Object?>>[];
+        const channel = MethodChannel('mknoon/received_media_egress');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'perform');
+          final request = Map<Object?, Object?>.from(call.arguments as Map);
+          nativeRequests.add(request);
+          final item = (request['items'] as List).single as Map;
+          expect(request['destination'], 'open');
+          expect(item['attachmentId'], 'received-pdf');
+          expect(item['mime'], 'application/pdf');
+          expect(item['sourcePath'], pdf.resolveSymbolicLinksSync());
+          expect(
+            sha256
+                .convert(File(item['sourcePath'] as String).readAsBytesSync())
+                .toString(),
+            sourceHash,
+          );
+          return {
+            'requestId': request['requestId'],
+            'outcome': nativeRequests.length == 1 ? 'noViewer' : 'presented',
+            'items': <Object>[],
+          };
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final repo = FakeMessageRepository();
+        await repo.saveMessage(
+          ConversationMessage(
+            id: 'pdf-parent',
+            contactPeerId: makeContact().peerId,
+            senderPeerId: makeContact().peerId,
+            text: 'Received document',
+            timestamp: '2026-10-22T12:00:00Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-10-22T12:00:00Z',
+          ),
+        );
+        final attachments = FakeMediaAttachmentRepository()
+          ..seed([
+            MediaAttachment(
+              id: 'received-pdf',
+              messageId: 'pdf-parent',
+              mime: 'application/pdf',
+              size: pdf.lengthSync(),
+              mediaType: 'file',
+              localPath: pdf.path,
+              downloadStatus: 'done',
+              fileName: 'received.pdf',
+              createdAt: '2026-10-22T12:00:00Z',
+              ownerLane: MediaOwnerLane.direct,
+            ),
+          ]);
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: repo,
+          mediaAttachmentRepo: attachments,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: repo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _throwingSendFn,
+          p2pService: _ThrowingDeliveryP2PService(),
+          initialText: 'Unsent PDF draft',
+          documentAttachmentsEnabled: false,
+        );
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          find.byKey(ConversationWired.attachSheetDocumentKey),
+          findsNothing,
+        );
+        tester
+            .widget<ListTile>(
+              find.byKey(ConversationWired.attachSheetCancelKey),
+            )
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+        final tile = find.byKey(DocumentAttachmentTile.tileKey('received-pdf'));
+        expect(tile, findsOneWidget);
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await tester.tap(tile);
+          for (
+            var poll = 0;
+            poll < 100 && nativeRequests.length <= attempt;
+            poll++
+          ) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 10)),
+            );
+            await tester.pump();
+          }
+          expect(nativeRequests, hasLength(attempt + 1));
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(pdf.readAsBytesSync(), completePdfFixtureBytes());
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Unsent PDF draft',
+          );
+          expect(repo.store.keys, ['pdf-parent']);
+        }
+        expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
     testWidgets('viewer delete invokes existing direct whole message cleanup', (
       tester,
     ) async {
@@ -17365,6 +17786,13 @@ class _OverflowContactRepo extends FakeContactRepository {
 }
 
 /// Convenience send function that returns success instantly.
+class _AstraDocumentsPath extends PathProviderPlatform {
+  _AstraDocumentsPath(this.path);
+  final String path;
+  @override
+  Future<String?> getApplicationDocumentsPath() async => path;
+}
+
 class _PermissionMediaPicker extends FakeMediaPicker {
   bool granted = false;
   @override
