@@ -10228,6 +10228,213 @@ void main() {
       });
     });
 
+    for (final camera in [true, false]) {
+      testWidgets(
+        'MEDIA-010 ${camera ? 'camera' : 'photos'} denial then grant keeps '
+        'draft and sends one staged image once',
+        (tester) async {
+          final dir = Directory.systemTemp.createTempSync('permission_retry_');
+          addTearDown(() => dir.deleteSync(recursive: true));
+          final image = File('${dir.path}/capture.png')
+            ..writeAsBytesSync(_tinyPngBytes);
+          final picker = _PermissionMediaPicker()
+            ..imageResult = XFile(image.path)
+            ..multipleMediaResult = [XFile(image.path)];
+          final repo = FakeMessageRepository();
+          var sends = 0;
+          var uploads = 0;
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: repo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: repo,
+              contactRepo: FakeContactRepository(),
+            ),
+            initialText: 'Keep this draft 👋',
+            mediaPicker: picker,
+            bridge: FakeBridge(),
+            directMediaBlobCustodyClientEnabled: false,
+            imageProcessor: ImageProcessor(
+              compressFile:
+                  ({
+                    required path,
+                    required quality,
+                    required keepExif,
+                    minWidth = 1920,
+                    minHeight = 1080,
+                  }) async => XFile(path),
+            ),
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  blobId,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploads++;
+                  return MediaAttachment(
+                    id: 'permission-image',
+                    messageId: '',
+                    createdAt: '2026-10-22T09:00:00.000Z',
+                    mime: mime,
+                    size: image.lengthSync(),
+                    mediaType: 'image',
+                    localPath: image.path,
+                    downloadStatus: 'done',
+                  );
+                },
+            sendFn:
+                ({
+                  required p2pService,
+                  required messageRepo,
+                  required targetPeerId,
+                  required text,
+                  required senderPeerId,
+                  required senderUsername,
+                  messageId,
+                  required preassignedMessageIdIsFresh,
+                  timestamp,
+                  bridge,
+                  recipientMlKemPublicKey,
+                  quotedMessageId,
+                  mediaAttachments,
+                  privateMediaPolicy,
+                  mediaAttachmentRepo,
+                  transportMetrics,
+                  directEventFanout,
+                }) async {
+                  sends++;
+                  expect(text, 'Keep this draft 👋');
+                  expect(mediaAttachments, hasLength(1));
+                  return _instantSuccessSendFn(
+                    p2pService: p2pService,
+                    messageRepo: messageRepo,
+                    targetPeerId: targetPeerId,
+                    text: text,
+                    senderPeerId: senderPeerId,
+                    senderUsername: senderUsername,
+                    messageId: messageId,
+                    preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+                    timestamp: timestamp,
+                  );
+                },
+          );
+          Future<void> pick() async {
+            await tester.tap(find.byIcon(Icons.add_rounded));
+            await tester.pump(const Duration(milliseconds: 500));
+            tester
+                .widget<ListTile>(
+                  find.widgetWithText(
+                    ListTile,
+                    camera ? 'Take Photo' : 'Media Library',
+                  ),
+                )
+                .onTap!();
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+            });
+            await tester.pump(const Duration(milliseconds: 500));
+          }
+
+          await pick();
+          expect(find.byType(AttachmentPreviewStrip), findsNothing);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Keep this draft 👋',
+          );
+          expect(sends, 0);
+          expect(uploads, 0);
+          expect(tester.takeException(), isNull);
+
+          // Native permission is modeled only at the existing picker boundary.
+          picker.granted = true;
+          await pick();
+          expect(
+            tester
+                .widget<AttachmentPreviewStrip>(
+                  find.byType(AttachmentPreviewStrip),
+                )
+                .attachments,
+            hasLength(1),
+          );
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Keep this draft 👋',
+          );
+          expect(sends, 0);
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          for (var i = 0; i < 30 && sends == 0; i++) {
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+            });
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(sends, 1);
+          expect(uploads, 1);
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(sends, 1);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+
+    group(
+      'KNOWN GAP ASTRA-D-1: camera permission failure is silent',
+      () {
+        testWidgets('MEDIA-010 denied camera exposes visible failure feedback', (
+          tester,
+        ) async {
+          final repo = FakeMessageRepository();
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: repo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: repo,
+              contactRepo: FakeContactRepository(),
+            ),
+            sendFn: _instantSuccessSendFn,
+            initialText: 'Unsent camera draft',
+            mediaPicker: _PermissionMediaPicker(),
+          );
+          await tester.tap(find.byIcon(Icons.add_rounded));
+          await tester.pump(const Duration(milliseconds: 500));
+          tester
+              .widget<ListTile>(find.widgetWithText(ListTile, 'Take Photo'))
+              .onTap!();
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Unsent camera draft',
+          );
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(ConversationWired)),
+          )!;
+          expect(
+            find.text(l10n.media_unavailable),
+            findsOneWidget,
+            reason:
+                'camera permission denial must be visible, as gallery failure is',
+          );
+        });
+      },
+      skip:
+          'KNOWN GAP: ConversationWired._pickFromCamera only logs camera errors at conversation_wired.dart:5862-5867; causal RED 011-D-media-permission.',
+    );
+
     testWidgets('does not show AttachmentPreviewStrip initially', (
       tester,
     ) async {
@@ -17158,6 +17365,27 @@ class _OverflowContactRepo extends FakeContactRepository {
 }
 
 /// Convenience send function that returns success instantly.
+class _PermissionMediaPicker extends FakeMediaPicker {
+  bool granted = false;
+  @override
+  Future<XFile?> pickImage({required ImageSource source}) async {
+    if (!granted) {
+      pickImageCalls++;
+      throw PlatformException(code: 'camera_access_denied');
+    }
+    return super.pickImage(source: source);
+  }
+
+  @override
+  Future<List<XFile>> pickMultipleMedia() async {
+    if (!granted) {
+      pickMultipleMediaCalls++;
+      throw PlatformException(code: 'photo_access_denied');
+    }
+    return super.pickMultipleMedia();
+  }
+}
+
 Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   required P2PService p2pService,
   required MessageRepository messageRepo,
