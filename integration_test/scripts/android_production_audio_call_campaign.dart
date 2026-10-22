@@ -1846,6 +1846,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     final nativeAnswer = label == 'Answer';
     if (nativeAnswer) await _revealNativeAnswerSurface(deviceId);
     final deadline = DateTime.now().add(const Duration(seconds: 45));
+    var hierarchyRead = false;
     while (DateTime.now().isBefore(deadline)) {
       final String xml;
       try {
@@ -1854,6 +1855,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
         await Future<void>.delayed(const Duration(milliseconds: 250));
         continue;
       }
+      hierarchyRead = true;
       final matches = _exactSemanticNodes(
         xml,
         label: label,
@@ -1869,6 +1871,14 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       }
       if (matches.length == 1) return;
       await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    // Another UiAutomation client (for example an Appium UiAutomator2
+    // session) blocks every dump, which otherwise looks like a missing node.
+    if (!hierarchyRead) {
+      throw TimeoutException(
+        'UI hierarchy unavailable on $deviceId while waiting for "$label"; '
+        'close any other UiAutomation client on the device.',
+      );
     }
     throw TimeoutException('Semantic node "$label" did not appear.');
   }
