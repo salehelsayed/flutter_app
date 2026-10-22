@@ -5370,6 +5370,8 @@
     {
       "id": "other-test-infrastructure",
       "patterns": [
+        "test/integration/direct_media_fixture_fault_client_test.dart",
+        "test/integration/direct_media_fixture_go_timeout_test.dart",
         "test/tool/*",
         "tool/sims/*",
         "scripts/test/*",
@@ -5516,6 +5518,7 @@
     {
       "id": "production-audio-disposable-harness",
       "patterns": [
+        "test/integration/production_audio_call_manual_hold_test.dart",
         "integration_test/scripts/android_production_audio_call_campaign.dart",
         "integration_test/scripts/android_foreground_webrtc_audio_campaign.dart",
         "integration_test/support/android_foreground_webrtc_audio_evidence.dart",
