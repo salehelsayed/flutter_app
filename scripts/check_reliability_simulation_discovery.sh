@@ -715,6 +715,11 @@ classify_path() {
       record "support" "$path" "support" "347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract"
       return
       ;;
+    integration_test/scripts/run_media_fault_fixture.dart|\
+    integration_test/support/direct_media_fixture_fault_client.dart)
+      record "support" "$path" "support" "H2 hand-driven device companion: owned Plan 347 relay fixture with run-scoped blob fault controls"
+      return
+      ;;
     integration_test/scripts/run_voice_message_sims.dart|\
     integration_test/scripts/android_voice_message_device_campaign.dart)
       record "support" "$path" "support" "manifest-owned prebuilt main-app physical-Android plus emulator voice-message campaign"
