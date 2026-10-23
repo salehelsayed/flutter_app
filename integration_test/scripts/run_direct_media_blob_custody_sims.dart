@@ -263,11 +263,13 @@ Future<void> verifyDirectMediaBlobCustodyAndroidTopologyAndReachability({
   required List<String> devices,
   required String host,
   required int port,
+  bool emulatorPair = false,
 }) => _verifyAndroidTopologyAndReachability(
   adbExecutable: adbExecutable,
   devices: devices,
   host: host,
   port: port,
+  emulatorPair: emulatorPair,
 );
 
 Future<int> _runCentralSims({

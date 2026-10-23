@@ -8927,6 +8927,188 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.direct_catalog.ordered_offline_replay",
+      "owner": "reliability",
+      "proofBoundary": "production.direct_catalog.ordered_offline_replay",
+      "assertions": [
+        "DC-002-hundred-complete-ordered-once",
+        "DC-003-ten-offline-custody-replay-once",
+        "both-process-restarts-preserve-logical-identities"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_direct_ordered_replay.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.direct_catalog.ordered_offline_replay",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionDirectOrderedReplay",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.ordered_text_recovery",
+      "owner": "reliability",
+      "proofBoundary": "production.group_catalog.ordered_text_recovery",
+      "assertions": [
+        "GC-002-all-three-authors-ordered-hundred-exact-once",
+        "GC-005-accepted-text-custody-before-sender-death",
+        "GC-005-three-restarts-preserve-logical-identities"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_ordered_recovery.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.group_catalog.ordered_text_recovery",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator.count2",
+        "android.emulator.rebindable",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupOrderedRecovery",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.direct_catalog.inflight_sender_cut",
+      "owner": "reliability",
+      "proofBoundary": "production.direct_catalog.inflight_sender_cut",
+      "assertions": [
+        "DC-004-committed-protected-custody-ack-withheld",
+        "DC-004-verified-uid-death-before-original-store-timeout",
+        "DC-004-same-logical-identity-exact-once-after-two-restarts"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_direct_send_cut.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "relay-mutation:local-direct-text-checkpoint-fixture",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.direct_catalog.inflight_sender_cut",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionDirectSendCut",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false,
+      "inheritedEnvironmentKeys": [
+        "MKNOON_DIRECT_TEXT_SEND_CHECKPOINT",
+        "MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_IDENTITY_SHA256",
+        "MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_PROBE_URL"
+      ]
     }
   ],
   "ownership": [

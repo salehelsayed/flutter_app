@@ -67,6 +67,8 @@ const _allowedSupportImports = {
   'integration_test/support/android_campaign_topology.dart',
   // Existing call-evidence schema/oracles and host-only update fixture keys.
   'integration_test/support/android_production_audio_call_evidence.dart',
+  // Bounded HTTP control for the owned ephemeral relay; no app graph or stack.
+  'integration_test/support/direct_text_checkpoint_client.dart',
   'integration_test/support/update_check_test_keys.dart',
   'integration_test/support/ios_xctestrun_relocator.dart',
   'tool/sims/artifact_evidence.dart',

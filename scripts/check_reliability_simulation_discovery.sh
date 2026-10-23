@@ -446,6 +446,16 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production message latency: original A/R/GP send sequences on production services; original benchmarks retained"
       return
       ;;
+    integration_test/scripts/run_production_direct_ordered_replay.dart|\
+    integration_test/scripts/run_production_group_ordered_recovery.dart|\
+    integration_test/scripts/run_production_direct_send_cut.dart)
+      record "support" "$path" "support" "manifest-owned Catalog P0 production journey; existing observation runtime, exact logical-identity oracle, no additional executable census entry"
+      return
+      ;;
+    integration_test/scripts/run_direct_text_send_cut_sims.dart)
+      record "support" "$path" "support" "external existing ephemeral Redis fixture wrapper around the manifest-owned Catalog P0 direct-text cut"
+      return
+      ;;
     integration_test/scripts/run_production_routing.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return

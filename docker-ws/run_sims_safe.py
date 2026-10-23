@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Kayan's disposable-target launcher. Lists need no device or credentials.
 
-Run with major, device-audio, device-media, or notification-recovery.
+Run with major, device-audio, device-media, device-text, or notification-recovery.
 Targets come from SIMS_* environment values or ignored local_devices.env.
 The local file accepts literal shell-style assignments, without evaluation.
 KAYAN_TEST_RELAY_FILE must name an ignored file of test multiaddresses.
@@ -26,6 +26,7 @@ MODES = {
     "major": None,
     "device-audio": "android.production_1to1_audio_call",
     "device-media": "android.direct_media_blob_custody",
+    "device-text": "production.direct_catalog.inflight_sender_cut",
     "notification-recovery": "notifications.android_recovery_completion",
 }
 TARGETS = {
@@ -169,7 +170,7 @@ def policy(manifest, mode, physical_rows=frozenset()):
               or any(r["name"].split(":")[-1] in ("android-physical", "ios-physical")
                      for r in row.get("resources", []))):
             blocked[key] = "physical_data_preservation"
-        elif mode == "major" and (key in (MODES["device-audio"], MODES["device-media"])
+        elif mode == "major" and (key in (MODES["device-audio"], MODES["device-media"], MODES["device-text"])
               or (key.startswith("kx") and row["buildProfile"] == "android.e2e.production_call_local")):
             blocked[key] = "local_fixture_mode_required"
         elif "legacy.protected-target-contract" in capabilities:
@@ -389,7 +390,7 @@ def main(arguments=None):
         "SIMS_CHECKPOINT_PATH": str(directory / "checkpoint.json"),
         "GIT_SSH_COMMAND": str(deny_remote / "ssh"),
     })
-    if options.mode in ("device-audio", "device-media"):
+    if options.mode in ("device-audio", "device-media", "device-text"):
         first, second = selected.get("android-emulator-fourth"), selected.get("android-emulator")
         if not first or not second:
             raise ValueError("fixture mode requires two explicit emulator pins")
@@ -402,9 +403,12 @@ def main(arguments=None):
         environment["RELIABILITY_MULTI_DEVICE_IDS"] = first + "," + second
     # There is no shell invocation and no local-only skill launcher/device fallback.
     command = ["dart", "run", "tool/sims/sims.dart", "major", "--continue-on-failure"]
-    if options.mode in ("device-audio", "device-media"):
-        adapter = ("run_production_audio_call_sims.dart" if options.mode == "device-audio"
-                   else "run_direct_media_blob_custody_sims.dart")
+    if options.mode in ("device-audio", "device-media", "device-text"):
+        adapter = {
+            "device-audio": "run_production_audio_call_sims.dart",
+            "device-media": "run_direct_media_blob_custody_sims.dart",
+            "device-text": "run_direct_text_send_cut_sims.dart",
+        }[options.mode]
         command = ["dart", "run", "integration_test/scripts/" + adapter,
                    "--mode", "major", "--scenario", MODES[options.mode]]
         if options.mode == "device-audio":

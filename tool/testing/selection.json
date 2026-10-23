@@ -4832,6 +4832,148 @@
       ],
       "inspected": true,
       "success_marker": "No issues found!"
+    },
+    "production-catalog-direct-ordered": {
+      "kind": "sims",
+      "capability": "production.direct_catalog.ordered_offline_replay",
+      "boundary": "100 online texts plus ten recipient-offline texts preserve every logical ID, order and exact-once transcript after both owned process restarts",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable emulator journey using the explicitly recorded existing observation runtime. Host validation does not certify device execution, external native boundaries, audio content or a signed candidate.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro composer batches perform real UI sends. Appium UI and existing host tests cannot observe production repository logical identities, persisted relay custody or prove same-ID replay after owned process death; the existing routing observer supplies only read-only exact-run snapshots.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send_batch5.yaml",
+        "integration_test/maestro/production_resume.yaml"
+      ],
+      "host_preflight": "production-catalog-direct-ordered"
+    },
+    "production-catalog-group-ordered": {
+      "kind": "sims",
+      "capability": "production.group_catalog.ordered_text_recovery",
+      "boundary": "Three authorized members send and receive the ordered hundred; accepted text has real recipient custody before the sender cut and all three restarts preserve exact logical identities",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable emulator journey using the explicitly recorded existing observation runtime. Host validation does not certify device execution, external native boundaries, audio content or a signed candidate.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro membership and composer flows perform real UI actions. UI state alone cannot prove durable recipient custody at the accepted sender cut or exact logical identities after three process restarts; existing production read-only group/delivery observers provide those witnesses. Membership cuts remain a separate existing companion.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_resume.yaml",
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_direct_send.yaml"
+      ],
+      "host_preflight": "production-catalog-group-ordered"
+    },
+    "production-catalog-direct-cut": {
+      "kind": "sims",
+      "capability": "production.direct_catalog.inflight_sender_cut",
+      "boundary": "Committed protected relay custody remains unacknowledged across an in-budget owned sender kill; automatic recovery and two restart rounds preserve one exact logical message",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable emulator journey using the explicitly recorded existing observation runtime. Host validation does not certify device execution, external native boundaries, audio content or a signed candidate.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro proves exact composer submission and the sending status. Appium UI or host mocks cannot establish a real Redis custody commit with the same acknowledgement withheld at process death. A one-message bounded control on the existing ephemeral relay fixture fills only that causal gap; existing read-only repository snapshots and owned UID death receipts complete the oracle.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send_checkpoint.yaml",
+        "integration_test/maestro/production_resume.yaml"
+      ],
+      "host_preflight": "production-catalog-direct-cut",
+      "adapter": "integration_test/scripts/run_direct_text_send_cut_sims.dart"
+    },
+    "catalog-direct-text-checkpoint-host": {
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-mod=readonly",
+        "-tags=integration",
+        "-run",
+        "^(TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
+        "-count=1",
+        "-timeout=60s",
+        "-p=4",
+        "-parallel=1",
+        "-v",
+        "."
+      ],
+      "cwd": "go-relay-server",
+      "paths": [
+        "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
+        "go-relay-server/direct_text_send_checkpoint_test.go"
+      ],
+      "success_marker": "--- PASS: TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease",
+      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract",
+      "limitations": "Exact integration-tagged host selector only, no device or fixture-process mode, real mobile sender cut or release proof.",
+      "timeout_seconds": 180,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-relay-server/direct_media_blob_custody_device_fixture_test.go"
+      ],
+      "environment": {
+        "GOMAXPROCS": "4",
+        "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_PROCESS": "0",
+        "MKNOON_DIRECT_TEXT_SEND_CHECKPOINT": "0",
+        "MKNOON_PLAN393_FIXED_WAKE_FIXTURE": "0"
+      }
     }
   },
   "areas": [
@@ -6292,7 +6434,16 @@
         "test/tool/sims/production_provider_*",
         "integration_test/scripts/run_production_update_check.dart",
         "integration_test/support/production_update_check_notification.dart",
-        "integration_test/scripts/run_production_contact_delete.dart"
+        "integration_test/scripts/run_production_contact_delete.dart",
+        "integration_test/scripts/run_production_direct_ordered_replay.dart",
+        "integration_test/scripts/run_production_group_ordered_recovery.dart",
+        "integration_test/scripts/run_production_direct_send_cut.dart",
+        "integration_test/scripts/run_direct_text_send_cut_sims.dart",
+        "integration_test/support/direct_text_checkpoint_client.dart",
+        "test/tool/sims/production_direct_ordered_replay_criteria_test.dart",
+        "test/tool/sims/production_group_ordered_recovery_criteria_test.dart",
+        "test/tool/sims/production_direct_send_cut_criteria_test.dart",
+        "test/tool/sims/production_catalog_p0_registry_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6364,7 +6515,10 @@
         "production-group-create",
         "production-group-reaction",
         "production-group-reaction-toggle",
-        "production-group-removed-reaction"
+        "production-group-removed-reaction",
+        "production-catalog-direct-ordered",
+        "production-catalog-group-ordered",
+        "production-catalog-direct-cut"
       ],
       "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
     },
@@ -6476,6 +6630,21 @@
         "production-audio-harness-contract"
       ],
       "why": "Fixture relay allocation and publication must preserve below-ephemeral contiguous blocks, occupied-owner diagnostics and existing audio adapter contracts"
+    },
+    {
+      "id": "catalog-direct-text-checkpoint-fixture",
+      "patterns": [
+        "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
+        "go-relay-server/direct_text_send_checkpoint_test.go",
+        "go-relay-server/direct_media_blob_custody_device_fixture_test.go",
+        "integration_test/support/direct_text_checkpoint_client.dart",
+        "integration_test/scripts/run_direct_text_send_cut_sims.dart"
+      ],
+      "checks": [
+        "catalog-direct-text-checkpoint-host",
+        "production-catalog-direct-cut"
+      ],
+      "why": "The optional existing relay fixture gate and exact sender-cut adapter require their integration-tagged host contract plus the matching production scenario; existing relay mappings remain intact."
     }
   ],
   "documentation_only": [
@@ -9305,6 +9474,45 @@
         "go-relay-server/production_audio_call_device_fixture_test.go",
         "tool/call_audio_oracle/coturn.lock.json"
       ]
+    },
+    {
+      "id": "full.catalog-direct-text-checkpoint-host",
+      "kind": "command",
+      "command": [
+        "go",
+        "test",
+        "-mod=readonly",
+        "-tags=integration",
+        "-run",
+        "^(TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
+        "-count=1",
+        "-timeout=60s",
+        "-p=4",
+        "-parallel=1",
+        "-v",
+        "."
+      ],
+      "cwd": "go-relay-server",
+      "paths": [
+        "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
+        "go-relay-server/direct_text_send_checkpoint_test.go"
+      ],
+      "success_marker": "--- PASS: TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease",
+      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract",
+      "limitations": "Exact integration-tagged host selector only, no device or fixture-process mode, real mobile sender cut or release proof.",
+      "timeout_seconds": 180,
+      "requirements": [
+        "go"
+      ],
+      "references": [
+        "go-relay-server/direct_media_blob_custody_device_fixture_test.go"
+      ],
+      "environment": {
+        "GOMAXPROCS": "4",
+        "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_PROCESS": "0",
+        "MKNOON_DIRECT_TEXT_SEND_CHECKPOINT": "0",
+        "MKNOON_PLAN393_FIXED_WAKE_FIXTURE": "0"
+      }
     }
   ],
   "full_inventory": {
@@ -10828,6 +11036,39 @@
           "go-relay-server/production_audio_call_ports_contract_test.go"
         ],
         "reason": "The integration-tagged host-only selector includes every port-contract test in this file; no Docker/device fixture is selected"
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.ordered_offline_replay",
+        "patterns": [
+          "integration_test/scripts/run_production_direct_ordered_replay.dart"
+        ],
+        "reason": "100 online texts plus ten recipient-offline texts preserve every logical ID, order and exact-once transcript after both owned process restarts; the manifest owns execution, the source observation alias is explicit, and no native/device PASS follows from registration."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.ordered_text_recovery",
+        "patterns": [
+          "integration_test/scripts/run_production_group_ordered_recovery.dart"
+        ],
+        "reason": "Three authorized members send and receive the ordered hundred; accepted text has real recipient custody before the sender cut and all three restarts preserve exact logical identities; the manifest owns execution, the source observation alias is explicit, and no native/device PASS follows from registration."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.inflight_sender_cut",
+        "patterns": [
+          "integration_test/scripts/run_production_direct_send_cut.dart",
+          "integration_test/scripts/run_direct_text_send_cut_sims.dart"
+        ],
+        "reason": "Committed protected relay custody remains unacknowledged across an in-budget owned sender kill; automatic recovery and two restart rounds preserve one exact logical message; the manifest owns execution, the source observation alias is explicit, and no native/device PASS follows from registration."
+      },
+      {
+        "owner": "full.catalog-direct-text-checkpoint-host",
+        "patterns": [
+          "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
+          "go-relay-server/direct_text_send_checkpoint_test.go"
+        ],
+        "reason": "The normal relay runner has no integration build tag; this explicit host selector owns both new checkpoint contracts and compiles their fixture-only adapter, without selecting device execution."
       }
     ],
     "catalogs": [

@@ -1714,6 +1714,51 @@
           "source": "tool/sign_version_file.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_ordered_replay.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.149.command.2",
+          "value": "integration_test/scripts/run_production_direct_ordered_replay.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_ordered_recovery.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.150.command.2",
+          "value": "integration_test/scripts/run_production_group_ordered_recovery.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_send_cut.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.151.command.2",
+          "value": "integration_test/scripts/run_production_direct_send_cut.dart"
+        }
+      ]
     }
   ],
   "declarations": [

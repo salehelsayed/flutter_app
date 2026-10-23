@@ -2151,6 +2151,35 @@ configuration hash on all three roles and exact package restoration on each
 builds, and four scenario action receipts. This closes ML-001 on that candidate;
 the other 108 cases and final stable-candidate closure remain incomplete.
 
+The Catalog P0 host contracts additionally cover three registered, test-only
+journeys: `production.direct_catalog.ordered_offline_replay` (100 online and
+ten recipient-offline messages with exact logical identities and ordered
+restart replay), `production.group_catalog.ordered_text_recovery` (100 creator
+texts, both other authors, and an accepted text recovered after owned process
+deaths), and `production.direct_catalog.inflight_sender_cut`. The last journey
+uses the existing disposable Redis relay fixture with a one-shot committed
+store acknowledgement gate. Its host contracts preserve protected custody
+through release and cancellation; the actual cut also requires a sending UI
+receipt and verified sender death below 2.5 seconds on the same device clock,
+before the production three-second interactive store budget. A late cut is a
+harness failure and cannot prove an application defect. Persisted `failed`
+ordinary text with durable custody can render as pending automatic recovery;
+the runner must not infer a visible manual Retry action from that row alone.
+Thirty-five causal oracle/registry tests pass in
+`.codex-test-logs/astra-update-relay-sims/item3/006-units-summary.json`; the
+first attempt's two host-fixture type errors remain in `005-units.log`.
+Three focused integration-tagged Go host contracts pass in the same evidence
+directory's `007-go-checkpoint-summary.json`. These are host results, not device
+coverage. GC-005 still needs its separate membership process-death companion,
+and call content audio still needs the unapproved test-build audio hook.
+Changes to the nested direct-media target owner also require reviewed source
+hash updates in `tool/testing/legacy_target_contracts.json`; its four route
+commands, roles and environments remain fixed. The bounded host checkpoint
+client has one exact composition-guard import allowance, with the original app
+graph bans retained. All 1,240 production-journey host contracts pass in
+`017-production-contracts-summary.json`; the first import-guard failure remains
+in `014-affected-sims/` under the same private evidence directory.
+
 The additive PL-009 reaction module preserves the exact case identity through
 its shared create/accept/message observer and the unchanged original oracle.
 It requires a real successful send result, independent receiver stream events on

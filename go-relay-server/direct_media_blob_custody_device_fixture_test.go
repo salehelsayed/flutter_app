@@ -40,6 +40,7 @@ const (
 	directMediaDeviceFixtureProcessMode = "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_PROCESS"
 	directMediaDeviceFixtureHostIP      = "MKNOON_DIRECT_MEDIA_DEVICE_FIXTURE_HOST_IP"
 	directMediaDeviceFixtureReadyPrefix = "MKNOON_DIRECT_MEDIA_FIXTURE_READY="
+	directTextSendCheckpointMode        = "MKNOON_DIRECT_TEXT_SEND_CHECKPOINT"
 	plan393FixedWakeFixtureMode         = "MKNOON_PLAN393_FIXED_WAKE_FIXTURE"
 	plan393FixtureSnapshotKind          = "plan393_relay_snapshot"
 )
@@ -64,6 +65,7 @@ type directMediaDeviceFixtureReady struct {
 }
 
 type directMediaDeviceFixtureOptions struct {
+	textSendCheckpoint bool
 	fixedWakeRecovery  bool
 	serviceAccountPath string
 }
@@ -108,6 +110,7 @@ type directMediaDeviceFixture struct {
 	stores              *controlPlaneStores
 	media               *MediaStore
 	faults              *directMediaFixtureFaults
+	textCheckpoint      *directTextSendCheckpoint
 	redis               *miniredis.Miniredis
 	probe               *http.Server
 	probeLn             net.Listener
@@ -400,6 +403,7 @@ func runDirectMediaDeviceFixtureProcess(t *testing.T) {
 		root,
 		hostIP,
 		directMediaDeviceFixtureOptions{
+			textSendCheckpoint: os.Getenv(directTextSendCheckpointMode) == "1",
 			fixedWakeRecovery:  fixedWakeRecovery,
 			serviceAccountPath: serviceAccountPath,
 		},
@@ -477,6 +481,18 @@ func startDirectMediaDeviceFixture(
 		return fail(fmt.Errorf("start production Redis stores: %w", err))
 	}
 	fixture.stores = stores
+	if options.textSendCheckpoint {
+		if options.fixedWakeRecovery {
+			return fail(fmt.Errorf("text checkpoint requires the no-provider fixture"))
+		}
+		backend, ok := stores.Inbox.backend.(*redisInboxBackend)
+		if !ok {
+			return fail(fmt.Errorf("text checkpoint requires the production Redis backend"))
+		}
+		fixture.textCheckpoint = newDirectTextSendCheckpoint(ctx)
+		// Initialization is complete before handlers or fixture workers start.
+		stores.Inbox.backend = &directTextCheckpointRedisBackend{redisInboxBackend: backend, gate: fixture.textCheckpoint}
+	}
 	pushTokenState := string(pushTokenStateAbsent)
 	wakeCoordinatorStarted := false
 	if options.fixedWakeRecovery {
@@ -736,6 +752,9 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 	})
 	if fixture.faults != nil {
 		mux.HandleFunc(path+"/fault", fixture.faults.serve)
+	}
+	if fixture.textCheckpoint != nil {
+		mux.HandleFunc(path+"/send-checkpoint", fixture.textCheckpoint.serve)
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	fixture.probe = server
