@@ -80,6 +80,9 @@ class FakeLocalP2PService implements LocalP2PService {
   Future<void> restartAdvertising() async {}
 
   @override
+  void markAppResumed() {}
+
+  @override
   Stream<LocalChatMessage> get localMessageStream => _messageController.stream;
 
   @override

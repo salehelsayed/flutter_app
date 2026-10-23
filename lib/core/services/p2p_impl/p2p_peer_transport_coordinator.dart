@@ -240,6 +240,11 @@ class _P2PPeerTransportCoordinator {
     await _localP2P?.stop();
   }
 
+  void markAppResumed() {
+    if (_disposed) return;
+    _localP2P?.markAppResumed();
+  }
+
   Future<void> restartLocalAdvertising() async {
     if (_disposed) return;
     await _localP2P?.restartAdvertising();

@@ -90,6 +90,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
+  bool _discoveryFailed = false;
   StreamSubscription<BonsoirDiscoveryEvent>? _discoverySub;
   Timer? _refreshTimer;
 
@@ -166,6 +167,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     int? quicPort,
     int? tcpPort,
   }) async {
+    // A genuine native browser failure needs a new epoch. Ordinary TXT/resume
+    // refreshes keep the healthy browser and its resolver handles alive.
+    if (_discoveryFailed) await stopAdvertising();
     _ownPeerId = peerId;
     _stopping = false;
 
@@ -221,9 +225,16 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       // Bonsoir's native iOS log formatting can crash while stringifying
       // resolved service payloads, so plugin-side logging stays disabled in
       // the default factory.
-      _broadcast = _createBroadcast(service);
-      await _broadcast!.ready;
-      await _broadcast!.start();
+      final previousBroadcast = _broadcast;
+      _broadcast = null;
+      await previousBroadcast?.stop();
+      if (_stopping) return;
+      final broadcast = _createBroadcast(service);
+      _broadcast = broadcast;
+      await broadcast.ready;
+      if (_stopping || !identical(_broadcast, broadcast)) return;
+      await broadcast.start();
+      if (_stopping || !identical(_broadcast, broadcast)) return;
 
       emitFlowEvent(
         layer: 'FL',
@@ -232,17 +243,27 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       );
     }
 
-    // Start discovery of other peers. 178: this ALWAYS runs — even while the
-    // broadcast is gated — so the discoverer keeps browsing and a resolved peer
-    // can clear the suspected-denial latch.
-    _discovery = _createDiscovery(_serviceType);
-    await _discovery!.ready;
-    _discoverySub?.cancel();
-    _discoverySub = _discovery!.eventStream!.listen(
-      _handleDiscoveryEvent,
-      onError: _handleDiscoveryError,
-    );
-    await _discovery!.start();
+    // Refresh only the broadcast when already browsing: peers, pending
+    // resolves, timers and the Android native resolver retain the same epoch.
+    if (_stopping || _discovery != null) return;
+
+    // Browsing also starts while broadcast is gated, so a resolved peer can
+    // still clear the suspected-denial latch.
+    final discovery = _createDiscovery(_serviceType);
+    _discovery = discovery;
+    try {
+      await discovery.ready;
+      if (_stopping || !identical(_discovery, discovery)) return;
+      _discoverySub = discovery.eventStream!.listen(
+        _handleDiscoveryEvent,
+        onError: _handleDiscoveryError,
+      );
+      await discovery.start();
+      if (_stopping || !identical(_discovery, discovery)) return;
+    } catch (_) {
+      _discoveryFailed = true;
+      rethrow;
+    }
 
     emitFlowEvent(
       layer: 'FL',
@@ -326,6 +347,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     if (_stopping) return;
     // iOS can invalidate the native browser while suspended. The existing
     // resume path replaces it; its error stream must not escape to the zone.
+    _discoveryFailed = true;
     emitFlowEvent(
       layer: 'FL',
       event: 'LOCAL_MDNS_DISCOVERY_ERROR',
@@ -487,8 +509,8 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _refreshTimer?.cancel();
     _refreshTimer = null;
     // Cancel the session-scoped denial probe, but PRESERVE [_suspectedDeniedUntil]
-    // — restartAdvertising calls stopAdvertising() then startAdvertising(), and
-    // the gate must survive that teardown to skip the re-`start()` that blocks.
+    // — the gate must survive a real teardown to skip a later broadcast start
+    // that would block. Healthy advertisement refreshes do not tear down browse.
     _denialProbeTimer?.cancel();
     _denialProbeTimer = null;
 
@@ -506,6 +528,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     _discoverySub = null;
     await _discovery?.stop();
     _discovery = null;
+    _discoveryFailed = false;
 
     _peers.clear();
     _resolvable.clear();
@@ -565,7 +588,8 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // send path skips local and the parallel direct leg carries the message.
     if (p.isStale(DateTime.now().toUtc())) {
       _peers.remove(peerId);
-      _resolvable.remove(peerId);
+      // Reject the stale endpoint, but retain this live browser's service
+      // handle so resolve-on-send can request fresh host/port data.
       _peersController.add(Map.unmodifiable(_peers));
 
       emitFlowEvent(

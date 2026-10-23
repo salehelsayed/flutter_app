@@ -1834,6 +1834,7 @@ class P2PServiceImpl
   @override
   void markResumeStarted() {
     _resumeStartedAt = DateTime.now();
+    _peerTransportCoordinator.markAppResumed();
   }
 
   /// Clears any unconsumed resume timestamp.

@@ -5466,6 +5466,53 @@ visible and cannot become an ordinary first-attempt PASS.
   startup retry, Bonsoir error containment, denial gating and disposal controls
   still pass. Evidence is under `.codex-test-logs/dual-stack-recovery/`.
 
+- **Move Account receiver discovery freshness:** read-time TTL expiry previously
+  removed both a stale endpoint and its live browser's service handle. After
+  confirmation took more than 30 seconds, resolve-on-send could only wait for an
+  unsolicited fresh announcement. TTL expiry now evicts the endpoint while
+  retaining the handle for a fresh resolve; it never returns the stale address.
+  Actual peer loss and full teardown still remove handles. The 12-second move
+  deadline and per-peer single-flight behavior stay unchanged.
+  TXT/advertisement refresh now replaces only the broadcaster while a healthy
+  browser, cached peers, pending resolves, timers and Android native resolver
+  remain alive. Relay-state and ordinary network health checks also preserve
+  that browser. Only the actual lifecycle's existing `markResumeStarted` signal
+  queues a fresh native epoch, independent of whether a stream error arrived.
+  A queued resume joining an active health/TXT refresh escalates the shared
+  work before completion. Real stop clears old handles and queued resume intent.
+  The existing startup and refresh futures continue to serialize/coalesce work.
+  Factory-seam regressions reproduce both original assertion failures using
+  found/resolved callbacks and a backdated endpoint; both now pass. Early and
+  expired migration peers without libp2p TXT ports resolve to their HTTP endpoint.
+  `LOCAL_MDNS_PEER_SKIPPED_NO_LIBP2P_ADDR` belongs to generic libp2p forwarding;
+  migration resolves its own session peer and uses its host/port directly, so no
+  additional eligibility filter or first-time routing change was needed.
+  Coupled regressions exercise the actual relay-state push through P2P health
+  recovery and the actual `handleAppResumed` entry: relay recovery retains peers,
+  resolver handles and pending queries; lifecycle resume replaces the browser,
+  including when coalesced with relay recovery. A later ordinary health check
+  does not reuse the consumed resume intent. The P2PService interface is unchanged.
+  Focused discovery contracts pass 33 tests; 197 local-discovery, LAN-forwarding,
+  early-start, health-drain, watchdog, stop-race, composition and lifecycle
+  preservation cases also pass, with no skips or failures. The shared LAN fake
+  needs the new local marker's conformance; after that update, its two initially
+  compile-blocked consumers pass seven cases. Other passing source inputs stayed
+  unchanged. Analysis of all six changed Dart files is clean. The scoped
+  wrapper remains `NOT RUN` overall with 18 omitted checks and no unmapped
+  changes. RED inputs, exact GREEN hashes, commands and resource receipts are in
+  the `flutter_app_codex_discovery_refresh_20261023` worktree under
+  `.codex-test-logs/discovery-refresh-20261023/`; the rebased resume regressions
+  and reruns are in `.codex-test-logs/discovery-resume-review-20261023/`, including
+  the first resource-aborted preview and separate successful `fresh-1` evidence.
+  The real health-ingress regressions, retained first attempts and final source
+  hashes are in `.codex-test-logs/discovery-health-ingress-review-20261023/`.
+  These host results do not establish fresh device or signed-candidate proof.
+  Native receipt of an already-advertising peer remains a separate device leg:
+  the locked Android plugin starts active browse and queries initial TXT, but
+  delivery is not proved by host callbacks. Missing initial TXT is an unconfirmed
+  hypothesis recorded in that directory's `initial-browse-source.json`; no native
+  path or default feature flag was changed for it.
+
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code
   `-65569` (`DefunctConnection`) after suspension. Captured events showed the
@@ -5473,8 +5520,16 @@ visible and cannot become an ordinary first-attempt PASS.
   this was an unhandled stream error, not proof of failed recovery. The existing
   subscription now consumes errors and records only a fixed reason and numeric
   native code. No error message, peer or address is copied into that diagnostic.
-  The factory-seam regression reproduces the error and preserves stop/start
-  recovery, without adding a new retry or native lifecycle owner. First device
+  The vendored plugin reports `.failed` as an error, `.cancelled` as a stopped
+  event, and ignores other browser states; its optional event sink establishes
+  no suspension-to-error-delivery guarantee. The observed-error regression
+  alone cannot prove that guarantee. Normal resume therefore replaces the
+  browser independently of error delivery: old cache/pending resolves settle,
+  old native handles are discarded, and the new browser requires a new found
+  event. The silent-error resume and resume-during-TXT regressions protect this
+  distinction. Failed browser startup also retries with a fresh epoch. Healthy
+  TXT updates retain the browser; no new retry or native lifecycle owner is added.
+  First device
   failures and host red/green evidence remain under
   `.codex-test-logs/live-phones-20260912T084648Z/`.
   The final normal profile build reproduced native code `-65569` after

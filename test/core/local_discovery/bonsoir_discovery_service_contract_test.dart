@@ -3,27 +3,36 @@
 //
 // This pins the mDNS mapping the Move Account pairing depends on:
 // peer-found → auto-resolve → LocalPeer(host/port/peerId), the
-// discover-on-send resolvePeer contract, and stopAdvertising's behavior of
-// clearing peers and completing pending resolves with null — the exact
-// mechanics behind the "restartAdvertising nukes in-flight migration peer
-// resolution" hazard. Real-network mDNS stays on the device checklist.
+// discover-on-send resolvePeer contract, healthy advertisement refresh without
+// browser/cache loss, and real stop/error replacement clearing the native epoch.
+// Real-network mDNS stays on the device checklist.
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:bonsoir/bonsoir.dart';
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride, TargetPlatform;
 import 'package:flutter/services.dart' show PlatformException;
+import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/local_discovery/bonsoir_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/local_discovery/local_p2p_service.dart';
+import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
 
 void main() {
   group('BonsoirDiscoveryService contract', () {
     late List<_FakeBonsoirBroadcast> broadcasts;
     late List<_FakeBonsoirDiscovery> discoveries;
     late BonsoirDiscoveryService service;
+    Object? discoveryStartError;
+    Future<void>? broadcastStartGate;
 
     _FakeBonsoirBroadcast broadcast() => broadcasts.last;
     _FakeBonsoirDiscovery discovery() => discoveries.last;
@@ -31,14 +40,18 @@ void main() {
     setUp(() {
       broadcasts = <_FakeBonsoirBroadcast>[];
       discoveries = <_FakeBonsoirDiscovery>[];
+      discoveryStartError = null;
+      broadcastStartGate = null;
       service = BonsoirDiscoveryService(
         createBroadcast: (bonsoirService) {
-          final fake = _FakeBonsoirBroadcast(bonsoirService);
+          final fake = _FakeBonsoirBroadcast(bonsoirService)
+            ..startGate = broadcastStartGate;
           broadcasts.add(fake);
           return fake;
         },
         createDiscovery: (type) {
-          final fake = _FakeBonsoirDiscovery(type);
+          final fake = _FakeBonsoirDiscovery(type)
+            ..startError = discoveryStartError;
           discoveries.add(fake);
           return fake;
         },
@@ -52,6 +65,198 @@ void main() {
     });
 
     Future<void> flush() => Future<void>.delayed(Duration.zero);
+
+    Future<P2PServiceImpl> healthService(
+      _DiscoveryHealthBridge bridge,
+      LocalP2PService local,
+    ) async {
+      final p2p = P2PServiceImpl(
+        bridge: bridge,
+        localP2PService: local,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        isAppForeground: () => true,
+      );
+      addTearDown(() async {
+        await local.stop();
+        p2p.dispose();
+        await flush();
+      });
+      expect(
+        await p2p.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+        isTrue,
+      );
+      await local.start('self-peer');
+      return p2p;
+    }
+
+    test(
+      'relay_state_push health check preserves browser peers and resolver handles',
+      () async {
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = _ExternallyOwnedLocalP2PService(
+          discovery: service,
+          wsServer: ws,
+        );
+        final bridge = _DiscoveryHealthBridge();
+        await healthService(bridge, local);
+        final browser = discovery();
+        browser.emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-a', 51234),
+          ),
+        );
+        await flush();
+        browser.emit(
+          _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
+        );
+        await flush();
+        final waiting = service.resolvePeer(
+          'pending-health',
+          timeout: const Duration(seconds: 12),
+        );
+        var completed = false;
+        unawaited(waiting.then((_) => completed = true));
+        final events = <Map<String, dynamic>>[];
+        final refreshed = Completer<void>();
+        debugSetFlowEventSink((event) {
+          events.add(event);
+          if (event['event'] == 'LOCAL_P2P_SERVICE_RESTART_ADVERTISING' &&
+              !refreshed.isCompleted) {
+            refreshed.complete();
+          }
+        });
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        bridge.relayState = 'degraded';
+        bridge.onRelayStateChanged!({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+          'reason': 'fixture-degradation',
+        });
+        await refreshed.future.timeout(const Duration(seconds: 5));
+        await flush();
+
+        expect(
+          events
+              .where((e) => e['event'] == 'RELAY_RECOVERY_START')
+              .any(
+                (e) =>
+                    (e['details'] as Map)['recoverySource'] ==
+                    'relay_state_push',
+              ),
+          isTrue,
+        );
+        expect(discoveries, hasLength(1));
+        expect(browser.stopCalls, 0);
+        expect(service.getLocalPeer('peer-a'), isNotNull);
+        expect(completed, isFalse);
+        service.debugSeedPeer(
+          LocalPeer(
+            peerId: 'peer-a',
+            host: '192.168.0.7',
+            port: 51234,
+            discoveredAt: DateTime.now().toUtc().subtract(
+              const Duration(seconds: 31),
+            ),
+          ),
+        );
+        final pending = service.resolvePeer(
+          'peer-a',
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(browser.resolver.resolved, hasLength(2));
+        browser.emit(
+          _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
+        );
+        browser.emit(
+          _resolvedEvent('pending-health', host: '192.168.0.9', port: 51236),
+        );
+        expect((await pending)!.host, '192.168.0.8');
+        expect((await waiting)!.host, '192.168.0.9');
+      },
+    );
+
+    test(
+      'app lifecycle health check replaces browser without a native error',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = _ExternallyOwnedLocalP2PService(
+          discovery: service,
+          wsServer: ws,
+        );
+        final bridge = _DiscoveryHealthBridge();
+        final p2p = await healthService(bridge, local);
+        final browser = discovery();
+        browser.emit(
+          _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
+        );
+        await flush();
+        final waiting = service.resolvePeer(
+          'pending-resume',
+          timeout: const Duration(seconds: 12),
+        );
+
+        expect(await handleAppResumed(bridge: bridge, p2pService: p2p), isTrue);
+
+        expect(browser.stopCalls, 1);
+        expect(discoveries, hasLength(2));
+        expect(service.discoveredPeers, isEmpty);
+        expect(await waiting, isNull);
+        await p2p.performImmediateHealthCheck();
+        expect(
+          discoveries,
+          hasLength(2),
+          reason:
+              'a later generic health check must not reuse consumed resume intent',
+        );
+      },
+    );
+
+    test(
+      'lifecycle resume escalates a coalesced relay health refresh',
+      () async {
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = _ExternallyOwnedLocalP2PService(
+          discovery: service,
+          wsServer: ws,
+        );
+        final bridge = _DiscoveryHealthBridge();
+        final p2p = await healthService(bridge, local);
+        final browser = discovery();
+        final gate = Completer<void>();
+        broadcastStartGate = gate.future;
+        bridge.relayState = 'degraded';
+        bridge.onRelayStateChanged!({
+          'relayState': 'degraded',
+          'healthyRelayCount': 0,
+        });
+        await flush();
+        expect(broadcasts, hasLength(2));
+        expect(broadcasts.last.startCalls, 1);
+        expect(browser.stopCalls, 0);
+
+        p2p.markResumeStarted();
+        var completed = false;
+        final joined = p2p.performImmediateHealthCheck().then(
+          (_) => completed = true,
+        );
+        await flush();
+        expect(completed, isFalse);
+        gate.complete();
+        await joined;
+
+        expect(browser.stopCalls, 1);
+        expect(discoveries, hasLength(2));
+        expect(broadcasts, hasLength(3));
+      },
+    );
 
     test(
       'startAdvertising wires broadcast + discovery with the peer TXT record',
@@ -134,7 +339,26 @@ void main() {
         final events = <Map<String, dynamic>>[];
         debugSetFlowEventSink(events.add);
         addTearDown(() => debugSetFlowEventSink(null));
-        await service.startAdvertising('me-peer', 54321);
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = LocalP2PService(discovery: service, wsServer: ws);
+        await local.start('me-peer');
+        final oldBrowser = discovery();
+        oldBrowser.emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-a', 51234),
+          ),
+        );
+        await flush();
+        oldBrowser.emit(
+          _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
+        );
+        await flush();
+        final interrupted = service.resolvePeer(
+          'pending-before-error',
+          timeout: const Duration(seconds: 12),
+        );
 
         discovery().emitError(
           PlatformException(
@@ -156,15 +380,57 @@ void main() {
         expect(events.toString(), isNot(contains('private-native-message')));
         expect(broadcasts, hasLength(1));
 
-        // Resume already owns replacement of the defunct native browser.
-        await service.stopAdvertising();
-        await service.startAdvertising('me-peer', 54321);
+        // Normal resume replaces a genuinely defunct native browser, rather
+        // than retaining handles that belonged to its destroyed native epoch.
+        await local.restartAdvertising();
+        expect(oldBrowser.stopCalls, 1);
+        expect(await interrupted, isNull);
+        expect(service.discoveredPeers, isEmpty);
+        final pending = service.resolvePeer(
+          'peer-a',
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, isEmpty);
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-a', 51234),
+          ),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
         discovery().emit(
           _resolvedEvent('peer-a', host: '192.168.0.9', port: 51234),
         );
         await flush();
         expect(discoveries, hasLength(2));
+        expect((await pending)!.host, '192.168.0.9');
         expect(service.discoveredPeers, contains('peer-a'));
+      },
+    );
+
+    test(
+      'failed native browser start retries with a new discovery epoch',
+      () async {
+        discoveryStartError = StateError('fixture native start failure');
+        await expectLater(
+          service.startAdvertising('me-peer', 54321),
+          throwsStateError,
+        );
+        expect(discoveries, hasLength(1));
+        discoveryStartError = null;
+
+        await service.startAdvertising('me-peer', 54321);
+
+        expect(discoveries, hasLength(2));
+        expect(discoveries.first.stopCalls, 1);
+        expect(discoveries.last.startCalls, 1);
+        discovery().emit(
+          _resolvedEvent('peer-a', host: '192.168.0.9', port: 51234),
+        );
+        await flush();
+        expect(service.getLocalPeer('peer-a'), isNotNull);
       },
     );
 
@@ -213,6 +479,222 @@ void main() {
       expect(peer, isNotNull);
       expect(peer!.host, '192.168.0.7');
     });
+
+    test(
+      'expired migration endpoint actively re-resolves its retained handle',
+      () async {
+        const peerId = 'account-migration-0123456789abcdef0123456789abcdef';
+        await service.startAdvertising('me-peer', 54321);
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService(peerId, 51234),
+          ),
+        );
+        await flush();
+        discovery().emit(
+          _resolvedEvent(peerId, host: '192.168.0.7', port: 51234),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
+        service.debugSeedPeer(
+          LocalPeer(
+            peerId: peerId,
+            host: '192.168.0.7',
+            port: 51234,
+            discoveredAt: DateTime.now().toUtc().subtract(
+              const Duration(seconds: 31),
+            ),
+          ),
+        );
+
+        final pending = service.resolvePeer(
+          peerId,
+          timeout: const Duration(seconds: 12),
+        );
+        var completed = false;
+        unawaited(pending.then((_) => completed = true));
+        await flush();
+        expect(service.getLocalPeer(peerId), isNull);
+        expect(completed, isFalse);
+        expect(discovery().resolver.resolved, hasLength(2));
+        final joined = service.resolvePeer(
+          peerId,
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(2));
+
+        discovery().emit(
+          _resolvedEvent(peerId, host: '192.168.0.8', port: 51235),
+        );
+        for (final peer in await Future.wait([pending, joined])) {
+          expect(peer, isNotNull);
+          expect(peer!.host, '192.168.0.8');
+          expect(peer.port, 51235);
+          expect(peer.libp2pAddresses, isEmpty);
+        }
+      },
+    );
+
+    test(
+      'early migration resolve accepts an HTTP peer without libp2p ports',
+      () async {
+        const peerId = 'account-migration-0123456789abcdef0123456789abcdef';
+        await service.startAdvertising('me-peer', 54321);
+        final pending = service.resolvePeer(
+          peerId,
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService(peerId, 51234),
+          ),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
+        discovery().emit(
+          _resolvedEvent(peerId, host: '192.168.0.7', port: 51234),
+        );
+
+        final peer = await pending;
+        expect(peer, isNotNull);
+        expect(peer!.host, '192.168.0.7');
+        expect(peer.port, 51234);
+        expect(peer.libp2pAddresses, isEmpty);
+      },
+    );
+
+    test('TXT refresh preserves browser cache and pending resolves', () async {
+      final ws = LocalWsServer();
+      addTearDown(ws.stop);
+      final local = LocalP2PService(discovery: service, wsServer: ws);
+      await local.start('me-peer');
+      final browser = discovery();
+      browser.emit(
+        _resolvedEvent('cached-peer', host: '192.168.0.7', port: 51234),
+      );
+      browser.emit(
+        BonsoirDiscoveryEvent(
+          type: BonsoirDiscoveryEventType.discoveryServiceFound,
+          service: _peerService('pending-peer', 51235),
+        ),
+      );
+      await flush();
+      final pending = service.resolvePeer(
+        'pending-peer',
+        timeout: const Duration(seconds: 12),
+      );
+      var completed = false;
+      unawaited(pending.then((_) => completed = true));
+
+      await local.updateLibp2pPorts(quicPort: 45000, tcpPort: 45001);
+      expect(discoveries, hasLength(1));
+      expect(browser.stopCalls, 0);
+      expect(service.getLocalPeer('cached-peer'), isNotNull);
+      expect(completed, isFalse);
+      expect(broadcasts, hasLength(2));
+      expect(broadcasts.first.stopCalls, 1);
+      expect(broadcast().service.attributes['quicPort'], '45000');
+      expect(broadcast().service.attributes['tcpPort'], '45001');
+
+      await local.updateLibp2pPorts(quicPort: 45002, tcpPort: 45003);
+      expect(discoveries, hasLength(1));
+      expect(browser.stopCalls, 0);
+      expect(service.getLocalPeer('cached-peer'), isNotNull);
+      expect(completed, isFalse);
+      expect(browser.resolver.resolved, hasLength(1));
+      expect(broadcasts, hasLength(3));
+      expect(broadcasts[1].stopCalls, 1);
+      browser.emit(
+        _resolvedEvent('pending-peer', host: '192.168.0.8', port: 51235),
+      );
+      expect((await pending)!.host, '192.168.0.8');
+    });
+
+    test(
+      'iOS resume replaces the browser without a prior error event',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = LocalP2PService(discovery: service, wsServer: ws);
+        await local.start('me-peer');
+        final oldBrowser = discovery();
+        oldBrowser.emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-a', 51234),
+          ),
+        );
+        await flush();
+        oldBrowser.emit(
+          _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
+        );
+        await flush();
+        final interrupted = service.resolvePeer(
+          'pending-before-resume',
+          timeout: const Duration(seconds: 12),
+        );
+
+        // No stream error is delivered for this suspended browser.
+        local.markAppResumed();
+        await local.restartAdvertising();
+
+        expect(oldBrowser.stopCalls, 1);
+        expect(discoveries, hasLength(2));
+        expect(await interrupted, isNull);
+        expect(service.discoveredPeers, isEmpty);
+        final pending = service.resolvePeer(
+          'peer-a',
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, isEmpty);
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: _peerService('peer-a', 51235),
+          ),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
+        discovery().emit(
+          _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
+        );
+        expect((await pending)!.host, '192.168.0.8');
+      },
+    );
+
+    test(
+      'resume joining an active TXT refresh still replaces the browser',
+      () async {
+        final ws = LocalWsServer();
+        addTearDown(ws.stop);
+        final local = LocalP2PService(discovery: service, wsServer: ws);
+        await local.start('me-peer');
+        final oldBrowser = discovery();
+        final gate = Completer<void>();
+        broadcastStartGate = gate.future;
+        final ports = local.updateLibp2pPorts(quicPort: 45000, tcpPort: 45001);
+        await flush();
+        expect(broadcasts, hasLength(2));
+        expect(broadcasts.last.startCalls, 1);
+        local.markAppResumed();
+        final resume = local.restartAdvertising();
+        await flush();
+        gate.complete();
+        await Future.wait([ports, resume]);
+
+        expect(oldBrowser.stopCalls, 1);
+        expect(discoveries, hasLength(2));
+        expect(broadcasts, hasLength(3));
+        expect(broadcast().service.attributes['quicPort'], '45000');
+      },
+    );
 
     test('resolvePeer single-flights against an in-flight found resolve, then '
         'allows a fresh resolve once it completes (B1.2)', () async {
@@ -878,6 +1360,62 @@ BonsoirDiscoveryEvent _resolvedEvent(
   );
 }
 
+// The group owns Bonsoir and WS cleanup; P2P owns only its own controllers.
+class _ExternallyOwnedLocalP2PService extends LocalP2PService {
+  _ExternallyOwnedLocalP2PService({
+    required super.discovery,
+    required super.wsServer,
+  });
+
+  @override
+  void dispose() {}
+}
+
+class _DiscoveryHealthBridge extends Bridge {
+  String relayState = 'online';
+
+  @override
+  bool get isInitialized => true;
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<bool> checkHealth() async => true;
+  @override
+  Future<void> reinitialize() async {}
+  @override
+  void dispose() {}
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map;
+    final command = request['cmd'];
+    if (command == 'node:start' || command == 'node:status') {
+      return jsonEncode({
+        'ok': true,
+        'peerId': 'self-peer',
+        'isStarted': true,
+        'listenAddresses': <String>[],
+        'circuitAddresses': <String>[],
+        'connections': <Object>[],
+        'relayState': relayState,
+        'healthyRelayCount': relayState == 'online' ? 1 : 0,
+      });
+    }
+    if (command == 'relay:reconnect') {
+      relayState = 'online';
+      return jsonEncode({
+        'ok': true,
+        'success': true,
+        'recoveryMode': 'in_place',
+      });
+    }
+    if (command == 'inbox:retrieve_pending' || command == 'inbox:retrieve') {
+      return jsonEncode({'ok': true, 'messages': [], 'hasMore': false});
+    }
+    return jsonEncode({'ok': true});
+  }
+}
+
 class _RecordingResolver with ServiceResolver {
   final resolved = <BonsoirService>[];
 
@@ -894,6 +1432,7 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   final _controller = StreamController<BonsoirDiscoveryEvent>.broadcast();
   int startCalls = 0;
   int stopCalls = 0;
+  Object? startError;
 
   _FakeBonsoirDiscovery(this.type);
 
@@ -923,6 +1462,9 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   @override
   Future<void> start() async {
     startCalls++;
+    if (startError != null) {
+      throw startError!;
+    }
   }
 
   @override
@@ -937,6 +1479,7 @@ class _FakeBonsoirBroadcast implements BonsoirBroadcast {
   final BonsoirService service;
   int startCalls = 0;
   int stopCalls = 0;
+  Future<void>? startGate;
 
   _FakeBonsoirBroadcast(this.service);
 
@@ -955,6 +1498,7 @@ class _FakeBonsoirBroadcast implements BonsoirBroadcast {
   @override
   Future<void> start() async {
     startCalls++;
+    await startGate;
   }
 
   @override
