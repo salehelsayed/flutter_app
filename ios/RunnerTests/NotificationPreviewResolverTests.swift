@@ -3401,6 +3401,252 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(pushPreviewBody(text: String(repeating: "a", count: 180), media: nil).count, 140)
   }
 
+  func testDecryptsPostCreateFixturePreviewAsUntrackedThought() throws {
+    let fixture = try loadFixture("post_create_text")
+    let plaintext = try fixturePlaintextJSON(fixture)
+    let routeData = try XCTUnwrap(fixture["routeData"] as? [String: Any])
+    let decryptor = MemoryPushDecryptor(chatPlaintext: plaintext)
+    let dedupe = MemoryPushDedupeStore()
+    let eventEmitter = MemoryPushPreviewEventEmitter()
+    let resolver = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader([
+        PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+      ]),
+      decryptor: decryptor,
+      dedupeStore: dedupe,
+      eventEmitter: eventEmitter
+    )
+
+    let result = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New thought",
+      fallbackBody: "A friend shared a thought"
+    )
+
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertEqual(result.reason, "thought")
+    XCTAssertEqual(result.title, "Alice shared a thought")
+    XCTAssertEqual(result.body, "Sunny day on the pier")
+    XCTAssertEqual(result.threadIdentifier, "peer-alice")
+    XCTAssertFalse(result.suppress)
+    XCTAssertTrue(result.markAsShown)
+    XCTAssertNil(result.recoveryIdentity, "a thought hands off as .untracked")
+    XCTAssertEqual(decryptor.chatCalls, 1)
+    XCTAssertEqual(decryptor.lastChatSecretKey, "chat-secret")
+    XCTAssertEqual(dedupe.claims, ["post_create:fixture-post-1"])
+    let previewEvents = eventEmitter.events.filter {
+      $0.event.hasPrefix("PUSH_NSE_DECRYPT_")
+    }
+    XCTAssertEqual(previewEvents.map(\.event), ["PUSH_NSE_DECRYPT_OK"])
+    XCTAssertEqual(previewEvents.first?.details, ["kind": "thought"])
+
+    // Dart RecentRemoteNotificationGate._messageKey('post:<id>', '<id>').
+    XCTAssertEqual(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: routeData),
+      "message:post:fixture-post-1|fixture-post-1"
+    )
+    XCTAssertNil(
+      RecentRemoteShownMarkerStore.gateMessageKey(userInfo: [
+        "type": "post_create", "sender_id": "peer-alice", "message_id": "evt-1",
+      ])
+    )
+
+    let duplicate = resolver.resolve(
+      userInfo: routeData,
+      fallbackTitle: "New thought",
+      fallbackBody: "A friend shared a thought"
+    )
+    XCTAssertTrue(duplicate.suppress)
+    XCTAssertFalse(duplicate.markAsShown)
+    XCTAssertEqual(duplicate.reason, "duplicate_message")
+  }
+
+  func testThoughtPreviewUsesTrustedNameLocalizedTitleAndMediaDescriptors() throws {
+    let longText = String(repeating: "a", count: 180)
+    let cases: [(
+      locale: String,
+      text: String,
+      media: [[String: Any]],
+      title: String,
+      body: String
+    )] = [
+      (
+        "en-US", "", [["kind": "image", "mime": "image/jpeg"]],
+        "Trusted Alice shared a thought", "Photo"
+      ),
+      (
+        "de-DE", "", [["kind": "video", "mime": "video/mp4"]],
+        "Trusted Alice hat einen Gedanken geteilt", "Video"
+      ),
+      (
+        "ar", "", [["kind": "voice", "mime": "audio/mp4"]],
+        "شارك Trusted Alice خاطرة", "Voice message"
+      ),
+      (
+        "en-GB", "", [["kind": "image"], ["kind": "video"]],
+        "Trusted Alice shared a thought", "Media"
+      ),
+      (
+        "en-US", longText, [],
+        "Trusted Alice shared a thought", String(longText.prefix(140))
+      ),
+    ]
+
+    for item in cases {
+      let decryptor = MemoryPushDecryptor(
+        chatPlaintext: try thoughtPlaintextJSON(
+          postId: "post-media",
+          authorUsername: "Forged Alice",
+          text: item.text,
+          media: item.media
+        )
+      )
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([
+          PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+          PushSharedKeyNames.directReactionContacts:
+            try ordinaryDirectContactsJSON(),
+        ]),
+        decryptor: decryptor,
+        dedupeStore: MemoryPushDedupeStore(),
+        localeIdentifierProvider: { item.locale }
+      )
+
+      let result = resolver.resolve(
+        userInfo: thoughtRoute(postId: "post-media"),
+        fallbackTitle: "New thought",
+        fallbackBody: "A friend shared a thought"
+      )
+
+      XCTAssertTrue(result.didDecrypt, item.locale)
+      XCTAssertEqual(result.reason, "thought", item.locale)
+      XCTAssertEqual(result.title, item.title, item.locale)
+      XCTAssertEqual(result.body, item.body, item.locale)
+      XCTAssertNil(result.recoveryIdentity, item.locale)
+    }
+  }
+
+  func testThoughtPolicyAndParityFailClosedWithoutClaiming() throws {
+    let eligible = try ordinaryDirectContactsJSON()
+    let valid = try thoughtPlaintextJSON(postId: "post-policy")
+    let route = thoughtRoute(postId: "post-policy")
+    var noPostId = route
+    noPostId.removeValue(forKey: "post_id")
+    var noCiphertext = route
+    noCiphertext.removeValue(forKey: "ciphertext")
+    var selfRoute = route
+    selfRoute["sender_id"] = "peer-self"
+
+    let cases: [(
+      name: String,
+      contacts: String,
+      secret: String?,
+      route: [String: Any],
+      plaintext: String,
+      decryptError: Error?,
+      reason: String,
+      decrypts: Int
+    )] = [
+      (
+        "unknown",
+        #"{"version":1,"localAccountPeerId":"peer-self","contacts":{}}"#,
+        "chat-secret", route, valid, nil,
+        "thought_recipient_policy_rejected", 0
+      ),
+      (
+        "blocked", try ordinaryDirectContactsJSON(blocked: true),
+        "chat-secret", route, valid, nil,
+        "thought_recipient_policy_rejected", 0
+      ),
+      (
+        "archived", try ordinaryDirectContactsJSON(archived: true),
+        "chat-secret", route, valid, nil,
+        "thought_recipient_policy_rejected", 0
+      ),
+      (
+        "self",
+        try ordinaryDirectContactsJSON(
+          peerId: "peer-self",
+          username: "Local Account"
+        ),
+        "chat-secret", selfRoute, valid, nil,
+        "thought_recipient_policy_rejected", 0
+      ),
+      (
+        "missing_post_id", eligible, "chat-secret", noPostId, valid, nil,
+        "missing_thought_post_id", 0
+      ),
+      (
+        "missing_decrypt_input", eligible, "chat-secret", noCiphertext, valid,
+        nil, "missing_thought_decrypt_input", 0
+      ),
+      (
+        "missing_secret", eligible, nil, route, valid, nil,
+        "missing_thought_secret", 0
+      ),
+      (
+        "author_mismatch", eligible, "chat-secret", route,
+        try thoughtPlaintextJSON(
+          postId: "post-policy",
+          authorPeerId: "peer-mallory"
+        ),
+        nil, "thought_plaintext_parity_mismatch", 1
+      ),
+      (
+        "post_id_mismatch", eligible, "chat-secret", route,
+        try thoughtPlaintextJSON(postId: "post-other"), nil,
+        "thought_plaintext_parity_mismatch", 1
+      ),
+      (
+        "not_json", eligible, "chat-secret", route, "not json", nil,
+        "thought_plaintext_parity_mismatch", 1
+      ),
+      (
+        "decrypt_error", eligible, "chat-secret", route, valid,
+        MemoryPushDecryptError.injected, "thought_decrypt_error", 1
+      ),
+    ]
+
+    for item in cases {
+      var values: [String: String] = [
+        PushSharedKeyNames.directReactionContacts: item.contacts,
+      ]
+      if let secret = item.secret {
+        values[PushSharedKeyNames.identityMlKemSecretKey] = secret
+      }
+      let decryptor = MemoryPushDecryptor(chatPlaintext: item.plaintext)
+      decryptor.chatError = item.decryptError
+      let dedupe = MemoryPushDedupeStore()
+      let eventEmitter = MemoryPushPreviewEventEmitter()
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader(values),
+        decryptor: decryptor,
+        dedupeStore: dedupe,
+        eventEmitter: eventEmitter
+      )
+
+      let result = resolver.resolve(
+        userInfo: item.route,
+        fallbackTitle: "FORGED TITLE",
+        fallbackBody: "FORGED BODY"
+      )
+
+      XCTAssertTrue(result.suppress, item.name)
+      XCTAssertFalse(result.markAsShown, item.name)
+      XCTAssertFalse(result.didDecrypt, item.name)
+      XCTAssertEqual(result.reason, item.reason, item.name)
+      XCTAssertNil(result.recoveryIdentity, item.name)
+      XCTAssertEqual(decryptor.chatCalls, item.decrypts, item.name)
+      XCTAssertTrue(dedupe.claims.isEmpty, item.name)
+      let failEvents = eventEmitter.events.filter {
+        $0.event == "PUSH_NSE_DECRYPT_FAIL"
+      }
+      XCTAssertEqual(failEvents.count, 1, item.name)
+      XCTAssertEqual(failEvents.first?.details["kind"], "thought", item.name)
+      XCTAssertEqual(failEvents.first?.details["reason"], item.reason, item.name)
+    }
+  }
+
   func testMessageNotificationProjectionMatrixCoversContextsAndModalities() throws {
     let fixture = try loadFixture("ios_notification_message_matrix")
     let cases = try XCTUnwrap(fixture["cases"] as? [[String: Any]])
@@ -3939,6 +4185,46 @@ final class NotificationPreviewResolverTests: XCTestCase {
     ])
   }
 
+  /// The relay's encrypted `post_create` push (go-relay-server
+  /// buildEncryptedPostCreatePushMessage): routing plus the chat-style
+  /// ML-KEM block, never any plaintext preview field.
+  private func thoughtRoute(
+    postId: String,
+    senderPeerId: String = "peer-alice"
+  ) -> [String: Any] {
+    [
+      "type": "post_create",
+      "sender_id": senderPeerId,
+      "message_id": "event-\(postId)",
+      "post_id": postId,
+      "envelope_version": "2",
+      "kem": "kem",
+      "ciphertext": "ciphertext-\(postId)",
+      "nonce": "nonce-\(postId)",
+    ]
+  }
+
+  /// PostCreateEnvelope.toInnerJson: the per-recipient plaintext.
+  private func thoughtPlaintextJSON(
+    postId: String,
+    authorPeerId: String = "peer-alice",
+    authorUsername: String = "Alice",
+    text: String = "Sunny day on the pier",
+    media: [[String: Any]] = []
+  ) throws -> String {
+    try jsonString([
+      "post_id": postId,
+      "snapshot": [
+        "post_id": postId,
+        "author_peer_id": authorPeerId,
+        "author_username": authorUsername,
+        "text": text,
+        "media_kind": media.isEmpty ? "none" : "mixed",
+        "media": media,
+      ],
+    ])
+  }
+
   private func ordinaryLocalIdentityContextsJSON(
     localAccountPeerId: String = "peer-self",
     localDeviceId: String = "device-self",
@@ -4008,6 +4294,7 @@ private final class MemoryPushDecryptor: PushPayloadDecrypting {
   private(set) var groupCalls = 0
   private(set) var lastChatSecretKey: String?
   private(set) var lastGroupKey: String?
+  var chatError: Error?
 
   init(
     chatPlaintext: String? = nil,
@@ -4027,6 +4314,9 @@ private final class MemoryPushDecryptor: PushPayloadDecrypting {
   ) throws -> String {
     chatCalls += 1
     lastChatSecretKey = secretKey
+    if let chatError {
+      throw chatError
+    }
     return chatPlaintext ?? "{}"
   }
 

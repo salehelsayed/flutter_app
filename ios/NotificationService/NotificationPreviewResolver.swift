@@ -591,7 +591,8 @@ final class NotificationPreviewResolver {
     guard type == "new_message" ||
       type == "group_message" ||
       type == "message_reaction" ||
-      type == "group_reaction" else {
+      type == "group_reaction" ||
+      type == "post_create" else {
       return fallback(
         title: fallbackTitle,
         body: fallbackBody,
@@ -605,6 +606,12 @@ final class NotificationPreviewResolver {
         data: data,
         fallbackTitle: fallbackTitle,
         fallbackBody: fallbackBody,
+        fallbackThreadIdentifier: fallbackThreadIdentifier
+      )
+    }
+    if type == "post_create" {
+      return resolvePostCreate(
+        data: data,
         fallbackThreadIdentifier: fallbackThreadIdentifier
       )
     }
@@ -754,6 +761,107 @@ final class NotificationPreviewResolver {
         eventKind: "chat"
       )
     }
+  }
+
+  /// A friend's thought. The relay pushes it with the chat ML-KEM block and
+  /// the post_id in the clear, so the trust chain is resolveOneToOne's
+  /// (projection contact, shared identity key, decrypt, plaintext parity).
+  /// The result carries no recovery identity: the handoff is .untracked, and
+  /// the Dart post listener owns the card once the app drains.
+  private func resolvePostCreate(
+    data: PushRouteData,
+    fallbackThreadIdentifier: String?
+  ) -> NotificationPreviewResult {
+    guard let projection = OrdinaryNotificationProjectionSnapshot(
+      keyReader: keyReader
+    ),
+      let senderPeerId = data.exactString("sender_id", aliases: "s"),
+      senderPeerId != projection.localAccountPeerId,
+      let contact = projection.contacts[senderPeerId],
+      !contact.blocked,
+      !contact.archived else {
+      return suppressOrdinary(
+        title: "Mknoon",
+        body: "New thought",
+        threadIdentifier: fallbackThreadIdentifier,
+        reason: "thought_recipient_policy_rejected",
+        eventKind: "thought"
+      )
+    }
+    func suppress(
+      _ reason: String,
+      details: [String: String] = [:]
+    ) -> NotificationPreviewResult {
+      suppressOrdinary(
+        title: contact.username,
+        body: "New thought",
+        threadIdentifier: senderPeerId,
+        reason: reason,
+        eventKind: "thought",
+        eventDetails: details
+      )
+    }
+
+    guard let postId = data.exactString("post_id", aliases: "postId") else {
+      return suppress("missing_thought_post_id")
+    }
+    guard let kem = data.string("kem", aliases: "k"),
+          let ciphertext = data.string("ciphertext", aliases: "c"),
+          let nonce = data.string("nonce", aliases: "n") else {
+      return suppress(
+        "missing_thought_decrypt_input",
+        details: data.decryptInputPresenceDetails(
+          requiredKeys: [
+            ("kem", ["k"]),
+            ("ciphertext", ["c"]),
+            ("nonce", ["n"]),
+          ]
+        )
+      )
+    }
+    guard let secretKey = keyReader.readString(
+      key: PushSharedKeyNames.identityMlKemSecretKey
+    ) else {
+      return suppress("missing_thought_secret")
+    }
+
+    let plaintext: String
+    do {
+      plaintext = try decryptor.decryptOneToOne(
+        secretKey: secretKey,
+        kem: kem,
+        ciphertext: ciphertext,
+        nonce: nonce
+      )
+    } catch {
+      return suppress("thought_decrypt_error")
+    }
+    guard let thought = ThoughtPreviewPlaintext(json: plaintext),
+          thought.authorPeerId == senderPeerId,
+          thought.postId == postId else {
+      return suppress("thought_plaintext_parity_mismatch")
+    }
+
+    emitDecryptOK(kind: "thought")
+    if let dedupeStore,
+       !dedupeStore.claim(type: "post_create", messageId: postId) {
+      return suppressOrdinary(
+        title: contact.username,
+        body: "New thought",
+        threadIdentifier: senderPeerId,
+        reason: "duplicate_message"
+      )
+    }
+    return NotificationPreviewResult(
+      title: thoughtNotificationTitle(
+        name: contact.username,
+        localeIdentifier: localeIdentifierProvider()
+      ),
+      body: thought.previewBody,
+      threadIdentifier: senderPeerId,
+      didDecrypt: true,
+      reason: "thought"
+    )
   }
 
   private func resolveReaction(
@@ -1597,6 +1705,40 @@ private struct DirectReactionProjectedContact {
   let username: String
   let blocked: Bool
   let archived: Bool
+}
+
+/// The decrypted thought (Dart PostCreateEnvelope.toInnerJson), reduced to the
+/// fields the NSE checks and renders. Attachment kinds are mapped into the
+/// shared push vocabulary so pushPreviewBody renders them like chat media.
+private struct ThoughtPreviewPlaintext {
+  let postId: String
+  let authorPeerId: String
+  let text: String
+  let media: [[String: Any]]
+
+  init?(json: String) {
+    guard let payload = decodeJSONObject(json),
+          let snapshot = payload["snapshot"] as? [String: Any],
+          let postId = trimmedString(snapshot["post_id"])
+            ?? trimmedString(payload["post_id"]),
+          let authorPeerId = trimmedString(snapshot["author_peer_id"]) else {
+      return nil
+    }
+    self.postId = postId
+    self.authorPeerId = authorPeerId
+    text = trimmedString(snapshot["text"]) ?? ""
+    let attachments = snapshot["media"] as? [[String: Any]] ?? []
+    media = attachments.compactMap { attachment -> [String: Any]? in
+      guard let kind = trimmedString(attachment["kind"]) else {
+        return nil
+      }
+      return ["mediaType": kind == "voice" ? "audio" : kind]
+    }
+  }
+
+  var previewBody: String {
+    pushPreviewBody(text: text, media: media)
+  }
 }
 
 private struct DirectContactsProjectionSnapshot {
@@ -3062,6 +3204,13 @@ final class RecentRemoteShownMarkerStore {
         return nil
       }
       return "message:\(peerId)|\(eventId)"
+    case "post_create":
+      // Dart RecentRemoteNotificationGate._messageKey('post:<postId>',
+      // '<postId>'): the post id is the only id both sides hold after decrypt.
+      guard let postId = data.string("post_id", aliases: "postId") else {
+        return nil
+      }
+      return "message:post:\(postId)|\(postId)"
     default:
       return nil
     }
@@ -3318,6 +3467,22 @@ func pushPreviewBody(text: String, media: Any?) -> String {
     return "File"
   default:
     return "Media"
+  }
+}
+
+/// Mirrors l10n `thought_notification_title` (lib/l10n/app_{en,de,ar}.arb) so
+/// the NSE card reads like the in-app card the post listener posts later.
+private func thoughtNotificationTitle(
+  name: String,
+  localeIdentifier: String
+) -> String {
+  switch Locale(identifier: localeIdentifier).languageCode?.lowercased() {
+  case "ar":
+    return "شارك \(name) خاطرة"
+  case "de":
+    return "\(name) hat einen Gedanken geteilt"
+  default:
+    return "\(name) shared a thought"
   }
 }
 
