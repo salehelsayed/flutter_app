@@ -286,6 +286,15 @@ All 40 intro-runner preservation tests, 240 workflow tests and five provider
 contracts passed. Original evidence: `friends-folded-readiness-failure-001/`.
 Full owning checks remain pending.
 
+Pass introduction responses use the existing guarded response/outbox transaction,
+matching Accept: both notification carriers must be durable before transport
+starts. `pass_introduction_outbox_failure_test.dart` injects an unavailable
+outbox and requires both party/overall state to remain pending, with no outbound
+rows or network calls. The original Pass path fails this assertion while the
+Accept control passes. Evidence is retained under
+`.codex-test-logs/introduction-pass-atomic-20261023/`; these host repository-fault
+assertions do not establish device or native SQLite crash behavior.
+
 `QRScannerScreen` reports a code without awaiting the handler, then pops its own
 route only if that route is still current. `QRScannerWired` must therefore not
 use that route's context after

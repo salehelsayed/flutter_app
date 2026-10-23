@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 
@@ -81,16 +82,55 @@ Future<IntroductionModel?> passIntroduction({
     return null;
   }
 
-  final didUpdate = isRecipient
-      ? await introRepo.updateRecipientStatus(
-          introductionId,
-          IntroductionStatus.passed,
-        )
-      : await introRepo.updateIntroducedStatus(
-          introductionId,
-          IntroductionStatus.passed,
-        );
-  if (!didUpdate) {
+  final respondedAt = DateTime.now().toUtc().toIso8601String();
+  final newOverall = IntroductionModel.deriveStatus(
+    recipientStatus: isRecipient
+        ? IntroductionStatus.passed
+        : intro.recipientStatus,
+    introducedStatus: isRecipient
+        ? intro.introducedStatus
+        : IntroductionStatus.passed,
+    createdAt: intro.createdAt,
+  );
+
+  // Build pass payload
+  final passPayload = IntroductionPayload(
+    action: 'pass',
+    introductionId: introductionId,
+    responderId: ownPeerId,
+    responderUsername: ownUsername,
+    timestamp: respondedAt,
+  );
+
+  final deliveryForIntroducer = await _createPayloadDeliveryForContact(
+    bridge: bridge,
+    contactRepo: contactRepo,
+    ownPeerId: ownPeerId,
+    targetPeerId: intro.introducerId,
+    payload: passPayload,
+  );
+
+  // Stage the other party's carrier using the ML-KEM key from the intro since
+  // the other party isn't a contact yet (contact lookup would miss them).
+  final deliveryForOtherParty = await _createPayloadDeliveryForContact(
+    bridge: bridge,
+    contactRepo: contactRepo,
+    ownPeerId: ownPeerId,
+    targetPeerId: otherPeerId,
+    payload: passPayload,
+    mlKemPublicKey: otherMlKemKey,
+  );
+
+  // Commit the guarded response and both carriers before any transport call.
+  final didSave = await introRepo.saveIntroductionResponseWithOutboxDeliveries(
+    introductionId: introductionId,
+    isRecipient: isRecipient,
+    responseStatus: IntroductionStatus.passed,
+    overallStatus: newOverall,
+    respondedAt: respondedAt,
+    deliveries: [deliveryForIntroducer, deliveryForOtherParty],
+  );
+  if (!didSave) {
     final latestIntro = await introRepo.getIntroduction(introductionId);
     emitFlowEvent(
       layer: 'UC',
@@ -100,48 +140,15 @@ Future<IntroductionModel?> passIntroduction({
     return latestIntro ?? intro;
   }
 
-  // Derive new overall status
-  final updatedIntro = await introRepo.getIntroduction(introductionId);
-  if (updatedIntro == null) return null;
-
-  final newOverall = IntroductionModel.deriveStatus(
-    recipientStatus: updatedIntro.recipientStatus,
-    introducedStatus: updatedIntro.introducedStatus,
-    createdAt: updatedIntro.createdAt,
-  );
-  await introRepo.updateOverallStatus(introductionId, newOverall);
-
-  // Build pass payload
-  final passPayload = IntroductionPayload(
-    action: 'pass',
-    introductionId: introductionId,
-    responderId: ownPeerId,
-    responderUsername: ownUsername,
-    timestamp: DateTime.now().toUtc().toIso8601String(),
-  );
-
-  // Send to introducer
-  await _sendPayloadToContact(
+  await deliverStagedIntroductionDelivery(
     introRepo: introRepo,
     p2pService: p2pService,
-    bridge: bridge,
-    contactRepo: contactRepo,
-    ownPeerId: ownPeerId,
-    targetPeerId: intro.introducerId,
-    payload: passPayload,
+    delivery: deliveryForIntroducer,
   );
-
-  // Send to other party — pass ML-KEM key from intro record since
-  // the other party isn't a contact yet (contact lookup would miss them).
-  await _sendPayloadToContact(
+  await deliverStagedIntroductionDelivery(
     introRepo: introRepo,
     p2pService: p2pService,
-    bridge: bridge,
-    contactRepo: contactRepo,
-    ownPeerId: ownPeerId,
-    targetPeerId: otherPeerId,
-    payload: passPayload,
-    mlKemPublicKey: otherMlKemKey,
+    delivery: deliveryForOtherParty,
   );
 
   final finalIntro = await introRepo.getIntroduction(introductionId);
@@ -190,11 +197,9 @@ Future<bool> _hasIntroContactMlKemMismatch({
   return contactMlKemPublicKey != introMlKemPublicKey;
 }
 
-/// Sends an introduction payload to a contact, encrypting with ML-KEM
+/// Builds an introduction outbox row for a contact, encrypting with ML-KEM
 /// if the contact has a public key.
-Future<void> _sendPayloadToContact({
-  required IntroductionRepository introRepo,
-  required P2PService p2pService,
+Future<IntroductionOutboxDelivery> _createPayloadDeliveryForContact({
   required Bridge bridge,
   required ContactRepository contactRepo,
   required String ownPeerId,
@@ -209,9 +214,7 @@ Future<void> _sendPayloadToContact({
     effectiveMlKemKey = contact?.mlKemPublicKey;
   }
 
-  await deliverIntroductionPayloadReliably(
-    introRepo: introRepo,
-    p2pService: p2pService,
+  return createIntroductionOutboxDelivery(
     bridge: bridge,
     senderPeerId: ownPeerId,
     targetPeerId: targetPeerId,
