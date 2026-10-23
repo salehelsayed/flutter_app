@@ -1759,6 +1759,36 @@
           "value": "integration_test/scripts/run_production_direct_send_cut.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_actions.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; existing routing observation runtime remains explicit, actual UI actions use retained Maestro owner, and application composition stays owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.152.command.2",
+          "value": "integration_test/scripts/run_production_direct_actions.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_sender_offline.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; existing routing observation runtime remains explicit, actual UI actions use retained Maestro owner, and application composition stays owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.153.command.2",
+          "value": "integration_test/scripts/run_production_direct_sender_offline.dart"
+        }
+      ]
     }
   ],
   "declarations": [

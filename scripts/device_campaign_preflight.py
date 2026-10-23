@@ -85,6 +85,8 @@ HOST_PROBES = {
     'production-catalog-direct-ordered': ('integration_test/scripts/run_production_direct_ordered_replay.dart', 'production.direct_catalog.ordered_offline_replay'),
     'production-catalog-group-ordered': ('integration_test/scripts/run_production_group_ordered_recovery.dart', 'production.group_catalog.ordered_text_recovery'),
     'production-catalog-direct-cut': ('integration_test/scripts/run_production_direct_send_cut.dart', 'production.direct_catalog.inflight_sender_cut'),
+    'production-catalog-direct-actions': ('integration_test/scripts/run_production_direct_actions.dart', 'production.direct_catalog.actions_convergence'),
+    'production-catalog-direct-sender-offline': ('integration_test/scripts/run_production_direct_sender_offline.dart', 'production.direct_catalog.sender_offline_recovery'),
     'production-notification-open': ('integration_test/scripts/run_production_notification_open.dart', 'production.notification_open'),
     'production-notification-sound': ('integration_test/scripts/run_production_notification_sound.dart', 'production.notification_sound'),
     'production-foreground-group-push': ('integration_test/scripts/run_production_foreground_group_push.dart', 'production.foreground_group_push'),

@@ -9109,6 +9109,116 @@
         "MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_IDENTITY_SHA256",
         "MKNOON_DIRECT_MEDIA_CUSTODY_FIXTURE_PROBE_URL"
       ]
+    },
+    {
+      "id": "production.direct_catalog.actions_convergence",
+      "owner": "reliability",
+      "proofBoundary": "production.direct_catalog.actions_convergence",
+      "assertions": [
+        "DC-006-actual-quote-reaction-add-remove-edit-delete-ui",
+        "same-logical-rows-and-tombstone-after-both-restarts"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_direct_actions.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.direct_catalog.actions_convergence",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionDirectActions",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.direct_catalog.sender_offline_recovery",
+      "owner": "reliability",
+      "proofBoundary": "production.direct_catalog.sender_offline_recovery",
+      "assertions": [
+        "DC-022-actual-stopped-node-custody-and-automatic-recovery",
+        "same-logical-id-transport-label-and-restart-persistence"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "1to1"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_direct_sender_offline.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.direct_catalog.sender_offline_recovery",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator",
+        "android.emulator.rebindable"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionDirectSenderOffline",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

@@ -4974,6 +4974,80 @@
         "MKNOON_DIRECT_TEXT_SEND_CHECKPOINT": "0",
         "MKNOON_PLAN393_FIXED_WAKE_FIXTURE": "0"
       }
+    },
+    "production-catalog-direct-actions": {
+      "kind": "sims",
+      "capability": "production.direct_catalog.actions_convergence",
+      "boundary": "Actual quote, reaction add/remove, edit and delete-for-everyone UI receipts converge on three stable logical rows including a retained deletion tombstone, before and after both owned process restarts",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable emulator journey using the explicitly recorded existing observation runtime. Host validation does not certify device execution, external native boundaries, audio content or a signed candidate.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro drives actual composer/context-menu and navigation UI. Appium UI and host tests cannot establish the underlying persisted logical IDs, retained deletion tombstone or actual native stopped-node custody; the existing production-owned routing observer supplies exact current-run read-only snapshots. No substitute application graph or new device harness.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_catalog_quote_reply.yaml",
+        "integration_test/maestro/production_direct_reaction_toggle.yaml",
+        "integration_test/maestro/production_direct_edit.yaml",
+        "integration_test/maestro/production_direct_delete.yaml",
+        "integration_test/maestro/production_direct_assert_action.yaml",
+        "integration_test/maestro/production_resume.yaml",
+        "integration_test/maestro/production_direct_assert_reaction_present.yaml",
+        "integration_test/maestro/production_direct_assert_reaction_absent.yaml"
+      ],
+      "host_preflight": "production-catalog-direct-actions"
+    },
+    "production-catalog-direct-sender-offline": {
+      "kind": "sims",
+      "capability": "production.direct_catalog.sender_offline_recovery",
+      "boundary": "A real composer send while the production node is stopped retains actual failed SQL custody but visible automatic pending semantics; native start plus supported warm recovery delivers the same logical ID and current transport UI, preserved through both restarts",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable emulator journey using the explicitly recorded existing observation runtime. Host validation does not certify device execution, external native boundaries, audio content or a signed candidate.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro drives actual composer/context-menu and navigation UI. Appium UI and host tests cannot establish the underlying persisted logical IDs, retained deletion tombstone or actual native stopped-node custody; the existing production-owned routing observer supplies exact current-run read-only snapshots. No substitute application graph or new device harness.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send_checkpoint.yaml",
+        "integration_test/maestro/production_direct_assert_action.yaml",
+        "integration_test/maestro/production_resume.yaml"
+      ],
+      "host_preflight": "production-catalog-direct-sender-offline"
     }
   },
   "areas": [
@@ -6443,7 +6517,11 @@
         "test/tool/sims/production_direct_ordered_replay_criteria_test.dart",
         "test/tool/sims/production_group_ordered_recovery_criteria_test.dart",
         "test/tool/sims/production_direct_send_cut_criteria_test.dart",
-        "test/tool/sims/production_catalog_p0_registry_test.dart"
+        "test/tool/sims/production_catalog_p0_registry_test.dart",
+        "integration_test/scripts/run_production_direct_actions.dart",
+        "test/tool/sims/production_direct_actions_criteria_test.dart",
+        "integration_test/scripts/run_production_direct_sender_offline.dart",
+        "test/tool/sims/production_direct_sender_offline_criteria_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6518,7 +6596,9 @@
         "production-group-removed-reaction",
         "production-catalog-direct-ordered",
         "production-catalog-group-ordered",
-        "production-catalog-direct-cut"
+        "production-catalog-direct-cut",
+        "production-catalog-direct-actions",
+        "production-catalog-direct-sender-offline"
       ],
       "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
     },
@@ -11069,6 +11149,22 @@
           "go-relay-server/direct_text_send_checkpoint_test.go"
         ],
         "reason": "The normal relay runner has no integration build tag; this explicit host selector owns both new checkpoint contracts and compiles their fixture-only adapter, without selecting device execution."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.actions_convergence",
+        "patterns": [
+          "integration_test/scripts/run_production_direct_actions.dart"
+        ],
+        "reason": "Actual quote, reaction add/remove, edit and delete-for-everyone UI receipts converge on three stable logical rows including a retained deletion tombstone, before and after both owned process restarts; manifest execution ownership only, no device proof or coverage rating follows from registration."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.direct_catalog.sender_offline_recovery",
+        "patterns": [
+          "integration_test/scripts/run_production_direct_sender_offline.dart"
+        ],
+        "reason": "A real composer send while the production node is stopped retains actual failed SQL custody but visible automatic pending semantics; native start plus supported warm recovery delivers the same logical ID and current transport UI, preserved through both restarts; manifest execution ownership only, no device proof or coverage rating follows from registration."
       }
     ],
     "catalogs": [

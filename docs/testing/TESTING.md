@@ -2198,9 +2198,34 @@ Changes to the nested direct-media target owner also require reviewed source
 hash updates in `tool/testing/legacy_target_contracts.json`; its four route
 commands, roles and environments remain fixed. The bounded host checkpoint
 client has one exact composition-guard import allowance, with the original app
-graph bans retained. All 1,240 production-journey host contracts pass in
-`017-production-contracts-summary.json`; the first import-guard failure remains
+graph bans retained. The first batch has 1,240 passing production-journey host
+contracts in `017-production-contracts-summary.json`; the first import-guard failure remains
 in `014-affected-sims/` under the same private evidence directory.
+
+Two additional Catalog P0 journeys use the same routing observer:
+`production.direct_catalog.actions_convergence` binds real quote/edit/delete UI
+to three stable logical rows, a retained deletion tombstone, and both owned
+process restarts. Reaction chips are interactive child semantics, so presence
+and removal assertions select the child under the actual `message_<id>` row;
+a concatenated text/emoji label cannot establish the reaction target. Removal
+must remain absent after restart on both peers. This observer has no raw quote
+or reaction-table fields, so those assertions stay in the rendered UI scope.
+`production.direct_catalog.sender_offline_recovery` requires an actual stopped
+production node, authoritative failed ordinary-text custody, visible automatic
+pending semantics, native start and supported warm recovery, then same-ID
+delivery/current transport labels preserved across both restarts. It does not
+prove OS airplane mode or an envelope-less terminal manual Retry flow; DC-007
+still needs that separate leg. Twenty-eight exact oracle/registry host tests
+pass in the private evidence directory's `030-batch2-units-summary.json`, and
+all seven changed Dart files analyze clean in `029-batch2-analyze.log` after
+retaining and fixing four initial lint infos. These host facts confer no device
+coverage. The current SIMS host lane passes 389 cases in
+`033-batch2-sims-summary.json`; workflow 306, Maestro 9, production journey 1240
+and runtime roots 21 scoped lanes pass in `034-batch2-affected-summary.json`.
+The wider diagnostic-wrapper verdict remains NOT RUN; first resource-held
+attempts and the corrected subset invocation are retained. GC-001 needs all
+six registered create/invite/online-add/offline-add companions, with the actual
+two-, three- or four-role topology kept explicit.
 
 The additive PL-009 reaction module preserves the exact case identity through
 its shared create/accept/message observer and the unchanged original oracle.

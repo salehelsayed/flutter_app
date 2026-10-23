@@ -6,10 +6,16 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../tool/sims/manifest.dart';
 import '../../../tool/sims/planner.dart';
 import '../../../tool/sims/production_direct_ordered_replay_criteria.dart';
+import '../../../tool/sims/production_direct_actions_criteria.dart';
+import '../../../tool/sims/production_direct_sender_offline_criteria.dart';
 import '../../../tool/sims/production_direct_send_cut_criteria.dart';
 import '../../../tool/sims/production_group_ordered_recovery_criteria.dart';
 
 const _commands = {
+  productionDirectActions:
+      'integration_test/scripts/run_production_direct_actions.dart',
+  productionDirectSenderOffline:
+      'integration_test/scripts/run_production_direct_sender_offline.dart',
   productionDirectOrderedReplay:
       'integration_test/scripts/run_production_direct_ordered_replay.dart',
   productionGroupOrderedRecovery:
@@ -93,10 +99,18 @@ void main() {
     'runtime aliases and required complementary existing legs remain registered',
     () {
       expect(directSendCutRuntime, directOrderedReplayRuntime);
+      expect(directActionsRuntime, directOrderedReplayRuntime);
+      expect(directSenderOfflineRuntime, directOrderedReplayRuntime);
       for (final id in {
         directOrderedReplayRuntime,
         groupOrderedRecoveryRuntime,
         'production.group_catalog.private_process_death_matrix',
+        'production.group_catalog.private_abc_create',
+        'production.group_invite_reliability',
+        'production.group_catalog.gm002',
+        'production.group_catalog.private_online_add',
+        'production.group_catalog.gm003',
+        'production.group_catalog.private_offline_add',
         'kx0002',
         'kx0003',
         'kx0005',
@@ -105,6 +119,33 @@ void main() {
         'kx0008',
       }) {
         expect(manifest.capabilityById(id)!.active, isTrue);
+      }
+    },
+  );
+
+  test(
+    'group creation, decisions and history companions retain exact simultaneous role counts',
+    () {
+      const counts = {
+        'production.group_catalog.private_abc_create': 3,
+        'production.group_invite_reliability': 2,
+        'production.group_catalog.gm002': 4,
+        'production.group_catalog.private_online_add': 4,
+        'production.group_catalog.gm003': 4,
+        'production.group_catalog.private_offline_add': 4,
+      };
+      for (final entry in counts.entries) {
+        final capability = manifest.capabilityById(entry.key)!;
+        expect(capability.active, isTrue);
+        expect(capability.artifactRequired, isTrue);
+        expect(
+          capability.resources
+              .map((r) => r.name)
+              .where((n) => n.startsWith('device:'))
+              .toSet(),
+          hasLength(entry.value),
+          reason: entry.key,
+        );
       }
     },
   );
