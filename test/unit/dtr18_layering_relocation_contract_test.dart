@@ -392,7 +392,8 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '42041c6736b42d682ec2ecdec772148e679f220ed4d506c3fd4cd632eeb3b86f';
+    // Plan 407 fixes: PostListener receives the remote notification gate.
+    '9a4a34db7f9a77d9742dc4a453ff5f5acb6f0d09b359ce6e6ca11b28893cd6bd';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -411,8 +412,9 @@ const _productionBootstrapNormalizedSha256 =
 // historical-notification database callback stays byte-identical.
 // Plan 407: reviewed thought expiry/recovery wiring and disabled nearby publishing.
 // Plan 407 fixes: thought cards skip the foreground and retire once opened.
+// Plan 407 fixes: PostListener receives the remote notification gate.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'd77d3d16afe904cb85ce07e4e887af23357cdd46a5fc2a7785bcd2ff9b361538';
+    'a180cfd04ab67ff0afc7d6deedb097574e6da241d6b9687e99f275246d37d29e';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
