@@ -11,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:bonsoir/bonsoir.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride, TargetPlatform;
 import 'package:flutter/services.dart' show PlatformException;
@@ -742,6 +743,149 @@ void main() {
         hasLength(2),
         reason: 'a fresh found after completion resolves again',
       );
+    });
+
+    test(
+      'initial service without TXT resolves before a fresh announcement',
+      () async {
+        await service.startAdvertising('me-peer', 54321);
+        final found = BonsoirService(
+          name: 'existing-receiver',
+          type: '_mknoon._tcp',
+          port: 0,
+        );
+        final pending = service.resolvePeer(
+          'receiver-peer',
+          timeout: const Duration(seconds: 12),
+        );
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: found,
+          ),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(1));
+        // The native TXT side-query never emits another found event.
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceResolved,
+            service: ResolvedBonsoirService(
+              name: found.name,
+              type: found.type,
+              port: 51234,
+              host: '192.168.0.7',
+              attributes: {'peerId': 'receiver-peer'},
+            ),
+          ),
+        );
+        expect((await pending)!.host, '192.168.0.7');
+        service.debugSeedPeer(
+          LocalPeer(
+            peerId: 'receiver-peer',
+            host: '192.168.0.7',
+            port: 51234,
+            discoveredAt: DateTime.now().toUtc().subtract(
+              const Duration(seconds: 31),
+            ),
+          ),
+        );
+        final refreshed = service.resolvePeer(
+          'receiver-peer',
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(
+          discovery().resolver.resolved,
+          hasLength(2),
+          reason: 'resolved identity retains its live browser handle',
+        );
+        await service.stopAdvertising();
+        expect(await refreshed, isNull);
+      },
+    );
+
+    test(
+      'resolveFailed releases the peer single-flight for resolve-on-send',
+      () async {
+        await service.startAdvertising('me-peer', 54321);
+        final found = _peerService('peer-failed', 51234);
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: found,
+          ),
+        );
+        await flush();
+        discovery().emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceResolveFailed,
+            service: found,
+          ),
+        );
+        await flush();
+        final pending = service.resolvePeer(
+          'peer-failed',
+          timeout: const Duration(seconds: 12),
+        );
+        await flush();
+        expect(discovery().resolver.resolved, hasLength(2));
+        discovery().emit(
+          _resolvedEvent('peer-failed', host: '192.168.0.8', port: 51234),
+        );
+        expect((await pending)!.host, '192.168.0.8');
+      },
+    );
+
+    test(
+      'unidentified failed service retries on the existing refresh timer',
+      () async {
+        late int attempts;
+        fakeAsync((clock) {
+          unawaited(service.startAdvertising('me-peer', 54321));
+          clock.flushMicrotasks();
+          final found = BonsoirService(
+            name: 'existing-receiver',
+            type: '_mknoon._tcp',
+            port: 0,
+          );
+          discovery().emit(
+            BonsoirDiscoveryEvent(
+              type: BonsoirDiscoveryEventType.discoveryServiceFound,
+              service: found,
+            ),
+          );
+          clock.flushMicrotasks();
+          discovery().emit(
+            BonsoirDiscoveryEvent(
+              type: BonsoirDiscoveryEventType.discoveryServiceResolveFailed,
+              service: found,
+            ),
+          );
+          clock.flushMicrotasks();
+          clock.elapse(const Duration(seconds: 20));
+          attempts = discovery().resolver.resolved.length;
+        });
+        // Close the normal-zone stream controllers outside the fake timer zone.
+        await service.stopAdvertising();
+        expect(attempts, 2);
+      },
+    );
+
+    test('own initial service without TXT is skipped', () async {
+      await service.startAdvertising('me-peer', 54321);
+      discovery().emit(
+        BonsoirDiscoveryEvent(
+          type: BonsoirDiscoveryEventType.discoveryServiceFound,
+          service: BonsoirService(
+            name: broadcast().service.name,
+            type: '_mknoon._tcp',
+            port: 0,
+          ),
+        ),
+      );
+      await flush();
+      expect(discovery().resolver.resolved, isEmpty);
     });
 
     test('does not resolve our OWN advertised service (B1.1)', () async {

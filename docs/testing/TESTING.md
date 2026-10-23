@@ -5582,9 +5582,21 @@ visible and cannot become an ordinary first-attempt PASS.
   These host results do not establish fresh device or signed-candidate proof.
   Native receipt of an already-advertising peer remains a separate device leg:
   the locked Android plugin starts active browse and queries initial TXT, but
-  delivery is not proved by host callbacks. Missing initial TXT is an unconfirmed
-  hypothesis recorded in that directory's `initial-browse-source.json`; no native
-  path or default feature flag was changed for it.
+  delivery is not proved by host callbacks. Follow-up host regressions confirm
+  two application stall paths: initial services without peer-ID TXT were never
+  explicitly resolved, and resolve failures left the per-peer single-flight set.
+  Unidentified service handles now resolve through NSD immediately, survive for
+  retry on the existing 20-second timer, and bind to the peer once resolved;
+  resolve failures release the in-flight guard. Own-name filtering also covers
+  initial callbacks without TXT. Lost services and full stop clear unidentified
+  handles. The original-code regressions fail on both stalls and the missing
+  timer retry; the own-service control passes. Evidence, including the corrected
+  fake-clock fixture's retained first attempts, is under
+  `.codex-test-logs/discovery-initial-txt-20261023/` in the
+  `flutter_app_codex_discovery_initial_20261023` worktree. The device startup log
+  was not retained, so the exact branch behind that relaunch sample remains
+  unproved. Native plugin code and the default native-resolver flag are unchanged;
+  a fresh Pixel relaunch remains the separate device proof.
 
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code
