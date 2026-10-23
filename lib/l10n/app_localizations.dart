@@ -5480,6 +5480,12 @@ abstract class AppLocalizations {
   /// **'Local account data erased'**
   String get account_migration_erased_snackbar;
 
+  /// No description provided for @account_migration_erased_reopen_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Close and reopen the app to set up again.'**
+  String get account_migration_erased_reopen_message;
+
   /// No description provided for @account_migration_erase_failed.
   ///
   /// In en, this message translates to:

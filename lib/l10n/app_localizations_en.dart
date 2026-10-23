@@ -3284,6 +3284,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get account_migration_erased_snackbar => 'Local account data erased';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'Close and reopen the app to set up again.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'Could not erase local account data: $error';
   }

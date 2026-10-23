@@ -3347,6 +3347,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم محو بيانات الحساب المحلية';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'أغلق التطبيق وافتحه من جديد لإعداده مرة أخرى.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'تعذّر محو بيانات الحساب المحلية: $error';
   }

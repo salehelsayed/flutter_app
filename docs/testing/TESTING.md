@@ -9069,6 +9069,15 @@ setup after relaunch, but exposed a separate privacy gap: received photo, video,
 thumbnail, voice and PDF bytes remained in the retired account's media folder.
 Cancel preserved the original files and blocked state. This is separate from
 the earlier notification-preservation fixture failure.
+After successful erasure, the blocked screen now shows a persistent erased
+acknowledgement, removes its Erase action and asks the user to close and reopen
+the app to set up again. It waits for the complete erase callback; pending or
+failed cleanup retains the retired screen. It does not reuse repositories whose
+database was closed by erasure. The widget regression holds cleanup pending,
+then verifies the terminal copy and absent Erase action after success. Host
+evidence is in `.codex-test-logs/move-terminal-repairs-20261024/`; this UI repair
+does not establish the cause or resolution of the separate sender finishing
+stall observed during the device move.
 Redacted device evidence:
 `.codex-test-logs/live-phones-20260912T084648Z/android-reset-regression.redacted.log`.
 The media regression evidence is

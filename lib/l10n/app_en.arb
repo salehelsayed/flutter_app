@@ -1764,6 +1764,7 @@
   "account_migration_cancel": "Cancel",
   "account_migration_erase_local_data": "Erase local data",
   "account_migration_erased_snackbar": "Local account data erased",
+  "account_migration_erased_reopen_message": "Close and reopen the app to set up again.",
   "account_migration_erase_failed": "Could not erase local account data: {error}",
   "@account_migration_erase_failed": {
     "placeholders": {

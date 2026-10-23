@@ -1631,6 +1631,7 @@
   "account_migration_cancel": "Abbrechen",
   "account_migration_erase_local_data": "Lokale Daten löschen",
   "account_migration_erased_snackbar": "Lokale Kontodaten gelöscht",
+  "account_migration_erased_reopen_message": "Schließe die App und öffne sie erneut, um sie neu einzurichten.",
   "account_migration_erase_failed": "Lokale Kontodaten konnten nicht gelöscht werden: {error}",
   "account_migration_blocked_title": "Konto auf ein anderes Telefon umgezogen",
   "account_migration_blocked_message": "Dieses Telefon ist nach der Migration für das Öffnen des Kontos gesperrt. Lösche die lokale Kopie erst, wenn du sicher bist, dass das neue Telefon funktioniert.",

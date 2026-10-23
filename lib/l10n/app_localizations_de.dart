@@ -3366,6 +3366,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get account_migration_erased_snackbar => 'Lokale Kontodaten gelöscht';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'Schließe die App und öffne sie erneut, um sie neu einzurichten.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'Lokale Kontodaten konnten nicht gelöscht werden: $error';
   }

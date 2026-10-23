@@ -1631,6 +1631,7 @@
   "account_migration_cancel": "إلغاء",
   "account_migration_erase_local_data": "محو البيانات المحلية",
   "account_migration_erased_snackbar": "تم محو بيانات الحساب المحلية",
+  "account_migration_erased_reopen_message": "أغلق التطبيق وافتحه من جديد لإعداده مرة أخرى.",
   "account_migration_erase_failed": "تعذّر محو بيانات الحساب المحلية: {error}",
   "account_migration_blocked_title": "تم نقل الحساب إلى هاتف آخر",
   "account_migration_blocked_message": "هذا الهاتف محظور من فتح الحساب بعد النقل. لا تمحُ النسخة المحلية إلا عندما تتأكد من أن الهاتف الجديد يعمل.",
