@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/media/erase_account_media.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -30,6 +33,7 @@ import 'package:flutter_app/features/identity/application/linked_installation_au
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -116,6 +120,16 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
     pushedRouteNames.add(route.settings.name);
     super.didPush(route, previousRoute);
   }
+}
+
+class _EraseFileDatabase extends Fake implements Database {
+  _EraseFileDatabase(this.path);
+
+  @override
+  final String path;
+
+  @override
+  Future<void> close() async {}
 }
 
 void main() {
@@ -713,6 +727,113 @@ void main() {
       );
     },
   );
+
+  for (final outcome in ['cancel', 'confirm', 'media-failure']) {
+    testWidgets(
+      'migrated-out file erase $outcome preserves ownership and consent',
+      (tester) async {
+        final sandbox = Directory.systemTemp.createTempSync(
+          'retired-file-erase-',
+        );
+        addTearDown(() => sandbox.deleteSync(recursive: true));
+        final documents = Directory('${sandbox.path}/documents')..createSync();
+        final cache = Directory('${sandbox.path}/app-cache')..createSync();
+        final database = File('${sandbox.path}/identity.db');
+        database.writeAsStringSync('encrypted account fixture');
+        final mediaRoot = Directory('${documents.path}/media');
+        if (outcome == 'media-failure') {
+          final outside = Directory('${sandbox.path}/outside')..createSync();
+          Link(mediaRoot.path).createSync(outside.path);
+        } else {
+          mediaRoot.createSync();
+        }
+        final media = File('${mediaRoot.path}/received.jpg');
+        media.writeAsBytesSync([0xff, 0xd8, 0xff, 0xe0]);
+        final cachedMedia = File('${cache.path}/recording.m4a');
+        cachedMedia.writeAsBytesSync([1, 2, 3]);
+        const peerId = '12D3KooWRetiredFileErase';
+        identityRepository.seed(
+          FakeIdentityRepository.makeIdentity(peerId: peerId),
+        );
+        await saveAuthority(
+          AccountMigrationAuthorityState.migratedOut,
+          accountPeerId: peerId,
+        );
+        await secureKeyStore.write(
+          'db_encryption_key',
+          'retained-until-erased',
+        );
+        var eraseCalls = 0;
+        final eraseSettled = Completer<void>();
+
+        await tester.pumpWidget(
+          buildRouterApp(
+            eraseLocalAccountDatabase: () async {
+              eraseCalls++;
+              try {
+                await eraseAccountMedia(
+                  documentsDirectory: documents,
+                  cacheDirectories: [cache],
+                  temporaryDirectories: [],
+                  externalStorageDirectories: [],
+                );
+                await eraseEncryptedDatabase(_EraseFileDatabase(database.path));
+              } finally {
+                eraseSettled.complete();
+              }
+            },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('account-migration-erase-action')),
+        );
+        await tester.pumpAndSettle();
+        if (outcome == 'cancel') {
+          await tester.tap(find.text('Cancel'));
+        } else {
+          await tester.tap(
+            find.byKey(const ValueKey('account-migration-erase-confirm')),
+          );
+          // Dialog completion runs on the widget clock; filesystem completion
+          // needs real event-loop turns between those frames.
+          for (
+            var attempt = 0;
+            !eraseSettled.isCompleted && attempt < 200;
+            attempt++
+          ) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 10)),
+            );
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(eraseSettled.isCompleted, isTrue);
+        }
+        await pumpFrames(tester);
+
+        final succeeded = outcome == 'confirm';
+        expect(eraseCalls, outcome == 'cancel' ? 0 : 1);
+        expect(media.existsSync(), !succeeded);
+        expect(cachedMedia.existsSync(), !succeeded);
+        expect(database.existsSync(), !succeeded);
+        expect(
+          await secureKeyStore.read('db_encryption_key'),
+          succeeded ? isNull : 'retained-until-erased',
+        );
+        expect(
+          (await SecureKeyStoreAccountMigrationAuthorityRepository(
+            secureKeyStore: secureKeyStore,
+          ).loadAuthority())?.state,
+          succeeded ? isNull : AccountMigrationAuthorityState.migratedOut,
+        );
+        expect(p2pService.startNodeCallCount, 0);
+        if (outcome == 'media-failure') {
+          expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+          expect(find.byType(SnackBar), findsOneWidget);
+        }
+      },
+    );
+  }
 
   testWidgets(
     'database erase failure preserves the key and migrated-out authority',

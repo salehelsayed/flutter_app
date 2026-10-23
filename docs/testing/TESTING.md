@@ -8755,11 +8755,36 @@ close/deletion preserves the key and migrated-out authority. The canonical lease
 remains held until normal teardown to prevent reopening during erasure.
 Real temporary-file tests cover removal and failure propagation; startup tests
 cover ordering, durable authority and notification-preservation guards. The
-device erase/restart journey has not been repeated after this fix, so a passing
-host erase or secure-key deletion alone does not prove that native journey.
-This is separate from the earlier notification-preservation fixture failure.
+2026-10-23 TRANSFER-015 device attempt removed the database and reached fresh
+setup after relaunch, but exposed a separate privacy gap: received photo, video,
+thumbnail, voice and PDF bytes remained in the retired account's media folder.
+Cancel preserved the original files and blocked state. This is separate from
+the earlier notification-preservation fixture failure.
 Redacted device evidence:
 `.codex-test-logs/live-phones-20260912T084648Z/android-reset-regression.redacted.log`.
+The media regression evidence is
+`.codex-test-logs/safe-transfer-20261023T1246Z/SUMMARY.md`.
+
+Production account erasure now awaits `eraseAccountMedia` before removing the
+database and secure keys. It removes the canonical media/avatar, pending-upload,
+local/post media, ciphertext custody and migration-staging roots, application
+cache contents, and the bounded media artifacts in temporary/external-files
+storage. Application cache comes from the package-specific cache API; shared
+desktop temporary roots are never cleared wholesale. Directory-root symlinks
+are rejected, nested links do not authorize outside deletion, deletion is read
+back, and a media/database cleanup failure preserves the database key and
+retired-account authority and reaches the existing failure UI. Only the blocked-account screen exposes
+the shipping erase action; its confirmation still precedes all cleanup.
+
+The focused host run passed all 59 cases across media erasure, startup recovery,
+database-file erasure and secure-storage cleanup, with zero failures/skips and a
+clean analyzer for the four changed Dart files. Real-file widget fixtures use
+synchronous setup and interleave real event-loop turns with widget frames until
+the actual erase callback settles; fake-time pumping or awaiting the dialog
+only inside `runAsync` does not settle native file I/O. Initial fixture failures
+and the pre-fix filesystem/confirmation RED results remain in the owning
+worktree's `.codex-test-logs/erase-account-media-20261023/`. This is host evidence;
+the post-fix device erase/relaunch proof remains flutter_app-owned and pending.
 
 A two-file diagnostic rerun reproduced both failures (43 passed, two failed,
 9.470 seconds); focused failed-case reruns also failed. Sanitized follow-up

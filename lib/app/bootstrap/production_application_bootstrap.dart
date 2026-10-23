@@ -319,6 +319,7 @@ import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/erase_account_media.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -10513,7 +10514,12 @@ final class ProductionApplicationBootstrap
         // Migrated-out startup has already refused account runtime work. Keep
         // the canonical lease until normal teardown, so a background engine
         // cannot reopen storage between deletion and secure-key cleanup.
-        eraseLocalAccountDatabase: () => eraseEncryptedDatabase(db),
+        eraseLocalAccountDatabase: () async {
+          // Keep the database key and retired authority until every owned
+          // media/cache removal has succeeded, including readback.
+          await eraseAccountMedia(documentsDirectory: appDocDir);
+          await eraseEncryptedDatabase(db);
+        },
         accountMigrationRecoverExportPause: () async {
           if (accountMigrationTransferRuntime.hasActiveExportRun) {
             return false;
