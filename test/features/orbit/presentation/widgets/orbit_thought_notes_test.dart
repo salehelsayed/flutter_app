@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -176,6 +176,52 @@ void main() {
       expect(text.style!.height, 1.22);
     },
   );
+
+  testWidgets('a note sized under the app text style shows all its text', (
+    tester,
+  ) async {
+    // The app theme's inherited text style (on phones, a real font) must size
+    // the bubble too, or the last letters are clipped.
+    for (final shown in [
+      note('label', text: '', media: const MediaPreviewDescriptor(type: 'image', count: 1)),
+      note('bold', text: 'Reply thought from B'),
+    ]) {
+      await tester.pumpWidget(
+        wrap(
+          DefaultTextStyle(
+            style: const TextStyle(letterSpacing: 3),
+            child: OrbitThoughtNoteBubble(authorName: 'Friend 0', note: shown),
+          ),
+        ),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.byType(OrbitThoughtNoteBubble),
+          matching: find.byType(RichText),
+        ),
+      );
+      final box = tester.getSize(
+        find.descendant(
+          of: find.byType(OrbitThoughtNoteBubble),
+          matching: find.byType(Container),
+        ).first,
+      );
+      // Never clipped: the laid-out lines fit the bubble, and text is only cut
+      // where the ellipsis shows.
+      expect(
+        paragraph.size.height,
+        lessThanOrEqualTo(box.height - 12 + 0.01),
+        reason: shown.postId,
+      );
+      if (!paragraph.didExceedMaxLines) {
+        expect(
+          paragraph.getMaxIntrinsicWidth(double.infinity),
+          lessThanOrEqualTo(paragraph.constraints.maxWidth + 0.01),
+          reason: shown.postId,
+        );
+      }
+    }
+  });
 
   testWidgets('a media-only thought shows its media label; text wins', (
     tester,

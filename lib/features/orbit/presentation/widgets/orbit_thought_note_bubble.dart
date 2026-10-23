@@ -31,6 +31,11 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
     fontWeight: isRead ? FontWeight.w400 : FontWeight.w600,
   );
 
+  /// The inherited app text style (the phone's real font) merged with the
+  /// note style, so measuring and painting lay out the same glyphs.
+  static TextStyle _resolvedStyle(BuildContext context, OrbitThoughtNote note) =>
+      DefaultTextStyle.of(context).style.merge(textStyle(isRead: note.isRead));
+
   static String _preview(BuildContext context, OrbitThoughtNote note) =>
       orbitMediaPreviewLabel(
         l10n: AppLocalizations.of(context)!,
@@ -44,7 +49,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
     final painter = TextPainter(
       text: TextSpan(
         text: _preview(context, note),
-        style: textStyle(isRead: note.isRead),
+        style: _resolvedStyle(context, note),
       ),
       textAlign: TextAlign.center,
       textDirection: Directionality.of(context),
@@ -103,7 +108,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,
-                  style: textStyle(isRead: note.isRead),
+                  style: _resolvedStyle(context, note),
                 ),
               ),
               const SizedBox(height: 2),
