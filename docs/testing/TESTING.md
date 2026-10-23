@@ -2236,6 +2236,23 @@ attempts and the corrected subset invocation are retained. GC-001 needs all
 six registered create/invite/online-add/offline-add companions, with the actual
 two-, three- or four-role topology kept explicit.
 
+The DC-007 disposable direct-media fixture now offers explicit
+`upload_storage_block` and `upload_storage_restore` faults against its owned
+filesystem storage root. The block rejects active upload reservations and
+request-level attachment/lane selectors; restore preserves an unexpected
+replacement and the original saved directory. Three focused Go contracts in
+`go-relay-server/direct_media_blob_upload_storage_faults_test.go` pass against
+real framed production upload/download handlers: storage rejection followed by
+same-upload retry, HTTP scope/busy rejection, and replacement preservation.
+The previously stored control blob and retried blob remain byte-identical.
+Evidence is the private directory's `095-dc007-go-summary.json` and retained
+`094-dc007-go-upload-storage.log`; the single native lease lasted 48.463 seconds,
+with unchanged dependency manifests and zero swap growth. This is host fixture
+proof only. App SQLite/custody projection, visible terminal manual Retry and
+same-ID app convergence remain unverified; the broader selected Go and affected
+suites were not executed. These controls do not close DC-007 or add device
+coverage.
+
 The introduction Catalog P0 journeys reuse the production group-profile
 three-role runtime with introducer-only contact edges; the default full contact
 mesh would invalidate the pre-consent assertion. The mutual case requires real

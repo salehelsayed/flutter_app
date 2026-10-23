@@ -1065,6 +1065,11 @@ func (fixture *directMediaDeviceFixture) Close() error {
 				fixture.closeErr = err
 			}
 		}
+		if fixture.faults != nil {
+			if err := fixture.faults.restoreUploadStorage(); err != nil && fixture.closeErr == nil {
+				fixture.closeErr = err
+			}
+		}
 		if fixture.stores != nil {
 			if err := fixture.stores.Close(); err != nil && fixture.closeErr == nil {
 				fixture.closeErr = err

@@ -36,9 +36,11 @@ func validDirectMediaFixtureProbeID(value string) bool {
 type directMediaFixtureFaults struct {
 	media *MediaStore
 
-	mu          sync.Mutex
-	clockOffset time.Duration
-	stash       map[directMediaBlobCustodyKey]directMediaFixtureStash
+	mu           sync.Mutex
+	clockOffset  time.Duration
+	stash        map[directMediaBlobCustodyKey]directMediaFixtureStash
+	uploadStash  string
+	uploadMarker os.FileInfo
 }
 
 type directMediaFixtureStash struct {
@@ -62,12 +64,13 @@ type directMediaFixtureFault struct {
 }
 
 type directMediaFixtureFaultStatus struct {
-	Present     bool   `json:"present"`
-	Lane        string `json:"lane,omitempty"`
-	State       string `json:"state,omitempty"`
-	HashMatches bool   `json:"hashMatches"`
-	Snapshotted bool   `json:"snapshotted"`
-	ClockOffset string `json:"clockOffset"`
+	UploadStorageBlocked bool   `json:"uploadStorageBlocked,omitempty"`
+	Present              bool   `json:"present"`
+	Lane                 string `json:"lane,omitempty"`
+	State                string `json:"state,omitempty"`
+	HashMatches          bool   `json:"hashMatches"`
+	Snapshotted          bool   `json:"snapshotted"`
+	ClockOffset          string `json:"clockOffset"`
 }
 
 func newDirectMediaFixtureFaults(media *MediaStore) *directMediaFixtureFaults {
@@ -86,6 +89,14 @@ func newDirectMediaFixtureFaults(media *MediaStore) *directMediaFixtureFaults {
 
 func (faults *directMediaFixtureFaults) apply(fault directMediaFixtureFault) error {
 	switch fault.Op {
+	case "upload_storage_block", "upload_storage_restore":
+		if fault.RecipientPeerID != "" || fault.AttachmentID != "" || fault.Lane != "" {
+			return errors.New("upload storage fault rejects target arguments")
+		}
+		if fault.Op == "upload_storage_block" {
+			return faults.blockUploadStorage()
+		}
+		return faults.restoreUploadStorage()
 	case "clock_reset":
 		faults.setClockOffset(0)
 		return nil
@@ -313,8 +324,9 @@ func (faults *directMediaFixtureFaults) status(recipientPeerID, attachmentID str
 	faults.mu.Lock()
 	_, snapshotted := faults.stash[key]
 	offset := faults.clockOffset
+	uploadBlocked := faults.uploadStash != ""
 	faults.mu.Unlock()
-	status := directMediaFixtureFaultStatus{Snapshotted: snapshotted, ClockOffset: offset.String()}
+	status := directMediaFixtureFaultStatus{Snapshotted: snapshotted, ClockOffset: offset.String(), UploadStorageBlocked: uploadBlocked}
 	if cs := faults.media.custody; cs != nil {
 		cs.mu.Lock()
 		meta := cloneDirectMediaBlobCustodyMeta(cs.entries[key])
