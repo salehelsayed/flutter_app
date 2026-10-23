@@ -195,6 +195,52 @@ Device check, same Android pair: write a thought with a photo on one phone and s
 
 Implementation and validation (2026-10-22): `d81655bf0` implements the own-node plus and Thoughts-only text/photo/video/voice composer, reusing encrypted all-friends delivery and media recovery. Focused runs passed 64 composer/preservation tests and 166 integration/media tests after the retained initial compilation failure was fixed. Four device acceptance scenarios passed on that exact source, including a real photo shared between peers and rendered after decryption on the receiver. The disposable debug build had Google services disabled; it does not certify production push latency. The final Mac selection completed with 32 PASS / 0 FAIL / 3 baseline BLOCKED across reports with identical source identity; `feature-host-all` passed 11,974 tests with 14 baseline skips and no failures. The current app production files match that tested source. The accepted exceptions and unexecuted general device campaigns are detailed in `docs/testing/TESTING.md`; the general iPhone notification campaign remains unpassed. Receipts: `.codex-test-logs/plan407-step2/step3-focused-fixed/`, `.codex-test-logs/plan407-step3/step3-device-summary.md`, and `.codex-test-logs/plan407-step3/retained-host-evidence/summary.redacted.json`.
 
+### Fixes from the emulator test (2026-10-23)
+
+An exploratory run of steps 1–3 on two emulators found 12 issues. All are fixed on `UI-Update`, which is not pushed. Decision trail: `.audit/thoughts-fixes.tsv` (ignored).
+
+- **A friend in the background got no push.** The relay had no push case for `post_create`. Fixed in `8ab1a0aa9`.
+- **Encrypted push, owner choice.** Thoughts now use the chat-style encrypted push, so the phone shows "{name} shared a thought" with the text or a media label. The generic alert stays as the fallback for oversized pushes, missing `post_id` and old app builds. Commits:
+  - `e9f84a86e`: `post_id` in the envelope;
+  - `6bae23448`: relay v1.11.2;
+  - `c9b35206a`, `99423fe42`: Android decrypt and dedupe;
+  - `733428621`, `348577013`: iOS extension, with the dedupe key matching the app's event id.
+
+  Relay v1.11.2 is deployed to the Hetzner **test** relay only. Production still runs v1.11.1.
+- **Notifications (`5a109850c`):**
+  - no notification while the app is in the foreground;
+  - a newer thought retires the friend's older card, and opening a card retires its card;
+  - own `mknoon_thoughts` channel;
+  - media-only notification body;
+  - a stale tap clears the target.
+- **Orbit notes:**
+  - `f726fa6ac`: media label, screen-reader button, width up to 150 px, centre and "+" held in place while notes show;
+  - `7672b4237`: notes are measured in the font they are painted in. The device showed "Phot" and missing last words.
+- **Composer (`17100a28b`):**
+  - "Add a friend to share your thoughts" shows inside the sheet;
+  - photo and video thumbnails, each with remove.
+- **Own thought (`d61c47e7e`):** your live thought shows as a note above your own face and opens a "You" card.
+- **Delete for everyone (`379199bdc`):** delete sends a `post_retract` through the pin-removal path. Receivers accept it only from the author.
+- **Delivery (`6c75a86f7`):** a direct send counts as delivered only when acknowledged; otherwise it falls back to the inbox. Before this fix, a just-paused friend lost the thought.
+
+Device check on the Hetzner build `832354d0d`, both emulators:
+- background push in 4 s, and killed-process push in 4 s;
+- quiet in the foreground;
+- tapping the notification opens the card and clears it;
+- photo note and notification body;
+- thumbnails;
+- own note, "You" card and Delete on both phones;
+- the no-friends message;
+- the paused-friend fallback.
+
+Not checked on a device:
+- pinch and spread;
+- screen-reader labels;
+- the swim with many friends;
+- iOS (extension XCTests only, 65/65).
+
+Known limit: while the app process stays dead, two thoughts from one friend show two cards until the app next opens.
+
 ### Step 4 — Opening a chat from the orbit
 
 Pending owner confirmation (2026-10-20): the orbit itself stays as it is, and this step only changes how a chat opens from it. The prototype's "Flatten" transition (`prototypes/orbit_depth/flatten.dart`, chosen by the owner on 2026-10-13 and confirmed on 2026-10-20). UI that appears:
