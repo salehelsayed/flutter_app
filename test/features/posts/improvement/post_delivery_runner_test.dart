@@ -130,6 +130,39 @@ void main() {
     expect(network.inboxCount('peer-cara'), 1);
   });
 
+  test(
+    'an unacknowledged direct send falls back to the inbox, not delivered',
+    () async {
+      // A paused receiver can leave the connection looking live: the frame is
+      // written but its node never acknowledges, so the copy must also wait in
+      // the inbox or the friend never gets the thought.
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      FakeP2PService(peerId: 'peer-bob', network: network);
+      final aliceService = FakeP2PService(peerId: 'peer-alice', network: network)
+        ..directReplyBuilder = (_, _, _) =>
+            const SendMessageResult(sent: true, acked: false);
+      aliceService.connectedPeers.add('peer-bob');
+      final created = await _createLocalPost(
+        posts: posts,
+        contacts: contacts,
+        recipientPeerIds: const ['peer-bob'],
+      );
+
+      final (_, post) = await PostDeliveryRunner(
+        p2pService: aliceService,
+        postRepo: posts,
+        bridge: FakeBridge(),
+      ).execute(created);
+
+      final deliveries = await posts.getRecipientDeliveries(post.id);
+      expect(
+        deliveries.map((d) => '${d.recipientPeerId}:${d.deliveryStatus}'),
+        <String>['peer-bob:inbox'],
+      );
+      expect(network.inboxCount('peer-bob'), 1);
+    },
+  );
+
   test('execute marks post failed when all recipients fail', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     contacts.addTestContact(_contact('peer-cara', 'Cara'));

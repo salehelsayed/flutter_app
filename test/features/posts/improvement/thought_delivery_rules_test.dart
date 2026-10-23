@@ -583,7 +583,7 @@ class _CountingP2PService extends FakeP2PService {
   }) async {
     sentTo.add(targetPeerId);
     await beforeSendCompletes?.call();
-    return const SendMessageResult(sent: true);
+    return const SendMessageResult(sent: true, acked: true);
   }
 }
 

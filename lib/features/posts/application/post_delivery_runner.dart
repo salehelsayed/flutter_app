@@ -669,13 +669,17 @@ Future<_DeliveryAttempt> _deliverToRecipient({
         wireEnvelope,
         timeoutMs: _interactivePostBudget.inMilliseconds,
       );
-      if (sendResult.sent) {
+      // Only the receiver's ack proves delivery: a paused peer's connection
+      // can accept the frame and never read it.
+      if (sendResult.acknowledged) {
         return const _DeliveryAttempt(
           deliveryStatus: 'delivered',
           deliveryPath: 'direct',
         );
       }
-      directFailureReason = 'direct_send_returned_not_sent';
+      directFailureReason = sendResult.sent
+          ? 'direct_send_unacknowledged'
+          : 'direct_send_returned_not_sent';
     } else {
       directFailureReason = 'direct_connect_unavailable';
     }
