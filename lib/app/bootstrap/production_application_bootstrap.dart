@@ -343,6 +343,7 @@ import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -683,6 +684,11 @@ final class ProductionApplicationBootstrap
         ? null
         : LocalNotificationLedgerStore(
             directory: durableNotificationIdRegistry.directory,
+          );
+    final friendThoughtCards = durableNotificationIdRegistry == null
+        ? null
+        : FriendThoughtCardRegistry.under(
+            durableNotificationIdRegistry.directory,
           );
     final CanonicalRuntimeLeaseGateway? canonicalRuntimeLeaseGateway =
         !kIsWeb && Platform.isAndroid
@@ -6808,6 +6814,7 @@ final class ProductionApplicationBootstrap
       notificationService: notificationService,
       isAppForegroundActive: appVisibilityAuthority.isForegroundActive,
       remoteNotificationGate: recentRemoteNotificationGate,
+      friendThoughtCards: friendThoughtCards,
       bridge: bridge,
       getOwnMlKemSecretKey: () async {
         final identity = await repository.loadIdentity();

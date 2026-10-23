@@ -6370,6 +6370,124 @@ void main() {
         },
       );
 
+      RemoteMessage thoughtPush({
+        required String sender,
+        required String postId,
+      }) {
+        return RemoteMessage(
+          messageId: 'provider-$postId',
+          data: <String, dynamic>{
+            'type': 'post_create',
+            'sender_id': sender,
+            'message_id': 'evt-$postId',
+            'post_id': postId,
+            'kem': 'SECRET-kem',
+            'ciphertext': 'thought:$sender:$postId',
+            'nonce': 'SECRET-nonce',
+          },
+        );
+      }
+
+      /// The app is closed and every sender is a known friend. A ciphertext
+      /// `thought:<sender>:<postId>` decrypts to that thought's plaintext.
+      DurableConversationNotificationIdRegistry mockClosedAppWithFriends() {
+        mockNotificationsPlugin();
+        final directory = Directory.systemTemp.createTempSync(
+          'background-thought-ids-',
+        );
+        addTearDown(() {
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+        final registry = DurableConversationNotificationIdRegistry(
+          directory: directory,
+        );
+        debugSetBackgroundConversationNotificationIdRegistryResolver(
+          () async => registry,
+        );
+        debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+          final sender = message.data['sender_id'] as String;
+          return BackgroundDirectMessageLocalState(
+            previewContext: DirectMessageNotificationContext(
+              senderPeerId: sender,
+              senderUsername: 'Friend $sender',
+              expectedMessageId: message.data['message_id'] as String?,
+            ),
+            mlKemSecretKeys: const <String>['current-key'],
+          );
+        });
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+              final arguments = Map<String, dynamic>.from(
+                jsonDecode(call.arguments as String) as Map,
+              );
+              final [_, sender, postId] = (arguments['ciphertext'] as String)
+                  .split(':');
+              return jsonEncode(<String, Object?>{
+                'ok': true,
+                'plaintext': jsonEncode(<String, Object?>{
+                  'post_id': postId,
+                  'snapshot': <String, Object?>{
+                    'post_id': postId,
+                    'author_peer_id': sender,
+                    'text': 'Thought $postId',
+                    'media_kind': 'none',
+                    'media': <Object?>[],
+                  },
+                }),
+              });
+            });
+        return registry;
+      }
+
+      List<(String, Object?)> cardCalls() => log
+          .where((call) => call.method == 'show' || call.method == 'cancel')
+          .map((call) => (call.method, (call.arguments as Map)['id']))
+          .toList();
+
+      test(
+        'a second thought from the same friend replaces the first card while the app is closed',
+        () async {
+          final registry = mockClosedAppWithFriends();
+          Future<int> cardId(String key) => registry.resolve(
+            key,
+            activeNotificationIds: () async => const <int>[],
+          );
+
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'post-1'),
+          );
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'post-2'),
+          );
+
+          expect(cardCalls(), <(String, Object?)>[
+            ('show', await cardId('post:post-1')),
+            ('cancel', await cardId('post:post-1')),
+            ('show', await cardId('post:post-2')),
+          ]);
+        },
+      );
+
+      test('thoughts from two friends keep both cards', () async {
+        final registry = mockClosedAppWithFriends();
+        Future<int> cardId(String key) => registry.resolve(
+          key,
+          activeNotificationIds: () async => const <int>[],
+        );
+
+        await firebaseMessagingBackgroundHandler(
+          thoughtPush(sender: 'peer-alice', postId: 'post-1'),
+        );
+        await firebaseMessagingBackgroundHandler(
+          thoughtPush(sender: 'peer-bob', postId: 'post-3'),
+        );
+
+        expect(cardCalls(), <(String, Object?)>[
+          ('show', await cardId('post:post-1')),
+          ('show', await cardId('post:post-3')),
+        ]);
+      });
+
       test('a blocked, archived or unknown sender shows nothing', () async {
         BackgroundDirectMessageLocalState? localState({
           bool known = true,

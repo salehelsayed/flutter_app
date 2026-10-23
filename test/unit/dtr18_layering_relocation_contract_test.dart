@@ -395,7 +395,10 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 407 fixes: PostListener receives the remote notification gate.
     // Plan 407 fixes: PostListener receives the router's post_retract stream,
     // so an author can delete a thought for everyone. No owner moves.
-    '8b98a25527dc8268c10f4b188af219d90130a30b84863786ddef9ae23bf0f2f6';
+    // Plan 407 fixes: PostListener receives the friend thought-card registry
+    // built beside the notification-id registry, so one card per friend holds
+    // across the main and background isolates. No owner moves.
+    'cd7397229eae41f92778bb8060ef3543a725ed8a55e5f29ba10b854cb9ee7777';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -417,8 +420,10 @@ const _productionBootstrapNormalizedSha256 =
 // Plan 407 fixes: PostListener receives the remote notification gate.
 // Plan 407 fixes: the same post_retract stream line described at the
 // bootstrap digest above; the database proof callback is unchanged.
+// Plan 407 fixes: the same friend thought-card registry wiring described at
+// the bootstrap digest above; the database proof callback is unchanged.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '01d20c7a74b143c1a20720550779ceaf26356e689a3489c3eb2067df3f45da41';
+    'ca46ac1f421c4ac2443dd1ffe133a36f0710a3cba7ea953ec582df7d1036b663';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

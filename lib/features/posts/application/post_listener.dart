@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -33,6 +34,9 @@ class PostListener {
   /// The background push isolate marks each thought card it shows here, so
   /// the inbox drain that follows does not post a second one.
   final RecentRemoteNotificationGate? remoteNotificationGate;
+
+  /// Which thought card each friend holds, shared with the background isolate.
+  final FriendThoughtCardRegistry? friendThoughtCards;
   final Future<PostMediaAttachmentModel> Function({
     required PostMediaAttachmentModel attachment,
     required String postId,
@@ -54,6 +58,7 @@ class PostListener {
     this.notificationService,
     this.isAppForegroundActive,
     this.remoteNotificationGate,
+    this.friendThoughtCards,
     this.hydratePostMediaFn,
     DateTime Function()? nowProvider,
   }) : now = nowProvider ?? DateTime.now;
@@ -82,7 +87,7 @@ class PostListener {
       );
       if (result == HandleIncomingPostRetractResult.thoughtDeleted &&
           postId != null) {
-        await _cancelThoughtCard(postId);
+        await _cancelCard(NotificationRouteTarget.post(postId).toPayload());
       }
     } catch (error) {
       emitFlowEvent(
@@ -140,48 +145,55 @@ class PostListener {
 
     final sender = await contactRepo.getContact(post.senderPeerId);
     if (_expired(post)) return;
-    if (post.isIncoming) await _retireOlderThoughtCards(post);
-    if (sender != null &&
+    final cardKey = NotificationRouteTarget.post(post.id).toPayload();
+    final current =
+        !post.isIncoming || await _claimFriendsCard(post.senderPeerId, cardKey);
+    final showsCard =
+        current &&
+        sender != null &&
         !sender.isArchived &&
         notificationService != null &&
         post.isIncoming &&
-        !(await isAppForegroundActive?.call() ?? false)) {
-      final announcedByPush =
-          await remoteNotificationGate?.consumeIfRecentAnnouncement(
-            payload: NotificationRouteTarget.post(post.id).toPayload(),
-            messageId: post.eventId,
-          ) ??
-          false;
-      if (!announcedByPush) {
-        await notificationService!.showThoughtNotification(
-          postId: post.id,
-          title: localizedThoughtNotificationTitle(sender.username),
-          body: localizedThoughtNotificationBody(
-            text: post.text,
-            mediaKind: post.mediaKind,
-            mediaCount: post.media.length,
-          ),
-        );
-      }
+        !(await isAppForegroundActive?.call() ?? false);
+    final announcedByPush =
+        showsCard &&
+        (await remoteNotificationGate?.consumeIfRecentAnnouncement(
+              payload: cardKey,
+              messageId: post.eventId,
+            ) ??
+            false);
+    if (showsCard && !announcedByPush) {
+      await notificationService!.showThoughtNotification(
+        postId: post.id,
+        title: localizedThoughtNotificationTitle(sender.username),
+        body: localizedThoughtNotificationBody(
+          text: post.text,
+          mediaKind: post.mediaKind,
+          mediaCount: post.media.length,
+        ),
+      );
     }
     if (_expired(post)) {
-      await _cancelThoughtCard(post.id);
+      await _cancelCard(cardKey);
       return;
     }
     _postController.add(post);
   }
 
-  /// One card per friend: the newest thought replaces the friend's older ones.
-  Future<void> _retireOlderThoughtCards(PostModel post) async {
-    if (notificationService is! ConversationNotificationCancellation) return;
+  /// One card per friend: claiming the friend's card for this thought retires
+  /// the card it replaces, whichever isolate showed it. Returns false when a
+  /// newer thought from the friend already holds the card.
+  Future<bool> _claimFriendsCard(String senderPeerId, String cardKey) async {
+    final registry = friendThoughtCards;
+    if (registry == null) return true;
     try {
-      for (final older in await postRepo.loadFeed()) {
-        if (older.id != post.id &&
-            older.isIncoming &&
-            older.authorPeerId == post.authorPeerId) {
-          await _cancelThoughtCard(older.id);
-        }
-      }
+      final claim = await registry.claim(
+        senderPeerId: senderPeerId,
+        cardKey: cardKey,
+      );
+      final retired = claim.retired;
+      if (retired != null) await _cancelCard(retired);
+      return claim.current;
     } catch (error) {
       // A stale card must not stop the new thought from reaching Orbit.
       emitFlowEvent(
@@ -189,6 +201,7 @@ class PostListener {
         event: 'POST_LISTENER_RETIRE_FAILED',
         details: {'errorType': error.runtimeType.toString()},
       );
+      return true;
     }
   }
 
@@ -213,13 +226,11 @@ class PostListener {
     }
   }
 
-  Future<void> _cancelThoughtCard(String postId) async {
+  Future<void> _cancelCard(String cardKey) async {
     final notifications = notificationService;
     if (notifications is ConversationNotificationCancellation) {
       await (notifications as ConversationNotificationCancellation)
-          .cancelConversationNotification(
-            NotificationRouteTarget.post(postId).toPayload(),
-          );
+          .cancelConversationNotification(cardKey);
     }
   }
 

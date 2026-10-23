@@ -15,6 +15,7 @@ import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/notifications/durable_local_notification_effect_coordinator.dart';
+import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/group_invite_android_notification_identity.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
@@ -1629,6 +1630,14 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       if (!entered) throw const _BackgroundNotificationClaimOwnershipLost();
     }
 
+    if (routeTarget?.kind == NotificationRouteTargetKind.post) {
+      await _retireFriendsOlderThoughtCard(
+        message.data,
+        cardKey: conversationKey,
+        registry: notificationIdRegistry!,
+      );
+    }
+
     DurableLocalNotificationEffectResult? durableEffectResult;
     if (defaultTargetPlatform == TargetPlatform.android) {
       // Registry allocation, retirement, and metadata preparation happen
@@ -3119,6 +3128,41 @@ bool _isExactGroupNotificationReadAcknowledgement(
 String? _groupReactionConversationKey(Map<String, dynamic> data) {
   final groupId = _trimToNull(data['groupId']) ?? _trimToNull(data['group_id']);
   return groupId == null ? null : 'group:$groupId';
+}
+
+/// One card per friend while the app is closed: claiming the friend's slot for
+/// this thought retires the card the slot held, whichever isolate showed it.
+/// The sender is the authenticated outer field the eligibility check matched
+/// against the contact row.
+Future<void> _retireFriendsOlderThoughtCard(
+  Map<String, dynamic> data, {
+  required String cardKey,
+  required DurableConversationNotificationIdRegistry registry,
+}) async {
+  final senderPeerId =
+      _trimToNull(data['sender_id']) ??
+      _trimToNull(data['senderId']) ??
+      _trimToNull(data['senderPeerId']) ??
+      _trimToNull(data['from']);
+  if (senderPeerId == null) return;
+  try {
+    final claim = await FriendThoughtCardRegistry.under(
+      registry.directory,
+    ).claim(senderPeerId: senderPeerId, cardKey: cardKey);
+    final retired = claim.retired;
+    final retiredId = retired == null ? null : await registry.lookup(retired);
+    if (retiredId != null) {
+      await _backgroundNotificationsPlugin.cancel(retiredId);
+    }
+  } catch (error) {
+    // This thought's card still shows; the friend's next thought retries the
+    // retirement.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_THOUGHT_RETIRE_FAILED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+  }
 }
 
 String? _remoteNotificationConversationKey(

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -116,6 +117,7 @@ void main() {
   late _CancellingNotificationService notifications;
   late RecentRemoteNotificationGate remoteGate;
   late RecordingFakeBridge bridge;
+  late Directory cardsDir;
   late PostListener listener;
   var foreground = false;
 
@@ -131,6 +133,7 @@ void main() {
     );
     bridge = RecordingFakeBridge()
       ..whenCommand('message:confirm', (_) => '{"ok":true}');
+    cardsDir = Directory.systemTemp.createTempSync('post-listener-thought-cards-');
     listener = PostListener(
       postCreateStream: controller.stream,
       postRepo: posts,
@@ -139,6 +142,7 @@ void main() {
       notificationService: notifications,
       isAppForegroundActive: () async => foreground,
       remoteNotificationGate: remoteGate,
+      friendThoughtCards: FriendThoughtCardRegistry(directory: cardsDir),
     )..start();
   });
 
@@ -147,6 +151,7 @@ void main() {
     posts.dispose();
     await controller.close();
     await remoteGate.clear();
+    if (cardsDir.existsSync()) cardsDir.deleteSync(recursive: true);
   });
 
   test('skips the card the background push already announced', () async {
@@ -163,7 +168,11 @@ void main() {
     expect(await posts.loadFeed(), hasLength(1));
 
     controller.add(_message('peer-bob', 'Bob', postId: 'bob-2'));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // The card registry's file lock and the ack confirm make this path slower
+    // than a fixed short delay; wait for the card instead.
+    for (var i = 0; i < 40 && notifications.shownThoughts.isEmpty; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
 
     expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
   });
@@ -223,6 +232,81 @@ void main() {
       'post:cat-1',
       'post:bob-1',
     ]);
+  });
+
+  test('retires the card the background push showed for the same friend', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    // The headless isolate showed bob-0 while the app was closed. Its post
+    // never reached the feed, so only the shared registry knows that card.
+    await FriendThoughtCardRegistry(
+      directory: cardsDir,
+    ).claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-0');
+
+    final emitted = listener.incomingPostStream.first;
+    controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
+    expect((await emitted).id, 'bob-1');
+
+    expect(notifications.cancelled, ['post:bob-0']);
+    expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-1']);
+  });
+
+  test('draining thoughts the push already announced keeps the newest card', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    final background = FriendThoughtCardRegistry(directory: cardsDir);
+    for (final postId in ['bob-1', 'bob-2']) {
+      await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:$postId');
+      await remoteGate.markAnnouncement(
+        payload: 'post:$postId',
+        messageId: 'evt-$postId',
+      );
+    }
+
+    for (final postId in ['bob-1', 'bob-2']) {
+      final emitted = listener.incomingPostStream.first;
+      controller.add(_message('peer-bob', 'Bob', postId: postId));
+      expect((await emitted).id, postId);
+    }
+
+    expect(notifications.cancelled, isEmpty);
+    expect(notifications.shownThoughts, isEmpty);
+    expect(await posts.loadFeed(), hasLength(2));
+  });
+
+  test('draining announced thoughts nobody claimed retires the older banner', () async {
+    // iOS: the notification extension showed both banners and marked the
+    // gate, but it never touches the registry.
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    for (final postId in ['bob-1', 'bob-2']) {
+      await remoteGate.markAnnouncement(
+        payload: 'post:$postId',
+        messageId: 'evt-$postId',
+      );
+    }
+
+    for (final postId in ['bob-1', 'bob-2']) {
+      final emitted = listener.incomingPostStream.first;
+      controller.add(_message('peer-bob', 'Bob', postId: postId));
+      expect((await emitted).id, postId);
+    }
+
+    expect(notifications.cancelled, ['post:bob-1']);
+    expect(notifications.shownThoughts, isEmpty);
+  });
+
+  test('a thought behind the friend\'s newer card gets no card of its own', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    final background = FriendThoughtCardRegistry(directory: cardsDir);
+    await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-1');
+    await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-2');
+
+    for (final postId in ['bob-1', 'bob-2']) {
+      final emitted = listener.incomingPostStream.first;
+      controller.add(_message('peer-bob', 'Bob', postId: postId));
+      expect((await emitted).id, postId);
+    }
+
+    expect(notifications.cancelled, isEmpty);
+    expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
   });
 
   test('a media-only thought names its media in the body', () async {
