@@ -1819,6 +1819,21 @@
           "value": "integration_test/scripts/run_production_introduction_offline.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_local_media_delete.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned received group-image local-deletion leg: existing group-DE002 runtime, actual gallery send and media-target menu, read-only exact-row observations and owned restarts. No app graph or new observer is constructed.",
+      "condition": "Host tests and source registration do not establish device execution, image-frame decoding or physical-file erasure. flutter_app owns runtime proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.156.command.2",
+          "value": "integration_test/scripts/run_production_group_local_media_delete.dart"
+        }
+      ]
     }
   ],
   "declarations": [

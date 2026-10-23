@@ -1,0 +1,12 @@
+appId: ${APP_ID}
+name: production_catalog_media_assert_local_absent
+---
+- assertVisible:
+    id: chat_composer
+- assertNotVisible: '(?s-i)^(.*\n)?${TARGET_PATTERN}(\n.*)?$'
+- assertNotVisible:
+    text: '(?s-i)^Photo(\n.*)?$'
+    above:
+      text: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${PRESERVED_PATTERN}(\n.*)?$'

@@ -2284,6 +2284,32 @@ the introduction dependency closures without executing a device scenario.
 The broader required selection remains NOT RUN. None of these host results
 is device coverage.
 
+The GC-009 received-media local-deletion leg reuses group-DE002's three-role
+runtime and existing gallery JPEG. One author's target image, text marker and
+preserved image establish actual selector order. Only the exact incoming Photo
+tile exposes the media-target Delete-for-me action; caption long-press is not
+that action. The outgoing author's viewer has no incoming-media action menu,
+so the common Back/caption and absent composer establish its route. Read-only
+media-tile opening may retry while download completes, including after relaunch;
+deletion actions, exact-row comparisons, process deaths and nonce checks never
+retry. Complete confirmation title/body and Cancel
+remain required for both separate and Android-merged dialog semantics. Before,
+after and fresh-owned-restart snapshots bind original message/group identities,
+attachment counts and unchanged membership. The target disappears only for the
+deleting receiver, with unrelated text and preserved image routes intact for
+all members. The 12 causal oracle and eight registry cases pass in private item3
+`080-batch4-gc009-units-summary.json`, and all four changed Dart files analyze
+clean in 079. Census 084 passes. Fresh `085c-batch4-affected-host/results.json`
+records completed passes for workflow 306, Maestro 9, production journey 1254, runtime roots 21 and SIMS 425.
+Counts overlap; no lane has failed/skipped cases. Metadata-only owner audit
+`086-batch4-runbook-metadata-audit.json` verifies 19 exclusions and all four GC-009
+dependency closures/three-role topologies without any scenario or device command.
+The initial 074 analyzer, 077 negative-fixture type errors and 085 resource
+cancellation plus 085b coordinator yield remain retained; source repairs pass fresh checks. Broader
+required checks remain NOT RUN. This is no decoded-frame, attachment-key,
+physical-file-erasure or device claim. Existing quote/reaction companions
+remain required for GC-009.
+
 A separate IN-009 Pass-response blocker is confirmed at source
 `e1466134e4b25f8eade7e64d7f315c309692c933`: the real Pass use-case updates
 party and overall state before its first outbound repository save. Injecting

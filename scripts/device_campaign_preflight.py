@@ -89,6 +89,7 @@ HOST_PROBES = {
     'production-catalog-direct-sender-offline': ('integration_test/scripts/run_production_direct_sender_offline.dart', 'production.direct_catalog.sender_offline_recovery'),
     'production-catalog-intro-mutual': ('integration_test/scripts/run_production_introduction_mutual.dart', 'production.introduction_catalog.mutual_accept_direct_chat'),
     'production-catalog-intro-offline': ('integration_test/scripts/run_production_introduction_offline.dart', 'production.introduction_catalog.offline_outbox_recovery'),
+    'production-catalog-group-local-delete': ('integration_test/scripts/run_production_group_local_media_delete.dart', 'production.group_catalog.received_media_local_delete'),
     'production-notification-open': ('integration_test/scripts/run_production_notification_open.dart', 'production.notification_open'),
     'production-notification-sound': ('integration_test/scripts/run_production_notification_sound.dart', 'production.notification_sound'),
     'production-foreground-group-push': ('integration_test/scripts/run_production_foreground_group_push.dart', 'production.foreground_group_push'),

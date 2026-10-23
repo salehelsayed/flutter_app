@@ -5130,6 +5130,49 @@
         "integration_test/maestro/production_resume.yaml"
       ],
       "host_preflight": "production-catalog-intro-offline"
+    },
+    "production-catalog-group-local-delete": {
+      "kind": "sims",
+      "capability": "production.group_catalog.received_media_local_delete",
+      "boundary": "Actual received group image Delete for me confirmation, deleting member target-row absence only, unchanged original copies and unrelated text/image after three owned process restarts",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Only GC009 received-media local deletion. Existing quote/reaction legs remain complementary. Viewer route/caption, row identity and attachment counts are observed; no image-frame decoding, per-attachment key inspection, physical-file erasure, device execution or signed-candidate proof follows from host tests. Bounded UI retries cover only read-only media-tile opening readiness before and after relaunch; deletion actions, exact-row comparisons, process deaths and fresh-nonce checks never retry.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro performs actual gallery selection, exact photo-tile viewer/menu and full local-deletion confirmation. Appium UI or host tests cannot prove original logical row identity or persistence across process death; existing read-only group-DE002 snapshots and owned process receipts establish those complementary observations without an app service graph or new observer.",
+      "maestro_flows": [
+        "integration_test/maestro/production_catalog_group_create_verbatim.yaml",
+        "integration_test/maestro/production_catalog_invite_accept.yaml",
+        "integration_test/maestro/production_verbatim_send.yaml",
+        "integration_test/maestro/production_resume.yaml",
+        "integration_test/maestro/production_catalog_group_create.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_catalog_group_send_media.yaml",
+        "integration_test/maestro/production_group_open.yaml",
+        "integration_test/maestro/production_catalog_media_open_above_marker.yaml",
+        "integration_test/maestro/production_catalog_media_open_below_marker.yaml",
+        "integration_test/maestro/production_catalog_media_delete_above_marker.yaml",
+        "integration_test/maestro/production_catalog_media_assert_local_absent.yaml"
+      ],
+      "host_preflight": "production-catalog-group-local-delete"
     }
   },
   "areas": [
@@ -6611,7 +6654,9 @@
         "integration_test/support/production_intro_probe.dart",
         "integration_test/support/production_intro_offline_probe.dart",
         "integration_test/support/production_call_in_app_identity.dart",
-        "test/integration/production_call_in_app_identity_test.dart"
+        "test/integration/production_call_in_app_identity_test.dart",
+        "integration_test/scripts/run_production_group_local_media_delete.dart",
+        "test/tool/sims/production_group_local_media_delete_criteria_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6690,7 +6735,8 @@
         "production-catalog-direct-actions",
         "production-catalog-direct-sender-offline",
         "production-catalog-intro-mutual",
-        "production-catalog-intro-offline"
+        "production-catalog-intro-offline",
+        "production-catalog-group-local-delete"
       ],
       "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
     },
@@ -11273,6 +11319,14 @@
           "integration_test/scripts/run_production_introduction_offline.dart"
         ],
         "reason": "Actual offline offer UI commits both outbound carriers before sender death; second real acceptance occurs in nested existing stopped-node windows, preserves both failed outbound response carriers before responder death, then naturally reaches the restarted participant once; pass/late-accept fencing is a separate unfinished IN003 leg; registration is execution ownership, not a device or coverage verdict."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.group_catalog.received_media_local_delete",
+        "patterns": [
+          "integration_test/scripts/run_production_group_local_media_delete.dart"
+        ],
+        "reason": "Actual received group image Delete for me confirmation, deleting member target-row absence only, unchanged original copies and unrelated text/image after three owned process restarts; source registration does not confer device or coverage credit."
       }
     ],
     "catalogs": [

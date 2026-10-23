@@ -10,10 +10,13 @@ import '../../../tool/sims/production_direct_actions_criteria.dart';
 import '../../../tool/sims/production_direct_sender_offline_criteria.dart';
 import '../../../tool/sims/production_direct_send_cut_criteria.dart';
 import '../../../tool/sims/production_group_ordered_recovery_criteria.dart';
+import '../../../tool/sims/production_group_local_media_delete_criteria.dart';
 import '../../../tool/sims/production_introduction_mutual_criteria.dart';
 import '../../../tool/sims/production_introduction_offline_criteria.dart';
 
 const _commands = {
+  productionGroupLocalMediaDelete:
+      'integration_test/scripts/run_production_group_local_media_delete.dart',
   productionIntroductionMutual:
       'integration_test/scripts/run_production_introduction_mutual.dart',
   productionIntroductionOffline:
@@ -76,6 +79,7 @@ void main() {
           'device:android-emulator',
           if ({
             productionGroupOrderedRecovery,
+            productionGroupLocalMediaDelete,
             productionIntroductionMutual,
             productionIntroductionOffline,
           }.contains(id))
@@ -111,6 +115,7 @@ void main() {
       expect(directSendCutRuntime, directOrderedReplayRuntime);
       expect(directActionsRuntime, directOrderedReplayRuntime);
       expect(introductionMutualRuntime, groupOrderedRecoveryRuntime);
+      expect(groupLocalMediaDeleteRuntime, groupOrderedRecoveryRuntime);
       expect(directSenderOfflineRuntime, directOrderedReplayRuntime);
       for (final id in {
         directOrderedReplayRuntime,
@@ -122,6 +127,9 @@ void main() {
         'production.group_catalog.private_online_add',
         'production.group_catalog.gm003',
         'production.group_catalog.private_offline_add',
+        'production.group_catalog.ge024',
+        'production.group_catalog.private_reaction_roundtrip',
+        'production.group_catalog.private_reaction_toggle_convergence',
         'kx0002',
         'kx0003',
         'kx0005',

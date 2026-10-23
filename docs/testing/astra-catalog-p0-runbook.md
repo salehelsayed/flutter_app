@@ -41,6 +41,15 @@ The later intro flow corrections also pass fresh Maestro 062. Runbook audit
 including exact introduction dependency closures and call cohorts. These
 listings execute no scenario or device command. The scoped result, first
 failures and yield receipt remain in the ignored item3 artifacts.
+Batch four adds the received-media local-deletion leg with 20 focused host tests
+(12 causal oracle and eight registry), four-file clean analysis and census 084 PASS.
+Fresh scoped 085c-batch4-affected-host passes workflow 306, Maestro 9, production journey 1254, runtime roots 21 and SIMS 425.
+Each lane completes with no failed or skipped cases; counts overlap.
+Initial analyzer 074 and negative-fixture map-type errors 077 are repaired;
+resource-cancelled 085, coordinator-yield 085b and all first attempts remain retained.
+Owner metadata audit 086 verifies 19 exclusions, including all four GC-009 dependency
+closures and their three-role topologies, with no scenario/device execution.
+Wider required checks remain NOT RUN.
 No device scenario has been run by Astra. Every host launch
 needs fresh Mac resource and lease checks, including the unchanged load1 <=80
 gate, and must respect an active coordinator quiet hold.
@@ -68,7 +77,7 @@ remains **needs the test-build audio hook (not approved)**.
 | 8 | DC-013 | Contact purge with actual chat/media and an unrelated preserved chat, then restart | 3 | **NOT RUN — needs post-delete related-row observer**. Per Kayan `m-7ce8bffe`, do not add a `lib/debug` observer under this test-only scope. Existing message-only/call-history fixtures cannot establish orphan media/related-row absence. |
 | 9 | DC-016 | Blocked ingress/alerts, authorized stored-message deletion exception, unblock and fresh delivery | 2 | Not authored completely; do not replace the deletion exception with blanket rejection. |
 | 10 | GC-001 | Real create, accept/decline, add-member and policy-correct history legs | 4 | Six existing complementary scenarios are source-mapped for batch two; fresh execution still needs distinct available role pins. |
-| 11 | GC-009 | Existing quote/reaction legs plus received-media delete-for-me persistence/locality | 3 | Existing quote/reaction coverage is partial; local media deletion leg not authored completely. |
+| 11 | GC-009 | Existing quote/reaction legs plus received-media delete-for-me persistence/locality | 3 | Applied and registered in batch four; 20 focused host tests, four-file clean analysis, census and all five scoped host lanes pass. The four complementary legs still need owner review/integration and current runtime receipts; device proof NOT RUN. |
 | 12 | IN-002, IN-003, IN-009 | Selective introducer topology, real picker/consent UI, pass fences and durable offline outbox | 3 | IN-002 and the IN-009 acceptance-response leg are applied/registered; 24 causal host tests and changed-file analysis pass after correcting the review/contact route. IN-003 pass/late-carrier fencing and IN-009's pass-response leg remain incomplete. Default full-mesh preparation is unsuitable; the existing intro probe actively drains inbox and follows a natural-delivery UI witness. |
 | 13 | VC-004 | Existing `kx0015`/`kx0016`/`kx0017` native-card legs plus actual in-app incoming/active name privacy | 2 | Additive KX-0016/17 Flutter collectors/oracles are applied with 14 new and 40 retained native-evidence host tests passing. Native cards alone are insufficient; earlier native results gain no new scope. |
 | 14 | VC-017 | Same-call bounded interruption, current recovery deadline and terminal late-recovery fence | 2 | Not authored completely; no audibility claim without the unapproved audio hook. |
@@ -140,6 +149,10 @@ for label, scenario in {
     '13-group-offline-add': 'production.group_catalog.private_offline_add',
     '14-intro-mutual': 'production.introduction_catalog.mutual_accept_direct_chat',
     '15-intro-offline': 'production.introduction_catalog.offline_outbox_recovery',
+    '17-group-local-delete': 'production.group_catalog.received_media_local_delete',
+    '18-group-quotes': 'production.group_catalog.ge024',
+    '19-group-reaction': 'production.group_catalog.private_reaction_roundtrip',
+    '20-group-reaction-toggle': 'production.group_catalog.private_reaction_toggle_convergence',
 }.items():
     keep = closure({scenario})
     assert keep <= major, (label, 'missing registered owner/dependency')
@@ -284,6 +297,45 @@ observed visible raw peer ID fails the row and retains its first witness.
 These additive checks preserve the original native, RTP and restoration
 assertions. Emulator audio input stays **OFF**. No audible-content or signed
 release claim follows from these receipts.
+
+## Batch-four group media local-deletion leg
+
+`production.group_catalog.received_media_local_delete` is registered with three
+simultaneous disposable emulator roles and the existing group-DE002 observation
+runtime. Its 20 focused host tests, four-file clean analysis, census and all five scoped host lanes pass; wider required checks remain NOT RUN. After integration, regenerate the exact
+four exclusion files above and let the execution owner run each command
+separately, reviewing its own verdict and cleanup before the next:
+
+```sh
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/17-group-local-delete.exclude" --output "$ASTRA_P0_RUN/17-group-local-delete"
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/18-group-quotes.exclude" --output "$ASTRA_P0_RUN/18-group-quotes"
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/19-group-reaction.exclude" --output "$ASTRA_P0_RUN/19-group-reaction"
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/20-group-reaction-toggle.exclude" --output "$ASTRA_P0_RUN/20-group-reaction-toggle"
+```
+
+The actual gallery fixture is sent by one author as target image, preserved
+text marker and a second image. Their real authored order brackets exact Photo
+selectors without comparing different device clocks. Every member opens both
+real viewer routes first; the common Back button and exact caption are required,
+since the author's outgoing viewer has no received-media More actions menu.
+Only the bounded read-only media-tile opening may retry while download
+completes, including after relaunch. Deletion actions, exact-row comparisons,
+process deaths and fresh-nonce checks never retry. The receiver long-presses
+the exact Photo tile, opens Delete, and verifies the complete real Delete for
+me title/body and Cancel/confirm controls. Separate and Android-merged dialog
+labels retain the same full copy.
+
+The target must then be absent only at that receiver, with original message
+identities, unrelated text and second-image attachment counts preserved for all
+three members. Actual viewer routes are checked again after deletion and three
+verified owned process deaths/fresh nonces. This does not inspect attachment
+keys, decode image frames or prove physical-file erasure. SQL attachment counts
+alone are insufficient; the actual preserved-media routes are also required.
+GC-009 still requires its complementary existing
+`production.group_catalog.ge024`,
+`production.group_catalog.private_reaction_roundtrip` and
+`production.group_catalog.private_reaction_toggle_convergence` receipts. Each of these four legs requires three simultaneous available emulator roles.
+No single local-deletion result closes the whole row.
 
 ## Explicit fixture deferrals
 

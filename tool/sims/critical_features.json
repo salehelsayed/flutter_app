@@ -9346,6 +9346,67 @@
       "automationReady": true,
       "active": true,
       "declaredBuildException": false
+    },
+    {
+      "id": "production.group_catalog.received_media_local_delete",
+      "owner": "reliability",
+      "proofBoundary": "production.group_catalog.received_media_local_delete",
+      "assertions": [
+        "GC-009-actual-received-photo-menu-and-full-local-delete-confirmation",
+        "GC-009-only-deleting-member-loses-original-row",
+        "GC-009-other-copies-unrelated-text-and-image-survive-three-owned-restarts"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "groups"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_group_local_media_delete.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.group_catalog.received_media_local_delete",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator.count2",
+        "android.emulator.rebindable",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionGroupLocalMediaDelete",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
     }
   ],
   "ownership": [

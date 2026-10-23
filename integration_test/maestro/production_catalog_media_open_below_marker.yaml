@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: production_catalog_media_open_below_marker
+---
+- assertVisible: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${CAPTION_PATTERN}(\n.*)?$'
+# The catalog row records attachment ownership before the receiver finishes
+# downloading. Retry only this read-only open until the real viewer is ready;
+# deletion, exact-row comparisons, process deaths and nonce checks do not retry.
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn:
+          text: '(?s-i)^Photo(\n.*)?$'
+          below:
+            text: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+      - extendedWaitUntil:
+          notVisible:
+            id: chat_composer
+          timeout: 15000
+      - assertVisible: '^Back$'
+      - assertVisible: '(?s-i)^(.*\n)?${CAPTION_PATTERN}(\n.*)?$'
+
+- back
+- assertVisible:
+    id: chat_composer

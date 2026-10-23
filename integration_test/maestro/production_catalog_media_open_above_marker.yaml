@@ -1,0 +1,27 @@
+appId: ${APP_ID}
+name: production_catalog_media_open_above_marker
+---
+# Only this fresh three-message group is in scope. The target photo precedes
+# the exact preserved-text marker; the unrelated second photo follows it.
+- assertVisible: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${CAPTION_PATTERN}(\n.*)?$'
+# The catalog row records attachment ownership before the receiver finishes
+# downloading. Retry only this read-only open until the real viewer is ready;
+# deletion, exact-row comparisons, process deaths and nonce checks do not retry.
+- retry:
+    maxRetries: 3
+    commands:
+      - tapOn:
+          text: '(?s-i)^Photo(\n.*)?$'
+          above:
+            text: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+      - extendedWaitUntil:
+          notVisible:
+            id: chat_composer
+          timeout: 15000
+      - assertVisible: '^Back$'
+      - assertVisible: '(?s-i)^(.*\n)?${CAPTION_PATTERN}(\n.*)?$'
+
+- back
+- assertVisible:
+    id: chat_composer
