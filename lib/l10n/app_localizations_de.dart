@@ -206,6 +206,11 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_compose_open => 'Gedanken teilen';
 
   @override
+  String thought_notification_title(String name) {
+    return '$name hat einen Gedanken geteilt';
+  }
+
+  @override
   String get compose_title => 'Beitrag erstellen';
 
   @override

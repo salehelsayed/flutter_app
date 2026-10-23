@@ -195,6 +195,11 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_open => 'شارك خاطرة';
 
   @override
+  String thought_notification_title(String name) {
+    return 'شارك $name خاطرة';
+  }
+
+  @override
   String get compose_title => 'إنشاء منشور';
 
   @override

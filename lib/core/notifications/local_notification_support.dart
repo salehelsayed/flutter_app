@@ -109,6 +109,37 @@ NotificationDetails missedCallDetailsWithAction() => NotificationDetails(
   ),
 );
 
+// Plan 407: thoughts are not chat messages; their own channel lets the user
+// tell them apart and silence them without silencing chat.
+const mknoonThoughtsChannelId = 'mknoon_thoughts';
+const mknoonThoughtsChannelName = 'Thoughts';
+const mknoonThoughtsChannelDescription = 'Thoughts your friends share';
+
+const mknoonThoughtsChannel = AndroidNotificationChannel(
+  mknoonThoughtsChannelId,
+  mknoonThoughtsChannelName,
+  description: mknoonThoughtsChannelDescription,
+  importance: Importance.high,
+  audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+);
+
+const mknoonThoughtsNotificationDetails = NotificationDetails(
+  android: AndroidNotificationDetails(
+    mknoonThoughtsChannelId,
+    mknoonThoughtsChannelName,
+    channelDescription: mknoonThoughtsChannelDescription,
+    importance: Importance.high,
+    priority: Priority.high,
+    playSound: true,
+    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+  ),
+  iOS: DarwinNotificationDetails(
+    presentSound: true,
+    presentAlert: true,
+    presentBadge: true,
+  ),
+);
+
 // SE-41 T4a: update reminders from the background update check. Default
 // importance, so a reminder never pops over a chat. Native code posts on it
 // (UpdateCheckNotificationPoster.kt) and creates it with the same values.
@@ -432,4 +463,5 @@ const mknoonNotificationChannels = <AndroidNotificationChannel>[
   mknoonMessagesSilentChannel,
   mknoonCallsChannel,
   mknoonAppUpdatesChannel,
+  mknoonThoughtsChannel,
 ];

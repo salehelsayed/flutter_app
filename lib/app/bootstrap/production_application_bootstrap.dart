@@ -1,6 +1,5 @@
 import 'package:flutter_app/debug/debug_call_evidence_observer.dart';
 import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
-import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'dart:async';
 import 'dart:math';
@@ -6806,6 +6805,7 @@ final class ProductionApplicationBootstrap
       postRepo: postRepository,
       contactRepo: contactRepository,
       notificationService: notificationService,
+      isAppForegroundActive: appVisibilityAuthority.isForegroundActive,
       bridge: bridge,
       getOwnMlKemSecretKey: () async {
         final identity = await repository.loadIdentity();
@@ -9306,16 +9306,14 @@ final class ProductionApplicationBootstrap
 
     final postExpiryScheduler = PostExpiryScheduler(
       postChanges: postRepository.postChanges,
-      onPostChanged: (postId) async {
-        // App-root's resume sweep may delete before this scheduler runs. Its
-        // postChanges ID still retires the exact card; failed cancellations
-        // remain queued by the scheduler until a later attempt succeeds.
-        if (await postRepository.getPost(postId) == null) {
-          await notificationService.cancelConversationNotification(
-            NotificationRouteTarget.post(postId).toPayload(),
-          );
-        }
-      },
+      // App-root's resume sweep may delete before this scheduler runs. Its
+      // postChanges ID still retires the exact card; failed cancellations
+      // remain queued by the scheduler until a later attempt succeeds.
+      onPostChanged: (postId) => retireSettledThoughtNotification(
+        postId: postId,
+        postRepo: postRepository,
+        cancel: notificationService.cancelConversationNotification,
+      ),
       loadNextExpiry: () => dbLoadNextPostExpiry(db),
       sweep: () async {
         await sweepExpiredPosts(

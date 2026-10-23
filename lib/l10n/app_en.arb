@@ -66,6 +66,12 @@
   "thought_compose_share": "Share",
   "thought_compose_lifetime": "Your friends see this for 24 hours",
   "thought_compose_open": "Share a thought",
+  "thought_notification_title": "{name} shared a thought",
+  "@thought_notification_title": {
+    "placeholders": {
+      "name": {"type": "String"}
+    }
+  },
   "compose_title": "Create Post",
   "compose_hint": "What do you want to share?",
   "compose_audience_all": "All Friends",

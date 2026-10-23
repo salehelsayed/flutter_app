@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -30,7 +32,14 @@ ContactModel _contact(
   );
 }
 
-ChatMessage _message(String senderPeerId, String authorUsername) {
+ChatMessage _message(
+  String senderPeerId,
+  String authorUsername, {
+  String? postId,
+  String? text,
+  String mediaKind = 'none',
+}) {
+  final id = postId ?? 'post-$senderPeerId';
   final createdAt = DateTime.now().toUtc().toIso8601String();
   final expiresAt = DateTime.now()
       .toUtc()
@@ -38,16 +47,29 @@ ChatMessage _message(String senderPeerId, String authorUsername) {
       .toIso8601String();
   final envelope = PostCreateEnvelope.fromPost(
     PostModel(
-      id: 'post-$senderPeerId',
-      eventId: 'evt-$senderPeerId',
+      id: id,
+      eventId: 'evt-$id',
       senderPeerId: senderPeerId,
       authorPeerId: senderPeerId,
       authorUsername: authorUsername,
-      text: 'A post from $authorUsername',
+      text: text ?? 'A post from $authorUsername',
       audience: const PostAudience(kind: PostAudienceKind.allFriends),
       createdAt: createdAt,
       visibleAt: createdAt,
       expiresAt: expiresAt,
+      mediaKind: mediaKind,
+      media: [
+        if (mediaKind != 'none')
+          PostMediaAttachmentModel(
+            mediaId: 'media-$id',
+            postId: id,
+            blobId: 'blob-$id',
+            kind: mediaKind,
+            mime: mediaKind == 'voice' ? 'audio/aac' : 'image/jpeg',
+            sizeBytes: 10,
+            createdAt: createdAt,
+          ),
+      ],
     ),
   );
   return ChatMessage(
@@ -59,23 +81,40 @@ ChatMessage _message(String senderPeerId, String authorUsername) {
   );
 }
 
+class _CancellingNotificationService extends FakeNotificationService
+    implements ConversationNotificationCancellation {
+  final cancelled = <String>[];
+
+  @override
+  Future<void> cancelConversationNotification(
+    String conversationKey, {
+    ConversationNotificationContentKind? onlyIfContentKind,
+    ConversationNotificationContentCancellationPredicate? shouldCancelContent,
+  }) async {
+    cancelled.add(conversationKey);
+  }
+}
+
 void main() {
   late StreamController<ChatMessage> controller;
   late InMemoryContactRepository contacts;
   late InMemoryPostRepository posts;
-  late FakeNotificationService notifications;
+  late _CancellingNotificationService notifications;
   late PostListener listener;
+  var foreground = false;
 
   setUp(() {
+    foreground = false;
     controller = StreamController<ChatMessage>.broadcast();
     contacts = InMemoryContactRepository();
     posts = InMemoryPostRepository();
-    notifications = FakeNotificationService();
+    notifications = _CancellingNotificationService();
     listener = PostListener(
       postCreateStream: controller.stream,
       postRepo: posts,
       contactRepo: contacts,
       notificationService: notifications,
+      isAppForegroundActive: () async => foreground,
     )..start();
   });
 
@@ -91,9 +130,62 @@ void main() {
     controller.add(_message('peer-bob', 'Bob'));
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(notifications.shownGeneric, hasLength(1));
-    expect(notifications.shownGeneric.single.payload, 'post:post-peer-bob');
+    expect(notifications.shownGeneric, isEmpty);
+    final shown = notifications.shownThoughts.single;
+    expect(shown.title, 'Bob shared a thought');
+    expect(shown.body, 'A post from Bob');
+    expect(shown.payload, 'post:post-peer-bob');
     expect((await posts.loadFeed()), hasLength(1));
+  });
+
+  test('posts no notification while the app is in the foreground', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    foreground = true;
+    final emitted = listener.incomingPostStream.first;
+
+    controller.add(_message('peer-bob', 'Bob'));
+
+    expect((await emitted).id, 'post-peer-bob');
+    expect(notifications.shownThoughts, isEmpty);
+    expect(notifications.shownGeneric, isEmpty);
+  });
+
+  test('a newer thought retires only that friend\'s older card', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    contacts.addTestContact(_contact('peer-cat', 'Cat'));
+
+    controller.add(_message('peer-cat', 'Cat', postId: 'cat-1'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    notifications.cancelled.clear();
+    foreground = true;
+    controller.add(_message('peer-bob', 'Bob', postId: 'bob-2'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(notifications.cancelled, ['post:bob-1']);
+    expect(notifications.shownThoughts.map((n) => n.payload), [
+      'post:cat-1',
+      'post:bob-1',
+    ]);
+  });
+
+  test('a media-only thought names its media in the body', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+    controller.add(
+      _message('peer-bob', 'Bob', postId: 'v', text: '', mediaKind: 'voice'),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    controller.add(
+      _message('peer-bob', 'Bob', postId: 'p', text: '', mediaKind: 'image'),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(notifications.shownThoughts.map((n) => n.body), [
+      'Voice message',
+      'Photo',
+    ]);
   });
 
   test(
@@ -104,7 +196,7 @@ void main() {
       controller.add(_message('peer-bob', 'Bob'));
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(notifications.shownGeneric, isEmpty);
+      expect(notifications.shownThoughts, isEmpty);
       expect((await posts.loadFeed()), hasLength(1));
     },
   );

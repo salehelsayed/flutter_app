@@ -599,6 +599,22 @@ class FlutterNotificationService
     String? payload,
     int? androidNotificationId,
     String? androidNotificationTag,
+  }) => _showGenericNotification(
+    title: title,
+    body: body,
+    payload: payload,
+    androidNotificationId: androidNotificationId,
+    details: mknoonGenericNotificationDetails(
+      androidTag: androidNotificationTag,
+    ),
+  );
+
+  Future<void> _showGenericNotification({
+    required String title,
+    required String body,
+    required String? payload,
+    int? androidNotificationId,
+    required NotificationDetails details,
   }) async {
     final notificationId =
         androidNotificationId ??
@@ -619,7 +635,7 @@ class FlutterNotificationService
         notificationId,
         title,
         body,
-        mknoonGenericNotificationDetails(androidTag: androidNotificationTag),
+        details,
         payload: payload,
       );
 
@@ -632,6 +648,18 @@ class FlutterNotificationService
       await _notifyNotificationUpdated();
     }
   }
+
+  @override
+  Future<void> showThoughtNotification({
+    required String postId,
+    required String title,
+    required String body,
+  }) => _showGenericNotification(
+    title: title,
+    body: body,
+    payload: NotificationRouteTarget.post(postId).toPayload(),
+    details: mknoonThoughtsNotificationDetails,
+  );
 
   @override
   Future<void> showMissedCallNotification({

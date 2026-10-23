@@ -153,6 +153,35 @@ void main() {
     },
   );
 
+  test('opening a thought retires its card; other changes do not', () {
+    fakeAsync((clock) {
+      final created = DateTime.utc(2026, 10, 20, 9);
+      final posts = InMemoryPostRepository();
+      final cancelled = <String>[];
+      final scheduler = PostExpiryScheduler(
+        postChanges: posts.postChanges,
+        nowProvider: () => created,
+        onPostChanged: (id) => retireSettledThoughtNotification(
+          postId: id,
+          postRepo: posts,
+          cancel: (key) async => cancelled.add(key),
+        ),
+        loadNextExpiry: () async => null,
+        sweep: () async {},
+      );
+      scheduler.start();
+      clock.flushMicrotasks();
+      posts.savePost(_thought(created));
+      clock.flushMicrotasks();
+      expect(cancelled, isEmpty);
+      posts.markFocused('thought');
+      clock.flushMicrotasks();
+      expect(cancelled, ['post:thought']);
+      scheduler.dispose();
+      posts.dispose();
+    });
+  });
+
   test('background stops the deadline timer and resume catches up', () {
     fakeAsync((clock) {
       final start = DateTime.utc(2026, 10, 20);

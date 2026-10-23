@@ -60,6 +60,23 @@ class FakeNotificationService implements NotificationService {
 
   final List<FakeGenericNotification> shownGeneric = [];
 
+  @override
+  Future<void> showThoughtNotification({
+    required String postId,
+    required String title,
+    required String body,
+  }) async {
+    shownThoughts.add(
+      FakeGenericNotification(
+        title: title,
+        body: body,
+        payload: 'post:$postId',
+      ),
+    );
+  }
+
+  final List<FakeGenericNotification> shownThoughts = [];
+
   String? initialPayload;
 
   @override

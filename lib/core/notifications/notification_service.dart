@@ -301,6 +301,14 @@ abstract class NotificationService {
     String? androidNotificationTag,
   });
 
+  /// Plan 407: one friend's thought on the thoughts channel. Its id and tap
+  /// route are those of `post:<postId>`, so expiry retires the exact card.
+  Future<void> showThoughtNotification({
+    required String postId,
+    required String title,
+    required String body,
+  });
+
   /// 406: show one missed-call card for [contactAccountPeerId].
   ///
   /// Published on the dedicated calls channel so the user can silence chat and

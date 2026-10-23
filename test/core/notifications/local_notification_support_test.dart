@@ -70,8 +70,9 @@ void main() {
     // 118 Phase 3: BOTH the high channel and the silent channel are created.
     // 406: plus the dedicated calls channel, so a missed call can be silenced
     // independently of chat. SE-41 T4a: plus the app-updates channel.
+    // Plan 407: plus the thoughts channel.
     expect(log, hasLength(mknoonNotificationChannels.length));
-    expect(log, hasLength(4));
+    expect(log, hasLength(5));
     expect(
       log.every((call) => call.method == 'createNotificationChannel'),
       isTrue,
@@ -93,6 +94,10 @@ void main() {
     final updatesArgs = log[3].arguments as Map;
     expect(updatesArgs['id'], mknoonAppUpdatesChannelId);
     expect(updatesArgs['importance'], Importance.defaultImportance.value);
+
+    final thoughtsArgs = log[4].arguments as Map;
+    expect(thoughtsArgs['id'], 'mknoon_thoughts');
+    expect(thoughtsArgs['name'], 'Thoughts');
   });
 
   test('ensureMknoonNotificationChannel is a no-op off Android', () async {

@@ -358,6 +358,14 @@ class _RecordingNotificationService implements NotificationService {
   );
 
   @override
+  Future<void> showThoughtNotification({
+    required String postId,
+    required String title,
+    required String body,
+  }) =>
+      _inner.showThoughtNotification(postId: postId, title: title, body: body);
+
+  @override
   Future<String?> consumeInitialPayload() => _inner.consumeInitialPayload();
 
   @override

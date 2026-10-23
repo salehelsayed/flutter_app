@@ -454,6 +454,12 @@ abstract class AppLocalizations {
   /// **'Share a thought'**
   String get thought_compose_open;
 
+  /// No description provided for @thought_notification_title.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} shared a thought'**
+  String thought_notification_title(String name);
+
   /// No description provided for @compose_title.
   ///
   /// In en, this message translates to:

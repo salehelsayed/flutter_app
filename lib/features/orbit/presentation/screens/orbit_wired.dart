@@ -1078,7 +1078,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             notificationStore.target?.postId == postId);
     try {
       final requested = await repository.getPost(postId);
-      if (!mounted || !targetIsCurrent() || requested == null) return;
+      if (!mounted || !targetIsCurrent()) return;
+      if (requested == null) {
+        notificationStore?.clear();
+        return;
+      }
       final query = _thoughtQuery(repository);
       final thoughts = await query.execute(localPeerId: identity.peerId);
       PostModel? current;

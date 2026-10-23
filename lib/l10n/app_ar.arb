@@ -66,6 +66,7 @@
   "thought_compose_share": "مشاركة",
   "thought_compose_lifetime": "يرى أصدقاؤك هذه الخاطرة لمدة 24 ساعة",
   "thought_compose_open": "شارك خاطرة",
+  "thought_notification_title": "شارك {name} خاطرة",
   "compose_title": "إنشاء منشور",
   "compose_hint": "ماذا تريد أن تشارك؟",
   "compose_audience_all": "كل الأصدقاء",

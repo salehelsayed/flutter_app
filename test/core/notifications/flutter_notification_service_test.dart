@@ -221,9 +221,10 @@ void main() {
     await service.initialize();
 
     // 406: three channels now — messages, silent messages, and calls.
-    // SE-41 T4a: plus app updates.
+    // SE-41 T4a: plus app updates. Plan 407: plus thoughts.
     expect(log.map((call) => call.method).toList(), <String>[
       'initialize',
+      'createNotificationChannel',
       'createNotificationChannel',
       'createNotificationChannel',
       'createNotificationChannel',
@@ -858,26 +859,34 @@ void main() {
   );
 
   test(
-    'Plan 407 expiry cancels exactly the displayed thought notification',
+    'Plan 407 thought cards use the thoughts channel and expiry cancels exactly one',
     () async {
       final service = buildService();
       await service.initialize();
-      await service.showNotification(
-        title: 'Friend',
+      await service.showThoughtNotification(
+        postId: 'thought-1',
+        title: 'Friend shared a thought',
         body: 'Private thought',
-        payload: 'post:thought-1',
       );
-      final thoughtId = (log.last.arguments as Map)['id'];
-      await service.showNotification(
-        title: 'Another friend',
+      final thought = log.last.arguments as Map;
+      expect(log.last.method, 'show');
+      expect(thought['title'], 'Friend shared a thought');
+      expect(thought['body'], 'Private thought');
+      expect(thought['payload'], 'post:thought-1');
+      expect(
+        (thought['platformSpecifics'] as Map)['channelId'],
+        'mknoon_thoughts',
+      );
+      await service.showThoughtNotification(
+        postId: 'thought-2',
+        title: 'Another friend shared a thought',
         body: 'Live thought',
-        payload: 'post:thought-2',
       );
       final liveId = (log.last.arguments as Map)['id'];
-      expect(thoughtId, isNot(liveId));
+      expect(thought['id'], isNot(liveId));
       await service.cancelConversationNotification('post:thought-1');
       final cancellation = log.lastWhere((call) => call.method == 'cancel');
-      expect((cancellation.arguments as Map)['id'], thoughtId);
+      expect((cancellation.arguments as Map)['id'], thought['id']);
       expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
     },
   );

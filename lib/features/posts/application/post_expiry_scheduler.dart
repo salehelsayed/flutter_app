@@ -1,7 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+
+/// Plan 407: a thought's card retires once the thought is gone or opened.
+Future<void> retireSettledThoughtNotification({
+  required String postId,
+  required PostRepository postRepo,
+  required Future<void> Function(String conversationKey) cancel,
+}) async {
+  final post = await postRepo.getPost(postId);
+  if (post == null || (post.isIncoming && post.isFocused)) {
+    await cancel(NotificationRouteTarget.post(postId).toPayload());
+  }
+}
 
 /// One serialized foreground expiry owner. Reads independently enforce expiry;
 /// this timer removes files/rows at the earliest remaining deadline.

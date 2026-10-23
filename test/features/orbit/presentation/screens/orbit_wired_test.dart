@@ -861,6 +861,7 @@ void main() {
           expect(find.byType(OrbitWired), findsOneWidget);
           expect(find.byType(ThoughtCardScreen), findsNothing);
           expect(posts.focusedIds, isEmpty);
+          expect(pending.target, isNull);
           expect(pending.statusMessage, isNull);
           expect(find.textContaining('Finishing catch-up'), findsNothing);
           expect(find.byType(SnackBar), findsNothing);

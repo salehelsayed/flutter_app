@@ -199,6 +199,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_compose_open => 'Share a thought';
 
   @override
+  String thought_notification_title(String name) {
+    return '$name shared a thought';
+  }
+
+  @override
   String get compose_title => 'Create Post';
 
   @override

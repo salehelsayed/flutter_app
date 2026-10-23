@@ -175,6 +175,13 @@ class _RecordingNotificationService implements NotificationService {
   }) async {}
 
   @override
+  Future<void> showThoughtNotification({
+    required String postId,
+    required String title,
+    required String body,
+  }) async {}
+
+  @override
   Future<String?> consumeInitialPayload() async {
     final p = pendingInitialPayload;
     pendingInitialPayload = null;

@@ -11,6 +11,7 @@ import 'package:flutter_app/features/posts/application/handle_incoming_post_use_
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/push/application/notification_preview_copy.dart';
 
 class PostListener {
   final Stream<ChatMessage> postCreateStream;
@@ -21,6 +22,7 @@ class PostListener {
   final DateTime Function() now;
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final NotificationService? notificationService;
+  final Future<bool> Function()? isAppForegroundActive;
   final Future<PostMediaAttachmentModel> Function({
     required PostMediaAttachmentModel attachment,
     required String postId,
@@ -38,6 +40,7 @@ class PostListener {
     this.mediaFileManager,
     this.getOwnMlKemSecretKey,
     this.notificationService,
+    this.isAppForegroundActive,
     this.hydratePostMediaFn,
     DateTime Function()? nowProvider,
   }) : now = nowProvider ?? DateTime.now;
@@ -84,27 +87,66 @@ class PostListener {
 
     final sender = await contactRepo.getContact(post.senderPeerId);
     if (_expired(post)) return;
+    if (post.isIncoming) await _retireOlderThoughtCards(post);
     if (sender != null &&
         !sender.isArchived &&
         notificationService != null &&
-        post.isIncoming) {
-      await notificationService!.showNotification(
-        title: post.authorUsername,
-        body: post.text,
-        payload: NotificationRouteTarget.post(post.id).toPayload(),
+        post.isIncoming &&
+        !(await isAppForegroundActive?.call() ?? false)) {
+      await notificationService!.showThoughtNotification(
+        postId: post.id,
+        title: localizedThoughtNotificationTitle(post.authorUsername),
+        body: _thoughtNotificationBody(post),
       );
     }
     if (_expired(post)) {
-      final notifications = notificationService;
-      if (notifications is ConversationNotificationCancellation) {
-        await (notifications as ConversationNotificationCancellation)
-            .cancelConversationNotification(
-              NotificationRouteTarget.post(post.id).toPayload(),
-            );
-      }
+      await _cancelThoughtCard(post.id);
       return;
     }
     _postController.add(post);
+  }
+
+  /// One card per friend: the newest thought replaces the friend's older ones.
+  Future<void> _retireOlderThoughtCards(PostModel post) async {
+    if (notificationService is! ConversationNotificationCancellation) return;
+    try {
+      for (final older in await postRepo.loadFeed()) {
+        if (older.id != post.id &&
+            older.isIncoming &&
+            older.authorPeerId == post.authorPeerId) {
+          await _cancelThoughtCard(older.id);
+        }
+      }
+    } catch (error) {
+      // A stale card must not stop the new thought from reaching Orbit.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_LISTENER_RETIRE_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<void> _cancelThoughtCard(String postId) async {
+    final notifications = notificationService;
+    if (notifications is ConversationNotificationCancellation) {
+      await (notifications as ConversationNotificationCancellation)
+          .cancelConversationNotification(
+            NotificationRouteTarget.post(postId).toPayload(),
+          );
+    }
+  }
+
+  static String _thoughtNotificationBody(PostModel post) {
+    final text = post.text.trim();
+    if (text.isNotEmpty) return text;
+    return switch (post.mediaKind) {
+      'image' => localizedNotificationPhoto(1),
+      'image_carousel' => localizedNotificationPhoto(post.media.length),
+      'video' => localizedNotificationVideo(1),
+      'voice' => localizedNotificationVoiceMessage(),
+      _ => localizedNotificationMedia(),
+    };
   }
 
   bool _expired(PostModel post) {
