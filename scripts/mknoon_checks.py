@@ -35,7 +35,8 @@ RULES = Path('tool/testing/selection.json')
 SIMS = Path('tool/sims/critical_features.json')
 EXIT = {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
 _LAUNCH_CONTEXT = threading.local()
-CAPTURE_STREAM_BYTES = 8 * 1024 * 1024
+# The largest affected Flutter lanes print about 12-14 MiB of --machine output.
+CAPTURE_STREAM_BYTES = 64 * 1024 * 1024
 CAPTURE_RUN_BYTES = 256 * 1024 * 1024
 
 

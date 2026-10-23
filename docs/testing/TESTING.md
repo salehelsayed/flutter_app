@@ -9171,8 +9171,8 @@ any additional screenshots or diagnostic artifacts before sharing them.
 
 Native SIMS execution and `mknoon_checks` stream private raw output while
 children run, with independent stdout/stderr limits and a shared 256 MiB capture
-budget per executor/wrapper invocation. The default stream limit is 8 MiB.
-SIMS declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
+budget per executor/wrapper invocation. `mknoon_checks` uses 64 MiB per stream;
+SIMS keeps its own 8 MiB default and declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
 stream for `host.dart.all` and 32 MiB for `native.ios.runner_tests`. Complete
 retained runs measured 19,848,816 and 15,953,210 bytes respectively; the former
 default aborted a fresh full-host attempt at 8 MiB. Measured Go and Android
