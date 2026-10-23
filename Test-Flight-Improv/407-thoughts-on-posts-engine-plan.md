@@ -239,7 +239,11 @@ Not checked on a device:
 - the swim with many friends;
 - iOS (extension XCTests only, 65/65).
 
-Known limit: while the app process stays dead, two thoughts from one friend show two cards until the app next opens.
+Follow-ups (2026-10-23):
+- **One card per friend while the app is closed** (`e8b469285`). A shared per-friend card record lets the background push handler and `PostListener` retire the friend's older card. On iOS each push is still its own banner until the app opens, because the relay's `apns-collapse-id` is per message.
+- **Committed ack for thoughts** (`491a65ed3` Go, `6988d83ba`, `aa0ae9c3a`). The receiver's Go node acknowledges a direct `post_create` only after the app confirms the thought and its media rows are saved, before any media download. Otherwise the sender falls back to the inbox.
+
+  Device check: a text thought was acknowledged after the confirm (ack wait 138 ms), and a photo thought was confirmed 41 ms after receipt, before its download. A closed app showed one card for two thoughts.
 
 ### Step 4 — Opening a chat from the orbit
 
