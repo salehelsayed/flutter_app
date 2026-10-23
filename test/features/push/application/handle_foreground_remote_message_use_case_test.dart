@@ -339,13 +339,38 @@ void main() {
       },
     );
 
-    test('post and unknown kinds are unroutable', () async {
+    test('a thought push drains the direct inbox like a chat push', () async {
+      var oneToOneCalls = 0;
+      final drainedGroups = <String>[];
+      late ForegroundRemoteMessageResult result;
+
+      final events = await _captureFlowEvents(() async {
+        result = await handleForegroundRemoteMessage(
+          data: postCreateData(),
+          messageId: 'fcm-6',
+          drainOfflineInbox: () async {
+            oneToOneCalls += 1;
+          },
+          drainGroupOfflineInboxForGroup: (groupId) async {
+            drainedGroups.add(groupId);
+          },
+        );
+      });
+
+      expect(result, ForegroundRemoteMessageResult.drained);
+      expect(oneToOneCalls, 1);
+      expect(drainedGroups, isEmpty);
+      expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_ROUTED');
+      expect(events.single.details['kind'], 'post');
+    });
+
+    test('comment and unknown kinds are unroutable', () async {
       var oneToOneCalls = 0;
       final drainedGroups = <String>[];
 
       final events = await _captureFlowEvents(() async {
         await handleForegroundRemoteMessage(
-          data: postCreateData(),
+          data: pluginCanonicalUnroutableData(),
           messageId: 'fcm-6',
           drainOfflineInbox: () async {
             oneToOneCalls += 1;
@@ -372,7 +397,7 @@ void main() {
         'PUSH_FOREGROUND_MESSAGE_UNROUTABLE',
         'PUSH_FOREGROUND_MESSAGE_UNROUTABLE',
       ]);
-      expect(events.first.details['type'], 'post_create');
+      expect(events.first.details['type'], 'post_comment');
       expect(events.last.details['type'], 'weird');
     });
 
@@ -620,7 +645,7 @@ void main() {
         expect(drainedGroups, isEmpty);
         expect(events, hasLength(1));
         expect(events.single.event, 'PUSH_FOREGROUND_MESSAGE_UNROUTABLE');
-        expect(events.single.details['type'], 'post_create');
+        expect(events.single.details['type'], 'post_comment');
       },
     );
 

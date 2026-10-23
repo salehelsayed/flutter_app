@@ -39,6 +39,7 @@ bool routeTargetSupportsMessageAwareRemoteDedupe(
   return switch (kind) {
     NotificationRouteTargetKind.conversation => true,
     NotificationRouteTargetKind.group => true,
+    NotificationRouteTargetKind.post => true,
     NotificationRouteTargetKind.groupInvite => false,
     _ => false,
   };

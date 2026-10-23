@@ -6806,6 +6806,7 @@ final class ProductionApplicationBootstrap
       contactRepo: contactRepository,
       notificationService: notificationService,
       isAppForegroundActive: appVisibilityAuthority.isForegroundActive,
+      remoteNotificationGate: recentRemoteNotificationGate,
       bridge: bridge,
       getOwnMlKemSecretKey: () async {
         final identity = await repository.loadIdentity();

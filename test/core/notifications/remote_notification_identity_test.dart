@@ -127,4 +127,42 @@ void main() {
       isTrue,
     );
   });
+
+  test('thought open marks the post card plus its event announcement', () async {
+    final directory = Directory.systemTemp.createTempSync('remote-thought-');
+    final gate = RecentRemoteNotificationGate(
+      filePath: '${directory.path}/gate.json',
+    );
+    addTearDown(() async {
+      await gate.clear();
+      if (directory.existsSync()) directory.deleteSync(recursive: true);
+    });
+    const data = <String, dynamic>{
+      'type': 'post_create',
+      'sender_id': 'peer-alice',
+      'message_id': 'evt-thought-1',
+      'post_id': 'post-1',
+    };
+
+    expect(
+      routeTargetSupportsMessageAwareRemoteDedupe(
+        NotificationRouteTargetKind.post,
+      ),
+      isTrue,
+    );
+    expect(
+      await markRemoteNotificationOpenAsRecentAnnouncement(
+        data: data,
+        gate: gate,
+      ),
+      isTrue,
+    );
+    expect(
+      await gate.consumeIfRecentAnnouncement(
+        payload: 'post:post-1',
+        messageId: 'evt-thought-1',
+      ),
+      isTrue,
+    );
+  });
 }

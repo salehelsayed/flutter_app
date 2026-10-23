@@ -49,7 +49,9 @@ Map<String, dynamic> pluginCanonicalNewMessageData({
 
 Map<String, dynamic> pluginCanonicalUnroutableData({
   String postId = 'post-apns-1',
+  String commentId = 'comment-apns-1',
 }) => {
-  'type': 'post_create',
+  'type': 'post_comment',
   'post_id': postId,
+  'comment_id': commentId,
 };

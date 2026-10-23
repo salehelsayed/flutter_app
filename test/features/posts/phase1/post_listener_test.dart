@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -100,6 +102,7 @@ void main() {
   late InMemoryContactRepository contacts;
   late InMemoryPostRepository posts;
   late _CancellingNotificationService notifications;
+  late RecentRemoteNotificationGate remoteGate;
   late PostListener listener;
   var foreground = false;
 
@@ -109,12 +112,17 @@ void main() {
     contacts = InMemoryContactRepository();
     posts = InMemoryPostRepository();
     notifications = _CancellingNotificationService();
+    remoteGate = RecentRemoteNotificationGate(
+      filePath:
+          '${Directory.systemTemp.path}/post-listener-remote-gate-${DateTime.now().microsecondsSinceEpoch}.json',
+    );
     listener = PostListener(
       postCreateStream: controller.stream,
       postRepo: posts,
       contactRepo: contacts,
       notificationService: notifications,
       isAppForegroundActive: () async => foreground,
+      remoteNotificationGate: remoteGate,
     )..start();
   });
 
@@ -122,6 +130,37 @@ void main() {
     listener.dispose();
     posts.dispose();
     await controller.close();
+    await remoteGate.clear();
+  });
+
+  test('skips the card the background push already announced', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    await remoteGate.markAnnouncement(
+      payload: 'post:post-peer-bob',
+      messageId: 'evt-post-peer-bob',
+    );
+
+    controller.add(_message('peer-bob', 'Bob'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(notifications.shownThoughts, isEmpty);
+    expect(await posts.loadFeed(), hasLength(1));
+
+    controller.add(_message('peer-bob', 'Bob', postId: 'bob-2'));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
+  });
+
+  test('titles the card with the contact name, never the claimed author', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+    controller.add(_message('peer-bob', 'ATTACKER CLAIMED NAME', text: 'x' * 200));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final shown = notifications.shownThoughts.single;
+    expect(shown.title, 'Bob shared a thought');
+    expect(shown.body, 'x' * 140);
   });
 
   test('shows post notifications for active direct contacts', () async {

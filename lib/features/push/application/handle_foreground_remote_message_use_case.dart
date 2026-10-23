@@ -60,8 +60,7 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
     return ForegroundRemoteMessageResult.unroutable;
   }
 
-  if (routeTarget.kind == NotificationRouteTargetKind.post ||
-      routeTarget.kind == NotificationRouteTargetKind.postComment) {
+  if (routeTarget.kind == NotificationRouteTargetKind.postComment) {
     _emitUnroutable(data);
     return ForegroundRemoteMessageResult.unroutable;
   }
@@ -127,6 +126,9 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.groupInvite:
       case NotificationRouteTargetKind.intros:
+      // A thought rides the direct inbox; PostListener shows nothing while the
+      // app is in the foreground, so the drain is all this push needs.
+      case NotificationRouteTargetKind.post:
         final complete = drainOfflineInboxCompletely == null
             ? await (() async {
                 await drainOfflineInbox();
@@ -152,7 +154,6 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
         return data['type']?.toString().trim() == 'group_reaction'
             ? ForegroundRemoteMessageResult.notificationNeeded
             : ForegroundRemoteMessageResult.drained;
-      case NotificationRouteTargetKind.post:
       case NotificationRouteTargetKind.postComment:
         _emitUnroutable(data);
         return ForegroundRemoteMessageResult.unroutable;

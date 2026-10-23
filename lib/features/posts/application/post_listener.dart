@@ -4,6 +4,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -23,6 +24,10 @@ class PostListener {
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final NotificationService? notificationService;
   final Future<bool> Function()? isAppForegroundActive;
+
+  /// The background push isolate marks each thought card it shows here, so
+  /// the inbox drain that follows does not post a second one.
+  final RecentRemoteNotificationGate? remoteNotificationGate;
   final Future<PostMediaAttachmentModel> Function({
     required PostMediaAttachmentModel attachment,
     required String postId,
@@ -41,6 +46,7 @@ class PostListener {
     this.getOwnMlKemSecretKey,
     this.notificationService,
     this.isAppForegroundActive,
+    this.remoteNotificationGate,
     this.hydratePostMediaFn,
     DateTime Function()? nowProvider,
   }) : now = nowProvider ?? DateTime.now;
@@ -93,11 +99,23 @@ class PostListener {
         notificationService != null &&
         post.isIncoming &&
         !(await isAppForegroundActive?.call() ?? false)) {
-      await notificationService!.showThoughtNotification(
-        postId: post.id,
-        title: localizedThoughtNotificationTitle(post.authorUsername),
-        body: _thoughtNotificationBody(post),
-      );
+      final announcedByPush =
+          await remoteNotificationGate?.consumeIfRecentAnnouncement(
+            payload: NotificationRouteTarget.post(post.id).toPayload(),
+            messageId: post.eventId,
+          ) ??
+          false;
+      if (!announcedByPush) {
+        await notificationService!.showThoughtNotification(
+          postId: post.id,
+          title: localizedThoughtNotificationTitle(sender.username),
+          body: localizedThoughtNotificationBody(
+            text: post.text,
+            mediaKind: post.mediaKind,
+            mediaCount: post.media.length,
+          ),
+        );
+      }
     }
     if (_expired(post)) {
       await _cancelThoughtCard(post.id);
@@ -135,18 +153,6 @@ class PostListener {
             NotificationRouteTarget.post(postId).toPayload(),
           );
     }
-  }
-
-  static String _thoughtNotificationBody(PostModel post) {
-    final text = post.text.trim();
-    if (text.isNotEmpty) return text;
-    return switch (post.mediaKind) {
-      'image' => localizedNotificationPhoto(1),
-      'image_carousel' => localizedNotificationPhoto(post.media.length),
-      'video' => localizedNotificationVideo(1),
-      'voice' => localizedNotificationVoiceMessage(),
-      _ => localizedNotificationMedia(),
-    };
   }
 
   bool _expired(PostModel post) {
