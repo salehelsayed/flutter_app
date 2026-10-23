@@ -211,6 +211,7 @@
   "orbit_chip_provenance_arc": "Bogen {arc}",
   "orbit_chip_open": "{name} öffnen",
   "orbit_thought_note_semantics": "Gedanke von {name}: {preview}",
+  "orbit_thought_note_self_semantics": "Dein Gedanke: {preview}",
   "orbit_node_open_chat": "Chat mit {name} öffnen",
   "orbit_node_unread_open_chat": "{count, plural, =1{Chat mit {name} öffnen, 1 ungelesene Nachricht} other{Chat mit {name} öffnen, {count} ungelesene Nachrichten}}",
   "@orbit_node_unread_open_chat": {

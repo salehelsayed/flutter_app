@@ -5,6 +5,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualiz
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
@@ -172,6 +173,56 @@ void main() {
       wrap(const OrbitalVisualization(userPeerId: 'me', items: [])),
     );
     expect(find.byKey(const ValueKey('orbit-compose-thought')), findsNothing);
+  });
+
+  testWidgets('own note sits above the centre avatar and leaves the plus in place', (
+    tester,
+  ) async {
+    final now = DateTime.utc(2026, 10, 21, 12);
+    var shares = 0;
+    Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
+      OrbitalVisualization(
+        userPeerId: 'me',
+        items: const [],
+        onSelfAvatarTap: () {},
+        onComposeThought: () => shares++,
+        thoughtsByPeerId: thoughts,
+        nowProvider: () => now,
+      ),
+    );
+    final plus = find.byKey(const ValueKey('orbit-compose-thought'));
+    final self = find.byKey(const ValueKey('orbit-center-self-avatar'));
+    // The bare canvas widens to its parent when notes are out (the host
+    // centres it), so the plus is pinned relative to the self avatar.
+    Offset plusFromSelf() =>
+        tester.getRect(plus).topLeft - tester.getRect(self).center;
+    await tester.pumpWidget(scene(const {}));
+    await pumpBounded(tester);
+    final plusWithout = plusFromSelf();
+    expect(plusWithout, const Offset(4, 4));
+
+    await tester.pumpWidget(
+      scene({
+        'me': OrbitThoughtNote(
+          postId: 'mine',
+          text: 'Mine',
+          isRead: true,
+          expiresAt: now.add(const Duration(hours: 1)),
+        ),
+      }),
+    );
+    await pumpBounded(tester);
+    expect(find.text('Mine'), findsOneWidget);
+    expect(plusFromSelf(), plusWithout);
+    final selfRect = tester.getRect(self);
+    final own = tester.getRect(
+      find.byKey(const ValueKey('orbit-thought-note-self')),
+    );
+    expect(own.bottom, lessThanOrEqualTo(selfRect.top));
+    expect(own.center.dx, closeTo(selfRect.center.dx, 0.01));
+    expect(own.overlaps(tester.getRect(plus)), isFalse);
+    await tester.tap(plus);
+    expect(shares, 1);
   });
 
   testWidgets('UI25 replacing a seat during a press cannot open the new peer',

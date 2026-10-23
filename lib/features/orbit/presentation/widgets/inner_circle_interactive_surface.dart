@@ -42,6 +42,8 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   final List<OrbitItem> items;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<OrbitGroup> onGroupTap;
+
+  /// Newest live thought per author; the user's own sits under [userPeerId].
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
@@ -188,8 +190,12 @@ class _InnerCircleInteractiveSurfaceState
 
   DateTime get _now => (widget.nowProvider ?? DateTime.now)();
 
-  Iterable<OrbitThoughtNote> get _liveRingThoughts sync* {
+  /// The notes this surface can show: the user's own, then the ring friends'.
+  Iterable<OrbitThoughtNote> get _liveThoughts sync* {
     final now = _now;
+    final selfPeerId = widget.userPeerId;
+    final own = selfPeerId == null ? null : widget.thoughtsByPeerId[selfPeerId];
+    if (own != null && own.expiresAt.isAfter(now)) yield own;
     for (final item in widget.items.take(kOrbitRing1Count + kOrbitRing2Count)) {
       if (item is! OrbitFriendItem) continue;
       final note = widget.thoughtsByPeerId[item.friend.peerId];
@@ -197,7 +203,7 @@ class _InnerCircleInteractiveSurfaceState
     }
   }
 
-  bool get _notesOut => _thoughtsVisible && _liveRingThoughts.isNotEmpty;
+  bool get _notesOut => _thoughtsVisible && _liveThoughts.isNotEmpty;
 
   void _onThoughtRevealStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed &&
@@ -223,7 +229,7 @@ class _InnerCircleInteractiveSurfaceState
     _thoughtExpiryTimer = null;
     if (!_thoughtsVisible) return;
     DateTime? earliest;
-    for (final note in _liveRingThoughts) {
+    for (final note in _liveThoughts) {
       if (earliest == null || note.expiresAt.isBefore(earliest)) {
         earliest = note.expiresAt;
       }
@@ -512,7 +518,7 @@ class _InnerCircleInteractiveSurfaceState
   void _enterEdit() {
     if (_editing ||
         _notesOut ||
-        (_thoughtReveal.isAnimating && _liveRingThoughts.isNotEmpty))
+        (_thoughtReveal.isAnimating && _liveThoughts.isNotEmpty))
       return;
     HapticFeedback.mediumImpact();
     setState(() => _setEditing(true));

@@ -293,6 +293,140 @@ void main() {
   });
 
   testWidgets(
+    'the own note sits above the self node, clear of friends, and opens its thought',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2400);
+      tester.view.devicePixelRatio = 2.625;
+      addTearDown(tester.view.reset);
+      final semantics = tester.ensureSemantics();
+      final opened = <String>[];
+      var shares = 0;
+      Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
+        InnerCircleInteractiveSurface(
+          userPeerId: 'self',
+          onSelfAvatarTap: () {},
+          onComposeThought: () => shares++,
+          items: items.take(13).toList(),
+          onFriendTap: (_) {},
+          onGroupTap: (_) {},
+          onThoughtTap: opened.add,
+          thoughtsByPeerId: thoughts,
+          nowProvider: () => start,
+        ),
+      );
+      final friendNotes = {
+        for (var i = 0; i < 4; i++)
+          'friend-$i': note('n$i', text: 'A longer thought about today $i'),
+      };
+      final plus = find.byKey(const ValueKey('orbit-compose-thought'));
+      final self = find.byKey(const ValueKey('orbit-center-self-avatar'));
+      await tester.pumpWidget(scene(friendNotes));
+      await tester.pump(const Duration(seconds: 2));
+      final plusWithout = tester.getRect(plus);
+      final selfWithout = tester.getRect(self);
+
+      await tester.pumpWidget(
+        scene({
+          ...friendNotes,
+          'self': note('mine', text: 'My own thought', read: true),
+        }),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('My own thought'), findsOneWidget);
+      expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(5));
+      expect(tester.getRect(plus), plusWithout);
+      expect(tester.getRect(self), selfWithout);
+      final own = tester.getRect(
+        find.byKey(const ValueKey('orbit-thought-note-self')),
+      );
+      expect(own.bottom, lessThanOrEqualTo(selfWithout.top));
+      expect(own.center.dx, closeTo(selfWithout.center.dx, 0.01));
+      for (var i = 0; i < 13; i++) {
+        final face = tester.getRect(
+          find.descendant(
+            of: find.byKey(ValueKey('orbit-node-$i')),
+            matching: find.byType(OrbitalAvatar),
+          ),
+        );
+        expect(own.overlaps(face), isFalse, reason: 'face $i');
+        if (i < 4) {
+          final friendNote = tester.getRect(
+            find.byKey(ValueKey('orbit-thought-note-$i')),
+          );
+          expect(own.overlaps(friendNote), isFalse, reason: 'note $i');
+        }
+      }
+      expect(find.semantics.byLabel('Your thought: My own thought'), findsOne);
+      tester.semantics.tap(
+        find.semantics.byLabel('Your thought: My own thought'),
+      );
+      expect(opened, ['mine']);
+      await tester.tap(plus);
+      expect(shares, 1);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('the own note alone follows pinch, spread and its deadline', (
+    tester,
+  ) async {
+    var now = start;
+    var reloads = 0;
+    await tester.pumpWidget(
+      wrap(
+        InnerCircleInteractiveSurface(
+          userPeerId: 'self',
+          onSelfAvatarTap: () {},
+          items: items.take(2).toList(),
+          onFriendTap: (_) {},
+          onGroupTap: (_) {},
+          thoughtsByPeerId: {
+            'self': note(
+              'mine',
+              text: 'My own thought',
+              read: true,
+              lifetime: const Duration(minutes: 1),
+            ),
+          },
+          nowProvider: () => now,
+          onThoughtsExpired: () => reloads++,
+        ),
+      ),
+    );
+    expect(find.text('My own thought'), findsOneWidget);
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('orbit-thought-pinch-surface')),
+    );
+    Future<void> twoFingers(double startGap, double travel, int pointer) async {
+      final a = await tester.startGesture(
+        center - Offset(startGap, 0),
+        pointer: pointer,
+      );
+      final b = await tester.startGesture(
+        center + Offset(startGap, 0),
+        pointer: pointer + 1,
+      );
+      await a.moveBy(Offset(travel, 0));
+      await b.moveBy(Offset(-travel, 0));
+      await tester.pump();
+      await a.up();
+      await b.up();
+    }
+
+    await twoFingers(50, 25, 1);
+    expect(find.text('My own thought'), findsNothing);
+    await twoFingers(30, -25, 3);
+    expect(find.text('My own thought'), findsOneWidget);
+    now = start.add(const Duration(minutes: 1));
+    await tester.pump(const Duration(minutes: 1));
+    expect(find.text('My own thought'), findsNothing);
+    expect(reloads, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
     'deadline removes note without store/sweep changes and reloads host',
     (tester) async {
       var now = start;

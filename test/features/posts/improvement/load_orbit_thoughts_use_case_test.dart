@@ -102,6 +102,36 @@ void main() {
     },
   );
 
+  test('executeOwn picks the newest live outgoing thought of the user', () async {
+    contacts.seed([_contact('alice')]);
+    await posts.savePost(_post('alice', 'alice'));
+    await posts.savePost(_post('own-old', 'local').copyWith(isIncoming: false));
+    await posts.savePost(
+      _post(
+        'own-new',
+        'local',
+        createdAt: '2026-10-21T11:00:00Z',
+      ).copyWith(isIncoming: false),
+    );
+    await posts.savePost(
+      _post(
+        'own-expired',
+        'local',
+        createdAt: '2026-10-21T11:30:00Z',
+      ).copyWith(isIncoming: false, expiresAt: now.toIso8601String()),
+    );
+    await posts.savePost(
+      _post('own-incoming-copy', 'local', createdAt: '2026-10-21T11:45:00Z'),
+    );
+
+    expect((await query.executeOwn(localPeerId: 'local'))?.id, 'own-new');
+    expect(await query.executeOwn(localPeerId: 'nobody'), isNull);
+    expect(
+      (await query.execute(localPeerId: 'local')).map((post) => post.id),
+      ['alice'],
+    );
+  });
+
   test(
     'rechecks later block, archive and deletion against persisted thoughts',
     () async {

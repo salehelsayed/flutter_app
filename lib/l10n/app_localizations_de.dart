@@ -534,6 +534,11 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
+  String orbit_thought_note_self_semantics(String preview) {
+    return 'Dein Gedanke: $preview';
+  }
+
+  @override
   String orbit_node_open_chat(String name) {
     return 'Chat mit $name öffnen';
   }

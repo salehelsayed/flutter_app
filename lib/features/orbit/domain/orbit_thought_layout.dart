@@ -16,6 +16,8 @@ Rect orbitThoughtNoteRect(Offset face, double faceSize, Size noteSize) =>
 ///
 /// The final projection separates the painted rectangles (including note tails),
 /// rather than relying on a repulsion force that can settle with an overlap.
+/// The self face and the user's own note ([selfNoteSize]) never move; ring
+/// faces and notes are projected clear of both.
 class OrbitThoughtSwim {
   final Map<int, Offset> _positions = {};
   final Map<int, Offset> _velocities = {};
@@ -30,6 +32,7 @@ class OrbitThoughtSwim {
   Map<int, Offset> resolve({
     required List<OrbitSeat> seats,
     required Map<int, Size> noteSizes,
+    Size? selfNoteSize,
     required double availableWidth,
     required double seconds,
     required bool motionEnabled,
@@ -105,6 +108,11 @@ class OrbitThoughtSwim {
     }
 
     final self = Rect.fromCenter(center: Offset.zero, width: 48, height: 48);
+    final centre = <Rect>[
+      self,
+      if (selfNoteSize != null)
+        orbitThoughtNoteRect(Offset.zero, self.width, selfNoteSize),
+    ];
     // Projection is deterministic under Reduce Motion; it does not depend on
     // ticker history and never schedules an animation.
     for (var iteration = 0; iteration < 160; iteration++) {
@@ -118,16 +126,19 @@ class OrbitThoughtSwim {
           halfWidth - ownHalf,
         );
         _positions[index] = Offset(x.toDouble(), _positions[index]!.dy);
-        var delta = separation(face(index), self, index, -1);
-        if (delta != Offset.zero) {
-          move(index, delta);
-          moved = true;
-        }
-        if (noteSizes.containsKey(index)) {
-          delta = separation(note(index), self, index, -1);
+        Offset delta;
+        for (final obstacle in centre) {
+          delta = separation(face(index), obstacle, index, -1);
           if (delta != Offset.zero) {
             move(index, delta);
             moved = true;
+          }
+          if (noteSizes.containsKey(index)) {
+            delta = separation(note(index), obstacle, index, -1);
+            if (delta != Offset.zero) {
+              move(index, delta);
+              moved = true;
+            }
           }
         }
         for (final b in rings) {
@@ -166,7 +177,7 @@ class OrbitThoughtSwim {
     // choose the nearest clear vertical position against the already fixed
     // shapes. Candidate boundaries include a position above/below every shape,
     // so this also resolves dense layouts without an iteration-count guess.
-    final fixed = <Rect>[self];
+    final fixed = <Rect>[...centre];
     for (final seat in rings) {
       final index = seat.index;
       final ownHalf =

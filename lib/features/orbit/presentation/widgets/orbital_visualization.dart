@@ -39,6 +39,7 @@ class OrbitalVisualization extends StatelessWidget {
   final ValueChanged<OrbitFriend>? onFriendTap;
   final ValueChanged<OrbitGroup>? onGroupTap;
 
+  /// Newest live thought per author; the user's own sits under [userPeerId].
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final ValueChanged<String>? onThoughtTap;
   final DateTime Function()? nowProvider;
@@ -251,7 +252,19 @@ class OrbitalVisualization extends StatelessWidget {
       final note = thoughtsByPeerId[item.friend.peerId];
       if (note != null && note.expiresAt.isAfter(now)) notes[seat.index] = note;
     }
-    final reveal = notes.isEmpty
+    final selfPeerId = userPeerId;
+    final ownNote = selfPeerId == null ? null : thoughtsByPeerId[selfPeerId];
+    final selfThought = ownNote != null && ownNote.expiresAt.isAfter(now)
+        ? (
+            note: ownNote,
+            rect: orbitThoughtNoteRect(
+              Offset.zero,
+              48,
+              OrbitThoughtNoteBubble.measure(context, ownNote),
+            ),
+          )
+        : null;
+    final reveal = notes.isEmpty && selfThought == null
         ? 0.0
         : thoughtVisibility.clamp(0.0, 1.0).toDouble();
     final noteSizes = {
@@ -266,6 +279,7 @@ class OrbitalVisualization extends StatelessWidget {
         : (thoughtSwim ?? OrbitThoughtSwim()).resolve(
             seats: layout.seats,
             noteSizes: noteSizes,
+            selfNoteSize: selfThought?.rect.size,
             availableWidth: noteCanvasWidth,
             seconds: thoughtClock,
             motionEnabled: motionEnabled && thoughtSwim != null,
@@ -292,6 +306,12 @@ class OrbitalVisualization extends StatelessWidget {
             ? position.dy - math.max(seat.avatarSize, 48) / 2
             : orbitThoughtNoteRect(position, seat.avatarSize, size).top;
         noteTopOverhang = math.max(noteTopOverhang, -_center - top);
+      }
+      if (selfThought != null) {
+        noteTopOverhang = math.max(
+          noteTopOverhang,
+          -_center - selfThought.rect.top,
+        );
       }
     }
 
@@ -396,7 +416,6 @@ class OrbitalVisualization extends StatelessWidget {
       }
     }
 
-    final selfPeerId = userPeerId;
     final children = <Widget>[
       Positioned.fill(
         child: Opacity(
@@ -425,6 +444,7 @@ class OrbitalVisualization extends StatelessWidget {
       ),
       if (selfPeerId != null)
         Positioned(
+          key: const ValueKey('orbit-self-node'),
           // Geometry lock (INV-206-3): same anchor + 48px box as pre-206, so the
           // sculpt/arcs center-avatar position sentinels stay green.
           left: cx - 24,
@@ -616,45 +636,62 @@ class OrbitalVisualization extends StatelessWidget {
     // Notes are painted above the faces, with separate taps. They never add
     // an unread ring/dot or change the existing avatar's chat callback.
     if (reveal > 0) {
+      VoidCallback? noteTap(OrbitThoughtNote note) => onThoughtTap == null
+          ? null
+          : () {
+              // A finger held across the deadline cannot open an expired
+              // card even before the timer's rebuild reaches this frame.
+              if (note.expiresAt.isAfter((nowProvider ?? DateTime.now)())) {
+                onThoughtTap!(note.postId);
+              }
+            };
+      Widget noteLayer({
+        required Key key,
+        required Rect rect,
+        required double dim,
+        required Widget bubble,
+      }) => Positioned(
+        key: key,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        child: IgnorePointer(
+          ignoring: reveal < 0.5,
+          child: ExcludeSemantics(
+            excluding: reveal < 0.5,
+            child: Opacity(opacity: reveal * dim, child: bubble),
+          ),
+        ),
+      );
       for (final entry in notes.entries) {
         final seat = layout.seats.firstWhere((s) => s.index == entry.key);
-        final rect = orbitThoughtNoteRect(
-          positions[entry.key]!,
-          seat.avatarSize,
-          noteSizes[entry.key]!,
-        ).shift(Offset(cx, cy));
-        final note = entry.value;
         children.add(
-          Positioned(
+          noteLayer(
             key: ValueKey('orbit-thought-note-${entry.key}'),
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-            child: IgnorePointer(
-              ignoring: reveal < 0.5,
-              child: ExcludeSemantics(
-                excluding: reveal < 0.5,
-                child: Opacity(
-                  opacity: reveal * _dimFor(entry.key),
-                  child: OrbitThoughtNoteBubble(
-                    note: note,
-                    authorName:
-                        (items[entry.key] as OrbitFriendItem).friend.username,
-                    onTap: onThoughtTap == null
-                        ? null
-                        : () {
-                            // A finger held across the deadline cannot open an expired
-                            // card even before the timer's rebuild reaches this frame.
-                            if (note.expiresAt.isAfter(
-                              (nowProvider ?? DateTime.now)(),
-                            )) {
-                              onThoughtTap!(note.postId);
-                            }
-                          },
-                  ),
-                ),
-              ),
+            rect: orbitThoughtNoteRect(
+              positions[entry.key]!,
+              seat.avatarSize,
+              noteSizes[entry.key]!,
+            ).shift(Offset(cx, cy)),
+            dim: _dimFor(entry.key),
+            bubble: OrbitThoughtNoteBubble(
+              note: entry.value,
+              authorName: (items[entry.key] as OrbitFriendItem).friend.username,
+              onTap: noteTap(entry.value),
+            ),
+          ),
+        );
+      }
+      if (selfThought != null) {
+        children.add(
+          noteLayer(
+            key: const ValueKey('orbit-thought-note-self'),
+            rect: selfThought.rect.shift(Offset(cx, cy)),
+            dim: 1,
+            bubble: OrbitThoughtNoteBubble.own(
+              note: selfThought.note,
+              onTap: noteTap(selfThought.note),
             ),
           ),
         );

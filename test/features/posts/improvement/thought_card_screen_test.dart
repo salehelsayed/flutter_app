@@ -50,10 +50,24 @@ void main() {
     JustAudioPlatform.instance = originalAudioPlatform;
   });
 
+  Future<PostModel?> loadCurrentFriendThought(PostModel initialPost) async {
+    final thoughts = await LoadOrbitThoughtsUseCase(
+      postRepo: posts,
+      contactRepo: contacts,
+      nowProvider: () => now,
+    ).execute(localPeerId: 'local-peer');
+    return thoughts
+        .where((post) => post.authorPeerId == initialPost.authorPeerId)
+        .firstOrNull;
+  }
+
   Future<void> openCard(
     WidgetTester tester,
     PostModel initialPost, {
+    String authorName = 'Alice',
+    bool messageable = true,
     VoidCallback? onMessage,
+    Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
   }) async {
@@ -73,15 +87,11 @@ void main() {
           settings: const RouteSettings(name: 'thought-card'),
           builder: (_) => ThoughtCardScreen(
             initialPost: initialPost,
-            authorName: 'Alice',
+            authorName: authorName,
             postRepo: posts,
-            loadOrbitThoughts: LoadOrbitThoughtsUseCase(
-              postRepo: posts,
-              contactRepo: contacts,
-              nowProvider: () => now,
-            ),
-            localPeerId: 'local-peer',
-            onMessage: onMessage ?? () {},
+            loadCurrentThought:
+                loadCurrent ?? () => loadCurrentFriendThought(initialPost),
+            onMessage: messageable ? (onMessage ?? () {}) : null,
             downloadMedia:
                 download ??
                 (_) async => throw StateError('Unexpected media download'),
@@ -131,6 +141,41 @@ void main() {
       await finish(tester);
     },
   );
+
+  testWidgets('an own thought card has no Message button and stays unread', (
+    tester,
+  ) async {
+    final mine = _thought(initialNow).copyWith(
+      senderPeerId: 'local-peer',
+      authorPeerId: 'local-peer',
+      authorUsername: 'Me',
+      isIncoming: false,
+    );
+    await posts.savePost(mine);
+    final query = LoadOrbitThoughtsUseCase(
+      postRepo: posts,
+      contactRepo: contacts,
+      nowProvider: () => now,
+    );
+
+    await openCard(
+      tester,
+      mine,
+      authorName: 'You',
+      messageable: false,
+      loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('You'), findsOneWidget);
+    expect(find.text('2h ago'), findsOneWidget);
+    expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+    expect(find.byType(FilledButton), findsNothing);
+    expect(posts.focusedIds, isEmpty);
+    expect((await posts.getPost('thought-1'))!.isRead, isFalse);
+    await finish(tester);
+  });
 
   testWidgets('does not mark an unvalidated or blocked thought read', (
     tester,

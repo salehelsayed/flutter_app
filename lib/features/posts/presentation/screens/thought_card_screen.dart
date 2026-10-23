@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
-import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -15,15 +14,17 @@ import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
-/// A friend's current thought, without the retired Posts engagement controls.
+/// One author's current thought, without the retired Posts engagement controls.
+///
+/// The host decides whose thought this is: a friend's card offers Message, the
+/// user's own card (a null [onMessage]) has no action yet.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
     required this.initialPost,
     required this.authorName,
     required this.postRepo,
-    required this.loadOrbitThoughts,
-    required this.localPeerId,
+    required this.loadCurrentThought,
     required this.onMessage,
     required this.downloadMedia,
     this.eligibilityChanges,
@@ -33,9 +34,10 @@ class ThoughtCardScreen extends StatefulWidget {
   final PostModel initialPost;
   final String authorName;
   final PostRepository postRepo;
-  final LoadOrbitThoughtsUseCase loadOrbitThoughts;
-  final String localPeerId;
-  final VoidCallback onMessage;
+
+  /// The author's current live thought, or null once there is none to show.
+  final Future<PostModel?> Function() loadCurrentThought;
+  final VoidCallback? onMessage;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   downloadMedia;
   final Stream<void>? eligibilityChanges;
@@ -152,16 +154,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _close();
           return;
         }
-        final thoughts = await widget.loadOrbitThoughts.execute(
-          localPeerId: widget.localPeerId,
-        );
+        final current = await widget.loadCurrentThought();
         if (!mounted || _closing) return;
         if (_post.id != displayedId) continue;
-        final current = thoughts
-            .where(
-              (post) => post.authorPeerId == widget.initialPost.authorPeerId,
-            )
-            .firstOrNull;
         if (current == null) {
           _close();
           return;
@@ -187,7 +182,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   void _markWhenShown() {
     final postId = _post.id;
-    if (_markedIds.contains(postId) || !_markPendingIds.add(postId)) return;
+    // The author does not "read" their own thought.
+    if (!_post.isIncoming ||
+        _markedIds.contains(postId) ||
+        !_markPendingIds.add(postId)) {
+      return;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         if (!mounted ||
@@ -395,6 +395,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     final l10n = AppLocalizations.of(context)!;
     final colors = context.backgroundReadableColors;
     final visible = _validated && !_loadFailed && !_closing && _isLive;
+    final onMessage = widget.onMessage;
     return Scaffold(
       key: const ValueKey('thought-card-screen'),
       appBar: AppBar(title: Text(widget.authorName)),
@@ -440,7 +441,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 ],
               ),
             ),
-      bottomNavigationBar: visible
+      bottomNavigationBar: visible && onMessage != null
           ? SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -451,7 +452,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                       _close();
                       return;
                     }
-                    _close(afterClose: widget.onMessage);
+                    _close(afterClose: onMessage);
                   },
                   icon: const Icon(Icons.chat_bubble_outline),
                   label: Text(l10n.pinned_message(widget.authorName)),

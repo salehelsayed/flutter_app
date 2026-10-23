@@ -268,6 +268,14 @@
       }
     }
   },
+  "orbit_thought_note_self_semantics": "Your thought: {preview}",
+  "@orbit_thought_note_self_semantics": {
+    "placeholders": {
+      "preview": {
+        "type": "String"
+      }
+    }
+  },
   "orbit_node_open_chat": "Open chat with {name}",
   "@orbit_node_open_chat": {
     "placeholders": {

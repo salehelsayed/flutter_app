@@ -9,15 +9,20 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
   static const _padding = EdgeInsets.symmetric(horizontal: 9, vertical: 6);
 
   final OrbitThoughtNote note;
-  final String authorName;
+  final String? _authorName;
   final VoidCallback? onTap;
 
+  /// A friend's note, read as "Thought from [authorName]".
   const OrbitThoughtNoteBubble({
     super.key,
     required this.note,
-    required this.authorName,
+    required String authorName,
     this.onTap,
-  });
+  }) : _authorName = authorName;
+
+  /// The user's own note, read as "Your thought".
+  const OrbitThoughtNoteBubble.own({super.key, required this.note, this.onTap})
+    : _authorName = null;
 
   static TextStyle textStyle({required bool isRead}) => TextStyle(
     color: const Color(0xFFF5F5F5),
@@ -59,11 +64,13 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final size = measure(context, note);
     final preview = _preview(context, note);
+    final l10n = AppLocalizations.of(context)!;
+    final authorName = _authorName;
     return Semantics(
       button: onTap != null,
-      label: AppLocalizations.of(
-        context,
-      )!.orbit_thought_note_semantics(authorName, preview),
+      label: authorName == null
+          ? l10n.orbit_thought_note_self_semantics(preview)
+          : l10n.orbit_thought_note_semantics(authorName, preview),
       onTap: onTap,
       excludeSemantics: true,
       child: GestureDetector(

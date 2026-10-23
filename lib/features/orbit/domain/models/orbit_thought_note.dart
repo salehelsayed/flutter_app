@@ -1,10 +1,11 @@
 import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
-/// The newest eligible live thought for one Orbit friend.
+/// The newest eligible live thought for one Orbit author: a friend, or the user.
 ///
 /// The host owns author eligibility and read state; the surface additionally
 /// enforces [expiresAt] so a delayed cleanup sweep cannot leave a stale note.
+/// An outgoing thought is the user's own and is never unseen.
 class OrbitThoughtNote {
   final String postId;
   final String text;
@@ -32,7 +33,7 @@ class OrbitThoughtNote {
       'voice' => const MediaPreviewDescriptor(type: 'audio', count: 1),
       _ => null,
     },
-    isRead: post.isRead,
+    isRead: post.isRead || !post.isIncoming,
     expiresAt: DateTime.parse(post.expiresAt),
   );
 }

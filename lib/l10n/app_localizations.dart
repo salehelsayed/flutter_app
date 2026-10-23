@@ -946,6 +946,12 @@ abstract class AppLocalizations {
   /// **'Thought from {name}: {preview}'**
   String orbit_thought_note_semantics(String name, String preview);
 
+  /// No description provided for @orbit_thought_note_self_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Your thought: {preview}'**
+  String orbit_thought_note_self_semantics(String preview);
+
   /// No description provided for @orbit_node_open_chat.
   ///
   /// In en, this message translates to:

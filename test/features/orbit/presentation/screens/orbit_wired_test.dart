@@ -625,6 +625,118 @@ void main() {
           unorderedEquals([testContact.peerId, 'new-friend']),
         );
         expect(messageRepo.count, 0);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('orbit-thought-note-self')),
+            matching: find.text('Hello all my friends'),
+          ),
+          findsOneWidget,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'own live thought shows over the self node, opens a You card without Message, and leaves at its deadline',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        var now = thoughtNow;
+        final ownDeadline = thoughtNow.add(const Duration(seconds: 30));
+        final olderDeadline = thoughtNow.add(const Duration(seconds: 60));
+        PostModel own(PostModel post) => post.copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        );
+        await posts.savePost(thought('friend-thought', text: 'Friend thought'));
+        await posts.savePost(
+          own(
+            thought(
+              'own-old',
+              text: 'Older own thought',
+              age: const Duration(hours: 3),
+              expiresAt: olderDeadline,
+            ),
+          ),
+        );
+        await posts.savePost(
+          own(
+            thought(
+              'own-new',
+              text: 'My own live thought',
+              expiresAt: ownDeadline,
+            ),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => now,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(2));
+        final ownNote = find.byKey(const ValueKey('orbit-thought-note-self'));
+        final ownText = find.descendant(
+          of: ownNote,
+          matching: find.text('My own live thought'),
+        );
+        expect(ownText, findsOneWidget);
+        expect(
+          tester.widget<Text>(ownText).style!.fontWeight,
+          FontWeight.w400,
+        );
+        expect(find.text('Older own thought'), findsNothing);
+        final selfRect = tester.getRect(
+          find.byKey(const ValueKey('orbit-self-node')),
+        );
+        expect(selfRect.size, const Size(48, 48));
+        expect(
+          tester.getRect(ownNote).bottom,
+          lessThanOrEqualTo(selfRect.top),
+        );
+
+        await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-own-new')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        expect(
+          find.descendant(of: find.byType(AppBar), matching: find.text('You')),
+          findsOneWidget,
+        );
+        expect(
+          find.text('My own live thought', findRichText: true),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+        expect(posts.focusedIds, isEmpty);
+
+        Navigator.of(tester.element(find.byType(ThoughtCardScreen))).pop();
+        await pumpOrbitFrames(tester, count: 8);
+        expect(ownNote, findsOneWidget);
+        // At the deadline the next live own thought takes the expired one's
+        // place; once none is live the self note goes away.
+        now = ownDeadline;
+        await tester.pump(const Duration(seconds: 30));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.text('My own live thought'), findsNothing);
+        expect(
+          find.descendant(
+            of: ownNote,
+            matching: find.text('Older own thought'),
+          ),
+          findsOneWidget,
+        );
+        now = olderDeadline;
+        await tester.pump(const Duration(seconds: 30));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(ownNote, findsNothing);
+        expect(find.text('Friend thought'), findsOneWidget);
         await finishThoughtCase(tester);
       },
     );

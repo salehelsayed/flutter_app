@@ -1019,14 +1019,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       return;
     }
     try {
-      final thoughts = await _thoughtQuery(
-        repository,
-      ).execute(localPeerId: identity.peerId);
+      final query = _thoughtQuery(repository);
+      final thoughts = await query.execute(localPeerId: identity.peerId);
+      final own = await query.executeOwn(localPeerId: identity.peerId);
       if (!mounted || revision != _thoughtLoadRevision) return;
       setState(() {
         _thoughtsByPeerId = {
           for (final post in thoughts)
             post.authorPeerId: OrbitThoughtNote.fromPost(post),
+          if (own != null) identity.peerId: OrbitThoughtNote.fromPost(own),
         };
       });
       _onPendingThoughtTargetChanged();
@@ -1082,22 +1083,27 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         return;
       }
       final query = _thoughtQuery(repository);
-      final thoughts = await query.execute(localPeerId: identity.peerId);
-      PostModel? current;
-      for (final thought in thoughts) {
-        if (thought.authorPeerId == requested.authorPeerId) {
-          current = thought;
-          break;
-        }
+      final isOwn = requested.authorPeerId == identity.peerId;
+      Future<PostModel?> loadCurrent() async {
+        if (isOwn) return query.executeOwn(localPeerId: identity.peerId);
+        final thoughts = await query.execute(localPeerId: identity.peerId);
+        return thoughts
+            .where((thought) => thought.authorPeerId == requested.authorPeerId)
+            .firstOrNull;
       }
+
+      final current = await loadCurrent();
       if (!mounted || !targetIsCurrent()) return;
       if (current == null) {
         notificationStore?.clear();
         return;
       }
-      final contact = await widget.contactRepo.getContact(current.authorPeerId);
+      final contact = isOwn
+          ? null
+          : await widget.contactRepo.getContact(current.authorPeerId);
       if (!mounted || !targetIsCurrent()) return;
-      if (contact == null || contact.isBlocked || contact.isArchived) {
+      if (!isOwn &&
+          (contact == null || contact.isBlocked || contact.isArchived)) {
         notificationStore?.clear();
         return;
       }
@@ -1109,14 +1115,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       }
       notificationStore?.clear();
       opened = true;
+      final authorName =
+          contact?.username ?? AppLocalizations.of(context)!.feed_you;
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => ThoughtCardScreen(
-            initialPost: current!,
-            authorName: contact.username,
+            initialPost: current,
+            authorName: authorName,
             postRepo: repository,
-            loadOrbitThoughts: query,
-            localPeerId: identity.peerId,
+            loadCurrentThought: loadCurrent,
             nowProvider: widget.thoughtNowProvider,
             eligibilityChanges: _thoughtEligibilityChanges.stream,
             downloadMedia: (attachment) => downloadPostMedia(
@@ -1125,9 +1132,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               mediaFileManager: widget.mediaFileManager,
               attachment: attachment,
             ),
-            onMessage: () {
-              if (mounted) unawaited(_openConversationForContact(contact));
-            },
+            onMessage: contact == null
+                ? null
+                : () {
+                    if (mounted) {
+                      unawaited(_openConversationForContact(contact));
+                    }
+                  },
           ),
         ),
       );
