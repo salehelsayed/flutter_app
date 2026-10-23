@@ -206,7 +206,8 @@ void _expectRawPresentationDecisionsUseOnlyVisibilityAuthority() {
     ..._namedInvocations(accountErase, 'eraseAccount'),
     ..._namedInvocations(accountErase, 'clearAuthority'),
   ];
-  expect(cleanup, hasLength(5));
+  // Secure cleanup now owns authority deletion and verifies it last.
+  expect(cleanup, hasLength(4));
   for (final operation in cleanup) {
     expect(
       invalidation.offset,

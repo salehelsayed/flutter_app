@@ -7,6 +7,19 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
+class _RecordingEraseStore extends FakeSecureKeyStore {
+  _RecordingEraseStore(this.scope, this.deletions);
+
+  final String scope;
+  final List<String> deletions;
+
+  @override
+  Future<void> delete(String key) async {
+    deletions.add('$scope:$key');
+    await super.delete(key);
+  }
+}
+
 class _FailingEraseStore extends FakeSecureKeyStore {
   _FailingEraseStore(this.failure);
 
@@ -43,6 +56,42 @@ void main() {
         sharedStore: sharedStore,
       );
       cleanup = MigrationSecureStorageCleanup(staging: staging);
+    });
+
+    test('explicit reset deletes database key then authority last', () async {
+      final deletions = <String>[];
+      final primary = _RecordingEraseStore('primary', deletions);
+      final shared = _RecordingEraseStore('shared', deletions);
+      const authorityKey =
+          SecureKeyStoreAccountMigrationAuthorityRepository.storageKey;
+      const databaseKey = MigrationSecureStorageRegistry.dbEncryptionKey;
+      // Seed authority first so inventory order alone cannot satisfy the test.
+      await primary.write(authorityKey, 'blocked-authority-fixture');
+      await primary.write(databaseKey, 'database-key-fixture');
+      await primary.write('identity_private_key', 'private-key-fixture');
+      await shared.write('group_key:fixture', 'group-key-fixture');
+
+      await MigrationSecureStorageCleanup(
+        staging: MigrationSecureStorageStaging(
+          primaryStore: primary,
+          sharedStore: shared,
+        ),
+      ).eraseAccount(
+        registryKeys: MigrationSecureStorageRegistry.resolve(),
+        explicitLocalReset: true,
+      );
+
+      expect(deletions, hasLength(4));
+      expect(deletions.toSet(), {
+        'primary:identity_private_key',
+        'shared:group_key:fixture',
+        'primary:$databaseKey',
+        'primary:$authorityKey',
+      });
+      expect(deletions[deletions.length - 2], 'primary:$databaseKey');
+      expect(deletions.last, 'primary:$authorityKey');
+      expect(await primary.readAll(), isEmpty);
+      expect(await shared.readAll(), isEmpty);
     });
 
     test(

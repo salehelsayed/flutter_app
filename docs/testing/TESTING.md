@@ -9114,7 +9114,10 @@ tests across startup/database, bootstrap, secure storage, migration preservation
 and media erasure, with zero failures/skips and a clean analyzer for 12 changed
 Dart files. Fixtures prove all six settings survive, orphaned/staged account
 keys are removed, primary/shared stores are distinct, and inventory/deletion
-failures remain blocked. The first GREEN attempt's compile failure and stale
+failures remain blocked. Visibility ordering tracks four direct erase operations;
+the cleanup-owner test asserts the database key is deleted immediately before
+authority, after ordinary primary/shared entries. The first GREEN attempt's
+compile failure and stale
 DTR-18 pins are retained; the pin-chain proof reconstructs the approved
 `921bfe759 -> 473810a6d -> current` source changes without relaxing the historical
 callback or ownership assertions. Evidence is in the erase worktree's
