@@ -9028,6 +9028,14 @@ back, and a media/database cleanup failure preserves the database key and
 retired-account authority and reaches the existing failure UI. Only the blocked-account screen exposes
 the shipping erase action; its confirmation still precedes all cleanup.
 
+The same callback also removes the support-directory `ReactionNotificationClaims`
+namespace before database/key erasure, including message-ID dedupe markers and
+tone bookkeeping. A missing namespace is an ordinary successful no-op. The
+focused `erase_account_notification_claims_test.dart` uses the production claim
+writer, verifies removal and unrelated-file preservation, and repeats cleanup
+after the namespace is absent. Evidence is under
+`.codex-test-logs/erase-notification-claims-20261023/`; Pixel proof is separate.
+
 The focused host run passed all 59 cases across media erasure, startup recovery,
 database-file erasure and secure-storage cleanup, with zero failures/skips and a
 clean analyzer for the four changed Dart files. Real-file widget fixtures use

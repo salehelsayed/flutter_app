@@ -333,6 +333,7 @@ import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/erase_account_notification_claims.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
@@ -10519,8 +10520,11 @@ final class ProductionApplicationBootstrap
         // cannot reopen storage between deletion and secure-key cleanup.
         eraseLocalAccountDatabase: () async {
           // Keep the database key and retired authority until every owned
-          // media/cache removal has succeeded, including readback.
+          // media/cache/notification-claim removal has succeeded, including readback.
           await eraseAccountMedia(documentsDirectory: appDocDir);
+          await eraseAccountNotificationClaims(
+            supportDirectory: await getApplicationSupportDirectory(),
+          );
           await eraseEncryptedDatabase(db);
         },
         accountMigrationRecoverExportPause: () async {

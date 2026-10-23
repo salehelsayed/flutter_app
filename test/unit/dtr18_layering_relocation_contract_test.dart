@@ -303,6 +303,8 @@ const _applicationRootNormalizedSha256 =
 // 2026-10-23: retain one existing export source and await its stale-artifact
 // sweep before exposing the transfer runtime. The historical notification
 // callback and all app-owned composition responsibilities stay in place.
+// Account erase also removes owned notification claims before database/key cleanup.
+// Both pins retain the exact historical callback; see erase-notification-claims-20261023/dtr18-pin-proof.json.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -406,7 +408,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    'bcfff6d6b3139106bdb96fc022b0078499ef573e8a858d80d9e843e1a746a630';
+    '2a545454a62e485d5680b01db03e04fb6174908edd9f1a79e054a96ebf7ca108';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -431,7 +433,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same approved media erasure/shared-store wiring changes this remainder;
 // the exact historical notification callback remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '079c4986c4fc11485a2096afe62c9704cbafde1da19fb1a513139b03f86294ad';
+    'cbb6abf252f1a3e9548c975c997be6a942e2ec5b9413c93aee4a65951884b2de';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -487,6 +489,7 @@ const _resumeDirectiveFiles = <String>{
   'test/core/lifecycle/handle_app_resumed_warm_peer_test.dart',
   'test/core/lifecycle/pause_resume_retry_smoke_test.dart',
   'test/core/lifecycle/private_media_lifecycle_recovery_wiring_test.dart',
+  'test/core/local_discovery/bonsoir_discovery_service_contract_test.dart',
   'test/core/resilience/network_failover_test.dart',
   'test/core/services/p2p_service_fault_injection_test.dart',
   'test/features/contact_request/application/'
