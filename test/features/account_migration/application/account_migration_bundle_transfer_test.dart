@@ -36,6 +36,16 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
+class _MetadataHashFailureReader extends IoMigrationEntryFileReader {
+  @override
+  Future<String> sha256Hex(String path) {
+    if (path.endsWith('.metadata.json')) {
+      throw StateError('fixture metadata hash failure');
+    }
+    return super.sha256Hex(path);
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   sqfliteFfiInit();
@@ -89,6 +99,165 @@ void main() {
       if (await tempDir.exists()) {
         await tempDir.delete(recursive: true);
       }
+    });
+
+    AccountMigrationProductionBundleSource exportSource() =>
+        AccountMigrationProductionBundleSource(
+          sourceDb: sourceDb,
+          primaryStore: sourceStore,
+          documentsRootPath: tempDir.path,
+          exportDirectoryPath: p.join(tempDir.path, 'exports'),
+          snapshotExporter: MigrationDatabaseSnapshotExporter(
+            closeExportedDatabaseAfterValidation: false,
+            adapter: _RecordingSnapshotExportAdapter(
+              verificationDb: verificationDb,
+              snapshotBytes: utf8.encode('snapshot-db-bytes'),
+            ),
+          ),
+          segmentSize: 32,
+        );
+
+    test(
+      'startup sweep removes stale export files and snapshot sidecars',
+      () async {
+        final directory = await Directory(
+          p.join(tempDir.path, 'exports'),
+        ).create();
+        for (final name in [
+          'dead-session.metadata.json',
+          'dead-session.identity.snapshot.db',
+          'dead-session.identity.snapshot.db-wal',
+          'dead-session.identity.snapshot.db-shm',
+          'dead-session.identity.snapshot.db-journal',
+        ]) {
+          await File(
+            p.join(directory.path, name),
+          ).writeAsString('stale fixture');
+        }
+
+        await exportSource().sweepStaleExports();
+
+        expect(await directory.list().toList(), isEmpty);
+        expect(await File(sourceDb.path).exists(), isTrue);
+        expect(sourceDb.isOpen, isTrue);
+      },
+    );
+
+    test(
+      'startup sweep failure permits continuation but export still fails closed',
+      () async {
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final source = exportSource();
+        await File(source.exportDirectoryPath).writeAsString('not a directory');
+
+        await source.sweepStaleExportsOnStartup();
+
+        final failure = events.singleWhere(
+          (event) =>
+              event['event'] == 'ACCOUNT_MIGRATION_STARTUP_EXPORT_SWEEP_FAILED',
+        );
+        expect(failure['details'], {'errorType': 'FileSystemException'});
+        await expectLater(
+          source(_request()),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(sourceDb.isOpen, isTrue);
+      },
+    );
+
+    test(
+      'sweep and one run cleanup preserve other live export files',
+      () async {
+        final source = exportSource();
+        final first = await source(_request());
+        final second = await source(_request(sessionId: 'live-2'));
+        final directory = Directory(p.join(tempDir.path, 'exports'));
+        final stale = File(
+          p.join(directory.path, 'dead-session.metadata.json'),
+        );
+        await stale.writeAsString('stale fixture');
+
+        await expectLater(
+          source(_request()),
+          throwsA(isA<AccountMigrationBundleAssemblyException>()),
+        );
+        await source.sweepStaleExports();
+
+        expect(await stale.exists(), isFalse);
+        expect(
+          (await directory.list().toList())
+              .map((entry) => p.basename(entry.path))
+              .toSet(),
+          {
+            'session-1.metadata.json',
+            'session-1.identity.snapshot.db',
+            'live-2.metadata.json',
+            'live-2.identity.snapshot.db',
+          },
+        );
+        await first.cleanupExportArtifacts!();
+        expect(
+          await File(p.join(directory.path, 'live-2.metadata.json')).exists(),
+          isTrue,
+        );
+        expect(
+          await File(
+            p.join(directory.path, 'live-2.identity.snapshot.db'),
+          ).exists(),
+          isTrue,
+        );
+        await second.cleanupExportArtifacts!();
+        expect(await directory.list().toList(), isEmpty);
+      },
+    );
+
+    test(
+      'cleanup refuses a replaced export root and leaves it eligible for sweeping',
+      () async {
+        final source = exportSource();
+        final bundle = await source(_request());
+        final root = Directory(p.join(tempDir.path, 'exports'));
+        final held = await root.rename('${root.path}-held');
+        final link = await Link(root.path).create(held.path);
+
+        await expectLater(
+          bundle.cleanupExportArtifacts!(),
+          throwsA(isA<FileSystemException>()),
+        );
+        expect(
+          await File(p.join(held.path, 'session-1.metadata.json')).exists(),
+          isTrue,
+        );
+        await link.delete();
+        await held.rename(root.path);
+        await source.sweepStaleExports();
+        expect(await root.list().toList(), isEmpty);
+      },
+    );
+
+    test('failed bundle assembly removes partial export artifacts', () async {
+      final exportPath = p.join(tempDir.path, 'exports');
+      final source = AccountMigrationProductionBundleSource(
+        sourceDb: sourceDb,
+        primaryStore: sourceStore,
+        documentsRootPath: tempDir.path,
+        exportDirectoryPath: exportPath,
+        snapshotExporter: MigrationDatabaseSnapshotExporter(
+          closeExportedDatabaseAfterValidation: false,
+          adapter: _RecordingSnapshotExportAdapter(
+            verificationDb: verificationDb,
+            snapshotBytes: utf8.encode('snapshot-db-bytes'),
+          ),
+        ),
+        fileReader: _MetadataHashFailureReader(),
+        segmentSize: 32,
+      );
+
+      await expectLater(source(_request()), throwsStateError);
+
+      expect(await Directory(exportPath).list().toList(), isEmpty);
     });
 
     test(
@@ -3100,10 +3269,10 @@ List<String> get _requiredSourceKeys => const [
   MigrationSecureStorageRegistry.identityMlKemSecretKey,
 ];
 
-AccountMigrationTransferRequest _request() {
+AccountMigrationTransferRequest _request({String sessionId = 'session-1'}) {
   return AccountMigrationTransferRequest(
     transcript: AuthenticatedMigrationChannelTranscript(
-      sessionId: 'session-1',
+      sessionId: sessionId,
       newPhoneEphemeralPublicKey: 'new-public-key',
       oldPhonePeerId: 'old-peer',
       authenticatedChannelBinding: 'binding',

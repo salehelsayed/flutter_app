@@ -607,6 +607,8 @@ class _AccountMigrationJourneyWiredState
   void _cancelTransfer() {
     if (_transferRunning) {
       _transferCancellationRequested = true;
+      // The awaited runner reports cancellation after export cleanup settles.
+      return;
     }
     _setTransferCancelled(_transferRunId);
   }

@@ -96,7 +96,7 @@ class MigrationEntryStreamSource {
     required String bundleId,
     required List<MigrationEntryStreamInput> entries,
     MigrationStreamCrypto? streamCrypto,
-    Future<void> Function()? cleanupAfterSuccess,
+    Future<void> Function()? cleanupExportArtifacts,
   }) async {
     if (chunkSize <= 0) {
       throw const MigrationStreamCryptoException('chunk size must be positive');
@@ -158,7 +158,7 @@ class MigrationEntryStreamSource {
       ),
       encryptedSegments: null,
       streamingEntries: streamingEntries,
-      cleanupAfterSuccess: cleanupAfterSuccess,
+      cleanupExportArtifacts: cleanupExportArtifacts,
     );
   }
 }

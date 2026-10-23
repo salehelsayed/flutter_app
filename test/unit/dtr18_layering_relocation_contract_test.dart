@@ -300,6 +300,9 @@ const _applicationRootNormalizedSha256 =
 // existing shared secure store. The app-owned database callback and ownership
 // remain in place; erase-secure-storage-20261023/dtr18-pin-chain-proof.json
 // records the 921bfe759 -> 473810a6d -> current digest chain.
+// 2026-10-23: retain one existing export source and await its stale-artifact
+// sweep before exposing the transfer runtime. The historical notification
+// callback and all app-owned composition responsibilities stay in place.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -403,7 +406,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    'e25e28655dd52de6480b59adee5c4900931a83f5dd67826a585f64607694ad2b';
+    'bcfff6d6b3139106bdb96fc022b0078499ef573e8a858d80d9e843e1a746a630';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -428,7 +431,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same approved media erasure/shared-store wiring changes this remainder;
 // the exact historical notification callback remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '0c0dfc115e3f574efa19ea70cf00bb59cd2d9104aa2b9de958fd1f488eaf13d2';
+    '079c4986c4fc11485a2096afe62c9704cbafde1da19fb1a513139b03f86294ad';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

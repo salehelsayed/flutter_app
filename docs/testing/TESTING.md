@@ -8765,6 +8765,47 @@ fix for the earlier failures. The retained first failures remain authoritative
 for their own run. See the focused investigation record and
 `artifacts/testflight-crash-investigation-20260910/check-final/results.json`.
 
+Move Account export cleanup (2026-10-23): the reported TRANSFER-007 cancellation
+left an encrypted database snapshot beside plaintext secure-values metadata in
+`account_migration/export`, including after relaunch. Cleanup previously ran
+only after a successful move; assembly failures also left partial artifacts.
+The host regressions reproduced both filesystem leftovers and the journey
+reporting cancellation before its runner settled.
+
+The production bundle source now owns session files until terminal cleanup.
+Its existing dedicated export directory is swept before exposing the transfer
+runtime on startup, and before starting another export. The startup-only sweep
+catches filesystem failures, reports only the error type and lets runtime wiring
+continue; the next export's strict sweep still fails closed. A real replaced-root
+regression reproduced the launch exception before this catch and now proves
+startup continuation plus strict export refusal. A shared lock protects
+session registration, sweeping and cleanup; live session files are preserved,
+duplicate active sessions are refused, and each completed session removes only
+its own snapshot, sidecars and metadata with presence readback. Directory-root
+symlinks are refused and nested links are not followed. Assembly errors clean
+partial files; runtime `finally` cleanup covers cancellation, rejection,
+timeout, disconnect and exceptions before returning an outcome or restoring
+account networking. Cleanup failure prevents a normal cancelled outcome;
+an already completed cutover retains its existing success semantics and logs
+cleanup failure. The UI waits for the runner before reporting cancellation.
+
+The focused host checks on the rebased tree passed 168 distinct tests, with one
+unchanged skipped SQLCipher plugin-capability case and no failures. This includes seeded startup
+leftovers, two live exports, same-session refusal, replaced-root recovery,
+terminal failure paths, cancellation ordering and original streaming/snapshot
+preservation. Final analysis of nine changed Dart files is clean. The first
+analyzer result retains one test-fixture brace lint; only that style changed,
+then its cleanup-error case and analysis passed. The scoped wrapper omitted
+other selected checks and remains `NOT RUN` overall. Evidence, exact RED inputs
+and the reviewed bootstrap pin transition are in the
+`flutter_app_codex_migration_export_cleanup_20261023` worktree's
+`.codex-test-logs/migration-export-cleanup-20261023/`; the startup-failure RED,
+combined bootstrap pin proof and all rebased reruns are in
+`.codex-test-logs/migration-export-cleanup-review-20261023/`. No post-fix device or
+signed-candidate proof is established by these host results. Metadata remains
+file-backed during a live export; eliminating that plaintext intermediate
+requires a separate memory-backed entry source and streaming-offset checks.
+
 Physical Android local-reset regression: on Pixel 6 / API 37 at
 `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a`, choosing **Erase local data** on
 the migrated-out screen and cold-launching produced

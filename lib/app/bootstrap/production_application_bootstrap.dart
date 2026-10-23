@@ -5686,6 +5686,15 @@ final class ProductionApplicationBootstrap
       authorityRepository: accountMigrationAuthorityRepository,
       cutoverRepository: accountMigrationCutoverRepository,
     );
+    final accountMigrationBundleSource = AccountMigrationProductionBundleSource(
+      sourceDb: db,
+      primaryStore: secureKeyStore,
+      sharedStore: sharedPushKeyStore,
+      documentsRootPath: appDocDir.path,
+      exportDirectoryPath: '${appDocDir.path}/account_migration/export',
+      snapshotExporter: const MigrationDatabaseSnapshotExporter(),
+    );
+    await accountMigrationBundleSource.sweepStaleExportsOnStartup();
     final accountMigrationTransferRuntime = AccountMigrationLocalTransferRuntime(
       discovery: localDiscovery,
       wsServer: localWsServer,
@@ -5697,14 +5706,7 @@ final class ProductionApplicationBootstrap
         availableBytesProvider: () =>
             diskSpaceChannel.getAvailableBytes(appDocDir.path),
       ),
-      bundleSource: AccountMigrationProductionBundleSource(
-        sourceDb: db,
-        primaryStore: secureKeyStore,
-        sharedStore: sharedPushKeyStore,
-        documentsRootPath: appDocDir.path,
-        exportDirectoryPath: '${appDocDir.path}/account_migration/export',
-        snapshotExporter: const MigrationDatabaseSnapshotExporter(),
-      ).call,
+      bundleSource: accountMigrationBundleSource.call,
       streamCrypto: accountMigrationStreamCrypto,
       bundleReceiver: AccountMigrationProductionBundleReceiver(
         streamCrypto: accountMigrationStreamCrypto,

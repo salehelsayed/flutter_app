@@ -46,17 +46,16 @@ class AccountMigrationLocalTransferBundle {
   final List<MigrationEncryptedSegment>? encryptedSegments;
   final List<AccountMigrationStreamingEntry> streamingEntries;
 
-  /// Best-effort deletion of sender-side export artifacts (DB snapshot,
-  /// metadata blob) once the move fully succeeds. Never invoked on failure or
-  /// cancel — a retried attempt rebuilds the bundle and overwrites them.
-  final Future<void> Function()? cleanupAfterSuccess;
+  /// Deletes sender-owned export artifacts (DB snapshot and metadata) when
+  /// this run ends. The runtime awaits cleanup before returning its outcome.
+  final Future<void> Function()? cleanupExportArtifacts;
 
   const AccountMigrationLocalTransferBundle({
     required this.manifest,
     this.plaintextSegments = const {},
     this.encryptedSegments,
     this.streamingEntries = const [],
-    this.cleanupAfterSuccess,
+    this.cleanupExportArtifacts,
   });
 }
 
@@ -726,187 +725,199 @@ class AccountMigrationLocalTransferRuntime {
         safeMessage: accountMigrationBundleSourceFailedSafeMessage,
       );
     }
-    if (isCancelled()) {
-      return const AccountMigrationTransferResult.cancelled();
-    }
-
-    final _MigrationJsonResponse manifestResponse;
+    var moveCompleted = false;
     try {
-      manifestResponse = await _postJson(
-        httpClient: httpClient,
-        peer: peer,
-        sessionId: request.sessionId,
-        command: accountMigrationLocalTransferCommandManifest,
-        body: bundle.manifest.toJson(),
-      );
-    } on _MigrationPostException {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.localTransferTimedOut,
-        safeMessage: accountMigrationLocalTransferStalledSafeMessage,
-      );
-    }
-    if (manifestResponse.statusCode == HttpStatus.notImplemented) {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.bundleImporterUnavailable,
-        safeMessage:
-            'The new phone can pair locally, but it cannot import the account bundle yet. Update both phones before moving this account.',
-      );
-    }
-    final manifestRejectReason = manifestResponse.body?['reason'];
-    if (manifestResponse.statusCode == HttpStatus.insufficientStorage &&
-        (manifestRejectReason == 'receiver_storage_insufficient' ||
-            manifestRejectReason == 'receiver_storage_unavailable')) {
-      if (manifestRejectReason == 'receiver_storage_unavailable') {
-        return const AccountMigrationTransferResult.failure(
-          code: AccountMigrationTransferFailureCode.receiverStorageInsufficient,
-          safeMessage: accountMigrationReceiverStorageUnavailableMessage,
+      if (isCancelled()) {
+        return const AccountMigrationTransferResult.cancelled();
+      }
+
+      final _MigrationJsonResponse manifestResponse;
+      try {
+        manifestResponse = await _postJson(
+          httpClient: httpClient,
+          peer: peer,
+          sessionId: request.sessionId,
+          command: accountMigrationLocalTransferCommandManifest,
+          body: bundle.manifest.toJson(),
         );
-      }
-      // The receiver's rejection carries its preflight numbers; surface the
-      // exact shortfall so the user knows how much to free up.
-      int? rejectionBytes(String key) {
-        final value = manifestResponse.body?[key];
-        return value is int ? value : null;
-      }
-
-      final requiredBytes = rejectionBytes('requiredBytes');
-      final totalRequiredBytes = requiredBytes == null
-          ? null
-          : requiredBytes +
-                (rejectionBytes('stagingOverheadBytes') ?? 0) +
-                (rejectionBytes('headroomBytes') ?? 0);
-      return AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.receiverStorageInsufficient,
-        safeMessage: accountMigrationReceiverStorageInsufficientMessage(
-          requiredBytes: totalRequiredBytes,
-          availableBytes: rejectionBytes('availableBytes'),
-        ),
-      );
-    }
-    if (!_isOk(manifestResponse)) {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.transferRejected,
-        safeMessage: 'The new phone rejected the account bundle manifest.',
-      );
-    }
-
-    onProgress(AccountMigrationTransferStep.transferringDatabase);
-    final transferResult = bundle.manifest.isEntryStreamed
-        ? await _sendStreamingEntryChunks(
-            httpClient: httpClient,
-            bundle: bundle,
-            request: request,
-            peer: peer,
-            isCancelled: isCancelled,
-            onSegmentProgress: onSegmentProgress,
-          )
-        : bundle.encryptedSegments == null
-        ? await _exportPlaintextBundleSegments(
-            httpClient: httpClient,
-            bundle: bundle,
-            request: request,
-            peer: peer,
-            isCancelled: isCancelled,
-            onSegmentProgress: onSegmentProgress,
-          )
-        : await _sendPreparedBundleSegments(
-            httpClient: httpClient,
-            bundle: bundle,
-            request: request,
-            peer: peer,
-            isCancelled: isCancelled,
-            onSegmentProgress: onSegmentProgress,
-          );
-    if (isCancelled()) {
-      return const AccountMigrationTransferResult.cancelled();
-    }
-    if (!transferResult.isSuccess) {
-      if (transferResult.code == MigrationTransferResultCode.transferTimedOut) {
+      } on _MigrationPostException {
         return const AccountMigrationTransferResult.failure(
           code: AccountMigrationTransferFailureCode.localTransferTimedOut,
           safeMessage: accountMigrationLocalTransferStalledSafeMessage,
         );
       }
-      return AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.transferRejected,
-        safeMessage: _transferFailureText(transferResult.code),
-      );
-    }
-
-    onProgress(AccountMigrationTransferStep.checking);
-    _MigrationJsonResponse? completeResponse;
-    final completeAttemptCount = receiverReplaySafe ? 2 : 1;
-    for (var attempt = 0; attempt < completeAttemptCount; attempt++) {
-      try {
-        completeResponse = await _postJson(
-          httpClient: httpClient,
-          peer: peer,
-          sessionId: request.sessionId,
-          command: accountMigrationLocalTransferCommandComplete,
-          body: {
-            accountMigrationLocalTransferFieldBundleId:
-                bundle.manifest.bundleId,
-          },
-          // v2 entries are hash-verified per chunk on arrival, so complete()
-          // only re-validates the staged DB + metadata — not the whole account.
-          budgetScaleBytes: bundle.manifest.isEntryStreamed
-              ? bundle.manifest.importValidationBytes
-              : bundle.manifest.totalBytes,
+      if (manifestResponse.statusCode == HttpStatus.notImplemented) {
+        return const AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.bundleImporterUnavailable,
+          safeMessage:
+              'The new phone can pair locally, but it cannot import the account bundle yet. Update both phones before moving this account.',
         );
-        break;
-      } on _MigrationPostException {
-        if (attempt + 1 >= completeAttemptCount) {
+      }
+      final manifestRejectReason = manifestResponse.body?['reason'];
+      if (manifestResponse.statusCode == HttpStatus.insufficientStorage &&
+          (manifestRejectReason == 'receiver_storage_insufficient' ||
+              manifestRejectReason == 'receiver_storage_unavailable')) {
+        if (manifestRejectReason == 'receiver_storage_unavailable') {
+          return const AccountMigrationTransferResult.failure(
+            code:
+                AccountMigrationTransferFailureCode.receiverStorageInsufficient,
+            safeMessage: accountMigrationReceiverStorageUnavailableMessage,
+          );
+        }
+        // The receiver's rejection carries its preflight numbers; surface the
+        // exact shortfall so the user knows how much to free up.
+        int? rejectionBytes(String key) {
+          final value = manifestResponse.body?[key];
+          return value is int ? value : null;
+        }
+
+        final requiredBytes = rejectionBytes('requiredBytes');
+        final totalRequiredBytes = requiredBytes == null
+            ? null
+            : requiredBytes +
+                  (rejectionBytes('stagingOverheadBytes') ?? 0) +
+                  (rejectionBytes('headroomBytes') ?? 0);
+        return AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.receiverStorageInsufficient,
+          safeMessage: accountMigrationReceiverStorageInsufficientMessage(
+            requiredBytes: totalRequiredBytes,
+            availableBytes: rejectionBytes('availableBytes'),
+          ),
+        );
+      }
+      if (!_isOk(manifestResponse)) {
+        return const AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.transferRejected,
+          safeMessage: 'The new phone rejected the account bundle manifest.',
+        );
+      }
+
+      onProgress(AccountMigrationTransferStep.transferringDatabase);
+      final transferResult = bundle.manifest.isEntryStreamed
+          ? await _sendStreamingEntryChunks(
+              httpClient: httpClient,
+              bundle: bundle,
+              request: request,
+              peer: peer,
+              isCancelled: isCancelled,
+              onSegmentProgress: onSegmentProgress,
+            )
+          : bundle.encryptedSegments == null
+          ? await _exportPlaintextBundleSegments(
+              httpClient: httpClient,
+              bundle: bundle,
+              request: request,
+              peer: peer,
+              isCancelled: isCancelled,
+              onSegmentProgress: onSegmentProgress,
+            )
+          : await _sendPreparedBundleSegments(
+              httpClient: httpClient,
+              bundle: bundle,
+              request: request,
+              peer: peer,
+              isCancelled: isCancelled,
+              onSegmentProgress: onSegmentProgress,
+            );
+      if (isCancelled()) {
+        return const AccountMigrationTransferResult.cancelled();
+      }
+      if (!transferResult.isSuccess) {
+        if (transferResult.code ==
+            MigrationTransferResultCode.transferTimedOut) {
           return const AccountMigrationTransferResult.failure(
             code: AccountMigrationTransferFailureCode.localTransferTimedOut,
             safeMessage: accountMigrationLocalTransferStalledSafeMessage,
           );
         }
+        return AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.transferRejected,
+          safeMessage: _transferFailureText(transferResult.code),
+        );
       }
-    }
-    final settledCompleteResponse = completeResponse!;
-    if (!_isOk(settledCompleteResponse)) {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.verificationFailed,
-        safeMessage:
-            'The new phone could not verify the transferred account bundle.',
+
+      onProgress(AccountMigrationTransferStep.checking);
+      _MigrationJsonResponse? completeResponse;
+      final completeAttemptCount = receiverReplaySafe ? 2 : 1;
+      for (var attempt = 0; attempt < completeAttemptCount; attempt++) {
+        try {
+          completeResponse = await _postJson(
+            httpClient: httpClient,
+            peer: peer,
+            sessionId: request.sessionId,
+            command: accountMigrationLocalTransferCommandComplete,
+            body: {
+              accountMigrationLocalTransferFieldBundleId:
+                  bundle.manifest.bundleId,
+            },
+            // v2 entries are hash-verified per chunk on arrival, so complete()
+            // only re-validates the staged DB + metadata — not the whole account.
+            budgetScaleBytes: bundle.manifest.isEntryStreamed
+                ? bundle.manifest.importValidationBytes
+                : bundle.manifest.totalBytes,
+          );
+          break;
+        } on _MigrationPostException {
+          if (attempt + 1 >= completeAttemptCount) {
+            return const AccountMigrationTransferResult.failure(
+              code: AccountMigrationTransferFailureCode.localTransferTimedOut,
+              safeMessage: accountMigrationLocalTransferStalledSafeMessage,
+            );
+          }
+        }
+      }
+      final settledCompleteResponse = completeResponse!;
+      if (!_isOk(settledCompleteResponse)) {
+        return const AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.verificationFailed,
+          safeMessage:
+              'The new phone could not verify the transferred account bundle.',
+        );
+      }
+
+      if (oldPhoneCutoverCoordinator != null &&
+          settledCompleteResponse
+                  .body?[accountMigrationLocalTransferFieldCutoverReady] !=
+              true) {
+        return const AccountMigrationTransferResult.failure(
+          code: AccountMigrationTransferFailureCode.cutoverRejected,
+          safeMessage:
+              'The new phone verified the bundle but cannot complete final account handoff. Update both phones and try again.',
+        );
+      }
+      final oldBlockProofReplaySafe =
+          settledCompleteResponse
+              .body?[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] ==
+          true;
+
+      onProgress(AccountMigrationTransferStep.finishing);
+      final cutoverFailure = await _runOldPhoneCutoverIfConfigured(
+        httpClient: httpClient,
+        request: request,
+        peer: peer,
+        manifest: bundle.manifest,
+        oldBlockProofReplaySafe: oldBlockProofReplaySafe,
+      );
+      if (cutoverFailure != null) {
+        return cutoverFailure;
+      }
+      moveCompleted = true;
+      return const AccountMigrationTransferResult.success();
+    } finally {
+      await _cleanupBundleArtifacts(
+        bundle,
+        request,
+        moveCompleted: moveCompleted,
       );
     }
-
-    if (oldPhoneCutoverCoordinator != null &&
-        settledCompleteResponse
-                .body?[accountMigrationLocalTransferFieldCutoverReady] !=
-            true) {
-      return const AccountMigrationTransferResult.failure(
-        code: AccountMigrationTransferFailureCode.cutoverRejected,
-        safeMessage:
-            'The new phone verified the bundle but cannot complete final account handoff. Update both phones and try again.',
-      );
-    }
-    final oldBlockProofReplaySafe =
-        settledCompleteResponse
-            .body?[accountMigrationLocalTransferFieldOldBlockProofReplaySafe] ==
-        true;
-
-    onProgress(AccountMigrationTransferStep.finishing);
-    final cutoverFailure = await _runOldPhoneCutoverIfConfigured(
-      httpClient: httpClient,
-      request: request,
-      peer: peer,
-      manifest: bundle.manifest,
-      oldBlockProofReplaySafe: oldBlockProofReplaySafe,
-    );
-    if (cutoverFailure != null) {
-      return cutoverFailure;
-    }
-    await _cleanupBundleAfterSuccess(bundle, request);
-    return const AccountMigrationTransferResult.success();
   }
 
-  Future<void> _cleanupBundleAfterSuccess(
+  Future<void> _cleanupBundleArtifacts(
     AccountMigrationLocalTransferBundle bundle,
-    AccountMigrationTransferRequest request,
-  ) async {
-    final cleanup = bundle.cleanupAfterSuccess;
+    AccountMigrationTransferRequest request, {
+    required bool moveCompleted,
+  }) async {
+    final cleanup = bundle.cleanupExportArtifacts;
     if (cleanup == null) {
       return;
     }
@@ -927,6 +938,7 @@ class AccountMigrationLocalTransferRuntime {
           'errorType': accountMigrationTransferErrorType(error),
         },
       );
+      if (!moveCompleted) rethrow;
     }
   }
 
