@@ -6263,6 +6263,190 @@ void main() {
       },
     );
 
+    group('post_create thought push', () {
+      const thoughtData = <String, dynamic>{
+        'type': 'post_create',
+        'sender_id': 'peer-alice',
+        'message_id': 'evt-thought-1',
+        'post_id': 'post-1',
+        'kem': 'SECRET-kem',
+        'ciphertext': 'SECRET-ciphertext',
+        'nonce': 'SECRET-nonce',
+        'title': 'ATTACKER OUTER NAME',
+      };
+
+      void mockNotificationsPlugin() {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        AndroidFlutterLocalNotificationsPlugin.registerWith();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (MethodCall call) async {
+              log.add(call);
+              if (call.method == 'initialize') return true;
+              return null;
+            });
+      }
+
+      test(
+        'shows the decrypted thought on the thoughts channel under the post card id',
+        () async {
+          mockNotificationsPlugin();
+          final directory = Directory.systemTemp.createTempSync(
+            'background-thought-ids-',
+          );
+          addTearDown(() {
+            if (directory.existsSync()) directory.deleteSync(recursive: true);
+          });
+          final registry = DurableConversationNotificationIdRegistry(
+            directory: directory,
+          );
+          debugSetBackgroundConversationNotificationIdRegistryResolver(
+            () async => registry,
+          );
+          debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+            return BackgroundDirectMessageLocalState(
+              previewContext: DirectMessageNotificationContext(
+                senderPeerId: 'peer-alice',
+                senderUsername: 'Trusted Alice',
+                expectedMessageId: message.data['message_id'] as String?,
+              ),
+              mlKemSecretKeys: const <String>['current-key'],
+            );
+          });
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+                expect(call.method, 'decryptMessage');
+                final arguments = Map<String, dynamic>.from(
+                  jsonDecode(call.arguments as String) as Map,
+                );
+                expect(arguments['secretKey'], 'current-key');
+                expect(arguments['ciphertext'], 'SECRET-ciphertext');
+                return jsonEncode(<String, Object?>{
+                  'ok': true,
+                  'plaintext': jsonEncode(<String, Object?>{
+                    'post_id': 'post-1',
+                    'snapshot': <String, Object?>{
+                      'post_id': 'post-1',
+                      'author_peer_id': 'peer-alice',
+                      'author_username': 'ATTACKER DECRYPTED NAME',
+                      'text': 'Coffee on the roof tonight?',
+                      'media_kind': 'none',
+                      'media': <Object?>[],
+                    },
+                  }),
+                });
+              });
+
+          await firebaseMessagingBackgroundHandler(
+            const RemoteMessage(
+              messageId: 'provider-thought-1',
+              data: thoughtData,
+            ),
+          );
+
+          final show = log.singleWhere((call) => call.method == 'show');
+          final arguments = show.arguments as Map;
+          expect(arguments['title'], 'Trusted Alice shared a thought');
+          expect(arguments['body'], 'Coffee on the roof tonight?');
+          expect(arguments['payload'], 'post:post-1');
+          expect(
+            arguments['id'],
+            await registry.resolve(
+              'post:post-1',
+              activeNotificationIds: () async => const <int>[],
+            ),
+            reason: 'the in-app card for this post must replace this one',
+          );
+          final platformSpecifics = arguments['platformSpecifics'] as Map;
+          expect(platformSpecifics['channelId'], mknoonThoughtsChannelId);
+          expect(platformSpecifics['playSound'], isTrue);
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:post-1',
+              messageId: 'evt-thought-1',
+            ),
+            isTrue,
+            reason: 'PostListener consumes this mark instead of a second card',
+          );
+        },
+      );
+
+      test('a blocked, archived or unknown sender shows nothing', () async {
+        BackgroundDirectMessageLocalState? localState({
+          bool known = true,
+          int blocked = 0,
+          int archived = 0,
+        }) => directMessageLocalStateFromRows(
+          data: thoughtData,
+          identityRow: const <String, Object?>{'peer_id': 'peer-self'},
+          contactRow: known
+              ? <String, Object?>{
+                  'peer_id': 'peer-alice',
+                  'username': 'Alice',
+                  'is_blocked': blocked,
+                  'is_archived': archived,
+                }
+              : null,
+          currentMlKemSecretKey: 'current-key',
+          priorMlKemSecretKeys: const <String>[],
+        );
+
+        expect(localState()?.previewContext.senderUsername, 'Alice');
+        expect(localState()?.previewContext.expectedMessageId, 'evt-thought-1');
+        expect(localState()?.mlKemSecretKeys, const <String>['current-key']);
+        expect(localState(blocked: 1), isNull);
+        expect(localState(archived: 1), isNull);
+        expect(localState(known: false), isNull);
+
+        mockNotificationsPlugin();
+        debugSetBackgroundDirectMessageLocalStateResolver((_) async => null);
+        await firebaseMessagingBackgroundHandler(
+          const RemoteMessage(
+            messageId: 'provider-thought-blocked',
+            data: thoughtData,
+          ),
+        );
+
+        expect(log.where((call) => call.method == 'show'), isEmpty);
+      });
+
+      test(
+        'a visible generic thought alert is left to the OS, routes to the post and dedupes the in-app card',
+        () async {
+          mockNotificationsPlugin();
+          const data = <String, dynamic>{
+            'type': 'post_create',
+            'sender_id': 'peer-alice',
+            'message_id': 'evt-thought-2',
+            'post_id': 'post-2',
+          };
+
+          await firebaseMessagingBackgroundHandler(
+            const RemoteMessage(
+              messageId: 'provider-thought-2',
+              notification: RemoteNotification(
+                title: 'New thought',
+                body: 'A friend shared a thought',
+              ),
+              data: data,
+            ),
+          );
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(
+            NotificationRouteTarget.fromRemoteMessageData(data)?.toPayload(),
+            'post:post-2',
+          );
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:post-2',
+              messageId: 'evt-thought-2',
+            ),
+            isTrue,
+          );
+        },
+      );
+    });
+
     test(
       'suppresses background fallback when account migration runtime gate blocks',
       () async {

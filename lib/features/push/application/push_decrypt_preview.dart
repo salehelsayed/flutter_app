@@ -399,6 +399,15 @@ Future<BackgroundPushNotificationFallback> resolveBackgroundPushNotification(
       context: directReactionContext,
     );
   }
+  if (type == 'post_create') {
+    return _resolveThoughtPreview(
+      data,
+      fallback,
+      decryptOneToOne: decryptOneToOne,
+      context: directMessageContext,
+      locale: locale,
+    );
+  }
   if (type == 'group_reaction') {
     return _resolveGroupReactionPreview(
       data,
@@ -853,6 +862,152 @@ Future<BackgroundPushNotificationFallback> _resolveOneToOnePreview(
   );
 }
 
+/// The authenticated facts inside a thought push plaintext
+/// (`PostCreateEnvelope.toInnerJson`): who wrote it, which post it is, and what
+/// the card may say. The sender-claimed display name is left behind here.
+final class _ThoughtPushPlaintext {
+  const _ThoughtPushPlaintext({
+    required this.postId,
+    required this.authorPeerId,
+    required this.text,
+    required this.mediaKind,
+    required this.mediaCount,
+  });
+
+  final String postId;
+  final String authorPeerId;
+  final String text;
+  final String mediaKind;
+  final int mediaCount;
+
+  static _ThoughtPushPlaintext? parse(String plaintext) {
+    try {
+      final json = jsonDecode(plaintext);
+      if (json is! Map) return null;
+      final snapshot = json['snapshot'];
+      if (snapshot is! Map) return null;
+      final postId = _trimToNull(json['post_id']?.toString());
+      final authorPeerId = _trimToNull(snapshot['author_peer_id']?.toString());
+      if (postId == null ||
+          authorPeerId == null ||
+          _trimToNull(snapshot['post_id']?.toString()) != postId) {
+        return null;
+      }
+      final media = snapshot['media'];
+      return _ThoughtPushPlaintext(
+        postId: postId,
+        authorPeerId: authorPeerId,
+        text: snapshot['text']?.toString() ?? '',
+        mediaKind: _trimToNull(snapshot['media_kind']?.toString()) ?? 'none',
+        mediaCount: media is List ? media.length : 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// A thought is a one-to-one envelope from a direct contact, so it shares the
+/// chat path's recipient-owned [context] and decrypt. Copy the recipient
+/// cannot vouch for degrades to the relay's own content-free words.
+Future<BackgroundPushNotificationFallback> _resolveThoughtPreview(
+  Map<String, dynamic> data,
+  BackgroundPushNotificationFallback fallback, {
+  required DecryptOneToOnePush? decryptOneToOne,
+  required DirectMessageNotificationContext? context,
+  required Locale? locale,
+}) async {
+  final genericFallback = BackgroundPushNotificationFallback(
+    title: backgroundPushThoughtFallbackTitle,
+    body: backgroundPushThoughtFallbackBody,
+    payload: fallback.payload,
+  );
+  final outerSender =
+      _trimToNull(data['sender_id']?.toString()) ??
+      _trimToNull(data['from']?.toString());
+  final outerPostId =
+      _trimToNull(data['post_id']?.toString()) ??
+      _trimToNull(data['postId']?.toString());
+  final kem = _trimToNull(data['kem']?.toString());
+  final ciphertext = _trimToNull(data['ciphertext']?.toString());
+  final nonce = _trimToNull(data['nonce']?.toString());
+  final senderName = _trimToNull(context?.senderUsername);
+  if (context == null ||
+      senderName == null ||
+      outerSender != context.senderPeerId ||
+      outerPostId == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {'kind': 'thought', 'reason': 'thought_context_or_input'},
+    );
+    return genericFallback;
+  }
+  final trustedFallback = BackgroundPushNotificationFallback(
+    title: localizedThoughtNotificationTitle(senderName, locale: locale),
+    body: backgroundPushThoughtTrustedFallbackBody,
+    payload: fallback.payload,
+  );
+  if (decryptOneToOne == null ||
+      kem == null ||
+      ciphertext == null ||
+      nonce == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {'kind': 'thought', 'reason': 'missing_thought_decrypt_input'},
+    );
+    return trustedFallback;
+  }
+
+  final _ThoughtPushPlaintext? thought;
+  try {
+    thought = _ThoughtPushPlaintext.parse(
+      await decryptOneToOne(kem: kem, ciphertext: ciphertext, nonce: nonce),
+    );
+  } catch (_) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {'kind': 'thought', 'reason': 'thought_decrypt_error'},
+    );
+    return trustedFallback;
+  }
+  if (thought == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {'kind': 'thought', 'reason': 'invalid_thought_plaintext'},
+    );
+    return trustedFallback;
+  }
+  if (thought.authorPeerId != context.senderPeerId ||
+      thought.postId != outerPostId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_ANDROID_DATA_DECRYPT_FAIL',
+      details: {'kind': 'thought', 'reason': 'thought_parity_mismatch'},
+    );
+    return genericFallback;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'PUSH_ANDROID_DATA_DECRYPT_OK',
+    details: {'kind': 'thought'},
+  );
+  return BackgroundPushNotificationFallback(
+    title: trustedFallback.title,
+    body: localizedThoughtNotificationBody(
+      text: thought.text,
+      mediaKind: thought.mediaKind,
+      mediaCount: thought.mediaCount,
+      locale: locale,
+    ),
+    payload: fallback.payload,
+  );
+}
+
 Future<BackgroundPushNotificationFallback> _resolveGroupPreview(
   Map<String, dynamic> data,
   BackgroundPushNotificationFallback fallback, {
@@ -1239,7 +1394,7 @@ String pushPreviewBody(
   }
   final trimmed = text.trim();
   if (trimmed.isNotEmpty) {
-    return _capPreview(trimmed);
+    return capNotificationPreview(trimmed);
   }
   if (media == null || media.isEmpty) {
     return localizedNotificationMessage(locale: locale);
@@ -1320,14 +1475,6 @@ String? _groupSystemPreviewBody({
   return displayName == null
       ? 'A member joined the group'
       : '$displayName joined the group';
-}
-
-String _capPreview(String text, {int maxScalars = 140}) {
-  final scalars = text.runes.toList();
-  if (scalars.length <= maxScalars) {
-    return text;
-  }
-  return String.fromCharCodes(scalars.take(maxScalars));
 }
 
 String? _trimToNull(String? value) {

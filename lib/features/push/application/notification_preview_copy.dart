@@ -96,6 +96,34 @@ String localizedThoughtNotificationTitle(String name, {Locale? locale}) =>
       locale: locale,
     ).thought_notification_title(name);
 
+/// Body of a thought card: its text, else the media it carries. The push
+/// isolate and PostListener both use it, so the push card and the in-app card
+/// that replaces it read the same.
+String localizedThoughtNotificationBody({
+  required String text,
+  required String mediaKind,
+  required int mediaCount,
+  Locale? locale,
+}) {
+  final trimmed = text.trim();
+  if (trimmed.isNotEmpty) return capNotificationPreview(trimmed);
+  return switch (mediaKind) {
+    'image' => localizedNotificationPhoto(1, locale: locale),
+    'image_carousel' => localizedNotificationPhoto(mediaCount, locale: locale),
+    'video' => localizedNotificationVideo(1, locale: locale),
+    'voice' => localizedNotificationVoiceMessage(locale: locale),
+    _ => localizedNotificationMedia(locale: locale),
+  };
+}
+
+String capNotificationPreview(String text, {int maxScalars = 140}) {
+  final scalars = text.runes.toList();
+  if (scalars.length <= maxScalars) {
+    return text;
+  }
+  return String.fromCharCodes(scalars.take(maxScalars));
+}
+
 /// 406: missed-call card copy. Resolved without a BuildContext because the
 /// projection that triggers it can run in a background isolate.
 String localizedMissedCallBody({Locale? locale}) =>

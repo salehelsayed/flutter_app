@@ -1437,8 +1437,11 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         notificationId,
         fallback.title,
         fallback.body,
-        groupInviteAndroidTag == null
-            ? mknoonConversationNotificationDetails(
+        groupInviteAndroidTag != null
+            ? mknoonGenericNotificationDetails(androidTag: groupInviteAndroidTag)
+            : routeTarget?.kind == NotificationRouteTargetKind.post
+            ? mknoonThoughtsNotificationDetails
+            : mknoonConversationNotificationDetails(
                 conversationKey: conversationKey,
                 silent: effectiveSilent,
                 preservePrimaryAndroidChannel: preservePrimaryAndroidChannel,
@@ -1448,9 +1451,6 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
                     contentKind == ConversationNotificationContentKind.reaction
                     ? fallback.body
                     : null,
-              )
-            : mknoonGenericNotificationDetails(
-                androidTag: groupInviteAndroidTag,
               ),
         payload: nativePayload,
       );
@@ -3219,7 +3219,8 @@ resolveBackgroundPushNotificationDisplayEligibilityFromLocalState(
     return accountNetworkAllowed;
   }
 
-  if (_trimToNull(message.data['type']) == 'new_message') {
+  final type = _trimToNull(message.data['type']);
+  if (type == 'new_message' || type == 'post_create') {
     final localState = await _backgroundDirectMessageLocalStateResolver(
       message,
     );
@@ -3275,7 +3276,7 @@ resolveBackgroundPushNotificationDisplayEligibilityFromLocalState(
 Future<BackgroundPushNotificationFallback>
 _resolveBackgroundPushNotificationFromLocalState(RemoteMessage message) async {
   final type = _trimToNull(message.data['type']);
-  if (type == 'new_message') {
+  if (type == 'new_message' || type == 'post_create') {
     final localState = await _backgroundDirectMessageLocalStateResolver(
       message,
     );
@@ -3488,7 +3489,8 @@ BackgroundDirectMessageLocalState? directMessageLocalStateFromRows({
   required List<String> priorMlKemSecretKeys,
   ConversationNotificationSnapshot? snapshot,
 }) {
-  if (_trimToNull(data['type']) != 'new_message') return null;
+  final type = _trimToNull(data['type']);
+  if (type != 'new_message' && type != 'post_create') return null;
   final senderPeerId =
       _trimToNull(data['sender_id']) ??
       _trimToNull(data['senderId']) ??
@@ -3581,10 +3583,10 @@ _resolveDirectMessageLocalStateFromEncryptedDb(RemoteMessage message) async {
       contactRow: rows[1],
       currentMlKemSecretKey: currentKey,
       priorMlKemSecretKeys: priorKeys,
-      snapshot: await _loadBackgroundDirectConversationSnapshot(
-        db,
-        senderPeerId,
-      ),
+      // A thought card is not a chat thread, so it carries no history lines.
+      snapshot: _trimToNull(message.data['type']) == 'new_message'
+          ? await _loadBackgroundDirectConversationSnapshot(db, senderPeerId)
+          : null,
     );
   } catch (e) {
     emitFlowEvent(

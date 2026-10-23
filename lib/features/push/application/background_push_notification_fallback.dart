@@ -29,6 +29,12 @@ const backgroundPushIntrosFallbackTitle = 'Introduction update';
 const backgroundPushIntrosFallbackBody =
     'Open Mknoon to see the latest update.';
 
+// A thought the recipient cannot read or vouch for. The relay's visible
+// fallback alert uses the same words, so both degraded paths look alike.
+const backgroundPushThoughtFallbackTitle = 'New thought';
+const backgroundPushThoughtFallbackBody = 'A friend shared a thought';
+const backgroundPushThoughtTrustedFallbackBody = 'Open Mknoon to see it.';
+
 typedef GroupMessageNotificationDisplayEligibilityResolver =
     Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
 typedef ForegroundGroupReactionNotificationResolver =
@@ -756,6 +762,9 @@ String _defaultTitleFor(RemoteMessage message) {
   if (_routesToDirectReaction(message)) {
     return backgroundPushReactionFallbackTitle;
   }
+  if (_routesToThought(message)) {
+    return backgroundPushThoughtFallbackTitle;
+  }
   return _routesToIntros(message)
       ? backgroundPushIntrosFallbackTitle
       : backgroundPushDefaultTitle;
@@ -768,10 +777,16 @@ String _defaultBodyFor(RemoteMessage message) {
   if (_routesToDirectReaction(message)) {
     return backgroundPushReactionFallbackBody;
   }
+  if (_routesToThought(message)) {
+    return backgroundPushThoughtFallbackBody;
+  }
   return _routesToIntros(message)
       ? backgroundPushIntrosFallbackBody
       : backgroundPushDefaultBody;
 }
+
+bool _routesToThought(RemoteMessage message) =>
+    _trimToNull(message.data['type']?.toString()) == 'post_create';
 
 bool _routesToIntros(RemoteMessage message) {
   final kind = NotificationRouteTarget.fromRemoteMessageData(

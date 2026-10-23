@@ -971,6 +971,165 @@ void main() {
       }
     });
 
+    group('post_create thought push', () {
+      const thoughtMessage = RemoteMessage(
+        data: <String, dynamic>{
+          'type': 'post_create',
+          'sender_id': 'peer-alice',
+          'message_id': 'evt-thought-1',
+          'post_id': 'post-1',
+          'kem': 'SECRET-kem',
+          'ciphertext': 'SECRET-ciphertext',
+          'nonce': 'SECRET-nonce',
+        },
+      );
+      const aliceContext = DirectMessageNotificationContext(
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice from contacts DB',
+        expectedMessageId: 'evt-thought-1',
+      );
+
+      test('decrypts into a card titled with the local contact name', () async {
+        final resolved = await resolveBackgroundPushNotification(
+          thoughtMessage,
+          directMessageContext: aliceContext,
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async {
+                expect(
+                  (kem, ciphertext, nonce),
+                  ('SECRET-kem', 'SECRET-ciphertext', 'SECRET-nonce'),
+                );
+                return _thoughtPlaintext(
+                  postId: 'post-1',
+                  authorPeerId: 'peer-alice',
+                  text: '  Coffee on the roof tonight?  ',
+                );
+              },
+        );
+
+        expect(resolved.title, 'Alice from contacts DB shared a thought');
+        expect(resolved.body, 'Coffee on the roof tonight?');
+        expect(resolved.payload, 'post:post-1');
+      });
+
+      test('a media-only thought names its media in the device language', () async {
+        const cases = <(String, int, Locale, String)>[
+          ('image', 1, Locale('en'), 'Photo'),
+          ('image_carousel', 3, Locale('de'), '3 Fotos'),
+          ('video', 1, Locale('de'), 'Video'),
+          ('voice', 1, Locale('de'), 'Sprachnachricht'),
+          ('hologram', 1, Locale('en'), 'Media'),
+        ];
+        for (final (mediaKind, mediaCount, locale, expected) in cases) {
+          final resolved = await resolveBackgroundPushNotification(
+            thoughtMessage,
+            directMessageContext: aliceContext,
+            locale: locale,
+            decryptOneToOne:
+                ({required kem, required ciphertext, required nonce}) async =>
+                    _thoughtPlaintext(
+                      postId: 'post-1',
+                      authorPeerId: 'peer-alice',
+                      text: '',
+                      mediaKind: mediaKind,
+                      mediaCount: mediaCount,
+                    ),
+          );
+          expect(resolved.body, expected, reason: mediaKind);
+        }
+      });
+
+      test('a long thought is capped like a chat preview', () async {
+        final resolved = await resolveBackgroundPushNotification(
+          thoughtMessage,
+          directMessageContext: aliceContext,
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async =>
+                  _thoughtPlaintext(
+                    postId: 'post-1',
+                    authorPeerId: 'peer-alice',
+                    text: 'x' * 200,
+                  ),
+        );
+
+        expect(resolved.body, 'x' * 140);
+      });
+
+      test(
+        'plaintext that disagrees with the authenticated sender or post stays content-free',
+        () async {
+          for (final (authorPeerId, postId) in const <(String, String)>[
+            ('peer-attacker', 'post-1'),
+            ('peer-alice', 'post-other'),
+          ]) {
+            final resolved = await resolveBackgroundPushNotification(
+              thoughtMessage,
+              directMessageContext: aliceContext,
+              decryptOneToOne:
+                  ({required kem, required ciphertext, required nonce}) async =>
+                      _thoughtPlaintext(
+                        postId: postId,
+                        authorPeerId: authorPeerId,
+                        text: 'must never show',
+                      ),
+            );
+
+            expect(resolved.title, 'New thought', reason: '$authorPeerId $postId');
+            expect(resolved.body, 'A friend shared a thought');
+            expect(resolved.payload, 'post:post-1');
+          }
+        },
+      );
+
+      test('without recipient-owned context nothing is decrypted', () async {
+        var decrypts = 0;
+        final resolved = await resolveBackgroundPushNotification(
+          thoughtMessage,
+          decryptOneToOne:
+              ({required kem, required ciphertext, required nonce}) async {
+                decrypts += 1;
+                return _thoughtPlaintext(
+                  postId: 'post-1',
+                  authorPeerId: 'peer-alice',
+                  text: 'must never show',
+                );
+              },
+        );
+
+        expect(decrypts, 0);
+        expect(resolved.title, 'New thought');
+        expect(resolved.body, 'A friend shared a thought');
+        expect(resolved.payload, 'post:post-1');
+      });
+
+      test(
+        'an authorized thought that cannot be decrypted names the friend without content',
+        () async {
+          for (final decrypt in <DecryptOneToOnePush?>[
+            null,
+            ({required kem, required ciphertext, required nonce}) async =>
+                throw StateError('plugin rejected'),
+            ({required kem, required ciphertext, required nonce}) async =>
+                'not json',
+          ]) {
+            final resolved = await resolveBackgroundPushNotification(
+              thoughtMessage,
+              directMessageContext: aliceContext,
+              decryptOneToOne: decrypt,
+            );
+
+            expect(resolved.title, 'Alice from contacts DB shared a thought');
+            expect(resolved.body, 'Open Mknoon to see it.');
+            expect(resolved.payload, 'post:post-1');
+            expect(
+              '${resolved.title}|${resolved.body}',
+              isNot(contains('SECRET')),
+            );
+          }
+        },
+      );
+    });
+
     test('decrypts 1:1 ciphertext preview with sender title', () async {
       const message = RemoteMessage(
         data: {
@@ -2384,3 +2543,30 @@ Map<String, dynamic> _signedGroupReactionPushData({
     'envelope_version': '1',
   };
 }
+
+/// The ML-KEM plaintext of a thought envelope (PostCreateEnvelope.toInnerJson).
+/// The author name is sender-claimed and must never reach a card.
+String _thoughtPlaintext({
+  required String postId,
+  required String authorPeerId,
+  required String text,
+  String mediaKind = 'none',
+  int mediaCount = 0,
+}) => jsonEncode(<String, Object?>{
+  'post_id': postId,
+  'snapshot': <String, Object?>{
+    'post_id': postId,
+    'author_peer_id': authorPeerId,
+    'author_username': 'ATTACKER DECRYPTED NAME',
+    'post_created_at': '2026-10-23T09:00:00.000Z',
+    'audience': <String, Object?>{'kind': 'all_friends'},
+    'text': text,
+    'media_kind': mediaKind,
+    'media': List<Map<String, Object?>>.generate(
+      mediaCount,
+      (index) => <String, Object?>{'media_id': 'media-$index'},
+    ),
+    'keep_available': false,
+    'expires_at': '2026-10-26T09:00:00.000Z',
+  },
+});
