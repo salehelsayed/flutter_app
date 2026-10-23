@@ -286,8 +286,9 @@ All 40 intro-runner preservation tests, 240 workflow tests and five provider
 contracts passed. Original evidence: `friends-folded-readiness-failure-001/`.
 Full owning checks remain pending.
 
-`QRScannerScreen` reports a code and pops its route without awaiting the
-handler. `QRScannerWired` must therefore not use that route's context after
+`QRScannerScreen` reports a code without awaiting the handler, then pops its own
+route only if that route is still current. `QRScannerWired` must therefore not
+use that route's context after
 asynchronous work. It used to, and parsing awaits `payload.verify`, so the
 handler stopped at `context.mounted` whenever the route was gone first. That
 dropped the contact, the request and the "Added to your circle!" hand-off with
@@ -300,6 +301,27 @@ transition. The handler now uses the navigator's context.
 closed, and it fails without the fix. After a successful scan, two request sends
 are expected: the scanner's own, then the key-exchange retry coordinator's about
 one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
+
+On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
+dispatched correctly but returned to that screen before confirmation. Both the
+first-time and Orbit handlers synchronously replace the scanner with the
+migration journey; the scanner's unconditional pop then removed that new
+journey. Camera detection and debug paste Submit now share completion logic
+that captures the scanner route before calling the handler and only dismisses
+it while it remains current. The existing caller tests previously invoked
+`onScanned` directly, bypassing the faulty dismissal. Their paste UI and
+`MobileScanner.onDetect` cases now reproduce all four failures without the fix
+and retain the migration journey and original payload with the fix. The
+first-time cases also assert the confirmation screen after the actual route
+transition completes. All 28 caller tests and 18 unchanged scanner tests passed,
+including verification completing after the scanner route closes; analysis of
+the three changed Dart files reported no issues. Camera callbacks are injected
+in host tests; this does not establish optical scanning or native camera
+behavior. Initial failures and scoped wrapper results are retained in
+`.codex-test-logs/migration-qr-20261023/` in the
+`flutter_app_codex_migration_qr_20261023` worktree; the device reproduction is
+recorded in the main worktree's
+`.codex-test-logs/safe-transfer-b-20261023T1310Z/SUMMARY.md`.
 
 A USB Android 8.1 phone (Honor JSN-L22, API 27, SwiftKey) passed all five
 Group invites and Media production journeys on 2026-10-17 (`invites`,

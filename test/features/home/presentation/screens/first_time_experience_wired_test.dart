@@ -26,6 +26,7 @@ import 'package:flutter_app/features/posts/application/nearby_location_service.d
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -309,50 +310,75 @@ void main() {
       expect(find.byIcon(Icons.crop_free), findsOneWidget);
     });
 
-    testWidgets('scan routes Move Account QR to old-phone migration', (
-      tester,
-    ) async {
-      identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
-      final createdAt = DateTime.now().toUtc();
-      final migrationQr = MigrationQrPayload(
-        sessionId: 'fte-migration-session',
-        createdAt: createdAt,
-        expiresAt: createdAt.add(const Duration(minutes: 5)),
-        newPhoneEphemeralPublicKey: 'new-phone-ephemeral-public',
-        channelNonce: 'fte-channel-nonce',
-      ).toJsonString();
+    for (final entry in ['paste', 'camera']) {
+      testWidgets(
+        'scan routes Move Account QR to old-phone migration via $entry',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'test-sig',
+          };
+          final createdAt = DateTime.now().toUtc();
+          final migrationQr = MigrationQrPayload(
+            sessionId: 'fte-migration-session',
+            createdAt: createdAt,
+            expiresAt: createdAt.add(const Duration(minutes: 5)),
+            newPhoneEphemeralPublicKey: 'new-phone-ephemeral-public',
+            channelNonce: 'fte-channel-nonce',
+          ).toJsonString();
 
-      Future<AccountMigrationTransferResult> runner({
-        required AccountMigrationTransferRequest request,
-        required AccountMigrationTransferProgressCallback onProgress,
-        required bool Function() isCancelled,
-        AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
-      }) async {
-        return const AccountMigrationTransferResult.success();
-      }
+          Future<AccountMigrationTransferResult> runner({
+            required AccountMigrationTransferRequest request,
+            required AccountMigrationTransferProgressCallback onProgress,
+            required bool Function() isCancelled,
+            AccountMigrationTransferSegmentProgressCallback? onSegmentProgress,
+          }) async {
+            return const AccountMigrationTransferResult.success();
+          }
 
-      await tester.pumpWidget(buildFTE(accountMigrationRunTransfer: runner));
-      await tester.pump();
-      await tester.pump();
+          await tester.pumpWidget(
+            buildFTE(accountMigrationRunTransfer: runner),
+          );
+          await tester.pump();
+          await tester.pump();
 
-      await tester.tap(find.text("Scan a friend's code"));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+          await tester.tap(find.text("Scan a friend's code"));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
 
-      final scanner = tester.widget<QRScannerScreen>(
-        find.byType(QRScannerScreen),
+          expect(find.byType(QRScannerScreen), findsOneWidget);
+          if (entry == 'paste') {
+            await tester.tap(find.text('Paste QR Data'));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 300));
+            await tester.enterText(find.byType(TextField).last, migrationQr);
+            await tester.tap(find.text('Submit'));
+          } else {
+            tester.widget<MobileScanner>(find.byType(MobileScanner)).onDetect!(
+              BarcodeCapture(barcodes: [Barcode(rawValue: migrationQr)]),
+            );
+          }
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.pump();
+
+          expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+          final journeyRoute = ModalRoute.of(
+            tester.element(find.byType(AccountMigrationJourneyWired)),
+          )!;
+          await tester.pump(journeyRoute.transitionDuration);
+          await tester.pump();
+          expect(find.byType(QRScannerScreen), findsNothing);
+          final journey = tester.widget<AccountMigrationJourneyWired>(
+            find.byType(AccountMigrationJourneyWired),
+          );
+          expect(journey.runTransfer, same(runner));
+          expect(journey.initialScannedQr, migrationQr);
+          expect(find.text('Confirm the code'), findsOneWidget);
+        },
       );
-      scanner.onScanned(migrationQr);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-
-      final journey = tester.widget<AccountMigrationJourneyWired>(
-        find.byType(AccountMigrationJourneyWired),
-      );
-      expect(journey.runTransfer, same(runner));
-      expect(journey.initialScannedQr, migrationQr);
-    });
+    }
 
     testWidgets('does not crash when contact request stream emits', (
       tester,
