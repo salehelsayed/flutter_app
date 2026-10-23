@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -988,6 +989,68 @@ func TestBuildContactRequestPushMessage_UsesContactRequestRoute(t *testing.T) {
 	}
 	if msg.Data["body"] != "Alice wants to connect" {
 		t.Fatalf("body = %q, want %q", msg.Data["body"], "Alice wants to connect")
+	}
+}
+
+const postCreatePushFixture = `{"type":"post_create","version":"2","event_id":"thought-evt-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-from","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+
+func TestBuildPostCreatePushMessage_UsesGenericThoughtAlert(t *testing.T) {
+	msg := buildPushMessage("fcm-token", "peer-from", postCreatePushFixture)
+
+	wantData := map[string]string{
+		"type":       "post_create",
+		"title":      "New thought",
+		"body":       "A friend shared a thought",
+		"message_id": "thought-evt-1",
+	}
+	if !reflect.DeepEqual(msg.Data, wantData) {
+		t.Fatalf("data = %#v, want %#v", msg.Data, wantData)
+	}
+	if msg.Notification == nil || msg.Notification.Title != "New thought" ||
+		msg.Notification.Body != "A friend shared a thought" {
+		t.Fatalf("notification = %#v, want generic thought copy", msg.Notification)
+	}
+	if got := msg.APNS.Headers["apns-push-type"]; got != "alert" {
+		t.Fatalf("apns-push-type = %q, want %q", got, "alert")
+	}
+	if got := msg.Android.Priority; got != "high" {
+		t.Fatalf("android priority = %q, want %q", got, "high")
+	}
+}
+
+func TestInboxStore_PostCreateEnvelopeSendsGenericPush(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	tokenStore.RegisterToken("peer-recipient", "fcm-token", "android")
+
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+
+	result, err := inbox.Store("peer-recipient", inboxMessage{
+		From:      "peer-sender",
+		Message:   postCreatePushFixture,
+		Timestamp: time.Now().UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+	if result != InboxStoreResultStored {
+		t.Fatalf("Store() result = %q, want %q", result, InboxStoreResultStored)
+	}
+
+	select {
+	case <-recorder.sentSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for post_create push")
+	}
+	if got := recorder.SendCallCount(); got != 1 {
+		t.Fatalf("push sends = %d, want 1", got)
+	}
+	sent := recorder.LastMessage()
+	if sent.Data["type"] != "post_create" || sent.Data["title"] != "New thought" ||
+		sent.Data["body"] != "A friend shared a thought" || sent.Data["message_id"] != "thought-evt-1" {
+		t.Fatalf("sent data = %#v, want generic post_create alert", sent.Data)
 	}
 }
 

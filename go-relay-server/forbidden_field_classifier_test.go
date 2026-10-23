@@ -39,6 +39,14 @@ func TestForbiddenFieldClassifier_MessagePushesDoNotExposePreviewCanaries(t *tes
 			)),
 		},
 		{
+			name: "thought",
+			msg: scanPushMessage(buildPushMessage(
+				"fcm-token",
+				"peer-alice",
+				`{"type":"post_create","version":"2","event_id":"fixture-thought-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-alice","senderUsername":"Alice","encrypted":{"kem":"fixture-kem","ciphertext":"fixture-ciphertext","nonce":"fixture-nonce"}}`,
+			)),
+		},
+		{
 			name: "group",
 			msg: scanPushMessage(buildGroupPushMessage(
 				"fcm-token",

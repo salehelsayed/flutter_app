@@ -48,6 +48,8 @@ const (
 	contactRequestPushBody      = "Open Mknoon to respond"
 	groupInvitePushTitle        = "Group Invite"
 	groupInvitePushBody         = "Open Mknoon to review"
+	postCreatePushTitle         = "New thought"
+	postCreatePushBody          = "A friend shared a thought"
 	groupInviteAndroidTagPrefix = "mknoon_group_invite_"
 	introPushNotificationTitle  = "New Introduction"
 	introPushNotificationBody   = "Open Mknoon to review"
@@ -1383,6 +1385,8 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		}
 	case "contact_request":
 		resolvedTitle = contactRequestPushTitle
+	case "post_create":
+		resolvedTitle = postCreatePushTitle
 	case "group_invite":
 		if metadata.GroupName != "" {
 			resolvedTitle = metadata.GroupName
@@ -2178,6 +2182,13 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 			ShouldNotify: true,
 			RouteType:    "new_message",
 			MessageID:    extractMessageId(message),
+		}
+	case "post_create":
+		return chatPushMetadata{
+			ShouldNotify: true,
+			RouteType:    "post_create",
+			MessageID:    trimmedString(envelope["event_id"]),
+			Body:         postCreatePushBody,
 		}
 	case "contact_request":
 		intent := trimmedString(envelope["intent"])
