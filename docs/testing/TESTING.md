@@ -2275,6 +2275,22 @@ the introduction dependency closures without executing a device scenario.
 The broader required selection remains NOT RUN. None of these host results
 is device coverage.
 
+A separate IN-009 Pass-response blocker is confirmed at source
+`e1466134e4b25f8eade7e64d7f315c309692c933`: the real Pass use-case updates
+party and overall state before its first outbound repository save. Injecting
+a failure before that save leaves both statuses passed with no outbound rows
+or transport calls; the real Accept control stays pending under the same
+fault. The exact two-test host probe records one pass and one failure in
+`070-pass-probe-units.log`, with clean analysis in
+`069-pass-probe-analyze.log` and source hashes/scope in
+`071-pass-probe-confirmed.json` under the private item3 evidence directory.
+The reproducer is retained in its ignored `batch-four/test/features/introduction/application/`
+folder; its temporary executable copy was removed. This establishes the
+use-case/repository-fault behavior with existing in-memory fakes; native
+SQLite crash or device behavior remains unverified. Stop the IN-009 Pass
+row for an application-owner repair; the acceptance-only journey does not
+close it. No application repair was made in this test-only task.
+
 The additive PL-009 reaction module preserves the exact case identity through
 its shared create/accept/message observer and the unchanged original oracle.
 It requires a real successful send result, independent receiver stream events on
