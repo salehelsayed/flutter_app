@@ -49,6 +49,10 @@ class OrbitalVisualization extends StatelessWidget {
   final double thoughtVisibility;
   final double thoughtClock;
 
+  /// Empty space the host leaves above the canvas. Notes grow into it first,
+  /// so the centre node stays put when they appear.
+  final double topInset;
+
   /// 206 — when non-null, the center self-avatar becomes the Settings entry:
   /// an idle tap fires [onSelfAvatarTap], a long-press fires
   /// [onSelfAvatarLongPress] (sculpt-entry uniformity). The detector + button
@@ -109,6 +113,7 @@ class OrbitalVisualization extends StatelessWidget {
     this.thoughtSwim,
     this.thoughtVisibility = 1,
     this.thoughtClock = 0,
+    this.topInset = 0,
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
     this.onComposeThought,
@@ -360,10 +365,9 @@ class OrbitalVisualization extends StatelessWidget {
             math.max(0.0, (constraints.maxWidth - _size) / 2),
           )
         : sideOverhang;
-    final overhang = math.max(
-      math.max(arcOverhang, ringTopOverhang),
-      noteTopOverhang,
-    );
+    final baseOverhang = math.max(arcOverhang, ringTopOverhang);
+    final overhang = math.max(baseOverhang, noteTopOverhang);
+    final noteLift = math.min(topInset, overhang - baseOverhang);
     final bottomOverhang = math.max(
       math.max(arcBottomOverhang, ringBottomOverhang),
       noteBottomOverhang,
@@ -629,21 +633,26 @@ class OrbitalVisualization extends StatelessWidget {
             height: rect.height,
             child: IgnorePointer(
               ignoring: reveal < 0.5,
-              child: Opacity(
-                opacity: reveal * _dimFor(entry.key),
-                child: OrbitThoughtNoteBubble(
-                  note: note,
-                  onTap: onThoughtTap == null
-                      ? null
-                      : () {
-                          // A finger held across the deadline cannot open an expired
-                          // card even before the timer's rebuild reaches this frame.
-                          if (note.expiresAt.isAfter(
-                            (nowProvider ?? DateTime.now)(),
-                          )) {
-                            onThoughtTap!(note.postId);
-                          }
-                        },
+              child: ExcludeSemantics(
+                excluding: reveal < 0.5,
+                child: Opacity(
+                  opacity: reveal * _dimFor(entry.key),
+                  child: OrbitThoughtNoteBubble(
+                    note: note,
+                    authorName:
+                        (items[entry.key] as OrbitFriendItem).friend.username,
+                    onTap: onThoughtTap == null
+                        ? null
+                        : () {
+                            // A finger held across the deadline cannot open an expired
+                            // card even before the timer's rebuild reaches this frame.
+                            if (note.expiresAt.isAfter(
+                              (nowProvider ?? DateTime.now)(),
+                            )) {
+                              onThoughtTap!(note.postId);
+                            }
+                          },
+                  ),
                 ),
               ),
             ),
@@ -654,6 +663,7 @@ class OrbitalVisualization extends StatelessWidget {
 
     return Column(
       children: [
+        SizedBox(height: topInset - noteLift),
         SizedBox(
           key: canvasKey,
           width: boxWidth,

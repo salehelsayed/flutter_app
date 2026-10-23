@@ -548,6 +548,7 @@ void main() {
       String text = 'Private thought',
       Duration age = const Duration(hours: 1),
       DateTime? expiresAt,
+      String mediaKind = 'none',
     }) {
       final createdAt = thoughtNow.subtract(age).toIso8601String();
       return PostModel(
@@ -562,6 +563,7 @@ void main() {
         visibleAt: createdAt,
         expiresAt: (expiresAt ?? thoughtNow.add(const Duration(hours: 23)))
             .toIso8601String(),
+        mediaKind: mediaKind,
       );
     }
 
@@ -626,6 +628,32 @@ void main() {
         await finishThoughtCase(tester);
       },
     );
+
+    testWidgets('a voice-only thought note reads "Voice message"', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(thought('voice', text: '', mediaKind: 'voice'));
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      expect(
+        find.descendant(
+          of: find.byType(OrbitThoughtNoteBubble),
+          matching: find.text('Voice message'),
+        ),
+        findsOneWidget,
+      );
+      await finishThoughtCase(tester);
+    });
 
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,

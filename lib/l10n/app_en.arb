@@ -256,6 +256,17 @@
       }
     }
   },
+  "orbit_thought_note_semantics": "Thought from {name}: {preview}",
+  "@orbit_thought_note_semantics": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "preview": {
+        "type": "String"
+      }
+    }
+  },
   "orbit_node_open_chat": "Open chat with {name}",
   "@orbit_node_open_chat": {
     "placeholders": {

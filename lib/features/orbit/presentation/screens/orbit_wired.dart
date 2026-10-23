@@ -1023,12 +1023,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       setState(() {
         _thoughtsByPeerId = {
           for (final post in thoughts)
-            post.authorPeerId: OrbitThoughtNote(
-              postId: post.id,
-              text: post.text,
-              isRead: post.isRead,
-              expiresAt: DateTime.parse(post.expiresAt),
-            ),
+            post.authorPeerId: OrbitThoughtNote.fromPost(post),
         };
       });
       _onPendingThoughtTargetChanged();

@@ -934,6 +934,12 @@ abstract class AppLocalizations {
   /// **'Open {name}'**
   String orbit_chip_open(String name);
 
+  /// No description provided for @orbit_thought_note_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Thought from {name}: {preview}'**
+  String orbit_thought_note_semantics(String name, String preview);
+
   /// No description provided for @orbit_node_open_chat.
   ///
   /// In en, this message translates to:

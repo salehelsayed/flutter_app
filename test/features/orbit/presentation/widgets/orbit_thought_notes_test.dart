@@ -1,5 +1,9 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_preview_descriptor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
@@ -33,9 +37,11 @@ void main() {
     String text = 'A thought',
     bool read = false,
     Duration lifetime = const Duration(hours: 1),
+    MediaPreviewDescriptor? media,
   }) => OrbitThoughtNote(
     postId: id,
     text: text,
+    media: media,
     isRead: read,
     expiresAt: start.add(lifetime),
   );
@@ -137,7 +143,12 @@ void main() {
     'bubble width/ellipsis and only heavier text distinguish unseen',
     (tester) async {
       await tester.pumpWidget(
-        wrap(OrbitThoughtNoteBubble(note: note('short', text: 'H'))),
+        wrap(
+          OrbitThoughtNoteBubble(
+            authorName: 'Friend 0',
+            note: note('short', text: 'H'),
+          ),
+        ),
       );
       final shortWidth = tester
           .getSize(find.byType(OrbitThoughtNoteBubble))
@@ -150,11 +161,14 @@ void main() {
       final long = List.filled(100, 'long thought').join(' ');
       await tester.pumpWidget(
         wrap(
-          OrbitThoughtNoteBubble(note: note('long', text: long, read: true)),
+          OrbitThoughtNoteBubble(
+            authorName: 'Friend 0',
+            note: note('long', text: long, read: true),
+          ),
         ),
       );
       final text = tester.widget<Text>(find.text(long));
-      expect(tester.getSize(find.byType(OrbitThoughtNoteBubble)).width, 96);
+      expect(tester.getSize(find.byType(OrbitThoughtNoteBubble)).width, 150);
       expect(text.maxLines, 2);
       expect(text.overflow, TextOverflow.ellipsis);
       expect(text.style!.fontWeight, FontWeight.w400);
@@ -162,6 +176,121 @@ void main() {
       expect(text.style!.height, 1.22);
     },
   );
+
+  testWidgets('a media-only thought shows its media label; text wins', (
+    tester,
+  ) async {
+    Future<void> show(String text, MediaPreviewDescriptor media) =>
+        tester.pumpWidget(
+          wrap(
+            OrbitThoughtNoteBubble(
+              authorName: 'Friend 0',
+              note: note('media', text: text, media: media),
+            ),
+          ),
+        );
+    await show('', const MediaPreviewDescriptor(type: 'image', count: 3));
+    expect(find.text('3 photos'), findsOneWidget);
+    await show('', const MediaPreviewDescriptor(type: 'video', count: 1));
+    expect(find.text('Video'), findsOneWidget);
+    await show('', const MediaPreviewDescriptor(type: 'audio', count: 1));
+    expect(find.text('Voice message'), findsOneWidget);
+    await show('Look', const MediaPreviewDescriptor(type: 'image', count: 1));
+    expect(find.text('Look'), findsOneWidget);
+    expect(find.text('Photo'), findsNothing);
+  });
+
+  testWidgets(
+    'a shown note is a labelled semantics button that opens the thought',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final opened = <String>[];
+      Widget scene(double visibility) => wrap(
+        OrbitalVisualization(
+          userPeerId: 'self',
+          items: items.take(2).toList(),
+          nowProvider: () => start,
+          thoughtVisibility: visibility,
+          thoughtsByPeerId: {
+            'friend-0': note('live'),
+            'friend-1': note(
+              'voice',
+              text: '',
+              media: const MediaPreviewDescriptor(type: 'audio', count: 1),
+            ),
+          },
+          onThoughtTap: opened.add,
+        ),
+      );
+      await tester.pumpWidget(scene(1));
+      final node = tester.getSemantics(
+        find.bySemanticsLabel('Thought from Friend 0: A thought'),
+      );
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      expect(
+        find.semantics.byLabel('Thought from Friend 1: Voice message'),
+        findsOne,
+      );
+      tester.semantics.tap(
+        find.semantics.byLabel('Thought from Friend 0: A thought'),
+      );
+      expect(opened, ['live']);
+
+      await tester.pumpWidget(scene(0.3));
+      expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(2));
+      expect(find.semantics.byLabel(RegExp('Thought from')), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('notes appearing on a phone keep the centre node in place', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2400);
+    tester.view.devicePixelRatio = 2.625;
+    addTearDown(tester.view.reset);
+    Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
+      InnerCircleInteractiveSurface(
+        userPeerId: 'self',
+        onSelfAvatarTap: () {},
+        items: items.take(13).toList(),
+        onFriendTap: (_) {},
+        onGroupTap: (_) {},
+        thoughtsByPeerId: thoughts,
+        nowProvider: () => start,
+      ),
+    );
+    Offset self() => tester.getCenter(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+    );
+    await tester.pumpWidget(scene(const {}));
+    await tester.pump(const Duration(seconds: 2));
+    final without = self();
+    Map<String, OrbitThoughtNote> thoughts(int count) => {
+      for (var i = 0; i < count; i++)
+        'friend-$i': note('n$i', text: 'A longer thought about today $i'),
+    };
+    await tester.pumpWidget(scene(thoughts(4)));
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(4));
+    expect(self(), without);
+
+    // Thirteen stacked notes outgrow the spare space; they still start on
+    // the surface (below the app bar), and the centre yields only the rest.
+    await tester.pumpWidget(scene(thoughts(13)));
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(13));
+    final top = tester.getRect(find.byType(InnerCircleInteractiveSurface)).top;
+    final bubbleTops = [
+      for (final element in find.byType(OrbitThoughtNoteBubble).evaluate())
+        tester.getRect(find.byWidget(element.widget)).top,
+    ];
+    expect(bubbleTops.reduce(math.min), greaterThanOrEqualTo(top));
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 2));
+  });
 
   testWidgets(
     'deadline removes note without store/sweep changes and reloads host',

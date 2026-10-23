@@ -16,7 +16,7 @@ void main() {
             geometry: OrbitGeometryPrefs.defaults,
           ).seats;
           final sizes = {
-            for (final seat in seats) seat.index: Size(96, noteHeight),
+            for (final seat in seats) seat.index: Size(150, noteHeight),
           };
           final positions = OrbitThoughtSwim().resolve(
             seats: seats,

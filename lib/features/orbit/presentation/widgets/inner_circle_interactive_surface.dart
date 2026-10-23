@@ -861,8 +861,6 @@ class _InnerCircleInteractiveSurfaceState
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // 205 item 4: fixed centering spacer (see build()).
-                            SizedBox(height: centerTopInset),
                             Listener(
                               key: const ValueKey(
                                 'orbit-thought-pinch-surface',
@@ -883,6 +881,8 @@ class _InnerCircleInteractiveSurfaceState
                                   nowProvider: widget.nowProvider,
                                   thoughtSwim: _thoughtSwim,
                                   thoughtVisibility: _thoughtReveal.value,
+                                  // 205 item 4: centering spacer (see build()).
+                                  topInset: centerTopInset,
                                   thoughtClock:
                                       (_thoughtClock
                                               .lastElapsedDuration
