@@ -9,3 +9,9 @@ abstract class SecureKeyStore {
   Future<void> delete(String key);
   Future<bool> containsKey(String key);
 }
+
+/// Full inventory required by explicit local account erasure, including keys
+/// whose database references have already been removed.
+abstract interface class SecureKeyStoreInventory {
+  Future<Map<String, String>> readAll();
+}

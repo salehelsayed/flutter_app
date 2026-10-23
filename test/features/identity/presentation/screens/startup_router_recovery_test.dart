@@ -91,6 +91,14 @@ class _SecondAuthorityReadThrowingSecureKeyStore extends FakeSecureKeyStore {
   }
 }
 
+class _SilentAccountEraseFailureStore extends FakeSecureKeyStore {
+  @override
+  Future<void> delete(String key) async {
+    if (key == 'identity_ml_kem_secret_key_ring') return;
+    await super.delete(key);
+  }
+}
+
 class _AuthorityBecomesActiveOnSecondReadSecureKeyStore
     extends FakeSecureKeyStore {
   _AuthorityBecomesActiveOnSecondReadSecureKeyStore({
@@ -230,6 +238,7 @@ void main() {
   }
 
   Widget buildRouterApp({
+    FakeSecureKeyStore? sharedSecureKeyStore,
     Future<void>? initialShareIntentCapture,
     Future<void> Function()? ensureRuntimeServicesReady,
     Future<void> Function()? afterP2PNodeStarted,
@@ -305,6 +314,7 @@ void main() {
         invalidateAppVisibility: invalidateAppVisibility,
         retireCanonicalNotificationBinding: retireCanonicalNotificationBinding,
         eraseLocalAccountDatabase: eraseLocalAccountDatabase ?? () async {},
+        sharedSecureKeyStore: sharedSecureKeyStore,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
         consumeInitialIosApnsNotificationOpen:
@@ -658,10 +668,29 @@ void main() {
       var authorityExistedDuringRecoveryClear = false;
       const databaseKey = 'test-database-key';
       await secureKeyStore.write('db_encryption_key', databaseKey);
+      const retiredAccountKeys = [
+        'identity_ml_kem_secret_key_ring',
+        'fdc09_received_wake_tokens',
+        'media_attachment_encryption_key:orphan-media',
+      ];
+      for (final key in retiredAccountKeys) {
+        await secureKeyStore.write(key, 'retired-account-fixture');
+      }
+      await secureKeyStore.write('image_quality_preference', 'high');
+      final sharedSecureKeyStore = FakeSecureKeyStore();
+      await sharedSecureKeyStore.write(
+        'identity_ml_kem_secret_key',
+        'shared-key-fixture',
+      );
+      await sharedSecureKeyStore.write(
+        'group_key:orphan-group:2',
+        'group-key-fixture',
+      );
       final cleanupOrder = <String>[];
 
       await tester.pumpWidget(
         buildRouterApp(
+          sharedSecureKeyStore: sharedSecureKeyStore,
           invalidateAppVisibility: () {
             cleanupOrder.add('visibility-invalidated');
           },
@@ -711,6 +740,11 @@ void main() {
         'database-erased',
       ]);
       expect(await secureKeyStore.read('db_encryption_key'), isNull);
+      for (final key in retiredAccountKeys) {
+        expect(await secureKeyStore.read(key), isNull, reason: key);
+      }
+      expect(await secureKeyStore.read('image_quality_preference'), 'high');
+      expect(await sharedSecureKeyStore.readAll(), isEmpty);
       expect(authorityExistedDuringRecoveryClear, isTrue);
       expect(
         deliveredClearCount,
@@ -834,6 +868,55 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'secure-storage erase readback failure preserves blocked authority',
+    (tester) async {
+      secureKeyStore = _SilentAccountEraseFailureStore();
+      const peerId = '12D3KooWMigratedOutSecureFailure';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(peerId: peerId),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.migratedOut,
+        accountPeerId: peerId,
+      );
+      await secureKeyStore.write('db_encryption_key', 'retained-key');
+      await secureKeyStore.write(
+        'identity_ml_kem_secret_key_ring',
+        'retired-key-fixture',
+      );
+      var databaseErased = false;
+      await tester.pumpWidget(
+        buildRouterApp(
+          eraseLocalAccountDatabase: () async {
+            databaseErased = true;
+          },
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-confirm')),
+      );
+      await pumpFrames(tester);
+
+      expect(databaseErased, isTrue);
+      expect(await secureKeyStore.read('db_encryption_key'), 'retained-key');
+      expect(
+        (await SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: secureKeyStore,
+        ).loadAuthority())?.state,
+        AccountMigrationAuthorityState.migratedOut,
+      );
+      expect(p2pService.startNodeCallCount, 0);
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      expect(find.byType(SnackBar), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'database erase failure preserves the key and migrated-out authority',

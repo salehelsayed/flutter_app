@@ -34,6 +34,9 @@ void main() {
           if (storageWriteFails) {
             throw PlatformException(code: 'secure_write_failed');
           }
+          if (call.method == 'readAll') {
+            return <String, String>{'orphan-key': 'fixture-value'};
+          }
           return null;
         });
   });
@@ -44,6 +47,18 @@ void main() {
   });
 
   group('FlutterSecureKeyStore', () {
+    test(
+      'inventory exposes stored entries and propagates platform failure',
+      () async {
+        final store = FlutterSecureKeyStore(
+          authorityMutationPublisher: publisher,
+        );
+        expect(await store.readAll(), {'orphan-key': 'fixture-value'});
+        storageWriteFails = true;
+        await expectLater(store.readAll(), throwsA(isA<PlatformException>()));
+      },
+    );
+
     test('defaults to app-only Apple keychain scope', () {
       final store = FlutterSecureKeyStore();
 

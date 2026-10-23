@@ -268,6 +268,7 @@ class StartupRouter extends StatefulWidget {
 
   /// The secure key store for preference storage.
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? sharedSecureKeyStore;
 
   /// The image processor for EXIF stripping and compression.
   final ImageProcessor imageProcessor;
@@ -481,6 +482,7 @@ class StartupRouter extends StatefulWidget {
     this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.sharedSecureKeyStore,
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
@@ -1553,15 +1555,12 @@ class _StartupRouterState extends State<StartupRouter> {
     await eraseDatabase();
     final staging = MigrationSecureStorageStaging(
       primaryStore: widget.secureKeyStore,
-      sharedStore: widget.secureKeyStore,
+      sharedStore: widget.sharedSecureKeyStore,
     );
     await MigrationSecureStorageCleanup(staging: staging).eraseAccount(
       registryKeys: MigrationSecureStorageRegistry.resolve(),
       explicitLocalReset: true,
     );
-    await SecureKeyStoreAccountMigrationAuthorityRepository(
-      secureKeyStore: widget.secureKeyStore,
-    ).clearAuthority();
   }
 
   Future<bool> _handleInitialPushOpen() async {

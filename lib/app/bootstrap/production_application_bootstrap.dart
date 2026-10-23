@@ -10393,6 +10393,7 @@ final class ProductionApplicationBootstrap
         transportMetrics: transportMetrics,
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
+        sharedSecureKeyStore: sharedPushKeyStore,
         imageProcessor: imageProcessor,
         audioRecorderService: audioRecorderService,
         privateMediaOutboxE2EController: privateMediaOutboxE2EController,

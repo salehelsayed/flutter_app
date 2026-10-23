@@ -19,7 +19,7 @@ const mknoonSharedAppleAccessGroup = '397R9Q4WMX.group.com.mknoon.app.share';
 /// - iOS: kSecAttrAccessibleWhenUnlockedThisDeviceOnly — keys stay on-device,
 ///   inaccessible while locked, excluded from iCloud/iTunes backups.
 /// - Android: EncryptedSharedPreferences backed by Android Keystore.
-class FlutterSecureKeyStore implements SecureKeyStore {
+class FlutterSecureKeyStore implements SecureKeyStore, SecureKeyStoreInventory {
   final FlutterSecureStorage _storage;
   final String? appleAccessGroup;
   final DroppedPushRecoveryAuthorityMutationPublisher?
@@ -69,7 +69,8 @@ class FlutterSecureKeyStore implements SecureKeyStore {
     action: _storage.deleteAll,
   );
 
-  /// Read-back used to prove the dedicated namespace is empty after reset.
+  /// Inventory for account erasure and disposable namespace verification.
+  @override
   Future<Map<String, String>> readAll() => _storage.readAll();
 
   Future<void> _mutate({

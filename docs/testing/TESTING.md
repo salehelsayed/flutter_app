@@ -8783,8 +8783,44 @@ synchronous setup and interleave real event-loop turns with widget frames until
 the actual erase callback settles; fake-time pumping or awaiting the dialog
 only inside `runAsync` does not settle native file I/O. Initial fixture failures
 and the pre-fix filesystem/confirmation RED results remain in the owning
-worktree's `.codex-test-logs/erase-account-media-20261023/`. This is host evidence;
-the post-fix device erase/relaunch proof remains flutter_app-owned and pending.
+worktree's `.codex-test-logs/erase-account-media-20261023/`. Kayan subsequently
+reported the media erase/relaunch device proof passed (`m-452e0107`), but the
+secure-storage count falling from 20 to nine did not identify or clear all
+account-owned entries.
+
+The ensuing source audit found that reset passed only the fixed migration
+registry, leaving historical ML-KEM private keys, peer wake tokens/call handles,
+retry peer lists, transport/cutover metadata, orphaned group/media decryption
+keys, and incomplete secure-storage transfer staging outside cleanup. Explicit
+local reset now inventories each available application secure store before any
+secure-key deletion and deletes entries individually with presence readback.
+Only six primary-store app settings survive: `background_preference`,
+`image_quality_preference`, `video_quality_preference`,
+`orbit_geometry_prefs_v1`, `media_download_preferences`, and
+`settings_always_relay_calls`. Their preservation policy is centralized in
+`MigrationSecureStorageRegistry`; migration export/promotion policies remain
+unchanged. Shared-store entries are all account data. Production now forwards
+the actual iOS shared secure store to reset, rather than aliasing the primary
+store. Media/database erasure still precedes secure cleanup; inventory or
+ordinary-key deletion/readback failure retains the database key and blocked
+authority, and authority is deleted last. Android storage-provider encryption
+metadata is outside the plugin's application-key inventory, so encrypted XML
+entry counts alone cannot certify account erasure.
+
+The secure-storage regression failed in both the cleanup unit test and the
+confirmed startup erase flow before the fix. The final host run passed 105
+tests across startup/database, bootstrap, secure storage, migration preservation
+and media erasure, with zero failures/skips and a clean analyzer for 12 changed
+Dart files. Fixtures prove all six settings survive, orphaned/staged account
+keys are removed, primary/shared stores are distinct, and inventory/deletion
+failures remain blocked. The first GREEN attempt's compile failure and stale
+DTR-18 pins are retained; the pin-chain proof reconstructs the approved
+`921bfe759 -> 473810a6d -> current` source changes without relaxing the historical
+callback or ownership assertions. Evidence is in the erase worktree's
+`.codex-test-logs/erase-secure-storage-20261023/`. The scoped wrapper reports
+omitted checks as `NOT RUN`; these host results do not certify a new device or
+release candidate. The complete secure-storage device proof remains
+flutter_app-owned and pending.
 
 A two-file diagnostic rerun reproduced both failures (43 passed, two failed,
 9.470 seconds); focused failed-case reruns also failed. Sanitized follow-up

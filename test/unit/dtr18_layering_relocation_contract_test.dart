@@ -235,8 +235,10 @@ const _privacySha256 =
 // and the modal call messenger. Existing owners and resume dispatch stay put.
 // Group B captures and awaits the existing consent decision before releasing
 // presentation suppression; the root owner and import floor are unchanged.
+// 2026-10-23: forward the existing iOS shared secure store to account erasure.
+// No application owner or resume dispatch moves.
 const _applicationRootNormalizedSha256 =
-    'd1d09ac0d4ac4fc69957cfc07e70beed2d1114785cc835cc81800932e683c19f';
+    '254ac920e2916b799c6446effb2367d82562fb7f5462576c6d30b0019c09a7a0';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -294,6 +296,10 @@ const _applicationRootNormalizedSha256 =
 // at the same listener construction; no bootstrap owner or adapter moves.
 // Live quality loaders add only app-owned preference reads. The exact owner
 // diff reconstructs both prior pins; see quality-pref-live/pin-chain-proof.json.
+// 2026-10-23: include approved media erasure from 473810a6d and forward the
+// existing shared secure store. The app-owned database callback and ownership
+// remain in place; erase-secure-storage-20261023/dtr18-pin-chain-proof.json
+// records the 921bfe759 -> 473810a6d -> current digest chain.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -397,7 +403,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '4a893b761ddb5c7110bd075cce1ee8196616404c26ac633fb3b3e49cd044ea10';
+    'e25e28655dd52de6480b59adee5c4900931a83f5dd67826a585f64607694ad2b';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -419,8 +425,10 @@ const _productionBootstrapNormalizedSha256 =
 // app-owned P2P responsibility are unchanged. Both bootstrap pins cover this.
 // The same Group B gate callback changes this remainder; the historical
 // notification proof injection remains byte-identical and unique.
+// The same approved media erasure/shared-store wiring changes this remainder;
+// the exact historical notification callback remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '2c84ce34827c26336092621c6b33096a3bc3e8c91f8e0154c5943852571ec33b';
+    '0c0dfc115e3f574efa19ea70cf00bb59cd2d9104aa2b9de958fd1f488eaf13d2';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

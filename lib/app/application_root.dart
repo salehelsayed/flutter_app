@@ -518,6 +518,7 @@ class MyApp extends StatefulWidget {
   final TransportMetrics? transportMetrics;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? sharedSecureKeyStore;
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
   final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
@@ -700,6 +701,7 @@ class MyApp extends StatefulWidget {
     this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.sharedSecureKeyStore,
     required this.imageProcessor,
     required this.audioRecorderService,
     this.privateMediaOutboxE2EController,
@@ -3568,6 +3570,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           transportMetrics: widget.transportMetrics,
           mediaFileManager: widget.mediaFileManager,
           secureKeyStore: widget.secureKeyStore,
+          sharedSecureKeyStore: widget.sharedSecureKeyStore,
           imageProcessor: widget.imageProcessor,
           audioRecorderService: widget.audioRecorderService,
           conversationTracker: widget.conversationTracker,

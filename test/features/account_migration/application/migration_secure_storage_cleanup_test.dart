@@ -7,6 +7,27 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
+class _FailingEraseStore extends FakeSecureKeyStore {
+  _FailingEraseStore(this.failure);
+
+  final String failure;
+
+  @override
+  Future<Map<String, String>> readAll() {
+    if (failure == 'inventory') throw StateError('inventory unavailable');
+    return super.readAll();
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    if (key == 'identity_private_key') {
+      if (failure == 'silent') return;
+      if (failure == 'delete') throw StateError('deletion unavailable');
+    }
+    await super.delete(key);
+  }
+}
+
 void main() {
   group('MigrationSecureStorageCleanup', () {
     late FakeSecureKeyStore primaryStore;
@@ -22,6 +43,124 @@ void main() {
         sharedStore: sharedStore,
       );
       cleanup = MigrationSecureStorageCleanup(staging: staging);
+    });
+
+    test(
+      'explicit reset erases unregistered account secrets and preserves app preferences',
+      () async {
+        const accountKeys = [
+          'identity_ml_kem_secret_key_ring',
+          'fdc09_wake_tokens',
+          'fdc09_received_wake_tokens',
+          'vc2_issued_call_wake_handles_v1',
+          'vc2_received_call_wake_handles_v1',
+          'mlkem_reannounce_pending',
+          'wake_token_pending',
+          'wake_token_distribution_scheduled_v1',
+          'group_device_announce_pending',
+          'push_registration_transport_peer_id',
+          'account_migration_cutover:v1',
+          'group_secrets_scrubbed',
+          'group_key_material:orphan-group:2',
+          'media_attachment_encryption_key:orphan-media',
+          'account_migration:staging:v1:old-session:primary:identity_private_key',
+          'account_migration:promoted:v1:old-session',
+          'future_account_secret',
+        ];
+        const preferences = [
+          'background_preference',
+          'image_quality_preference',
+          'video_quality_preference',
+          'orbit_geometry_prefs_v1',
+          'media_download_preferences',
+          'settings_always_relay_calls',
+        ];
+        for (final name in accountKeys) {
+          await primaryStore.write(name, 'retired-account-fixture');
+        }
+        for (final name in preferences) {
+          await primaryStore.write(name, 'app-preference-fixture');
+        }
+        await sharedStore.write(
+          'group_key:orphan-group:2',
+          'group-key-fixture',
+        );
+        await sharedStore.write('group_muted:orphan-group', '1');
+
+        await cleanup.eraseAccount(
+          registryKeys: MigrationSecureStorageRegistry.resolve(),
+          explicitLocalReset: true,
+        );
+
+        for (final name in accountKeys) {
+          expect(await primaryStore.read(name), isNull, reason: name);
+        }
+        for (final name in preferences) {
+          expect(
+            await primaryStore.read(name),
+            'app-preference-fixture',
+            reason: name,
+          );
+        }
+        expect(await sharedStore.read('group_key:orphan-group:2'), isNull);
+        expect(await sharedStore.read('group_muted:orphan-group'), isNull);
+        expect(
+          (await primaryStore.readAll()).keys.toSet(),
+          preferences.toSet(),
+        );
+        expect(await sharedStore.readAll(), isEmpty);
+      },
+    );
+
+    for (final failure in ['inventory', 'delete', 'silent']) {
+      test(
+        'explicit reset retains blocked authority after $failure failure',
+        () async {
+          final store = _FailingEraseStore(failure);
+          final authorityKey =
+              SecureKeyStoreAccountMigrationAuthorityRepository.storageKey;
+          await store.write(authorityKey, 'blocked-authority-fixture');
+          await store.write('db_encryption_key', 'database-key-fixture');
+          await store.write('identity_private_key', 'private-key-fixture');
+
+          await expectLater(
+            MigrationSecureStorageCleanup(
+              staging: MigrationSecureStorageStaging(primaryStore: store),
+            ).eraseAccount(
+              registryKeys: MigrationSecureStorageRegistry.resolve(),
+              explicitLocalReset: true,
+            ),
+            throwsStateError,
+          );
+
+          expect(await store.read(authorityKey), 'blocked-authority-fixture');
+          expect(await store.read('db_encryption_key'), 'database-key-fixture');
+          expect(
+            await store.read('identity_private_key'),
+            'private-key-fixture',
+          );
+        },
+      );
+    }
+
+    test('shared inventory failure occurs before primary deletion', () async {
+      await primaryStore.write('identity_private_key', 'private-key-fixture');
+      await expectLater(
+        MigrationSecureStorageCleanup(
+          staging: MigrationSecureStorageStaging(
+            primaryStore: primaryStore,
+            sharedStore: _FailingEraseStore('inventory'),
+          ),
+        ).eraseAccount(
+          registryKeys: MigrationSecureStorageRegistry.resolve(),
+          explicitLocalReset: true,
+        ),
+        throwsStateError,
+      );
+      expect(
+        await primaryStore.read('identity_private_key'),
+        'private-key-fixture',
+      );
     });
 
     test(
@@ -62,7 +201,12 @@ void main() {
               : sharedStore;
           expect(
             await store.read(key.activeKey),
-            isNull,
+            key.scope == MigrationSecureStoreScope.primary &&
+                    MigrationSecureStorageRegistry
+                        .accountErasePreservedPrimaryKeys
+                        .contains(key.activeKey)
+                ? 'active:${key.activeKey}'
+                : isNull,
             reason: key.activeKey,
           );
         }
