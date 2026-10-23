@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -156,7 +157,12 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('1 attachment'), findsOneWidget);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(1),
+      );
 
       await tester.ensureVisible(find.text('Post'));
       await tester.tap(find.text('Post'));
@@ -275,7 +281,12 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
 
-      expect(find.text('2 attachments'), findsOneWidget);
+      expect(
+        tester
+            .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+            .attachments,
+        hasLength(2),
+      );
 
       await tester.ensureVisible(find.text('Post'));
       await tester.tap(find.text('Post'));
