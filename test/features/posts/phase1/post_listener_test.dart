@@ -353,6 +353,51 @@ void main() {
       ]);
     });
 
+    test(
+      'releases the ack once the media rows are saved, before the download',
+      () async {
+        contacts.addTestContact(_contact('peer-bob', 'Bob'));
+        final download = Completer<PostMediaAttachmentModel>();
+        final slow = PostListener(
+          postCreateStream: controller.stream,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          hydratePostMediaFn: ({required attachment, required postId}) =>
+              download.future,
+        );
+        listener.dispose();
+        slow.start();
+        addTearDown(slow.dispose);
+
+        controller.add(
+          _message(
+            'peer-bob',
+            'Bob',
+            postId: 'photo',
+            mediaKind: 'image',
+            confirmNonce: 'nonce-media',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        expect(download.isCompleted, isFalse);
+        expect(
+          (await posts.loadPostMediaAttachments('photo')).map(
+            (m) => m.downloadStatus,
+          ),
+          ['pending'],
+        );
+        expect(bridge.payloadsFor('message:confirm'), [
+          {'nonce': 'nonce-media', 'ok': true},
+        ]);
+
+        download.completeError(StateError('offline'));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(bridge.payloadsFor('message:confirm'), hasLength(1));
+      },
+    );
+
     test('releases the ack for a duplicate thought', () async {
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
       controller.add(_message('peer-bob', 'Bob'));

@@ -105,6 +105,13 @@ class PostListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     final (HandleIncomingPostResult, PostModel?) outcome;
+    var confirmed = false;
+    Future<void> confirmStored() async {
+      if (confirmed) return;
+      confirmed = true;
+      await _maybeConfirmDirectNonce(message, ok: true);
+    }
+
     try {
       final ownMlKemSecretKey = getOwnMlKemSecretKey == null
           ? null
@@ -118,11 +125,14 @@ class PostListener {
         ownMlKemSecretKey: ownMlKemSecretKey,
         hydratePostMediaFn: hydratePostMediaFn,
         nowProvider: now,
+        // Media downloads can outlast the sender's ack window; the thought and
+        // its media keys are already saved, so release the ack first.
+        onDurablyStored: confirmStored,
       );
     } catch (error) {
       // Nothing final happened, so the sender keeps custody: Go withholds its
       // ack and the sender falls back to the relay inbox.
-      await _maybeConfirmDirectNonce(message, ok: false);
+      if (!confirmed) await _maybeConfirmDirectNonce(message, ok: false);
       emitFlowEvent(
         layer: 'FL',
         event: 'POST_LISTENER_ERROR',
@@ -132,7 +142,7 @@ class PostListener {
     }
     // Every returned result is final (stored, duplicate, or rejected for
     // good), so the sender's Go node may release its ack.
-    await _maybeConfirmDirectNonce(message, ok: true);
+    await confirmStored();
     final (result, post) = outcome;
     if (result != HandleIncomingPostResult.postCreated || post == null) {
       emitFlowEvent(

@@ -40,6 +40,9 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   HydratePostMediaFn? hydratePostMediaFn,
   MediaFileManager? mediaFileManager,
   DateTime Function()? nowProvider,
+  /// Runs once the thought and every media row (with its keys) are saved,
+  /// before any media download.
+  Future<void> Function()? onDurablyStored,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -142,6 +145,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
       isStillEligible: isStillEligible,
       mediaFileManager: mediaFileManager,
+      onDurablyStored: onDurablyStored,
     );
     if (!await isStillEligible()) {
       await postRepo.deletePostCascade(mergedPost.id);
@@ -186,6 +190,7 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
     isStillEligible: isStillEligible,
     mediaFileManager: mediaFileManager,
+    onDurablyStored: onDurablyStored,
   );
   if (!await isStillEligible()) {
     await postRepo.deletePostCascade(post.id);
@@ -261,11 +266,13 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
   HydratePostMediaFn? hydratePostMediaFn,
   List<PostMediaAttachmentModel> existingMedia =
       const <PostMediaAttachmentModel>[],
+  Future<void> Function()? onDurablyStored,
 }) async {
   final existingById = <String, PostMediaAttachmentModel>{
     for (final attachment in existingMedia) attachment.mediaId: attachment,
   };
   final storedMedia = <PostMediaAttachmentModel>[];
+  final pendingAttachments = <PostMediaAttachmentModel>[];
   for (final attachment in incomingMedia) {
     if (!await isStillEligible()) return const [];
     final preservedAttachment = existingById[attachment.mediaId];
@@ -286,6 +293,12 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
       isEncrypted: cryptoEntry != null ? true : null,
     );
     await postRepo.savePostMediaAttachment(pendingAttachment);
+    pendingAttachments.add(pendingAttachment);
+  }
+  await onDurablyStored?.call();
+
+  for (final pendingAttachment in pendingAttachments) {
+    if (!await isStillEligible()) return const [];
     if (hydratePostMediaFn == null) {
       storedMedia.add(pendingAttachment);
       continue;
@@ -307,7 +320,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
         event: hydrateErrorEvent,
         details: {
           'postId': postId,
-          'mediaId': attachment.mediaId,
+          'mediaId': pendingAttachment.mediaId,
           'error': e.toString(),
         },
       );
