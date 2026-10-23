@@ -7,7 +7,7 @@ AVD="${1:?avd}"; PORT="${2:?port}"
 [[ "$PORT" =~ ^55(5[4-9]|[6-8][0-9])$ ]] || { echo "refused port" >&2; exit 2; }
 SDK="$HOME/Library/Android/sdk"; SERIAL="emulator-$PORT"
 if adb devices | grep -q "^$SERIAL"; then echo "$SERIAL already attached"; exit 0; fi
-nohup "$SDK/emulator/emulator" -avd "$AVD" -port "$PORT" -no-window -no-snapshot-load -no-boot-anim \
+nohup "$SDK/emulator/emulator" -avd "$AVD" -port "$PORT" -no-window -no-audio -no-snapshot-load -no-boot-anim \
   -netdelay none -netspeed full > "/tmp/emulator_${AVD}_$PORT.log" 2>&1 < /dev/null &
 echo "launched $AVD pid=$!"
 for i in $(seq 1 72); do
