@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
@@ -107,12 +108,52 @@ void main() {
         expect(submitted!.text, isEmpty);
         expect(submitted!.audience.kind, PostAudienceKind.allFriends);
         expect(submitted!.mediaDrafts.single, same(draft));
-        await tester.tap(find.byIcon(Icons.close_rounded));
+        await tester.tap(find.byIcon(Icons.close));
         await tester.pump();
         expect(share(tester).onPressed, isNull);
       },
     );
   }
+
+  testWidgets('picked photos show as thumbnails that remove one by one', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      scene(
+        media: () async => const [
+          PostMediaDraft(localFilePath: '/tmp/one.jpg', mime: 'image/jpeg'),
+          PostMediaDraft(localFilePath: '/tmp/two.jpg', mime: 'image/jpeg'),
+        ],
+        submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+      ),
+    );
+    await tester.tap(find.text('Media'));
+    await tester.pump();
+    AttachmentPreviewStrip strip() =>
+        tester.widget(find.byType(AttachmentPreviewStrip));
+    expect(strip().attachments.map((file) => file.path), [
+      '/tmp/one.jpg',
+      '/tmp/two.jpg',
+    ]);
+    await tester.tap(find.byIcon(Icons.close).first);
+    await tester.pump();
+    expect(strip().attachments.map((file) => file.path), ['/tmp/two.jpg']);
+  });
+
+  testWidgets('nobody to share with explains inside the sheet, keeps text', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      scene(submit: (_) async => ComposePostSubmitOutcome.nobodyToShareWith),
+    );
+    await tester.enterText(find.byType(TextField), 'Hello');
+    await tester.pump();
+    expect(find.text('Add a friend to share your thoughts'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tester.pump();
+    expect(find.text('Add a friend to share your thoughts'), findsOneWidget);
+    expect(find.text('Hello'), findsOneWidget);
+  });
 
   testWidgets(
     'voice uses the shared recorder and preserves its waveform draft',

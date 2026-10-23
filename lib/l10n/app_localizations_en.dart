@@ -196,6 +196,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_compose_lifetime => 'Your friends see this for 24 hours';
 
   @override
+  String get thought_compose_nobody_to_share_with =>
+      'Add a friend to share your thoughts';
+
+  @override
   String get thought_compose_open => 'Share a thought';
 
   @override

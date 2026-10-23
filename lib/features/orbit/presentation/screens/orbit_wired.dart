@@ -956,6 +956,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 unawaited(_deliverThought(repository, local));
                 return ComposePostSubmitOutcome.closeSheet;
               }
+              if (result == SendPostResult.noEligibleRecipients) {
+                return ComposePostSubmitOutcome.nobodyToShareWith;
+              }
             } catch (error) {
               _reportThoughtFailure(error);
             }

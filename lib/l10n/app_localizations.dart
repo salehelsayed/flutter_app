@@ -448,6 +448,12 @@ abstract class AppLocalizations {
   /// **'Your friends see this for 24 hours'**
   String get thought_compose_lifetime;
 
+  /// No description provided for @thought_compose_nobody_to_share_with.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a friend to share your thoughts'**
+  String get thought_compose_nobody_to_share_with;
+
   /// No description provided for @thought_compose_open.
   ///
   /// In en, this message translates to:

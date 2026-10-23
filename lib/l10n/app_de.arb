@@ -65,6 +65,7 @@
   "thought_compose_title": "Gedanken teilen",
   "thought_compose_share": "Teilen",
   "thought_compose_lifetime": "Deine Freunde sehen diesen Gedanken 24 Stunden lang",
+  "thought_compose_nobody_to_share_with": "Füge einen Freund hinzu, um Gedanken zu teilen",
   "thought_compose_open": "Gedanken teilen",
   "thought_notification_title": "{name} hat einen Gedanken geteilt",
   "compose_title": "Beitrag erstellen",

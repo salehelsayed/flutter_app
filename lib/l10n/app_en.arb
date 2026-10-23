@@ -65,6 +65,7 @@
   "thought_compose_title": "Share a thought",
   "thought_compose_share": "Share",
   "thought_compose_lifetime": "Your friends see this for 24 hours",
+  "thought_compose_nobody_to_share_with": "Add a friend to share your thoughts",
   "thought_compose_open": "Share a thought",
   "thought_notification_title": "{name} shared a thought",
   "@thought_notification_title": {

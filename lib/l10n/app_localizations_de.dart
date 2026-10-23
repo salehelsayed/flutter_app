@@ -203,6 +203,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Deine Freunde sehen diesen Gedanken 24 Stunden lang';
 
   @override
+  String get thought_compose_nobody_to_share_with =>
+      'Füge einen Freund hinzu, um Gedanken zu teilen';
+
+  @override
   String get thought_compose_open => 'Gedanken teilen';
 
   @override

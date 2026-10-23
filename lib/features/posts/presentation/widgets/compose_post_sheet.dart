@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
@@ -27,7 +29,7 @@ class ComposePostResult {
   });
 }
 
-enum ComposePostSubmitOutcome { closeSheet, keepSheetOpen }
+enum ComposePostSubmitOutcome { closeSheet, keepSheetOpen, nobodyToShareWith }
 
 class ComposePostSheet extends StatefulWidget {
   /// The live Orbit composer shares only with friends. Dormant Posts callers
@@ -88,6 +90,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
+  bool _nobodyToShareWith = false;
   final AmplitudeBuffer _amplitudeBuffer = AmplitudeBuffer(size: 24);
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<double>? _amplitudeSubscription;
@@ -156,6 +159,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       );
       if (outcome == ComposePostSubmitOutcome.closeSheet && mounted) {
         Navigator.of(context).pop();
+      } else if (outcome == ComposePostSubmitOutcome.nobodyToShareWith &&
+          mounted) {
+        setState(() => _nobodyToShareWith = true);
       }
     } finally {
       if (mounted) {
@@ -757,7 +763,21 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       ],
                     ),
                   ],
-                  if (_mediaDrafts.isNotEmpty) ...[
+                  if (_mediaDrafts.isNotEmpty &&
+                      _mediaDrafts.first.kind != 'voice') ...[
+                    const SizedBox(height: 12),
+                    AttachmentPreviewStrip(
+                      attachments: [
+                        for (final draft in _mediaDrafts)
+                          File(draft.localFilePath),
+                      ],
+                      onRemove: (index) => setState(
+                        () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+                      ),
+                    ),
+                  ],
+                  if (_mediaDrafts.isNotEmpty &&
+                      _mediaDrafts.first.kind == 'voice') ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
@@ -858,6 +878,15 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       AppLocalizations.of(context)!.thought_compose_lifetime,
                       style: const TextStyle(color: Colors.white70),
                     ),
+                    if (_nobodyToShareWith) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        AppLocalizations.of(
+                          context,
+                        )!.thought_compose_nobody_to_share_with,
+                        style: const TextStyle(color: Color(0xFFFFB4A9)),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                   ],
                   SizedBox(

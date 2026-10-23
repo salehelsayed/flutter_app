@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -35,7 +36,12 @@ void main() {
     await tester.tap(find.text('Media'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2 attachments'), findsOneWidget);
+    expect(
+      tester
+          .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+          .attachments,
+      hasLength(2),
+    );
 
     await tester.tap(find.text('Post'));
     await tester.pumpAndSettle();

@@ -672,6 +672,13 @@ void main() {
       await pumpOrbitFrames(tester, count: 6);
       expect(find.byType(ComposePostSheet), findsOneWidget);
       expect(find.text('Keep my draft'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ComposePostSheet),
+          matching: find.text('Add a friend to share your thoughts'),
+        ),
+        findsOneWidget,
+      );
       expect(await posts.loadFeed(), isEmpty);
       expect(p2pService.storeInInboxCallCount, 0);
       await finishThoughtCase(tester);
