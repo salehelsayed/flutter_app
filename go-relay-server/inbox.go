@@ -1357,7 +1357,10 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			}
 			return buildUnusableEnvelopeFallbackPushMessage(token, fallback, fromPeerId)
 		}
-		message := buildCiphertextOnlyPushMessage(token, data, fromPeerId)
+		message := buildCiphertextOnlyPushMessage(token, data, fromPeerId, messaging.ApsAlert{
+			Title: pushNotificationTitle,
+			Body:  pushNotificationBody,
+		})
 		if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(message) {
 			// Oversized media envelope: FCM would reject the silent ciphertext-only
 			// push (>4 KB). Drop the encrypted payload and keep only routing. Android
@@ -1373,6 +1376,11 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 			return buildOversizedFallbackPushMessage(token, fallback, fromPeerId)
 		}
 		return message
+	}
+	if metadata.PostID != "" {
+		if encrypted := buildEncryptedPostCreatePushMessage(token, fromPeerId, metadata, message); encrypted != nil {
+			return encrypted
+		}
 	}
 
 	resolvedTitle := metadata.SenderUsername
@@ -1427,6 +1435,9 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 	}
 	if metadata.MessageID != "" {
 		data["message_id"] = metadata.MessageID
+	}
+	if metadata.PostID != "" {
+		data["post_id"] = metadata.PostID
 	}
 	if metadata.SenderUsername != "" {
 		data["sender_username"] = metadata.SenderUsername
@@ -1491,6 +1502,38 @@ func groupInviteAndroidNotificationTag(groupID, inviteID string) string {
 	return fmt.Sprintf("%s%x", groupInviteAndroidTagPrefix, digest[:16])
 }
 
+// buildEncryptedPostCreatePushMessage mirrors the new_message ciphertext-only
+// push for a thought whose envelope names its post_id. It returns nil when the
+// envelope has no usable encrypted block or would not fit the provider
+// budgets. The caller then sends the generic visible thought alert, because
+// the routing-only fallbacks know only new_message and group_message.
+func buildEncryptedPostCreatePushMessage(
+	token,
+	fromPeerId string,
+	metadata chatPushMetadata,
+	message string,
+) *messaging.Message {
+	data := map[string]string{
+		"type":      "post_create",
+		"sender_id": fromPeerId,
+		"post_id":   metadata.PostID,
+	}
+	if metadata.MessageID != "" {
+		data["message_id"] = metadata.MessageID
+	}
+	if !addChatEncryptedPushData(data, message) {
+		return nil
+	}
+	pushMessage := buildCiphertextOnlyPushMessage(token, data, fromPeerId, messaging.ApsAlert{
+		Title: postCreatePushTitle,
+		Body:  postCreatePushBody,
+	})
+	if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(pushMessage) {
+		return nil
+	}
+	return pushMessage
+}
+
 func buildGroupPushMessage(
 	token,
 	groupId,
@@ -1518,7 +1561,10 @@ func buildGroupPushMessage(
 		}
 		return buildUnusableEnvelopeFallbackPushMessage(token, fallback, groupId)
 	}
-	pushMessage := buildCiphertextOnlyPushMessage(token, data, groupId)
+	pushMessage := buildCiphertextOnlyPushMessage(token, data, groupId, messaging.ApsAlert{
+		Title: pushNotificationTitle,
+		Body:  pushNotificationBody,
+	})
 	if pushDataSize(data) > maxPushDataBytes || !messageFitsProviderBudgets(pushMessage) {
 		// Oversized group media envelope: same as the 1:1 path — drop the encrypted
 		// payload and keep only routing. Android renders locally after policy checks;
@@ -1538,15 +1584,17 @@ func buildGroupPushMessage(
 	return pushMessage
 }
 
-func buildCiphertextOnlyPushMessage(token string, data map[string]string, threadID string) *messaging.Message {
+func buildCiphertextOnlyPushMessage(
+	token string,
+	data map[string]string,
+	threadID string,
+	alert messaging.ApsAlert,
+) *messaging.Message {
 	aps := &messaging.Aps{
 		ContentAvailable: true,
 		MutableContent:   true,
 		Sound:            pushNotificationSound,
-		Alert: &messaging.ApsAlert{
-			Title: pushNotificationTitle,
-			Body:  pushNotificationBody,
-		},
+		Alert:            &alert,
 	}
 	if threadID != "" {
 		aps.ThreadID = threadID
@@ -1926,8 +1974,16 @@ func projectGroupPushMessageForPlatform(
 	return projected
 }
 
+// iosCustodyCollapseTypes lists the stored direct push types whose custody
+// retries collapse into one iOS notification.
+var iosCustodyCollapseTypes = map[string]bool{
+	"group_invite": true,
+	"new_message":  true,
+	"post_create":  true,
+}
+
 // projectStoredDirectPushMessageForPlatform adds a collapse identity only at
-// the stored-rich iOS group-invite and direct-message boundary. The relay
+// the stored-rich iOS group-invite, direct-message and thought boundary. The relay
 // custody UUID is stable across provider retries, while a separately stored row
 // receives a new UUID. Unknown platforms retain the incumbent fail-open
 // dual-copy projection and never inherit an iOS-only collapse header.
@@ -1943,7 +1999,7 @@ func projectStoredDirectPushMessageForPlatform(
 	}
 	if projected == nil ||
 		strings.ToLower(strings.TrimSpace(platform)) != "ios" ||
-		(messageType != "group_invite" && messageType != "new_message") ||
+		!iosCustodyCollapseTypes[messageType] ||
 		projected.APNS == nil {
 		return projected
 	}
@@ -2069,6 +2125,9 @@ type chatPushMetadata struct {
 	GroupID        string
 	GroupName      string
 	Body           string
+	// PostID is the thought's post id, carried in the clear on v2 post_create
+	// envelopes so the push can route before decryption. Empty for older senders.
+	PostID string
 	// IntroAction is the VALIDATED canonical introduction action ("send",
 	// "accept", "pass"). Empty when the envelope's canonical message ID is
 	// absent, malformed, or (for v1) conflicts with the cleartext payload
@@ -2188,6 +2247,7 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 			ShouldNotify: true,
 			RouteType:    "post_create",
 			MessageID:    trimmedString(envelope["event_id"]),
+			PostID:       trimmedString(envelope["post_id"]),
 			Body:         postCreatePushBody,
 		}
 	case "contact_request":

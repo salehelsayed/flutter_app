@@ -1054,6 +1054,132 @@ func TestInboxStore_PostCreateEnvelopeSendsGenericPush(t *testing.T) {
 	}
 }
 
+const postCreatePushFixtureWithPostID = `{"type":"post_create","version":"2","event_id":"thought-evt-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-from","post_id":"post-1","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+
+func TestBuildPostCreatePushMessage_WithPostIDRidesAsCiphertextOnlyPush(t *testing.T) {
+	msg := buildPushMessage("fcm-token", "peer-from", postCreatePushFixtureWithPostID)
+
+	wantData := map[string]string{
+		"type":             "post_create",
+		"sender_id":        "peer-from",
+		"message_id":       "thought-evt-1",
+		"post_id":          "post-1",
+		"envelope_version": "2",
+		"kem":              "k",
+		"ciphertext":       "c",
+		"nonce":            "n",
+	}
+	if !reflect.DeepEqual(msg.Data, wantData) {
+		t.Fatalf("data = %#v, want %#v", msg.Data, wantData)
+	}
+	if msg.Notification != nil {
+		t.Fatalf("notification = %#v, want none (ciphertext-only push)", msg.Notification)
+	}
+	if msg.Android == nil || msg.Android.Priority != "high" || msg.Android.Notification != nil {
+		t.Fatalf("android = %#v, want data-only high priority", msg.Android)
+	}
+	if got := msg.APNS.Headers["apns-push-type"]; got != "alert" {
+		t.Fatalf("apns-push-type = %q, want %q", got, "alert")
+	}
+	aps := msg.APNS.Payload.Aps
+	if !aps.MutableContent || !aps.ContentAvailable {
+		t.Fatalf("aps mutable-content=%v content-available=%v, want both true", aps.MutableContent, aps.ContentAvailable)
+	}
+	if aps.Alert == nil || aps.Alert.Title != "New thought" || aps.Alert.Body != "A friend shared a thought" {
+		t.Fatalf("aps alert = %#v, want generic thought copy", aps.Alert)
+	}
+	if aps.ThreadID != "peer-from" {
+		t.Fatalf("aps thread-id = %q, want sender %q", aps.ThreadID, "peer-from")
+	}
+	assertAPNSCustomString(t, msg, "post_id", "post-1")
+	assertAPNSCustomString(t, msg, "ciphertext", "c")
+}
+
+func TestBuildPostCreatePushMessage_FallsBackToGenericAlert(t *testing.T) {
+	oversized := `{"type":"post_create","version":"2","event_id":"thought-evt-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-from","post_id":"post-1","encrypted":{"kem":"` +
+		strings.Repeat("k", 1500) + `","ciphertext":"` + strings.Repeat("c", 5000) + `","nonce":"n"}}`
+	genericWithPostID := map[string]string{
+		"type":       "post_create",
+		"title":      "New thought",
+		"body":       "A friend shared a thought",
+		"message_id": "thought-evt-1",
+		"post_id":    "post-1",
+	}
+
+	cases := []struct {
+		name     string
+		envelope string
+		wantData map[string]string
+	}{
+		{
+			name:     "no post_id keeps today's alert byte for byte",
+			envelope: postCreatePushFixture,
+			wantData: map[string]string{
+				"type":       "post_create",
+				"title":      "New thought",
+				"body":       "A friend shared a thought",
+				"message_id": "thought-evt-1",
+			},
+		},
+		{
+			name:     "post_id without an encrypted block",
+			envelope: `{"type":"post_create","version":"2","event_id":"thought-evt-1","created_at":"2026-10-23T10:00:00Z","sender_peer_id":"peer-from","post_id":"post-1"}`,
+			wantData: genericWithPostID,
+		},
+		{
+			name:     "post_id with an oversized ciphertext",
+			envelope: oversized,
+			wantData: genericWithPostID,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := buildPushMessage("fcm-token", "peer-from", tc.envelope)
+			if msg == nil {
+				t.Fatal("thought push = nil, want the generic visible alert")
+			}
+			if !reflect.DeepEqual(msg.Data, tc.wantData) {
+				t.Fatalf("data = %#v, want %#v", msg.Data, tc.wantData)
+			}
+			if msg.Notification == nil || msg.Notification.Title != "New thought" ||
+				msg.Notification.Body != "A friend shared a thought" {
+				t.Fatalf("notification = %#v, want generic thought copy", msg.Notification)
+			}
+			if msg.Android == nil || msg.Android.Notification == nil || msg.Android.Notification.Title != "New thought" {
+				t.Fatalf("android = %#v, want a visible generic notification", msg.Android)
+			}
+			if msg.APNS.Payload.Aps.MutableContent {
+				t.Fatal("generic thought alert carries no ciphertext, so it must not ask the NSE to decrypt")
+			}
+			if !messageFitsProviderBudgets(msg) {
+				t.Fatal("generic thought alert must fit the provider budgets")
+			}
+		})
+	}
+}
+
+func TestProjectStoredDirectPushMessageForPlatform_PostCreateCollapsesOnIOSOnly(t *testing.T) {
+	for _, envelope := range []string{postCreatePushFixtureWithPostID, postCreatePushFixture} {
+		ios := projectStoredDirectPushMessageForPlatform(
+			buildPushMessage("fcm-token", "peer-from", envelope),
+			"ios",
+			"custody-thought-1",
+		)
+		if got, ok := tc395APNSCollapseID(ios); !ok || got != "custody-thought-1" {
+			t.Fatalf("ios collapse id = %q present=%v, want custody-thought-1 for %s", got, ok, envelope)
+		}
+		android := projectStoredDirectPushMessageForPlatform(
+			buildPushMessage("fcm-token", "peer-from", envelope),
+			"android",
+			"custody-thought-1",
+		)
+		if got, ok := tc395APNSCollapseID(android); ok {
+			t.Fatalf("android projection gained collapse id %q", got)
+		}
+	}
+}
+
 func TestExtractChatPushMetadata_SuppressesKeyExchangeRetryContactRequest(t *testing.T) {
 	metadata := extractChatPushMetadata(
 		`{"type":"contact_request","version":"2","intent":"key_exchange_retry","msgId":"req-1","senderUsername":"Alice","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`,
