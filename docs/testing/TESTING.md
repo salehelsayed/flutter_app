@@ -4632,7 +4632,24 @@ visible and cannot become an ordinary first-attempt PASS.
   in ignored `artifacts/relay-startup-20260916/`.
 
 - **Old pending-send notification boundary:** delivered-history suppression
-  does not establish an age policy for undelivered backlogs. A verified private
+  does not establish an age policy for undelivered backlogs. The separate
+  `go-relay-server/catalog_relay_recovery_test.go` protocol fixture exercises
+  the real framed relay handler over authenticated local mocknet streams and
+  production memory backends: seven-day direct/group expiry, retained exact-ID
+  pages, unchanged replay before exact ACK, expired group cursor gaps, recipient
+  authorization and later valid delivery. Its rejected-request sequence retains
+  earlier custody while malformed JSON, unknown actions, missing recipients and
+  spoofed senders fail through their exact error branches; later valid store/
+  retrieve/ACK succeeds without replacing hosts or stores. Streams have an
+  explicit owned reset bound because mocknet deadlines alone do not enforce it.
+  The focused three top-level cases and four rejection subcases pass with no
+  skips/failures, `GOMAXPROCS=4`, one package and `-p=4`; dependencies are
+  unchanged. Evidence in the Astra worktree is
+  `.codex-test-logs/astra-update-relay-sims/item2/001-rg-summary.json` and its
+  receipt. This is relay protocol/memory-backend proof, not Redis/process
+  durability, app decryption, the application's eight-generation key ring or a
+  native/mobile recovery result. It does not replace authored-age notification
+  policy or the broader registered Go sweep. A verified private
   iPhone incident on 2026-09-12 linked three 11:50:28 Berlin push receipts to
   message traces whose Android build 112 send attempts failed on September 9.
   The same authenticated sender started build 118 seconds before today's relay
