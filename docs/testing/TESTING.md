@@ -1273,8 +1273,17 @@ the call surface does; keep an explicit localized icon semantics label too.
 Reserve the close row without consuming the scroll body's previous vertical
 padding, so German store-failure copy keeps its retry button reachable. The
 existing gate and text-scale widget tests cover these boundaries; focused raw
-failure and passing evidence is under `.codex-test-logs/update-x/`. This is host
-evidence, not a signed-candidate or native-notification result.
+failure and passing evidence is under `.codex-test-logs/update-x/`. Store-launch
+recovery distinguishes refusal/throw from a successful handoff followed by return
+without installing: the latter must retain the required gate without a false
+launch error. A false-to-true retry clears stale localized failure feedback while
+the hard decision remains; the session X remains usable afterward. The unchanged
+EN/DE/AR cases plus the added retry case passed in the 31-case gate widget file,
+with zero skips/failures and a clean focused analyzer on 2026-10-23. Evidence in
+the Astra worktree is `.codex-test-logs/astra-update-relay-sims/item1/009-gate-summary.json`
+and `010-analyze.log`; earlier interrupted/held attempts remain preserved. This
+is injected host evidence, not an actual external-store, install, signed-candidate
+or native-notification result.
 
 The SE-41 production notification parser recognizes package-grouped Android
 PendingIntent headers (`#N: PendingIntentRecord{...}`) as well as legacy

@@ -155,8 +155,8 @@ header:
     proof: Real shared-logic joins and complementary causal preservation; not native OS/device or signed release certification.
     first_attempts: 005 stopped incomplete precache despite exit0; 006/008 library fixture timing/admission failures;
       007 private fixture compile error. Preserved, diagnosed, corrected; no app bug/skip introduced.
-    call_audio_constraint: 'Per m-17c52b26: Android-receiver no-hook energy proxy only; iPhone-receiver/content-proof
-      needs a test-build audio hook (not approved now). No call-content rating upgraded here.'
+    call_audio_constraint: 'Historical m-17c52b26 proxy allowance is superseded by current_partial_constraints below.
+      No call-content rating was upgraded by this host run.'
   group_d_device_run:
     date_utc: '2026-10-22'
     executor: flutter_app; relayed by Kayan m-f69e1bbe referencing m-0880d484
@@ -188,6 +188,11 @@ header:
       validation: Not included in the tested device source; no post-fix native proof from this run.
     availability_policy: Preserve actual environment failure; future unavailable alternate hardware/topology is N/A
       and cannot be required for closure. Astra did not discover targets.
+  current_partial_constraints: 'Owner decisions of 2026-10-22: VC-009/011/014/015/017/018/019 and CALL-007 remain
+    partial: needs the test-build audio hook (not approved). The no-hook energy proxy is not feasible. All 32 Lever2
+    native oracle routes remain NOT RUN / SOURCE_CAPTURE_NOT_WIRED (docs/testing/astra-lever2-device-status.md:3).
+    This ledger does not erase prior scoped Group C/D device observations or structural call proof; see also
+    docs/testing/lever3-run-a-call-device-evidence.md:78.'
 features:
 - id: IDENTITY
   name: Onboarding, identity and recovery
@@ -310,12 +315,12 @@ features:
 - id: UPDATE
   name: Signed update checks and update-required UI
   summary:
-    strong: 2
+    strong: 3
     partial: 6
-    missing: 1
+    missing: 0
     unknown: 0
-  biggest_gap: Real signed verification/cache policy exists; actual OS background wake/store launch and failed/cancelled
-    store recovery on exact candidate are incomplete.
+  biggest_gap: Signed verification/cache and shared required-gate recovery have host assertions; actual OS background
+    wake, external store behavior and the exact installed candidate remain separate.
 - id: TRANSPORT
   name: Cross-cutting discovery, reconnect and local/offline routing
   summary:
@@ -13479,12 +13484,12 @@ journeys:
   - Open each migrated attachment on receiver using native decoder/player/document viewer.
   - Compare full content/orientation/duration/caption and retry missing original honestly.
   conditions:
-    platform: executor-reported Android emulator pair; attempted local migration
-    connectivity: n/a
+    platform: executor-reported Android source to iOS simulator receiver; physical-iPhone receiver leg NOT RUN
+    connectivity: local network; completed transfer and cutover
     offline: n/a
     app_state: foreground
     input: actual migrated image/video/voice/PDF bytes
-    recovery: n/a
+    recovery: receiver terminate/relaunch; all four migrated media items reopened
   expected: Migrated full media is usable on receiver, beyond preserved metadata/path/hash.
   rating: partial
   tests:
@@ -13515,33 +13520,44 @@ journeys:
     proves: 'test/features/account_migration/application/account_migration_end_to_end_test.dart:739: Many verified
       segments retain all generated files/content hashes and account data; volume tests are not native photo/video/audio
       open tests. Registered: affected-storage, host-all. This volume case was not rerun in the scoped Group D packet.'
-  execution: blocked_environment
+  execution: device_run
   device_result:
-    status: BLOCKED_ENVIRONMENT_LOCAL_PEER_UNAVAILABLE
+    status: PASS
     summary:
-    - The launched Move Account attempt stopped at connecting with failureCode localPeerUnavailable between two emulators.
-      Executor attributes the block to separate netsim NATs.
-    - This is an actual attempted-run environment block, not migrated receiver/media preservation proof. Astra did
-      not diagnose networking or control either emulator.
-    - Use only a currently available, mutually reachable disposable migration pair for any follow-up. An unavailable
-      alternate hardware/topology leg is N/A by project policy; two absent physical LAN devices must not become a
-      mandatory closure condition.
+    - Scoped 2026-10-23 PASS reported by flutter_app on source cb02da5e9, Android source to iOS simulator receiver.
+      Migrated JPEG, MP4, M4A and PDF hashes match the source; the full photo, video, voice player and PDF opened.
+      After terminate/relaunch, the same four rows, captions/times and file hashes persisted and every item reopened.
+    - Receiver is an iOS simulator. The physical-iPhone receiver leg is NOT RUN after its UI automation prerequisite
+      blocked; no physical-iPhone receiver or signed release-candidate pass is inferred.
+    - QR was decoded from a simulator screenshot and entered through debug Paste migration QR; this is fixture entry,
+      not optical camera proof. Initial paste rejection from IME alteration and the first simulator build network-lookup
+      failure remain in the executor evidence; the simulator build retry and corrected paste completed.
+    - Voice fixture was silent; player progression/duration and exact file preservation do not prove intelligible
+      migrated audio. The old source showed its moved-account block after cutover. Astra inspected saved evidence only.
+    - Prior 2026-10-22 attempt remains BLOCKED_ENVIRONMENT_LOCAL_PEER_UNAVAILABLE before transfer completion between
+      two emulators; separate netsim NATs were the executor's diagnosis, not independently verified by Astra.
     evidence:
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:10
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:11
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:12
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:14
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:15
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:16
+    - /Volumes/CrucialX9/flutter_app/.codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:17
     - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:9
     - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_move_fail_log.txt:10
     - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_move_fail_log.txt:11
     - /Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/t011_source_media_hashes.txt:1
   gaps:
-  - Attempt blocked before transfer completion, so native SQLCipher/keychain migration, cutover and received photo/video/voice
-    preservation were not proven. Source-only media artifacts do not prove migrated content.
-  - Local-network repair/next attempt is flutter_app-owned using available targets. The suggested two-device LAN diagnosis
-    was reported by the executor, not independently verified here; unavailable replacement topology is N/A rather
-    than a hardware wait/release blocker.
+  - The scoped receiver PASS is iOS simulator only; physical-iPhone receiver leg NOT RUN and optical QR camera scanning
+    were not verified. Unavailable alternate targets are N/A by project policy, not mandatory hardware waits.
+  - Silent voice playback does not establish intelligible audio; missing-original recovery and a signed release candidate
+    were not verified. Rating remains partial.
   catalog_ids:
   - DC-019
   open_questions:
-  - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
-    provenance and scope.
+  - Execution by flutter_app; Astra inspected saved evidence only. The 2026-10-23 summary lines10-18 defines the scoped
+    simulator receiver PASS; the earlier Group D block remains historical evidence.
   - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
     above are retained; no rating upgrade.'
 - id: TRANSFER-012
@@ -15064,24 +15080,41 @@ journeys:
   - Have the platform store launcher reject, throw, or return without an install.
   - Retry or resume while the installed build is still old.
   conditions:
-    platform: Android/iOS store boundary
+    platform: shared Android/iOS root-gate logic; injected host store boundary
     connectivity: n/a
     offline: n/a
     app_state: foreground
-    input: failed/cancelled external store launch
+    input: false/throw handoff; successful handoff followed by return without installing
     recovery: retry and return without installing
   expected: The required state remains truthful and retryable; a failed/cancelled store action must not imply the
     installed app was updated.
-  rating: missing
-  tests: []
-  execution: not_run
+  rating: strong
+  tests:
+  - path: test/features/update_check/presentation/update_required_gate_test.dart
+    name: UPDATE-009 store handoff cannot clear the required root gate
+    kind: widget
+    real:
+    - UpdateRequiredGate in MaterialApp.builder inside ForegroundCallOverlay
+    - update controller and Back guard
+    - Flutter navigator, focus and semantics
+    faked:
+    - update service and installed-build/platform inputs
+    - call capability
+    - external store handoff result
+    proves: 'Existing EN/DE/AR false/throw/return cases retain the hard decision, localized recovery on refused or
+      thrown handoff, retry and the exact store target. The successful-retry case at line 156 clears stale failure
+      feedback, resumes without an install or a false error, and uses the build-126 session X. Existing Android
+      target and session-X tests remain unchanged. Verified 2026-10-23: all31 visible gate-suite cases PASS,0 skipped/failed,
+      runner done success,exit0; focused Flutter analyzer reports no issues. Evidence .codex-test-logs/astra-update-relay-sims/item1/009-gate-summary.json
+      and 010-analyze.log in the Astra worktree. Prior resource-aborted/held attempts remain preserved. Registered:
+      host-all, update-check.'
+  execution: host_run
   gaps:
-  - Inspected gate/banner tests inject successful recording launchers; no assertion found joining failed/cancelled
-    store launch to retained hard-gate state.
+  - Host launchers prove the shared UI contract; no real external store, native cancellation, installation or signed
+    candidate was exercised. A successful external handoff followed by user cancellation is modeled as return without
+    an install, not a false platform-launch failure.
   catalog_ids: []
-  open_questions:
-  - What visible feedback is required when the external store cannot open? Current success-target assertions do
-    not define it.
+  open_questions: []
 - id: TRANSPORT-001
   feature: TRANSPORT
   title: Known-contact discovery on same local Wi-Fi without public internet
@@ -16617,9 +16650,10 @@ gaps:
 - rank: 9
   journey_id: TRANSFER-011
   test_type: e2e
-  must_verify: After real transfer/cutover, open migrated full image/video/voice/PDF through actual supported decoder/player/viewer;
-    verify content, duration/orientation/caption and missing-original recovery.
-  why: Rows, paths and generated binary file hashes cannot prove usable migrated media.
+  must_verify: Preserve the scoped simulator receiver media-open/relaunch PASS; verify intelligible migrated voice
+    content and missing-original recovery on available targets.
+  why: Silent voice playback and exact-file preservation do not prove audibility or missing-original recovery. Physical-iPhone
+    receiver leg remains NOT RUN; unavailable alternate targets are N/A by project policy.
 - rank: 10
   journey_id: VC-026
   test_type: e2e
@@ -16687,24 +16721,18 @@ gaps:
     preserving original failed attempt.
   why: Fake bridges/object reconstruction and thumbnail visibility are insufficient for native full-content recovery.
 - rank: 21
-  journey_id: UPDATE-009
-  test_type: widget
-  must_verify: Inject store launcher false/throw/cancel into actual required-update root gate; verify localized
-    recovery, retained blocking policy and successful retry.
-  why: A required gate must remain truthful when external store handoff cannot complete.
-- rank: 22
   journey_id: VC-024
   test_type: e2e
   must_verify: Specify duration/resource thresholds, hold real bidirectional audio and test only actually available
     output accessories with positive audio continuity.
   why: Short RTP/control runs and sampler unit tests cannot prove sustained audio/resource behavior.
-- rank: 23
+- rank: 22
   journey_id: GX-001
   test_type: e2e
   must_verify: When eight concurrent app targets are actually available, expand role binding and exact every-sender/every-receiver
     dedupe assertions.
   why: Five fake peers and three/four actual actors do not prove eight-member scale; unavailable topology N/A.
-- rank: 24
+- rank: 23
   journey_id: NAV-006
   test_type: manual
   must_verify: Owner identifies concrete supported manual Inner-Circle membership/order entry, or confirms automatic

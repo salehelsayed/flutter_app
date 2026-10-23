@@ -152,6 +152,62 @@ void main() {
   }
 
   group('UPDATE-009 store handoff cannot clear the required root gate', () {
+    testWidgets(
+      'successful retry clears feedback and return without installing '
+      'keeps the gate without a false error',
+      (tester) async {
+        var attempts = 0;
+        await pumpApp(
+          tester,
+          storeLauncher: (target) async {
+            launches.add(target);
+            return ++attempts > 1;
+          },
+        );
+        final l10n = AppLocalizations.of(tester.element(find.byKey(_overlay)))!;
+        final recovery = find.text(l10n.update_required_store_failed);
+        expect(recovery, findsNothing);
+
+        await tester.tap(find.text('Update now'));
+        await tester.pumpAndSettle();
+        expect(recovery, findsOneWidget);
+        expect(find.byKey(_close).hitTestable(), findsOneWidget);
+        expect(guard.blocking, isTrue);
+
+        await tester.tap(find.text('Update now'));
+        await tester.pumpAndSettle();
+        expect(attempts, 2);
+        expect(launches, [
+          Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+          Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+        ]);
+        expect(recovery, findsNothing);
+
+        // Opening the store is not an installation. A resume that still returns
+        // the same hard decision must neither dismiss the gate nor invent a
+        // launcher failure after the successful handoff.
+        await resume(tester);
+        expect(service.checks, 2);
+        expect(controller.installedBuildNumber, '118');
+        expect(controller.value, _hard);
+        expect(find.byKey(_overlay), findsOneWidget);
+        expect(recovery, findsNothing);
+        expect(find.text('Update now').hitTestable(), findsOneWidget);
+        expect(guard.blocking, isTrue);
+        expect(await tester.binding.handlePopRoute(), isTrue);
+
+        // Build 126's session escape remains usable after failed and successful
+        // handoffs; it does not change the required decision or soft dismissal.
+        await tester.tap(find.byKey(_close));
+        await tester.pumpAndSettle();
+        expect(find.byKey(_overlay), findsNothing);
+        expect(guard.blocking, isFalse);
+        expect(find.text('home').hitTestable(), findsOneWidget);
+        expect(controller.value, _hard);
+        expect(service.dismissed, isEmpty);
+      },
+    );
+
     for (final copy in const [
       (Locale('en'), 'Please update Mknoon', 'Update now'),
       (Locale('de'), 'Bitte aktualisiere Mknoon', 'Jetzt aktualisieren'),
