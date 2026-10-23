@@ -15,6 +15,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../shared/fakes/recording_fake_bridge.dart';
 
 ContactModel _contact(
   String peerId,
@@ -40,9 +41,11 @@ ChatMessage _message(
   String? postId,
   String? text,
   String mediaKind = 'none',
+  String? confirmNonce,
+  DateTime? created,
 }) {
   final id = postId ?? 'post-$senderPeerId';
-  final createdAt = DateTime.now().toUtc().toIso8601String();
+  final createdAt = (created ?? DateTime.now()).toUtc().toIso8601String();
   final expiresAt = DateTime.now()
       .toUtc()
       .add(const Duration(days: 3))
@@ -80,7 +83,16 @@ ChatMessage _message(
     content: envelope.toJson(),
     timestamp: envelope.createdAt,
     isIncoming: true,
+    confirmNonce: confirmNonce,
   );
+}
+
+/// A store whose write fails the way a locked or full database does.
+class _FailingPostRepository extends InMemoryPostRepository {
+  @override
+  Future<void> savePost(PostModel post) async {
+    throw StateError('database is locked');
+  }
 }
 
 class _CancellingNotificationService extends FakeNotificationService
@@ -103,6 +115,7 @@ void main() {
   late InMemoryPostRepository posts;
   late _CancellingNotificationService notifications;
   late RecentRemoteNotificationGate remoteGate;
+  late RecordingFakeBridge bridge;
   late PostListener listener;
   var foreground = false;
 
@@ -116,10 +129,13 @@ void main() {
       filePath:
           '${Directory.systemTemp.path}/post-listener-remote-gate-${DateTime.now().microsecondsSinceEpoch}.json',
     );
+    bridge = RecordingFakeBridge()
+      ..whenCommand('message:confirm', (_) => '{"ok":true}');
     listener = PostListener(
       postCreateStream: controller.stream,
       postRepo: posts,
       contactRepo: contacts,
+      bridge: bridge,
       notificationService: notifications,
       isAppForegroundActive: () async => foreground,
       remoteNotificationGate: remoteGate,
@@ -239,4 +255,90 @@ void main() {
       expect((await posts.loadFeed()), hasLength(1));
     },
   );
+
+  group('deferred direct ack', () {
+    test('releases the ack once the thought is stored', () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      controller.add(_message('peer-bob', 'Bob', confirmNonce: 'nonce-stored'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-stored', 'ok': true},
+      ]);
+    });
+
+    test('releases the ack for a duplicate thought', () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      controller.add(_message('peer-bob', 'Bob'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      controller.add(_message('peer-bob', 'Bob', confirmNonce: 'nonce-dup'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-dup', 'ok': true},
+      ]);
+    });
+
+    test('releases the ack for thoughts rejected for good', () async {
+      contacts.addTestContact(_contact('peer-eve', 'Eve', blocked: true));
+      contacts.addTestContact(_contact('peer-old', 'Old'));
+
+      controller.add(_message('peer-stranger', 'Stranger', confirmNonce: 'nonce-unknown'));
+      controller.add(_message('peer-eve', 'Eve', confirmNonce: 'nonce-blocked'));
+      controller.add(
+        _message(
+          'peer-old',
+          'Old',
+          confirmNonce: 'nonce-expired',
+          created: DateTime.now().subtract(const Duration(hours: 25)),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.loadFeed(), isEmpty);
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-unknown', 'ok': true},
+        {'nonce': 'nonce-blocked', 'ok': true},
+        {'nonce': 'nonce-expired', 'ok': true},
+      ]);
+    });
+
+    test('withholds the ack when the store fails', () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final failingPosts = _FailingPostRepository();
+      final failing = PostListener(
+        postCreateStream: controller.stream,
+        postRepo: failingPosts,
+        contactRepo: contacts,
+        bridge: bridge,
+      )..start();
+      listener.stop();
+      addTearDown(() {
+        failing.dispose();
+        failingPosts.dispose();
+      });
+
+      controller.add(_message('peer-bob', 'Bob', confirmNonce: 'nonce-fail'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await failingPosts.loadFeed(), isEmpty);
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-fail', 'ok': false},
+      ]);
+    });
+
+    test('sends no confirm for a thought without a nonce', () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      controller.add(_message('peer-bob', 'Bob'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(bridge.calledCommands, isEmpty);
+    });
+  });
 }

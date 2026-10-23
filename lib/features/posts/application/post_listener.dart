@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -98,19 +99,36 @@ class PostListener {
   }
 
   Future<void> _onMessage(ChatMessage message) async {
-    final ownMlKemSecretKey = getOwnMlKemSecretKey == null
-        ? null
-        : await getOwnMlKemSecretKey!();
-    final (result, post) = await handleIncomingPost(
-      message: message,
-      postRepo: postRepo,
-      contactRepo: contactRepo,
-      bridge: bridge,
-      mediaFileManager: mediaFileManager,
-      ownMlKemSecretKey: ownMlKemSecretKey,
-      hydratePostMediaFn: hydratePostMediaFn,
-      nowProvider: now,
-    );
+    final (HandleIncomingPostResult, PostModel?) outcome;
+    try {
+      final ownMlKemSecretKey = getOwnMlKemSecretKey == null
+          ? null
+          : await getOwnMlKemSecretKey!();
+      outcome = await handleIncomingPost(
+        message: message,
+        postRepo: postRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        mediaFileManager: mediaFileManager,
+        ownMlKemSecretKey: ownMlKemSecretKey,
+        hydratePostMediaFn: hydratePostMediaFn,
+        nowProvider: now,
+      );
+    } catch (error) {
+      // Nothing final happened, so the sender keeps custody: Go withholds its
+      // ack and the sender falls back to the relay inbox.
+      await _maybeConfirmDirectNonce(message, ok: false);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_LISTENER_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return;
+    }
+    // Every returned result is final (stored, duplicate, or rejected for
+    // good), so the sender's Go node may release its ack.
+    await _maybeConfirmDirectNonce(message, ok: true);
+    final (result, post) = outcome;
     if (result != HandleIncomingPostResult.postCreated || post == null) {
       emitFlowEvent(
         layer: 'FL',
@@ -170,6 +188,27 @@ class PostListener {
         layer: 'FL',
         event: 'POST_LISTENER_RETIRE_FAILED',
         details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  /// Releases (ok) or withholds (not ok) the deferred direct ack the sender's
+  /// Go node is waiting for. A thought without a confirmNonce, such as a
+  /// relay-inbox replay, needs nothing.
+  Future<void> _maybeConfirmDirectNonce(
+    ChatMessage message, {
+    required bool ok,
+  }) async {
+    final nonce = message.confirmNonce;
+    final bridge = this.bridge;
+    if (bridge == null || nonce == null || nonce.isEmpty) return;
+    try {
+      await callP2PConfirmDirectMessage(bridge, nonce: nonce, ok: ok);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_LISTENER_CONFIRM_NONCE_ERROR',
+        details: {'nonce': nonce, 'error': error.toString(), 'ok': ok},
       );
     }
   }
