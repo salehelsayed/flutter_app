@@ -303,8 +303,9 @@ const _applicationRootNormalizedSha256 =
 // 2026-10-23: retain one existing export source and await its stale-artifact
 // sweep before exposing the transfer runtime. The historical notification
 // callback and all app-owned composition responsibilities stay in place.
-// Account erase also removes owned notification claims before database/key cleanup.
-// Both pins retain the exact historical callback; see erase-notification-claims-20261023/dtr18-pin-proof.json.
+// Account erase removes owned notification state from support and the iOS
+// shared container before database/key cleanup, preserving disposable isolation.
+// Both pins retain the exact historical callback; see erase-notification-state-20261023/dtr18-pin-proof.json.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -408,7 +409,7 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '2a545454a62e485d5680b01db03e04fb6174908edd9f1a79e054a96ebf7ca108';
+    '4ee3c4a26440b576963391e7f9ba0491e03569b854b807cadc3844c8b4132920';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -433,7 +434,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same approved media erasure/shared-store wiring changes this remainder;
 // the exact historical notification callback remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'cbb6abf252f1a3e9548c975c997be6a942e2ec5b9413c93aee4a65951884b2de';
+    '87a55249188fb3a49669f311335e867311ae1c5381ed7444be8963327f2115ae';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -9054,13 +9054,28 @@ back, and a media/database cleanup failure preserves the database key and
 retired-account authority and reaches the existing failure UI. Only the blocked-account screen exposes
 the shipping erase action; its confirmation still precedes all cleanup.
 
-The same callback also removes the support-directory `ReactionNotificationClaims`
-namespace before database/key erasure, including message-ID dedupe markers and
-tone bookkeeping. A missing namespace is an ordinary successful no-op. The
-focused `erase_account_notification_claims_test.dart` uses the production claim
-writer, verifies removal and unrelated-file preservation, and repeats cleanup
-after the namespace is absent. Evidence is under
-`.codex-test-logs/erase-notification-claims-20261023/`; Pixel proof is separate.
+The same callback awaits `eraseAccountNotificationState` before database/key
+erasure. It removes `ReactionNotificationClaims`, `NotificationConversationIds`
+(including its ledger), `PendingConversationNotificationOverlay`, recent-remote
+JSON/account/alias files, and the corresponding direct iOS dedupe/tone/proof
+namespaces. Cleanup covers app support plus the normal iOS App Group container;
+the disposable iOS profile retains its existing local-only isolation. An
+unavailable shared container emits a fixed reason and is skipped; actual
+deletion/readback failures preserve the database key and retired authority.
+Missing entries are successful no-ops;
+containers, unrelated files and the persisted App Group path survive.
+
+The Pixel follow-up in `.codex-test-logs/erase-claims-20261023T2103Z/SUMMARY.md`
+found the registry, overlay lock and account marker surviving the initial
+claims-only cleanup. Registry owners contain conversation hashes; the overlay
+disk file is an empty lock, while its content is covered by secure-store erase.
+An account marker may contain the null-binding tombstone rather than an ID.
+The single `erase_account_notification_state_test.dart` uses the real claim,
+tone, registry, overlay and recent-remote writers in temporary support/shared
+containers, verifies removal, preserves unrelated/configuration files, and
+repeats cleanup after entries are absent. Evidence is under
+`.codex-test-logs/erase-notification-state-20261023/`; host shared-path coverage
+does not establish device or out-of-process NSE erasure proof.
 
 The focused host run passed all 59 cases across media erasure, startup recovery,
 database-file erasure and secure-storage cleanup, with zero failures/skips and a
