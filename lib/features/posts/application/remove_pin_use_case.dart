@@ -75,7 +75,7 @@ Future<(RemovePinResult, PostPinStateModel?)> removePin({
   await postRepo.clearPinDismissal(post.id);
 
   final envelope = PostPinRemoveEnvelope.buildJson(pinState: removedPinState);
-  final deliveryResult = await queueAndSendPostPinFollowOn(
+  final deliveryResult = await queueAndSendPostFollowOn(
     postRepo: postRepo,
     p2pService: p2pService,
     eventId: removedPinState.eventId,

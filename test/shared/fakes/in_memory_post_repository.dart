@@ -541,7 +541,7 @@ class InMemoryPostRepository implements PostRepository {
       final retryableDeliveries =
           (_followOnOutboxDeliveriesByEventId[event.eventId] ??
                   const <PostFollowOnOutboxRecipientDelivery>[])
-              .where((delivery) => !delivery.isSettled)
+              .where((delivery) => delivery.isRetryable)
               .toList(growable: false);
       if (retryableDeliveries.isEmpty) {
         continue;

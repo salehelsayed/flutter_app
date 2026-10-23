@@ -210,6 +210,20 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_compose_open => 'Gedanken teilen';
 
   @override
+  String get thought_delete => 'Löschen';
+
+  @override
+  String get thought_delete_confirm_title => 'Diesen Gedanken löschen?';
+
+  @override
+  String get thought_delete_confirm_body =>
+      'Er verschwindet bei dir und deinen Freunden.';
+
+  @override
+  String get thought_delete_failed =>
+      'Löschen nicht möglich. Versuch es noch mal.';
+
+  @override
   String thought_notification_title(String name) {
     return '$name hat einen Gedanken geteilt';
   }

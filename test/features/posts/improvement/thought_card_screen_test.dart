@@ -67,6 +67,7 @@ void main() {
     String authorName = 'Alice',
     bool messageable = true,
     VoidCallback? onMessage,
+    Future<void> Function(String postId)? onDelete,
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
@@ -92,6 +93,7 @@ void main() {
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
             onMessage: messageable ? (onMessage ?? () {}) : null,
+            onDelete: onDelete,
             downloadMedia:
                 download ??
                 (_) async => throw StateError('Unexpected media download'),
@@ -174,7 +176,108 @@ void main() {
     expect(find.byType(FilledButton), findsNothing);
     expect(posts.focusedIds, isEmpty);
     expect((await posts.getPost('thought-1'))!.isRead, isFalse);
+    expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
     await finish(tester);
+  });
+
+  group('own card Delete', () {
+    late PostModel mine;
+    late LoadOrbitThoughtsUseCase query;
+    var deletes = 0;
+
+    setUp(() async {
+      deletes = 0;
+      mine = _thought(initialNow).copyWith(
+        senderPeerId: 'local-peer',
+        authorPeerId: 'local-peer',
+        authorUsername: 'Me',
+        isIncoming: false,
+      );
+      await posts.savePost(mine);
+      query = LoadOrbitThoughtsUseCase(
+        postRepo: posts,
+        contactRepo: contacts,
+        nowProvider: () => now,
+      );
+    });
+
+    Future<void> openOwnCard(
+      WidgetTester tester, {
+      required Future<void> Function(String postId) onDelete,
+    }) async {
+      await openCard(
+        tester,
+        mine,
+        authorName: 'You',
+        messageable: false,
+        loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
+        onDelete: onDelete,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('thought-delete')));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete this thought?'), findsOneWidget);
+    }
+
+    testWidgets("a friend's card has no Delete", (tester) async {
+      await posts.savePost(_thought(initialNow));
+      await openCard(tester, _thought(initialNow));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('Cancel keeps the thought and the card', (tester) async {
+      await openOwnCard(tester, onDelete: (_) async => deletes++);
+
+      await tester.tap(find.byKey(const ValueKey('thought-delete-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete this thought?'), findsNothing);
+      expect(deletes, 0);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+      expect(await posts.getPost('thought-1'), isNotNull);
+      await finish(tester);
+    });
+
+    testWidgets('confirming Delete deletes the thought and closes the card', (
+      tester,
+    ) async {
+      final deletedIds = <String>[];
+      await openOwnCard(
+        tester,
+        onDelete: (postId) async {
+          deletedIds.add(postId);
+          await posts.deletePostCascade(postId);
+        },
+      );
+
+      await tester.tap(find.byKey(const ValueKey('thought-delete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(deletedIds, ['thought-1']);
+      expect(await posts.getPost('thought-1'), isNull);
+      expect(find.byType(ThoughtCardScreen), findsNothing);
+      expect(navigationObserver.poppedNames, contains('thought-card'));
+      expect(find.text('orbit-home'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a failed delete keeps the card and says so', (tester) async {
+      await openOwnCard(
+        tester,
+        onDelete: (_) async => throw StateError('database closed'),
+      );
+
+      await tester.tap(find.byKey(const ValueKey('thought-delete-confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      expect(find.text('Couldn’t delete. Try again.'), findsOneWidget);
+      expect(await posts.getPost('thought-1'), isNotNull);
+      await finish(tester);
+    });
   });
 
   testWidgets('does not mark an unvalidated or blocked thought read', (

@@ -460,6 +460,30 @@ abstract class AppLocalizations {
   /// **'Share a thought'**
   String get thought_compose_open;
 
+  /// No description provided for @thought_delete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get thought_delete;
+
+  /// No description provided for @thought_delete_confirm_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this thought?'**
+  String get thought_delete_confirm_title;
+
+  /// No description provided for @thought_delete_confirm_body.
+  ///
+  /// In en, this message translates to:
+  /// **'It disappears for you and your friends.'**
+  String get thought_delete_confirm_body;
+
+  /// No description provided for @thought_delete_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t delete. Try again.'**
+  String get thought_delete_failed;
+
   /// No description provided for @thought_notification_title.
   ///
   /// In en, this message translates to:

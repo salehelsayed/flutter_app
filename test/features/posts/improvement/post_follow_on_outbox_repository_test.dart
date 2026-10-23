@@ -58,6 +58,43 @@ void main() {
     );
   }
 
+  test('an expired retraction row is never loaded for retry again', () async {
+    final repository = buildRepository();
+    addTearDown(repository.dispose);
+    const event = PostFollowOnOutboxEvent(
+      eventId: 'evt-retract-1',
+      eventType: 'post_retract',
+      postId: 'post-1',
+      senderPeerId: 'peer-bob',
+      rawEnvelope: '{"type":"post_retract"}',
+      createdAt: '2026-03-16T10:00:00.000Z',
+    );
+    await repository.saveFollowOnOutboxEvent(event);
+    const failed = PostFollowOnOutboxRecipientDelivery(
+      eventId: 'evt-retract-1',
+      recipientPeerId: 'peer-cara',
+      deliveryStatus: 'failed',
+      deliveryPath: 'inbox',
+      createdAt: '2026-03-16T10:00:00.000Z',
+      updatedAt: '2026-03-16T10:00:00.000Z',
+    );
+    await repository.saveFollowOnOutboxRecipientDelivery(failed);
+    expect(await repository.loadRetryableFollowOnOutboxJobs(), hasLength(1));
+
+    await repository.saveFollowOnOutboxRecipientDelivery(
+      failed.copyWith(
+        deliveryStatus: 'expired',
+        updatedAt: '2026-03-17T10:01:00.000Z',
+      ),
+    );
+
+    expect(await repository.loadRetryableFollowOnOutboxJobs(), isEmpty);
+    final rows = await repository.loadFollowOnOutboxRecipientDeliveries(
+      'evt-retract-1',
+    );
+    expect(rows.map((row) => row.deliveryStatus), ['expired']);
+  });
+
   test(
     'repository round-trip preserves outbox rows and retryable loading excludes settled recipients',
     () async {

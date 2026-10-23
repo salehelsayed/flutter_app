@@ -741,6 +741,51 @@ void main() {
       },
     );
 
+    testWidgets(
+      'deleting the own thought from its card clears the self note',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(
+          thought('own-live', text: 'Delete me').copyWith(
+            senderPeerId: testIdentity.peerId,
+            authorPeerId: testIdentity.peerId,
+            authorUsername: testIdentity.username,
+            isIncoming: false,
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final ownNote = find.byKey(const ValueKey('orbit-thought-note-self'));
+        expect(ownNote, findsOneWidget);
+
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-thought-tap-own-live')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('thought-delete')));
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byKey(const ValueKey('thought-delete-confirm')));
+        await pumpOrbitFrames(tester, count: 12);
+
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(ownNote, findsNothing);
+        expect(await posts.getPost('own-live'), isNull);
+        expect(mediaFileManager.deletedPostIds, ['own-live']);
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('a voice-only thought note reads "Voice message"', (
       tester,
     ) async {

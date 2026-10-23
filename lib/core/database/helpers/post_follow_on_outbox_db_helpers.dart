@@ -61,7 +61,7 @@ Future<List<Map<String, Object?>>> dbLoadRetryablePostFollowOnOutboxEvents(
         SELECT 1
         FROM post_follow_on_outbox_recipient_deliveries d
         WHERE d.event_id = e.event_id
-          AND d.delivery_status NOT IN ('delivered', 'inbox')
+          AND d.delivery_status NOT IN ('delivered', 'inbox', 'expired')
       )
       ORDER BY e.created_at ASC, e.event_id ASC
     ''',
@@ -80,11 +80,12 @@ dbLoadRetryablePostFollowOnOutboxRecipientDeliveries(
   return db.query(
     'post_follow_on_outbox_recipient_deliveries',
     where:
-        'event_id IN ($placeholders) AND delivery_status NOT IN (?, ?)',
+        'event_id IN ($placeholders) AND delivery_status NOT IN (?, ?, ?)',
     whereArgs: <Object?>[
       ...eventIds,
       'delivered',
       'inbox',
+      'expired',
     ],
     orderBy: 'created_at ASC, event_id ASC, recipient_peer_id ASC',
   );

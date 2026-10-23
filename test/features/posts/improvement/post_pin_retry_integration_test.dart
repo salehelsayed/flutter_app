@@ -57,7 +57,7 @@ void main() {
   });
 
   test(
-    'retryPostPinFollowOnJob honors the 25 recipient default cap for unresolved pin recipients',
+    'a queued follow-on retry honors the 25 recipient default cap for unresolved pin recipients',
     () async {
       const createdAt = '2026-03-15T11:25:00.000Z';
       const eventId = 'evt-pin-retry-default-cap';
@@ -107,10 +107,12 @@ void main() {
       }
 
       final job = (await postRepo.loadRetryableFollowOnOutboxJobs()).single;
-      final retryFuture = retryPostPinFollowOnJob(
+      final retryFuture = deliverQueuedPostFollowOn(
         postRepo: postRepo,
         p2pService: service,
-        job: job,
+        eventId: job.event.eventId,
+        envelope: job.event.rawEnvelope,
+        deliveries: job.recipientDeliveries,
       );
 
       await service.waitForSendCount(25);

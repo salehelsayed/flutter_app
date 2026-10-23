@@ -8,6 +8,7 @@ import 'package:flutter_app/core/notifications/recent_remote_notification_gate.d
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/handle_incoming_post_retract_use_case.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -16,6 +17,9 @@ import 'package:flutter_app/features/push/application/notification_preview_copy.
 
 class PostListener {
   final Stream<ChatMessage> postCreateStream;
+
+  /// Authors deleting a thought every friend was sent.
+  final Stream<ChatMessage> postRetractStream;
   final PostRepository postRepo;
   final ContactRepository contactRepo;
   final Bridge? bridge;
@@ -35,10 +39,12 @@ class PostListener {
   hydratePostMediaFn;
 
   StreamSubscription<ChatMessage>? _subscription;
+  StreamSubscription<ChatMessage>? _retractSubscription;
   final _postController = StreamController<PostModel>.broadcast();
 
   PostListener({
     required this.postCreateStream,
+    this.postRetractStream = const Stream<ChatMessage>.empty(),
     required this.postRepo,
     required this.contactRepo,
     this.bridge,
@@ -56,11 +62,34 @@ class PostListener {
   void start() {
     if (_subscription != null) return;
     _subscription = postCreateStream.listen(_onMessage);
+    _retractSubscription = postRetractStream.listen(_onRetract);
   }
 
   void stop() {
     _subscription?.cancel();
     _subscription = null;
+    _retractSubscription?.cancel();
+    _retractSubscription = null;
+  }
+
+  Future<void> _onRetract(ChatMessage message) async {
+    try {
+      final (result, postId) = await handleIncomingPostRetract(
+        message: message,
+        postRepo: postRepo,
+        mediaFileManager: mediaFileManager,
+      );
+      if (result == HandleIncomingPostRetractResult.thoughtDeleted &&
+          postId != null) {
+        await _cancelThoughtCard(postId);
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_LISTENER_RETRACT_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   void dispose() {

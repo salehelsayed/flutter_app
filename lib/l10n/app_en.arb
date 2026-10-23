@@ -67,6 +67,10 @@
   "thought_compose_lifetime": "Your friends see this for 24 hours",
   "thought_compose_nobody_to_share_with": "Add a friend to share your thoughts",
   "thought_compose_open": "Share a thought",
+  "thought_delete": "Delete",
+  "thought_delete_confirm_title": "Delete this thought?",
+  "thought_delete_confirm_body": "It disappears for you and your friends.",
+  "thought_delete_failed": "Couldn’t delete. Try again.",
   "thought_notification_title": "{name} shared a thought",
   "@thought_notification_title": {
     "placeholders": {

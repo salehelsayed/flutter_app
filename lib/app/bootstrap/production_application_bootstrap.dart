@@ -6802,6 +6802,7 @@ final class ProductionApplicationBootstrap
     final postListener = PostListener(
       mediaFileManager: mediaFileManager,
       postCreateStream: messageRouter.postCreateStream,
+      postRetractStream: messageRouter.postRetractStream,
       postRepo: postRepository,
       contactRepo: contactRepository,
       notificationService: notificationService,

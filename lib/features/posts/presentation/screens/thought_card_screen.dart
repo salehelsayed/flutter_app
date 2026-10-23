@@ -17,7 +17,7 @@ import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 /// One author's current thought, without the retired Posts engagement controls.
 ///
 /// The host decides whose thought this is: a friend's card offers Message, the
-/// user's own card (a null [onMessage]) has no action yet.
+/// user's own card offers Delete.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
@@ -27,6 +27,7 @@ class ThoughtCardScreen extends StatefulWidget {
     required this.loadCurrentThought,
     required this.onMessage,
     required this.downloadMedia,
+    this.onDelete,
     this.eligibilityChanges,
     this.nowProvider,
   });
@@ -38,6 +39,10 @@ class ThoughtCardScreen extends StatefulWidget {
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
   final VoidCallback? onMessage;
+
+  /// Deletes the displayed thought for everyone. Completes once the local copy
+  /// is gone; throws when it could not be deleted.
+  final Future<void> Function(String postId)? onDelete;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   downloadMedia;
   final Stream<void>? eligibilityChanges;
@@ -69,6 +74,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   bool _refreshing = false;
   bool _refreshAgain = false;
   bool _closing = false;
+  bool _deleting = false;
   int _mediaReadGeneration = 0;
 
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
@@ -380,6 +386,46 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     if (mounted && !_closing) _markWhenShown();
   }
 
+  Future<void> _confirmDelete() async {
+    final onDelete = widget.onDelete;
+    if (onDelete == null || _deleting || _closing || !_isLive) return;
+    final l10n = AppLocalizations.of(context)!;
+    final postId = _post.id;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.thought_delete_confirm_title),
+        content: Text(l10n.thought_delete_confirm_body),
+        actions: [
+          TextButton(
+            key: const ValueKey('thought-delete-cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.btn_cancel),
+          ),
+          FilledButton(
+            key: const ValueKey('thought-delete-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.thought_delete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted || _closing || _post.id != postId) {
+      return;
+    }
+    setState(() => _deleting = true);
+    try {
+      await onDelete(postId);
+      _close();
+    } catch (_) {
+      if (!mounted || _closing) return;
+      setState(() => _deleting = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.thought_delete_failed)));
+    }
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -441,25 +487,39 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 ],
               ),
             ),
-      bottomNavigationBar: visible && onMessage != null
-          ? SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: FilledButton.icon(
-                  key: const ValueKey('thought-message'),
-                  onPressed: () {
-                    if (!_isLive) {
-                      _close();
-                      return;
-                    }
-                    _close(afterClose: onMessage);
-                  },
-                  icon: const Icon(Icons.chat_bubble_outline),
-                  label: Text(l10n.pinned_message(widget.authorName)),
-                ),
+      bottomNavigationBar: !visible
+          ? null
+          : onMessage != null
+          ? _bottomAction(
+              FilledButton.icon(
+                key: const ValueKey('thought-message'),
+                onPressed: () {
+                  if (!_isLive) {
+                    _close();
+                    return;
+                  }
+                  _close(afterClose: onMessage);
+                },
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: Text(l10n.pinned_message(widget.authorName)),
+              ),
+            )
+          : widget.onDelete != null
+          ? _bottomAction(
+              OutlinedButton.icon(
+                key: const ValueKey('thought-delete'),
+                onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
+                icon: const Icon(Icons.delete_outline),
+                label: Text(l10n.thought_delete),
               ),
             )
           : null,
+    );
+  }
+
+  Widget _bottomAction(Widget button) {
+    return SafeArea(
+      child: Padding(padding: const EdgeInsets.all(16), child: button),
     );
   }
 

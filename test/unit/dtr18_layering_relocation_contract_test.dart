@@ -393,7 +393,9 @@ const _productionBootstrapNormalizedSha256 =
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
     // Plan 407 fixes: PostListener receives the remote notification gate.
-    '9a4a34db7f9a77d9742dc4a453ff5f5acb6f0d09b359ce6e6ca11b28893cd6bd';
+    // Plan 407 fixes: PostListener receives the router's post_retract stream,
+    // so an author can delete a thought for everyone. No owner moves.
+    '8b98a25527dc8268c10f4b188af219d90130a30b84863786ddef9ae23bf0f2f6';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -413,8 +415,10 @@ const _productionBootstrapNormalizedSha256 =
 // Plan 407: reviewed thought expiry/recovery wiring and disabled nearby publishing.
 // Plan 407 fixes: thought cards skip the foreground and retire once opened.
 // Plan 407 fixes: PostListener receives the remote notification gate.
+// Plan 407 fixes: the same post_retract stream line described at the
+// bootstrap digest above; the database proof callback is unchanged.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'a180cfd04ab67ff0afc7d6deedb097574e6da241d6b9687e99f275246d37d29e';
+    '01d20c7a74b143c1a20720550779ceaf26356e689a3489c3eb2067df3f45da41';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

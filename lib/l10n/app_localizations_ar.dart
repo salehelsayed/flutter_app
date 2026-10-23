@@ -198,6 +198,18 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_open => 'شارك خاطرة';
 
   @override
+  String get thought_delete => 'حذف';
+
+  @override
+  String get thought_delete_confirm_title => 'حذف هذه الخاطرة؟';
+
+  @override
+  String get thought_delete_confirm_body => 'ستختفي عندك وعند أصدقائك.';
+
+  @override
+  String get thought_delete_failed => 'تعذّر الحذف. حاول مرة أخرى.';
+
+  @override
   String thought_notification_title(String name) {
     return 'شارك $name خاطرة';
   }

@@ -270,7 +270,7 @@ void main() {
   );
 
   test(
-    'queueAndSendPostPinFollowOn persists outbox rows and excludes settled recipients from retry',
+    'queueAndSendPostFollowOn persists outbox rows and excludes settled recipients from retry',
     () async {
       final pendingSnapshot = Completer<List<String>>();
       final postRepo = InMemoryPostRepository();
@@ -302,7 +302,7 @@ void main() {
       addTearDown(service.dispose);
       addTearDown(postRepo.dispose);
 
-      final result = await queueAndSendPostPinFollowOn(
+      final result = await queueAndSendPostFollowOn(
         postRepo: postRepo,
         p2pService: service,
         eventId: 'evt-pin-remove-1',

@@ -133,6 +133,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
+import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
@@ -1138,6 +1139,26 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                     if (mounted) {
                       unawaited(_openConversationForContact(contact));
                     }
+                  },
+            onDelete: !isOwn
+                ? null
+                : (postId) async {
+                    final retraction = await retractThought(
+                      postRepo: repository,
+                      p2pService: widget.p2pService,
+                      mediaFileManager: widget.mediaFileManager,
+                      postId: postId,
+                      senderPeerId: identity.peerId,
+                      nowProvider: widget.thoughtNowProvider,
+                    );
+                    // Friends are told after the card has closed; anyone not
+                    // reached stays queued for the follow-on retrier.
+                    unawaited(
+                      retraction.delivery?.then(
+                        (_) {},
+                        onError: (Object error) => _reportThoughtFailure(error),
+                      ),
+                    );
                   },
           ),
         ),

@@ -22,6 +22,11 @@ class PostFollowOnOutboxRecipientDelivery {
   bool get isSettled =>
       deliveryStatus == 'delivered' || deliveryStatus == 'inbox';
 
+  /// Still owed to the recipient. An `expired` row was never delivered, but
+  /// the thought it retracts is gone everywhere, so nothing is owed. The SQL
+  /// in post_follow_on_outbox_db_helpers.dart excludes the same statuses.
+  bool get isRetryable => !isSettled && deliveryStatus != 'expired';
+
   factory PostFollowOnOutboxRecipientDelivery.fromMap(
     Map<String, Object?> map,
   ) {

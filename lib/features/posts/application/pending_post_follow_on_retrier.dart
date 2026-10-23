@@ -1,11 +1,13 @@
-import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
 import 'dart:async';
 
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
-import 'package:flutter_app/features/posts/application/post_engagement_follow_on_support.dart';
-import 'package:flutter_app/features/posts/application/post_pin_delivery_support.dart';
+import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_job.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class PendingPostFollowOnRetrier {
@@ -122,13 +124,39 @@ class PendingPostFollowOnRetrier {
   }
 }
 
+/// Retries queued thought retractions. Every other follow-on type is legacy
+/// Posts and is dropped unsent.
 Future<int> retryPendingPostFollowOns({
   required PostRepository postRepo,
   required P2PService p2pService,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
+  DateTime Function()? nowProvider,
 }) async {
-  if (rejectLegacyPostFeature('post_follow_on')) {
+  final now = (nowProvider ?? DateTime.now)().toUtc();
+  final retractions = <PostFollowOnOutboxJob>[];
+  for (final job in await postRepo.loadRetryableFollowOnOutboxJobs()) {
+    if (job.event.eventType != PostRetractEnvelope.type) {
+      rejectLegacyPostFeature(job.event.eventType);
+      continue;
+    }
+    final retraction = PostRetractEnvelope.fromJson(job.event.rawEnvelope);
+    if (retraction == null ||
+        ThoughtLifetime.isExpired(retraction.postCreatedAt, now)) {
+      // Every copy of the thought has expired on its own by now.
+      for (final delivery in job.recipientDeliveries) {
+        await postRepo.saveFollowOnOutboxRecipientDelivery(
+          delivery.copyWith(
+            deliveryStatus: 'expired',
+            updatedAt: now.toIso8601String(),
+          ),
+        );
+      }
+      continue;
+    }
+    retractions.add(job);
+  }
+  if (retractions.isEmpty) {
     return 0;
   }
 
@@ -140,34 +168,16 @@ Future<int> retryPendingPostFollowOns({
     return 0;
   }
 
-  final jobs = await postRepo.loadRetryableFollowOnOutboxJobs();
-  var retriedCount = 0;
-
-  for (final job in jobs) {
-    if (job.recipientDeliveries.isEmpty) {
-      continue;
-    }
-    if (isPostPinFollowOnEventType(job.event.eventType)) {
-      retriedCount++;
-      await retryPostPinFollowOnJob(
-        postRepo: postRepo,
-        p2pService: p2pService,
-        job: job,
-      );
-      continue;
-    }
-    if (!isPostEngagementFollowOnEventType(job.event.eventType)) {
-      continue;
-    }
-    retriedCount++;
-    await retryPostEngagementFollowOnJob(
+  for (final job in retractions) {
+    await deliverQueuedPostFollowOn(
       postRepo: postRepo,
       p2pService: p2pService,
-      job: job,
+      eventId: job.event.eventId,
+      envelope: job.event.rawEnvelope,
+      deliveries: job.recipientDeliveries,
     );
   }
-
-  return retriedCount;
+  return retractions.length;
 }
 
 Future<bool> _allowsPostFollowOnNetworkSideEffects({

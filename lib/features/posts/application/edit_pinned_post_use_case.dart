@@ -87,7 +87,7 @@ Future<(EditPinnedPostResult, PostPinStateModel?)> editPinnedPost({
     post: updatedPost,
     media: media,
   );
-  final deliveryResult = await queueAndSendPostPinFollowOn(
+  final deliveryResult = await queueAndSendPostFollowOn(
     postRepo: postRepo,
     p2pService: p2pService,
     eventId: pinState.eventId,
