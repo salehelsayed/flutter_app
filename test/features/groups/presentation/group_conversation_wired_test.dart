@@ -4301,7 +4301,7 @@ void main() {
         tester
             .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
             .onTap!();
-        await pumpUntil(
+        await pumpUntilAsyncWorkSettles(
           tester,
           () => find.text('Media Too Large').evaluate().isNotEmpty,
         );
@@ -4525,7 +4525,7 @@ void main() {
         tester
             .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
             .onTap!();
-        await pumpUntil(
+        await pumpUntilAsyncWorkSettles(
           tester,
           () => find.text('Media Too Large').evaluate().isNotEmpty,
         );
@@ -15407,8 +15407,9 @@ void main() {
           await saveActiveGroupMembers(groupRepo, group);
           final media = GateFirstSingleMediaReadRepository();
           addTearDown(() {
-            if (!media.releaseFirstRead.isCompleted)
+            if (!media.releaseFirstRead.isCompleted) {
               media.releaseFirstRead.complete();
+            }
           });
           final parent = makeMessage(
             id: 'g2-late-status',

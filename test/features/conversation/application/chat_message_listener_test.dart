@@ -17,6 +17,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart'
+    show debugRelayNotFoundRetryWait;
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart'
     show RecoveredInboxChatDisposition;
@@ -1761,8 +1763,14 @@ void main() {
     );
 
     test(
-      'marks confirmed relay absence unavailable after one download',
+      'marks confirmed relay absence unavailable after four bounded downloads',
       () async {
+        final previousWait = debugRelayNotFoundRetryWait;
+        final retryDelays = <Duration>[];
+        debugRelayNotFoundRetryWait = (delay) async {
+          retryDelays.add(delay);
+        };
+        addTearDown(() => debugRelayNotFoundRetryWait = previousWait);
         final senderPeerId = 'sender-peer-003';
         contactRepo.seedContact(_makeContact(senderPeerId));
 
@@ -1799,7 +1807,12 @@ void main() {
           'downloading',
           'unavailable',
         ]);
-        expect(bridge.downloadCallCount, 1);
+        expect(bridge.downloadCallCount, 4);
+        expect(retryDelays, const [
+          Duration(seconds: 15),
+          Duration(seconds: 45),
+          Duration(seconds: 120),
+        ]);
 
         listener.dispose();
       },

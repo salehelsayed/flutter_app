@@ -1627,6 +1627,12 @@ classify_path() {
     return 0
   fi
 
+  # App composition tests are included in the existing host-all discovery.
+  if [[ "$path" =~ ^test/app/.*_test\.dart$ ]]; then
+    printf 'app composition host suite'
+    return 0
+  fi
+
   if [[ "$path" =~ ^test/core/services/.*_test\.dart$ ]]; then
     printf 'core services direct suite'
     return 0

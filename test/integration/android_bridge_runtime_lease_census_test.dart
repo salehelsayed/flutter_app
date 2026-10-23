@@ -37,6 +37,9 @@
 
 import 'dart:io';
 
+import 'package:analyzer/dart/analysis/utilities.dart';
+import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // ---------------------------------------------------------------------------
@@ -139,6 +142,28 @@ final RegExp _ownerVariable = RegExp(
 /// Any bridge client construction, including subclasses such as
 /// `RecordingGoBridgeClient` — a subclass needs the same native channel.
 final RegExp _bridgeConstruction = RegExp(r'\b\w*GoBridgeClient\s*\(');
+
+class _BridgeConstructorDeclarations extends RecursiveAstVisitor<void> {
+  final offsets = <int>{};
+
+  @override
+  void visitConstructorDeclaration(ConstructorDeclaration node) {
+    offsets.add(node.returnType.offset);
+    super.visitConstructorDeclaration(node);
+  }
+}
+
+bool _constructsBridge(String source) {
+  final matches = _bridgeConstruction.allMatches(source).toList();
+  if (matches.isEmpty) return false;
+  final declarations = _BridgeConstructorDeclarations();
+  parseString(
+    content: source,
+    throwIfDiagnostics: false,
+  ).unit.accept(declarations);
+  // Exclude only the declared name, retaining calls inside constructor bodies.
+  return matches.any((match) => !declarations.offsets.contains(match.start));
+}
 
 final RegExp _mainDeclaration = RegExp(
   r'^(?:void|Future<void>|Future)\s+main\s*\(',
@@ -288,6 +313,9 @@ _Census _censusOf(String root) {
     }
   }
   final scannedFiles = sources.keys.toList()..sort();
+  final constructionSites = scannedFiles
+      .where((file) => _constructsBridge(sources[file]!))
+      .toSet();
 
   final edges = <String, Set<String>>{
     for (final file in scannedFiles) file: <String>{},
@@ -318,15 +346,9 @@ _Census _censusOf(String root) {
     entrypoints: scannedFiles
         .where((f) => _mainDeclaration.hasMatch(sources[f]!))
         .toSet(),
-    constructionSites: scannedFiles
-        .where((f) => _bridgeConstruction.hasMatch(sources[f]!))
-        .toSet(),
-    selfGuardedSites: scannedFiles
-        .where(
-          (f) =>
-              _bridgeConstruction.hasMatch(sources[f]!) &&
-              _leaseSeam.hasMatch(sources[f]!),
-        )
+    constructionSites: constructionSites,
+    selfGuardedSites: constructionSites
+        .where((file) => _leaseSeam.hasMatch(sources[file]!))
         .toSet(),
     closures: closures,
     sources: sources,
@@ -358,7 +380,9 @@ String _normalize(String path) {
 /// Body of a top-level function, by brace matching from its declaration.
 String _functionBody(String source, String name) {
   final declaration = RegExp(
-    r'^(?:void|Future<void>|Future)\s+' + name + r'\s*\([^)]*\)\s*(?:async\s*)?\{',
+    r'^(?:void|Future<void>|Future)\s+' +
+        name +
+        r'\s*\([^)]*\)\s*(?:async\s*)?\{',
     multiLine: true,
   ).firstMatch(source);
   if (declaration == null) return '';
@@ -553,11 +577,15 @@ void main() {
     });
     final libraryCensus = _censusOf(libraryRoot.path);
     expect(
-      libraryCensus.scannedFiles.where((f) => f.endsWith('shared_library.dart')),
+      libraryCensus.scannedFiles.where(
+        (f) => f.endsWith('shared_library.dart'),
+      ),
       isNotEmpty,
     );
     expect(
-      libraryCensus.entrypoints.where((f) => f.endsWith('consumer_harness.dart')),
+      libraryCensus.entrypoints.where(
+        (f) => f.endsWith('consumer_harness.dart'),
+      ),
       isNotEmpty,
       reason: 'a non-`_test.dart` entrypoint must still be walked',
     );
@@ -585,6 +613,39 @@ void main() {
     );
     expect(findings.single, contains('bare_entrypoint_test.dart'));
     expect(findings.single, isNot(contains('covered_entrypoint_test.dart')));
+  });
+
+  test('bridge constructor declarations do not hide actual constructions', () {
+    const declaration = '''
+class RecordingGoBridgeClient extends GoBridgeClient {
+  RecordingGoBridgeClient({required this.label});
+  final String label;
+}
+''';
+    final declarationRoot = _fixture({'client.dart': declaration});
+    expect(_censusOf(declarationRoot.path).constructionSites, isEmpty);
+
+    final callRoot = _fixture({
+      'harness.dart':
+          '''
+$declaration
+void main() {
+  final bridge = RecordingGoBridgeClient(label: 'fixture');
+}
+''',
+    });
+    expect(_censusOf(callRoot.path).unleasedPairs(), hasLength(1));
+
+    final bodyRoot = _fixture({
+      'client.dart': '''
+class RecordingGoBridgeClient extends GoBridgeClient {
+  RecordingGoBridgeClient() {
+    final bridge = GoBridgeClient();
+  }
+}
+''',
+    });
+    expect(_censusOf(bodyRoot.path).unleasedPairs(), hasLength(1));
   });
 
   test('the allow-list contains no executed harness', () {

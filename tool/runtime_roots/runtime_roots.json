@@ -1732,6 +1732,20 @@
       ]
     },
     {
+      "path": "lib/core/media/media_download_recovery_registry.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "media / receive recovery",
+      "reason": "The recovery contract test checks this registry of existing durable receive owners; production recovery remains in its existing query and policy owners.",
+      "condition": "Revisit if production composition imports this contract or the owning recovery paths change.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
       "path": "lib/core/debug/smoke_test_runner.dart",
       "rootKinds": [],
       "disposition": "retained-unresolved",

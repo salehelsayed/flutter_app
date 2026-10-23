@@ -73,7 +73,7 @@
       "environment": {},
       "config": [],
       "sources": {
-        "scripts/run_test_gates.sh": "c6f24eb49e88efc4301a88d567f949654d4ba3f739abd6ca00cf32a24a25407b"
+        "scripts/run_test_gates.sh": "8b82e659e37fddbb9391ff020ade44e550299ecd480b1d1552f342a661a61fda"
       },
       "audit": "Static path classification; no target execution.",
       "owns": [
@@ -131,7 +131,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "scripts/run_test_gates.sh": "c6f24eb49e88efc4301a88d567f949654d4ba3f739abd6ca00cf32a24a25407b",
+        "scripts/run_test_gates.sh": "8b82e659e37fddbb9391ff020ade44e550299ecd480b1d1552f342a661a61fda",
         "scripts/test/go_binding_staleness_contract_test.sh": "bf48e6eb7dade44ce6043c81140e0cb11dd8371ec09ddb8d75e26cd520da68f1",
         "scripts/test/relay_ack_custody_rollout_contract_test.sh": "6b1bac5bc535253d3737d43eb09a66087e7cdeb11729e9b58949d43142f275e1",
         "scripts/test/relay_go_toolchain_contract_test.sh": "95244e9b918b0b94eb3bb6692f941065714073449a6888e3082d85d1fcc0d927",

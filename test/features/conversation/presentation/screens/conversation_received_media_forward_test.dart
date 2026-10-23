@@ -34,6 +34,8 @@ import 'package:flutter_app/features/share/application/share_target_selection.da
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 
 import '../../domain/repositories/fake_media_attachment_repository.dart';
 import '../../../../core/bridge/fake_bridge.dart';
@@ -815,22 +817,7 @@ void main() {
             blobId: message.media.single.id,
             mime: message.media.single.mime,
           );
-      const canonicalJpegBytes = <int>[
-        0xff,
-        0xd8,
-        0xff,
-        0xe0,
-        0x00,
-        0x10,
-        0x4a,
-        0x46,
-        0x49,
-        0x46,
-        0x00,
-        0x01,
-        0x01,
-        0x00,
-      ];
+      final canonicalJpegBytes = img.encodeJpg(img.Image(width: 2, height: 2));
       File(canonicalSourcePath).writeAsBytesSync(canonicalJpegBytes);
       final canonicalAttachment = message.media.single.copyWith(
         size: canonicalJpegBytes.length,
@@ -925,7 +912,9 @@ void main() {
             contactRepo: contacts,
             mediaAttachmentRepo: attachments,
             mediaFileManager: forwardMediaFileManager,
-            imageProcessor: _testImageProcessor(),
+            imageProcessor: _testImageProcessor(
+              processedPhotoBytes: canonicalJpegBytes,
+            ),
             initialMessages: [canonicalMessage],
             forwardGroupRepository: groups,
             forwardGroupMessageRepository: groupMessages,
@@ -1199,18 +1188,27 @@ class _PartialForwardCoordinator implements ShareBatchDeliveryCoordinator {
   }
 }
 
-ImageProcessor _testImageProcessor() => ImageProcessor(
-  compressFile:
-      ({
-        required path,
-        required quality,
-        required keepExif,
-        minWidth = 1920,
-        minHeight = 1080,
-      }) async => null,
-  compressVideo: ({required path, required compress, onProgress}) async =>
-      VideoProcessResult(path: path),
-);
+ImageProcessor _testImageProcessor({List<int>? processedPhotoBytes}) =>
+    ImageProcessor(
+      compressFile:
+          ({
+            required path,
+            required quality,
+            required keepExif,
+            minWidth = 1920,
+            minHeight = 1080,
+          }) async {
+            if (processedPhotoBytes == null) return null;
+            final output = File('${path}_processed.jpg')
+              ..writeAsBytesSync(processedPhotoBytes);
+            addTearDown(() {
+              if (output.existsSync()) output.deleteSync();
+            });
+            return XFile(output.path);
+          },
+      compressVideo: ({required path, required compress, onProgress}) async =>
+          VideoProcessResult(path: path),
+    );
 
 class _ProductionGroupForwardBridge extends FakeBridge {
   @override

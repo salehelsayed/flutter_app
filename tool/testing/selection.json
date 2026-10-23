@@ -5370,6 +5370,7 @@
     {
       "id": "other-test-infrastructure",
       "patterns": [
+        "test/integration/android_bridge_runtime_lease_census_test.dart",
         "test/integration/direct_media_fixture_fault_client_test.dart",
         "test/integration/direct_media_fixture_go_timeout_test.dart",
         "test/tool/*",

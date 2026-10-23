@@ -47,6 +47,14 @@ configuration and signed artifact, not just the Dart revision or version label.
   `scripts/run_flutter_full_regression.sh` retain their existing gate/full-runner
   responsibilities. The wrapper adds deterministic change/release selection and
   evidence checks; it does not replace Flutter, Go, native, or JavaScript runners.
+  App composition paths under `test/app/` are included in host-all discovery and
+  must be classified too. A classification-only edit still requires refreshing
+  the two exact legacy owner source pins after reviewing its unchanged commands.
+- The Android bridge lease census distinguishes constructor declarations from
+  calls using the existing analyzer dependency. It excludes only the declared
+  name: same-file subclass calls and calls inside constructor bodies still need
+  a lease. The test-only media recovery registry has an exact computed
+  `test/integration` declaration in the runtime inventory, with no manual root.
 - Wrapper reports default to ignored `.codex-test-logs/checks-*/` directories;
   use that ignored directory for raw runs; arbitrary `artifacts/` paths are not automatically ignored. Legacy
   full runs retain `.full_regression_logs/`. Keep tokens, keys, personal data, and private
@@ -3682,6 +3690,10 @@ do not count `test(...)` strings as executions. Runner listings took about
   assert exact sanitized JPEG bytes in fresh group copies and upload budgets.
   Native-quality route tests use PNG and `tester.runAsync` for the processor's
   real file probe; Original JPEG intentionally bypasses the native encoder.
+  Group overflow fixtures must also drain that real I/O with the existing
+  `pumpUntilAsyncWorkSettles` helper while retaining size and quality assertions.
+  A successful forwarding fixture needs a decodable JPEG and a successful host
+  encoder port; a truncated signature and null encoder exercise failure instead.
   Compressed keeps its existing 1920×1080/quality-85 policy.
   `.heif` now follows `.heic`, including the Posts picker MIME classification;
   their native routing/metadata flags are covered per quality with a host port
@@ -3969,6 +3981,8 @@ visible and cannot become an ordinary first-attempt PASS.
   nonempty bytes are insufficient, and decoders can throw on malformed input.
   Success fixtures use real square images without dropping byte/path/version
   assertions. Group-download and repost avatar fixtures also need encoded square
+  images, including GDR-001's recovery-blocked replacement: malformed output
+  otherwise fails before its intended metadata/commit boundary. Use real square
   PNGs for both the source and processed output; a signature-only PNG/JPEG or
   arbitrary nonempty bytes cannot stand in for a decodable image. Preserve the
   exact processed-byte, 64-KiB omission, durable snapshot and rendered-author
@@ -4009,7 +4023,11 @@ visible and cannot become an ordinary first-attempt PASS.
   decision `m-ff569538`. There are at most four Dart `media:download` invocations:
   the initial request and three further requests after 15 s, 45 s and 120 s
   (three minutes of backoff). Native address/dial fallback within one command
-  remains unchanged. Three persisted waiting stages track this window without
+  remains unchanged. Listener fixtures use the existing scheduling seam to
+  assert all four invocations, all three delays, and final `unavailable` without
+  real-time sleeps. First integration failures and bounded follow-up evidence
+  are retained in `.codex-test-logs/integrate-main-20261023/`.
+  Three persisted waiting stages track this window without
   consuming or resetting the generic retry counter, adding a database column,
   or creating another recovery service. Reopen re-evaluates the stored stage
   and only its remaining requests; pending wire replay cannot reset it or revive
@@ -5987,13 +6005,17 @@ visible and cannot become an ordinary first-attempt PASS.
   schema or relay deployment is required.
   The eight-file Dart preservation selection passes 444 cases without skips,
   including 18 added recovery/ACK-order/diagnostic-privacy cases; two-file
-  analysis is clean. Three changed Swift files pass frontend syntax parsing
-  only. Four added RunnerTests methods have not been compiled or executed;
-  the full iOS target build, RunnerTests execution, and same-candidate iPhone 13
-  kill-ringing/kill-active, relaunch, next-incoming proof remain with flutter_app
-  (install over the existing app and retain identity). The original refusal's
-  orphan-journal cause remains a source-supported candidate until that device
-  proof distinguishes it from other native failures. Raw first fixture failures,
+  analysis is clean. The earlier Swift syntax-only result is superseded by
+  flutter_app's RunnerTests execution: 172 tests, zero failures, including all
+  four added lifecycle methods. Its `bbdd5a5e6` build has identical app/native
+  source to `84f02f53d`. The iPhone 13 install preserved identity; two ringing
+  kills and two active-call kills each recovered through relaunch to a connected
+  next incoming call, without the calling-unavailable refusal. This establishes
+  the tested recovery behavior; the original refusal's orphan-journal cause
+  remains a source-supported candidate. Delegated build/device evidence is in
+  `build/wt-iosrecovery/.codex-test-logs/iosrecovery/SUMMARY.md`; it does not
+  certify completion of the separate native 371/373/374 host tails.
+  Raw first fixture failures,
   unsupported-proof RED, authenticated-successor-first RED, and corrected
   preservation results remain in `.codex-test-logs/ios-call-recovery-20261022/`.
   Receipt acknowledgement must also leave a successor's shared native audio
