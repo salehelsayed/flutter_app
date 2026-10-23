@@ -1,0 +1,17 @@
+appId: ${APP_ID}
+name: production_intro_send_one
+---
+- assertVisible:
+    id: chat_composer
+- tapOn: '^Conversation options$'
+- tapOn: '^Introduce to your circle$'
+- assertVisible: '(?-i)^Introduce to ${RECIPIENT_PATTERN}$'
+- tapOn: '(?-i)^${FRIEND_PATTERN}$'
+- tapOn: '^Introduce \(1\)$'
+- extendedWaitUntil:
+    visible: '(?s-i)^.*1 introduction sent.*$'
+    timeout: 30000
+- assertVisible: '(?s-i)^.*${FRIEND_PATTERN}.*$'
+- tapOn: '^Back to conversation$'
+- assertVisible:
+    id: chat_composer

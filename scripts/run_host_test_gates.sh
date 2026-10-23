@@ -88,6 +88,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/debug/android_production_audio_call_e2e_test.dart"
   "test/integration/android_production_audio_call_campaign_test.dart"
   "test/integration/android_production_audio_call_evidence_test.dart"
+  "test/integration/production_call_in_app_identity_test.dart"
   "test/integration/production_audio_call_local_fixture_test.dart"
   # VC2-05: iOS CallKit journal adoption/audio activation plus typed PushKit
   # token publication, rotation and refresh-epoch-scoped invalidation.

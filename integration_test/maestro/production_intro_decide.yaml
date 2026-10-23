@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_intro_decide
+---
+- assertVisible: '(?s-i)^.*${OTHER_PATTERN}.*$'
+- tapOn: '(?-i)^${DECISION_PATTERN}$'
+- extendedWaitUntil:
+    visible: '(?-i)^${EXPECTED_STATE_PATTERN}$'
+    timeout: 30000
+- assertNotVisible: '(?-i)^${DECISION_PATTERN}$'

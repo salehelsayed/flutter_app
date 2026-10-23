@@ -8549,7 +8549,9 @@
       "assertions": [
         "kx0016.actual_authenticated_contact_incoming_name",
         "kx0016.same_name_retained_ongoing",
-        "kx0016.authenticated_audio_and_restoration"
+        "kx0016.authenticated_audio_and_restoration",
+        "kx0016.actual_flutter_incoming_and_connected_names",
+        "kx0016.no_peer_id_in_owned_flutter_call_surface"
       ],
       "lane": "reliability",
       "modes": [
@@ -8626,7 +8628,9 @@
         "kx0017.actual_peer_id_username_only_fixture",
         "kx0017.readable_native_fallback_without_raw_peer_id",
         "kx0017.authority_columns_preserved",
-        "kx0017.authenticated_audio_and_restoration"
+        "kx0017.authenticated_audio_and_restoration",
+        "kx0017.actual_flutter_incoming_and_connected_names",
+        "kx0017.no_peer_id_in_owned_flutter_call_surface"
       ],
       "lane": "reliability",
       "modes": [
@@ -9216,6 +9220,129 @@
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "validateProductionDirectSenderOffline",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.introduction_catalog.mutual_accept_direct_chat",
+      "owner": "reliability",
+      "proofBoundary": "production.introduction_catalog.mutual_accept_direct_chat",
+      "assertions": [
+        "IN-002-real-picker-and-both-consent-decisions",
+        "natural-mutual-contact-and-private-chat-before-active-probes",
+        "exact-introduction-and-chat-identity-through-owned-restarts"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "intro"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_introduction_mutual.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.introduction_catalog.mutual_accept_direct_chat",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator.count2",
+        "android.emulator.rebindable",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionIntroductionMutual",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "production.introduction_catalog.offline_outbox_recovery",
+      "owner": "reliability",
+      "proofBoundary": "production.introduction_catalog.offline_outbox_recovery",
+      "assertions": [
+        "IN-009-failed-offer-carriers-before-offline-sender-crash",
+        "second-acceptance-with-participant-and-responder-stopped",
+        "both-failed-acceptance-carriers-before-responder-crash",
+        "natural-mutual-delivery-and-private-chat-after-fresh-invocations"
+      ],
+      "lane": "reliability",
+      "modes": [
+        "major",
+        "full"
+      ],
+      "families": [
+        "intro"
+      ],
+      "required": true,
+      "command": [
+        "dart",
+        "run",
+        "integration_test/scripts/run_production_introduction_offline.dart"
+      ],
+      "buildProfile": "android.e2e.production",
+      "dependencies": [
+        "build.android.e2e.production"
+      ],
+      "resources": [
+        {
+          "name": "build:android.e2e.production",
+          "access": "read"
+        },
+        {
+          "name": "device:android-emulator-fourth",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator",
+          "access": "exclusive"
+        },
+        {
+          "name": "device:android-emulator-second",
+          "access": "exclusive"
+        },
+        {
+          "name": "artifact:production.introduction_catalog.offline_outbox_recovery",
+          "access": "write"
+        }
+      ],
+      "targetCapabilities": [
+        "android.emulator.count2",
+        "android.emulator.rebindable",
+        "android.emulator"
+      ],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateProductionIntroductionOffline",
       "automationReady": true,
       "active": true,
       "declaredBuildException": false

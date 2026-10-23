@@ -450,7 +450,9 @@ classify_path() {
     integration_test/scripts/run_production_group_ordered_recovery.dart|\
     integration_test/scripts/run_production_direct_send_cut.dart|\
     integration_test/scripts/run_production_direct_actions.dart|\
-    integration_test/scripts/run_production_direct_sender_offline.dart)
+    integration_test/scripts/run_production_direct_sender_offline.dart|\
+    integration_test/scripts/run_production_introduction_mutual.dart|\
+    integration_test/scripts/run_production_introduction_offline.dart)
       record "support" "$path" "support" "manifest-owned Catalog P0 production journey; existing observation runtime, exact logical-identity oracle, no additional executable census entry"
       return
       ;;

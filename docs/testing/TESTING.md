@@ -2227,6 +2227,54 @@ attempts and the corrected subset invocation are retained. GC-001 needs all
 six registered create/invite/online-add/offline-add companions, with the actual
 two-, three- or four-role topology kept explicit.
 
+The introduction Catalog P0 journeys reuse the production group-profile
+three-role runtime with introducer-only contact edges; the default full contact
+mesh would invalidate the pre-consent assertion. The mutual case requires real
+picker/consent UI, a private participant chat, original introduction/contact
+provenance and stable chat identity after owned restarts. The existing intro
+probe performs health checks and drains inboxes, so pending/mutual UI witnesses
+must precede that probe; its snapshot is not unassisted-delivery timing proof.
+The offline case also preserves actual failed invitation/acceptance carriers
+through owned process cuts. Accepted relay custody deletes outbound rows, so
+an absent recipient alone does not prove local queued custody. Its existing
+native stop controls use nested 240-second and 120-second windows, fresh
+owned-process action fences and actual acceptance while both response nodes
+are stopped. This proves only the acceptance-response leg when executed;
+IN-003 pass/late-acceptance and IN-009 pass-response proof remain separate.
+Twenty-four current introduction oracle tests pass in the private evidence
+directory's `057-batch3-intro-units-summary.json`. Fourteen additive call-identity
+tests, eight registry checks and 40 retained native-evidence tests pass in
+`044-batch3-units-summary.json` on their unchanged source. Five revised intro
+Dart files analyze clean in `056-batch3-intro-analyze.log`; the other 11 files
+retain `043-batch3-analyze.log`. The exact file-byte join is recorded in
+`057-joined-source-evidence.json`: 86 cases across five disjoint test files and
+16 analyzed current Dart files, with unchanged-file retention scoped to those
+bytes.
+Initial analyzer error/infos remain in `039-batch3-analyze.log` and the repaired
+additional lint info remains in `054-batch3-intro-analyze.log`. The census contract passes in
+`058-batch3-census-contract.log` on the corrected source. Source fit found that the actual
+review fold excludes mutual-accepted rows (`load_introductions_use_case.dart`),
+so its shipped Message label is unavailable in that review. The corrected
+test-only route requires the real empty review, then the naturally created
+contact bound by identity/name before opening the composer. The
+pending-review flow switches from the existing cold-reopen
+all-chats view to Inner Circle, where the actual semantic review dock is
+mounted. The dock itself selects the all-chats Intros filter in place; the
+ready-contact flow selects the actual All filter before its exact contact.
+The offline case
+first confirms Bob's acceptance at Charlie through the existing active probe
+before stopping both nodes; this is an assisted fixture precondition, not
+unassisted first-response timing. The corrected intro sources and two added
+causal tests pass their fresh analysis/execution above. Fresh scoped attempt
+`062-batch3-affected-host/results.json` records completed passes for workflow
+306, Maestro flow contracts 9, production journey contracts 1254, audio
+harness contracts 199, runtime roots 21 and SIMS contracts 413, with no failed
+or skipped cases. Counts overlap across lanes. Metadata-only runbook audit
+`063-batch3-runbook-metadata-audit.json` verifies 15 exact exclusion files and
+the introduction dependency closures without executing a device scenario.
+The broader required selection remains NOT RUN. None of these host results
+is device coverage.
+
 The additive PL-009 reaction module preserves the exact case identity through
 its shared create/accept/message observer and the unchanged original oracle.
 It requires a real successful send result, independent receiver stream events on
@@ -8314,7 +8362,31 @@ visible and cannot become an ordinary first-attempt PASS.
   `android.e2e.production`, update row `kx0028` uses `ios.simulator.app`, and
   `kx0031` is a host process-guard check. The four iOS physical proposals stay
   registered BLOCKED for physical-state preservation. Host validation and a
-  registered command do not certify any new device scenario. Contact rollback
+  registered command do not certify any new device scenario. KX-0016/17 also
+  require the actual owned Flutter incoming and connected call surface,
+  bracketed by snapshots of the same current call/contact. The displayed name
+  must be a sibling of the owned call-status node; an underlying conversation
+  cannot supply it. Both actual peer IDs are rejected in visible owned nodes,
+  including disabled nodes; hidden ancestors exclude their descendants. The
+  Flutter `Unknown contact` fallback differs from native `MKnoon caller`.
+  Fourteen pure XML/oracle tests and 40 retained native-evidence tests pass in
+  `.codex-test-logs/astra-update-relay-sims/item3/044-batch3-units-summary.json`,
+  including the binding to actual English ARB copy. The additive collector
+  preserves native-card, RTP and restoration assertions; missing actual Flutter
+  surface is a harness blocker and an observed visible raw peer ID retains its
+  first witness and fails the row. Its new host test remains classified in
+  both legacy call gates and the census contract. KX-0015 stays a complementary
+  native-card leg. Adding the legacy gate selector also changes the protected
+  `scripts/run_test_gates.sh` source hash for both `gate completeness-check`
+  and `gate all` in `tool/testing/legacy_target_contracts.json`; refresh only
+  those owner hashes while preserving commands, roles and environments.
+  The initial stale-hash failure/error is retained in the same private
+  evidence directory's `052-batch3-affected-host/workflow-1.raw.log`; the
+  two-entry source repair is verified by all 306 passing workflow cases in
+  `062-batch3-affected-host/results.json`. Fresh device
+  execution, emulator audio input OFF and the
+  separate unapproved content-audio hook are still required for their respective
+  proof scopes. Contact rollback
   uses an owned SQLite abort trigger. Android exposes the contact-delete
   dialog title and body as one accessibility label separated by a newline;
   both contact dialog flows therefore assert the exact merged ARB title/body,

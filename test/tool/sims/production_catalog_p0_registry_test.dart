@@ -10,8 +10,14 @@ import '../../../tool/sims/production_direct_actions_criteria.dart';
 import '../../../tool/sims/production_direct_sender_offline_criteria.dart';
 import '../../../tool/sims/production_direct_send_cut_criteria.dart';
 import '../../../tool/sims/production_group_ordered_recovery_criteria.dart';
+import '../../../tool/sims/production_introduction_mutual_criteria.dart';
+import '../../../tool/sims/production_introduction_offline_criteria.dart';
 
 const _commands = {
+  productionIntroductionMutual:
+      'integration_test/scripts/run_production_introduction_mutual.dart',
+  productionIntroductionOffline:
+      'integration_test/scripts/run_production_introduction_offline.dart',
   productionDirectActions:
       'integration_test/scripts/run_production_direct_actions.dart',
   productionDirectSenderOffline:
@@ -68,7 +74,11 @@ void main() {
         expect(locks, {
           'device:android-emulator-fourth',
           'device:android-emulator',
-          if (id == productionGroupOrderedRecovery)
+          if ({
+            productionGroupOrderedRecovery,
+            productionIntroductionMutual,
+            productionIntroductionOffline,
+          }.contains(id))
             'device:android-emulator-second',
         });
         expect(
@@ -100,6 +110,7 @@ void main() {
     () {
       expect(directSendCutRuntime, directOrderedReplayRuntime);
       expect(directActionsRuntime, directOrderedReplayRuntime);
+      expect(introductionMutualRuntime, groupOrderedRecoveryRuntime);
       expect(directSenderOfflineRuntime, directOrderedReplayRuntime);
       for (final id in {
         directOrderedReplayRuntime,

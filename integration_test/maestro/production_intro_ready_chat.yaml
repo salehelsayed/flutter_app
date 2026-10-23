@@ -1,0 +1,18 @@
+appId: ${APP_ID}
+name: production_intro_ready_chat
+---
+- extendedWaitUntil:
+    visible: '^No introductions yet$'
+    timeout: 30000
+- assertNotVisible: '^Accept$'
+- assertNotVisible: '^Pass$'
+# The dock selects the Intros filter in all chats, without pushing a route.
+# Select the real All filter before binding the new participant contact.
+- tapOn: '(?s-i)^All(?:\s+[0-9]+)?$'
+- assertVisible:
+    id: orbit.view.inner_circle
+- extendedWaitUntil:
+    visible:
+      id: orbit.contact.${PEER_ID}
+      text: '(?s-i)^.*${OTHER_PATTERN}.*$'
+    timeout: 30000

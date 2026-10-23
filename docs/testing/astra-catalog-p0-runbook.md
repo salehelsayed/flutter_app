@@ -1,7 +1,7 @@
-# Catalog P0 owner runbook — first batch and remaining queue
+# Catalog P0 owner runbook and remaining queue
 
-Source base for batch two: `2338ed7c9e25d8d6b9ffbd35dd8ddeb77f8d1944` in
-`/Volumes/CrucialX9/flutter_app-astra-update-relay-sims`.
+Source base for batch three: `4aca9509eb717b7488bb20db09fe7493d8edf2d2` in
+`/Users/I560101/.codex/worktrees/astra-update-relay-sims-host`.
 The 30 requested requirements are captured with the source catalog digest in
 `.codex-test-logs/astra-update-relay-sims/item3/catalog-source-snapshot.json`. This document confers no execution or coverage
 credit. Batch one has three new scenarios applied and registered in the own worktree,
@@ -18,7 +18,30 @@ preview has no unmapped paths. Wider required selection remains **NOT RUN**. Bat
 scenarios with 28 focused oracle/registry tests and seven changed Dart files
 analyzing clean. Its scoped host lanes pass: SIMS 389, workflow 306, production
 journey 1240, runtime roots 21 and Maestro 9; counts overlap. Broader required
-checks remain NOT RUN. Batch-three drafts remain ignored and unregistered. No device scenario has been run by Astra. Every host launch
+checks remain NOT RUN. Batch three adds two registered introduction scenarios
+and additive Flutter incoming/connected identity checks for existing KX-0016/17.
+The initial source passes 84 exact host tests (36 new, eight registry, 40
+retained native-evidence contracts), 16-file analysis, census and selection
+metadata. A later source-fit correction replaces an unreachable mutual review
+CTA with the actual empty review and identity/name-bound contact route; its
+changed introduction sources now pass 24 exact causal tests and clean five-file
+analysis. The other 62 disjoint registry/call tests retain their earlier source
+scope. The exact file-byte audit binds all 86 focused cases and 16 analyzed Dart
+files to the current source in `057-joined-source-evidence.json`.
+Fresh scoped attempt 062 passes workflow 306, Maestro flow contracts 9,
+production journey contracts 1254, audio harness contracts 199, runtime roots
+21 and SIMS contracts 413. Every lane records completion with no failed or
+skipped cases; these overlapping lane counts are not unique cases to sum.
+The wider required selection remains **NOT RUN**. Initial affected attempt 052
+retains one workflow failure and one error from the two stale protected gate
+hashes after additive host-test registration, plus its coordinator-yield
+receipt. Only those two owner hashes changed; fresh workflow 062 passes.
+The later intro flow corrections also pass fresh Maestro 062. Runbook audit
+063 validates the two metadata-only listings and all 15 exclusion files,
+including exact introduction dependency closures and call cohorts. These
+listings execute no scenario or device command. The scoped result, first
+failures and yield receipt remain in the ignored item3 artifacts.
+No device scenario has been run by Astra. Every host launch
 needs fresh Mac resource and lease checks, including the unchanged load1 <=80
 gate, and must respect an active coordinator quiet hold.
 
@@ -42,12 +65,12 @@ remains **needs the test-build audio hook (not approved)**.
 | 5 | VC-006 | Existing `kx0007` **and** `kx0008` | 2 | Existing registrations; busy admission and microphone-denied admission are separate required legs. Content-audio limitation remains. |
 | 6 | DC-004, DC-007, DC-022 | Direct send checkpoint and offline-status/retry scenarios being authored | 2 | DC-004 applied; focused host tests pass; scoped host selection passes; wider required checks NOT RUN; DC-022 is applied/registered and its scoped host checks pass; DC-007 still lacks its terminal failure/manual-Retry UI leg. Use real persisted custody and same logical ID; no invented automatic offline queue or delivered double-check UI. |
 | 7 | DC-006 | Direct quote, reaction add/remove, edit, deletion and durable replay | 2 | Applied and registered in batch two; focused and affected scoped host checks pass. Device proof NOT RUN. Uses real quote, reaction add/remove, edit, delete UI receipts and stable IDs/tombstones after restart; no claim about raw quote/reaction fields absent from the observer. |
-| 8 | DC-013 | Contact purge with actual chat/media and an unrelated preserved chat, then restart | 3 | Not authored completely; call-history-only fixtures are insufficient. |
+| 8 | DC-013 | Contact purge with actual chat/media and an unrelated preserved chat, then restart | 3 | **NOT RUN — needs post-delete related-row observer**. Per Kayan `m-7ce8bffe`, do not add a `lib/debug` observer under this test-only scope. Existing message-only/call-history fixtures cannot establish orphan media/related-row absence. |
 | 9 | DC-016 | Blocked ingress/alerts, authorized stored-message deletion exception, unblock and fresh delivery | 2 | Not authored completely; do not replace the deletion exception with blanket rejection. |
 | 10 | GC-001 | Real create, accept/decline, add-member and policy-correct history legs | 4 | Six existing complementary scenarios are source-mapped for batch two; fresh execution still needs distinct available role pins. |
 | 11 | GC-009 | Existing quote/reaction legs plus received-media delete-for-me persistence/locality | 3 | Existing quote/reaction coverage is partial; local media deletion leg not authored completely. |
-| 12 | IN-002, IN-003, IN-009 | Selective introducer topology, real picker/consent UI, pass fences and durable offline outbox | 3 | IN-002 and the IN-009 acceptance-response leg have ignored producer/oracle/probe drafts and 22 authored host-test sources, unapplied and unvalidated. IN-003 pass/late-carrier fencing remains source fit only. Default full-mesh preparation is unsuitable; the existing intro probe actively drains inbox and must follow a natural-delivery UI witness. |
-| 13 | VC-004 | Existing `kx0015`/`kx0016`/`kx0017` native-card legs plus actual in-app incoming/active name privacy | 2 | Native cards alone are insufficient. Ignored additive KX-0016/17 parser/oracle/collector drafts and 13 host-test sources are unapplied/unvalidated; earlier native results gain no new scope. |
+| 12 | IN-002, IN-003, IN-009 | Selective introducer topology, real picker/consent UI, pass fences and durable offline outbox | 3 | IN-002 and the IN-009 acceptance-response leg are applied/registered; 24 causal host tests and changed-file analysis pass after correcting the review/contact route. IN-003 pass/late-carrier fencing and IN-009's pass-response leg remain incomplete. Default full-mesh preparation is unsuitable; the existing intro probe actively drains inbox and follows a natural-delivery UI witness. |
+| 13 | VC-004 | Existing `kx0015`/`kx0016`/`kx0017` native-card legs plus actual in-app incoming/active name privacy | 2 | Additive KX-0016/17 Flutter collectors/oracles are applied with 14 new and 40 retained native-evidence host tests passing. Native cards alone are insufficient; earlier native results gain no new scope. |
 | 14 | VC-017 | Same-call bounded interruption, current recovery deadline and terminal late-recovery fence | 2 | Not authored completely; no audibility claim without the unapproved audio hook. |
 | 15 | VC-023 | Saved always-relay setting, actual relay-only candidate selection, unavailable-relay failure/no direct fallback, restored-service call | 2 | Not authored completely. Existing forced-relay profile masks preference propagation; a source-bound test-profile variant is needed. |
 
@@ -115,6 +138,8 @@ for label, scenario in {
     '11-group-online-add': 'production.group_catalog.private_online_add',
     '12-group-policy-offline-add': 'production.group_catalog.gm003',
     '13-group-offline-add': 'production.group_catalog.private_offline_add',
+    '14-intro-mutual': 'production.introduction_catalog.mutual_accept_direct_chat',
+    '15-intro-offline': 'production.introduction_catalog.offline_outbox_recovery',
 }.items():
     keep = closure({scenario})
     assert keep <= major, (label, 'missing registered owner/dependency')
@@ -127,6 +152,10 @@ keep_kx = {'kx0002', 'kx0003', 'kx0005', 'kx0006', 'kx0007', 'kx0008'}
 assert keep_kx <= call_rows, 'missing required complementary call leg'
 (out / '04-calls.exclude').write_text('\n'.join(sorted(
     key for key in call_rows if key.startswith('kx') and key not in keep_kx)) + '\n')
+identity_kx = {'kx0015', 'kx0016', 'kx0017'}
+assert identity_kx <= call_rows, 'missing required call identity companion'
+(out / '16-call-identity.exclude').write_text('\n'.join(sorted(
+    key for key in call_rows if key.startswith('kx') and key not in identity_kx)) + '\n')
 PY
 ```
 
@@ -198,12 +227,71 @@ flow. DC-007 remains incomplete until that separate UI leg exists. GC-001
 needs all six complementary receipts, including accepted/declined invites and
 policy-correct post-add history; a three-person creation alone is insufficient.
 
+## Batch-three queue after its host validation and review
+
+The scenarios below are registered. The corrected introduction route passes
+24 focused host tests and changed-file analysis; call-only sources retain
+their earlier proof scope. All six affected scoped host lanes pass in attempt
+062; broader required checks and every device leg remain NOT RUN.
+Execution belongs to `flutter_app`
+after review and integration. Recreate the ignored exclusion files above from
+that exact integrated candidate, then run each line separately and review its
+actual verdict and cleanup. The introduction cases require three distinct
+available disposable emulators; the call identity cohort requires two.
+
+```sh
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/14-intro-mutual.exclude" --output "$ASTRA_P0_RUN/14-intro-mutual"
+python3 docker-ws/run_sims_safe.py major --exclude-file "$ASTRA_P0_RUN/15-intro-offline.exclude" --output "$ASTRA_P0_RUN/15-intro-offline"
+python3 docker-ws/run_sims_safe.py device-audio --exclude-file "$ASTRA_P0_RUN/16-call-identity.exclude" --output "$ASTRA_P0_RUN/16-call-identity"
+```
+
+`mutual_accept_direct_chat` prepares introducer-to-participant edges only;
+Bob and Charlie must be unconnected before the actual picker/consent UI.
+The existing cold-reopen flow selects all chats; the pending-review recipe
+explicitly switches to Inner Circle, the real review dock's owning surface.
+Pending and mutual-contact UI witnesses precede the existing active intro
+probe, which can perform health checks and drain inboxes. The case does not
+claim unassisted delivery timing. Both participants accept through the UI,
+then share an actual private message and preserve the original introduction,
+contact provenance and chat identity through owned restarts. The actual
+review removes mutual-accepted rows and renders **No introductions yet**;
+the dock uses the all-chats Intros filter in place. Select the actual All
+filter, then the identity/name-bound participant contact and its composer.
+
+`offline_outbox_recovery` additionally requires a failed outbound invitation
+carrier to each participant before the introducer dies. Its response cut uses
+existing native node-stop windows (Bob 240 seconds, Charlie 120 seconds), fresh
+owned-process stop fences, actual Charlie acceptance while both nodes are
+stopped, and failed response carriers to Bob and Alice before Charlie dies.
+Before these windows, an existing active probe confirms Bob's first acceptance
+at still-unconnected Charlie. That is an assisted fixture precondition, not
+unassisted first-response delivery timing.
+Bob remains pending until later recovery. Accepted relay custody removes
+local outbound rows, so recipient absence alone cannot establish queued
+response custody. Exact identities and fresh nonces must survive recovery;
+natural UI again precedes active probes. This is the **acceptance-response
+leg only** of IN-009. It does not prove OS airplane mode, IN-003 pass/late
+acceptance fencing or the separate IN-009 pass-response leg.
+
+For VC-004 retain KX-0015's native-card companion and rerun strengthened
+KX-0016/17. The latter now require both native evidence and the actual owned
+Flutter incoming/connected surface bound to the same current call and contact.
+The name must be a sibling of the owned call-status node; an underlying chat
+name cannot satisfy it. Both actual peer IDs must be absent from visible
+owned nodes. The Flutter fallback **Unknown contact** and native fallback
+**MKnoon caller** are distinct. Missing Flutter UI is a harness blocker; an
+observed visible raw peer ID fails the row and retains its first witness.
+These additive checks preserve the original native, RTP and restoration
+assertions. Emulator audio input stays **OFF**. No audible-content or signed
+release claim follows from these receipts.
+
 ## Explicit fixture deferrals
 
 | Catalog rows | Verdict | Reason / owner direction |
 | --- | --- | --- |
 | CR-001, CR-002, CR-003, CR-005, CR-006, CR-007, CR-012, CR-018 | **NOT RUN** | **needs consent-capable fixture**. Per Kayan `m-6bbcb313`, no new consent infrastructure. The bounded source-fit review is in `.codex-test-logs/astra-update-relay-sims/item3/CR-source-fit.json` and `.codex-test-logs/astra-update-relay-sims/item3/CR-fixture-notes.md`; the separate debug/non-E2E Appium text-paste route is fixture entry, not optical camera proof. |
 | DC-020 | **NOT RUN** | **needs linked-installation fixture**. Per Kayan `m-085e261a`, do not build one. See `.codex-test-logs/astra-update-relay-sims/item3/DC020-fixture-notes.md`. The default-off authoring flag alone does not remove persisted linked-installation authority or make this row N/A. |
+| DC-013 | **NOT RUN** | **needs post-delete related-row observer**. Per Kayan `m-7ce8bffe`, no new `lib/debug` observer in this test-only scope. The existing group-delete observer can read direct message rows after contact deletion, but cannot establish orphan media/related-row absence; the other existing observers require a live contact or parent. Bounded source fit is in `.codex-test-logs/astra-update-relay-sims/item3/batch-four/README.md` and `source-fit.json` under that directory. |
 
 ## Verdict discipline
 

@@ -1789,6 +1789,36 @@
           "value": "integration_test/scripts/run_production_direct_sender_offline.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_introduction_mutual.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned introduction journey using the existing three-role group observation alias, selective fixture contacts and existing app-owned intro file receipts. Natural UI precedes active inbox probes; no app graph is constructed.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.154.command.2",
+          "value": "integration_test/scripts/run_production_introduction_mutual.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_introduction_offline.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned introduction journey using the existing three-role group observation alias, selective fixture contacts and existing app-owned intro file receipts. Natural UI precedes active inbox probes; no app graph is constructed.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.155.command.2",
+          "value": "integration_test/scripts/run_production_introduction_offline.dart"
+        }
+      ]
     }
   ],
   "declarations": [

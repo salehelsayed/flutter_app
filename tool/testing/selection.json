@@ -928,7 +928,7 @@
       "adapter": "integration_test/scripts/run_production_audio_call_sims.dart",
       "disposable_android_package": "com.mknoon.sims.productionaudio",
       "ui_driver": "existing_campaign",
-      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations. Its KX rows also correlate actual app-handler callback submission/redial/outcomes, canonical session state and native permission/notification evidence; UI taps and the existing host mocks alone cannot establish those app/native boundaries. Reuse the existing native notification-row parser and driver for the Call back child, plus existing Maestro journeys for update UI; retain independent row artifacts under one call-profile APK/backend lease. Notification cases also require actual OS channel, heads-up-manager and publication-order evidence; existing Maestro owns minimize/return UI, and the native owned-row tap never launches the app as a shortcut. Route29 compares coarse UI rows with the real native output provider; no endpoint identifier/name is serialized, and a stuck private picker suppresses raw artifacts. Preference30 reads only its saved boolean and uses existing Maestro for actual settings copy/toggle/restoration; forced relay is not a network-causality claim. kx0001 reads post-sign actual wire metadata and scheduled canonical timer origins for the current authenticated call; neither UI text nor static policy constants prove those runtime timestamps. It introduces no incoming-admission delay and makes no delayed/OS-offline proof claim.",
+      "ui_driver_reason": "Existing attested campaign proves RTP, TURN, exact native call ownership and cleanup beyond UI observations. Its KX rows also correlate actual app-handler callback submission/redial/outcomes, canonical session state and native permission/notification evidence; UI taps and the existing host mocks alone cannot establish those app/native boundaries. Reuse the existing native notification-row parser and driver for the Call back child, plus existing Maestro journeys for update UI; retain independent row artifacts under one call-profile APK/backend lease. Notification cases also require actual OS channel, heads-up-manager and publication-order evidence; existing Maestro owns minimize/return UI, and the native owned-row tap never launches the app as a shortcut. Route29 compares coarse UI rows with the real native output provider; no endpoint identifier/name is serialized, and a stuck private picker suppresses raw artifacts. Preference30 reads only its saved boolean and uses existing Maestro for actual settings copy/toggle/restoration; forced relay is not a network-causality claim. kx0001 reads post-sign actual wire metadata and scheduled canonical timer origins for the current authenticated call; neither UI text nor static policy constants prove those runtime timestamps. It introduces no incoming-admission delay and makes no delayed/OS-offline proof claim. KX0016/17 additionally join actual readable Flutter incoming/connected identity and privacy XML to current-call snapshots before/after the existing owned read; native cards alone cannot establish the in-app surface. This remains the same existing campaign owner and adds no separate UI harness.",
       "host_preflight": "one-to-one-runner",
       "additional_capabilities": [
         "kx0001",
@@ -1252,7 +1252,8 @@
         "test/integration/android_app_package_test.dart",
         "test/tool/sims/sims_ios_group_media_269_profile_test.dart",
         "test/tool/sims/sims_verification_test.dart",
-        "test/integration/android_production_audio_call_evidence_test.dart"
+        "test/integration/android_production_audio_call_evidence_test.dart",
+        "test/integration/production_call_in_app_identity_test.dart"
       ],
       "boundary": "Local audio proof binds a disposable package across prepared APK, cache, app-owned controls and native activity launch; shared iOS cache identity includes native compilation conditions and preserves Release settings",
       "limitations": "Host command and semantic UI fixtures preserve campaign safety; actual bidirectional audio and cleanup still require device-audio. This profile does not exercise FCM delivery.",
@@ -2074,7 +2075,8 @@
         "test/integration/production_group_reaction_toggle_execution_test.dart",
         "test/integration/production_group_removed_reaction_criteria_test.dart",
         "test/integration/production_group_removed_reaction_controls_test.dart",
-        "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart"
+        "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart",
+        "test/integration/production_call_in_app_identity_test.dart"
       ],
       "boundary": "Production journey activation, exact observations and native notification behavior, invocation identity, readiness, replay refusal and foreground drain fault isolation",
       "limitations": "Host controls only; actual production startup, UI, notification boundary and two-peer behavior require the additive pilot",
@@ -5048,6 +5050,86 @@
         "integration_test/maestro/production_resume.yaml"
       ],
       "host_preflight": "production-catalog-direct-sender-offline"
+    },
+    "production-catalog-intro-mutual": {
+      "kind": "sims",
+      "capability": "production.introduction_catalog.mutual_accept_direct_chat",
+      "boundary": "Selective introducer-only contact edges, actual introduction picker and both consent decisions, naturally rendered private participant chat, and same introduction/contact/chat identity after owned participant restarts",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable three-emulator journey with explicit existing group-DE002 observation alias and only introducer-friend contact edges. Existing legacy-intro probe performs health/inbox work; natural delivery/UI witnesses must precede post-action probes. No unassisted receipt timing, device execution or signed-candidate proof follows from host validation. IN009 acceptance leg does not claim pass/late-carrier proof.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro performs real picker, Accept and participant composer actions. Appium UI and host unit tests cannot identify atomic introduction/outbox rows or preserve same-ID restart causality; existing app-owned read-only intro receipts observe that state without constructing app services. The generic preamble actively drains inbox, so natural participant UI must precede post-action probes. Narrow owned-PID flow reads fence native stop before offline UI; they add no generic UI harness.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_intro_send_one.yaml",
+        "integration_test/maestro/production_intro_review_pending.yaml",
+        "integration_test/maestro/production_intro_decide.yaml",
+        "integration_test/maestro/production_intro_ready_chat.yaml",
+        "integration_test/maestro/production_intro_open_chat.yaml",
+        "integration_test/maestro/production_intro_read_chat.yaml",
+        "integration_test/maestro/production_resume.yaml"
+      ],
+      "host_preflight": "production-catalog-intro-mutual"
+    },
+    "production-catalog-intro-offline": {
+      "kind": "sims",
+      "capability": "production.introduction_catalog.offline_outbox_recovery",
+      "boundary": "Actual offline offer UI commits both outbound carriers before sender death; second real acceptance occurs in nested existing stopped-node windows, preserves both failed outbound response carriers before responder death, then naturally reaches the restarted participant once; pass/late-accept fencing is a separate unfinished IN003 leg",
+      "timeout_seconds": 7200,
+      "estimated_seconds": null,
+      "requirements": [
+        "dart",
+        "flutter",
+        "adb",
+        "maestro"
+      ],
+      "device_roles": [
+        "android_emulator_fourth",
+        "android_emulator",
+        "android_emulator_second"
+      ],
+      "references": [
+        "tool/sims/critical_features.json"
+      ],
+      "investigate": [
+        "lib/debug/production_journeys"
+      ],
+      "limitations": "Source-built disposable three-emulator journey with explicit existing group-DE002 observation alias and only introducer-friend contact edges. Existing legacy-intro probe performs health/inbox work; natural delivery/UI witnesses must precede post-action probes. No unassisted receipt timing, device execution or signed-candidate proof follows from host validation. IN009 acceptance leg does not claim pass/late-carrier proof.",
+      "disposable_android_package": "com.mknoon.sims.connectivity",
+      "ui_driver": "maestro",
+      "ui_driver_reason": "Existing Maestro performs real picker, Accept and participant composer actions. Appium UI and host unit tests cannot identify atomic introduction/outbox rows or preserve same-ID restart causality; existing app-owned read-only intro receipts observe that state without constructing app services. The generic preamble actively drains inbox, so natural participant UI must precede post-action probes. Narrow owned-PID flow reads fence native stop before offline UI; they add no generic UI harness.",
+      "maestro_flows": [
+        "integration_test/maestro/production_direct_open.yaml",
+        "integration_test/maestro/production_direct_send.yaml",
+        "integration_test/maestro/production_intro_send_one.yaml",
+        "integration_test/maestro/production_intro_review_pending.yaml",
+        "integration_test/maestro/production_intro_decide.yaml",
+        "integration_test/maestro/production_intro_ready_chat.yaml",
+        "integration_test/maestro/production_intro_open_chat.yaml",
+        "integration_test/maestro/production_intro_read_chat.yaml",
+        "integration_test/maestro/production_resume.yaml"
+      ],
+      "host_preflight": "production-catalog-intro-offline"
     }
   },
   "areas": [
@@ -6521,7 +6603,15 @@
         "integration_test/scripts/run_production_direct_actions.dart",
         "test/tool/sims/production_direct_actions_criteria_test.dart",
         "integration_test/scripts/run_production_direct_sender_offline.dart",
-        "test/tool/sims/production_direct_sender_offline_criteria_test.dart"
+        "test/tool/sims/production_direct_sender_offline_criteria_test.dart",
+        "integration_test/scripts/run_production_introduction_mutual.dart",
+        "test/tool/sims/production_introduction_mutual_criteria_test.dart",
+        "integration_test/scripts/run_production_introduction_offline.dart",
+        "test/tool/sims/production_introduction_offline_criteria_test.dart",
+        "integration_test/support/production_intro_probe.dart",
+        "integration_test/support/production_intro_offline_probe.dart",
+        "integration_test/support/production_call_in_app_identity.dart",
+        "test/integration/production_call_in_app_identity_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6598,7 +6688,9 @@
         "production-catalog-group-ordered",
         "production-catalog-direct-cut",
         "production-catalog-direct-actions",
-        "production-catalog-direct-sender-offline"
+        "production-catalog-direct-sender-offline",
+        "production-catalog-intro-mutual",
+        "production-catalog-intro-offline"
       ],
       "why": "Additive application journeys must retain production-created service ownership and exact invocation/flow receipts; original tests and selectors remain retained."
     },
@@ -11165,6 +11257,22 @@
           "integration_test/scripts/run_production_direct_sender_offline.dart"
         ],
         "reason": "A real composer send while the production node is stopped retains actual failed SQL custody but visible automatic pending semantics; native start plus supported warm recovery delivers the same logical ID and current transport UI, preserved through both restarts; manifest execution ownership only, no device proof or coverage rating follows from registration."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.introduction_catalog.mutual_accept_direct_chat",
+        "patterns": [
+          "integration_test/scripts/run_production_introduction_mutual.dart"
+        ],
+        "reason": "Selective introducer-only contact edges, actual introduction picker and both consent decisions, naturally rendered private participant chat, and same introduction/contact/chat identity after owned participant restarts; registration is execution ownership, not a device or coverage verdict."
+      },
+      {
+        "owner": "full-sims-major",
+        "capability": "production.introduction_catalog.offline_outbox_recovery",
+        "patterns": [
+          "integration_test/scripts/run_production_introduction_offline.dart"
+        ],
+        "reason": "Actual offline offer UI commits both outbound carriers before sender death; second real acceptance occurs in nested existing stopped-node windows, preserves both failed outbound response carriers before responder death, then naturally reaches the restarted participant once; pass/late-accept fencing is a separate unfinished IN003 leg; registration is execution ownership, not a device or coverage verdict."
       }
     ],
     "catalogs": [

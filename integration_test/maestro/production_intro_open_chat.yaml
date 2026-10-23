@@ -1,0 +1,10 @@
+appId: ${APP_ID}
+name: production_intro_open_chat
+---
+- assertVisible:
+    id: orbit.contact.${PEER_ID}
+    text: '(?s-i)^.*${OTHER_PATTERN}.*$'
+- tapOn:
+    id: orbit.contact.${PEER_ID}
+- assertVisible:
+    id: chat_composer
