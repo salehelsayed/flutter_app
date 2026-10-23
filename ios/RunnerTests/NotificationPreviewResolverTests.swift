@@ -3440,10 +3440,10 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(previewEvents.map(\.event), ["PUSH_NSE_DECRYPT_OK"])
     XCTAssertEqual(previewEvents.first?.details, ["kind": "thought"])
 
-    // Dart RecentRemoteNotificationGate._messageKey('post:<id>', '<id>').
+    // Dart RecentRemoteNotificationGate._messageKey('post:<id>', '<eventId>').
     XCTAssertEqual(
       RecentRemoteShownMarkerStore.gateMessageKey(userInfo: routeData),
-      "message:post:fixture-post-1|fixture-post-1"
+      "message:post:fixture-post-1|fixture-thought-event-1"
     )
     XCTAssertNil(
       RecentRemoteShownMarkerStore.gateMessageKey(userInfo: [

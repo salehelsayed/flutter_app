@@ -3206,11 +3206,13 @@ final class RecentRemoteShownMarkerStore {
       return "message:\(peerId)|\(eventId)"
     case "post_create":
       // Dart RecentRemoteNotificationGate._messageKey('post:<postId>',
-      // '<postId>'): the post id is the only id both sides hold after decrypt.
-      guard let postId = data.string("post_id", aliases: "postId") else {
+      // '<eventId>'): PostListener consumes with the thought's event id,
+      // which the relay sends as message_id.
+      guard let postId = data.string("post_id", aliases: "postId"),
+        let eventId = data.string("message_id") else {
         return nil
       }
-      return "message:post:\(postId)|\(postId)"
+      return "message:post:\(postId)|\(eventId)"
     default:
       return nil
     }
