@@ -178,6 +178,7 @@ func TestR3Deadline_CommitReserveExceedsReceiverAndIsTypeScoped(t *testing.T) {
 		{name: "reaction", typeName: "message_reaction", want: true},
 		{name: "deletion", typeName: "message_deletion", want: true},
 		{name: "contact request", typeName: "contact_request", want: true},
+		{name: "post create", typeName: "post_create", want: true},
 		{name: "introduction", typeName: "introduction", want: false},
 		{name: "delivery receipt", typeName: "delivery_receipt", want: false},
 		{name: "control", typeName: "profile_update", want: false},
@@ -210,6 +211,7 @@ func TestR3Deadline_PrewriteAdmissionIsTypeScoped(t *testing.T) {
 		{name: "two second introduction", message: `{"type":"introduction"}`, timeout: 2 * time.Second, wantAdmitted: true, wantPrewriteFor: 2 * time.Second},
 		{name: "default contact request", message: `{"type":"contact_request"}`, timeout: SendTimeout, wantAdmitted: true, wantPrewriteFor: SendTimeout - CommittedAckReserve, wantReserved: true},
 		{name: "default reaction", message: `{"type":"message_reaction"}`, timeout: SendTimeout, wantAdmitted: true, wantPrewriteFor: SendTimeout - CommittedAckReserve, wantReserved: true},
+		{name: "four second post create", message: `{"type":"post_create"}`, timeout: 4 * time.Second, wantAdmitted: true, wantPrewriteFor: time.Second, wantReserved: true},
 		{name: "immediate receipt", message: `{"type":"delivery_receipt"}`, timeout: 2 * time.Second, wantAdmitted: true, wantPrewriteFor: 2 * time.Second},
 		{name: "opaque control", message: `not-json`, timeout: 2 * time.Second, wantAdmitted: true, wantPrewriteFor: 2 * time.Second},
 	}

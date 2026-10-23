@@ -384,6 +384,78 @@ func contactRequestEnvelopeForTest(t *testing.T, msgId string) []byte {
 	return raw
 }
 
+// postCreateEnvelopeForTest builds a minimal type=="post_create" v2 envelope.
+// Like the contact_request helper, the encrypted body is a stub: the node only
+// reads the envelope "type" to decide whether to defer the ack.
+func postCreateEnvelopeForTest(t *testing.T, eventId string) []byte {
+	t.Helper()
+	envelope := map[string]interface{}{
+		"type":     "post_create",
+		"version":  "2",
+		"event_id": eventId,
+		"ts":       time.Now().UTC().Format(time.RFC3339Nano),
+		"encrypted": map[string]interface{}{
+			"kem":        "stub",
+			"ciphertext": "stub",
+			"nonce":      "stub",
+		},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("json.Marshal(postCreateEnvelope): %v", err)
+	}
+	return raw
+}
+
+// TestHandleIncomingMessage_PostCreate_AttachesConfirmNonce pins that a direct
+// post_create rides the same deferred-ack wire contract as chat_message and
+// contact_request: the message:received event carries a confirmNonce and the
+// {"ack":true} frame is written only after Dart confirms. Without the deferral
+// a receiver whose node is up but whose PostListener is not yet subscribed
+// acks and drops the thought, and the sender never falls back to the inbox.
+func TestHandleIncomingMessage_PostCreate_AttachesConfirmNonce(t *testing.T) {
+	collector := &testEventCollector{}
+	n := newDeferredAckTestNode(t, collector, 50*time.Millisecond)
+
+	stream := newStubTransportStream(
+		t,
+		postCreateEnvelopeForTest(t, "post-nonce"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n.handleIncomingMessage(stream)
+
+	data := waitForCollectedEvent(t, collector, "message:received", time.Second)
+	nonce, _ := data["confirmNonce"].(string)
+	if nonce == "" {
+		t.Fatalf("expected post_create message:received to carry a confirmNonce; event data: %v", data)
+	}
+	if stream.output.Len() != 0 {
+		t.Fatalf("expected NO ack bytes before confirm for a deferred post_create, got %d", stream.output.Len())
+	}
+
+	cb := &directConfirmCallback{confirmResults: []bool{true}}
+	n2 := newDeferredAckTestNode(t, cb, 50*time.Millisecond)
+	cb.node = n2
+
+	stream2 := newStubTransportStream(
+		t,
+		postCreateEnvelopeForTest(t, "post-confirm"),
+		generatePeerIDStr(t),
+		"/ip4/192.168.1.55/tcp/4001",
+	)
+
+	n2.handleIncomingMessage(stream2)
+
+	if got := ackPayloadFromStream(t, stream2); got != `{"ack":true}` {
+		t.Fatalf("expected ack payload after confirm, got %q", got)
+	}
+	if stream2.resetCount != 0 {
+		t.Fatalf("expected no stream reset on confirmed post_create ack, got %d", stream2.resetCount)
+	}
+}
+
 func TestHandleIncomingMessage_EmitsDirectTransportForNonCircuitStream(t *testing.T) {
 	collector := &testEventCollector{}
 	n := New(collector)
@@ -815,6 +887,7 @@ func TestShouldDeferDirectAck_ReactionAndDeletion(t *testing.T) {
 		{"message_deletion", true}, // F7: must now defer
 		{"introduction", false},    // legitimately fire-and-forget
 		{"contact_request", true},  // 171 TC-01: now deferred (cold-receiver durability)
+		{"post_create", true},      // plan 407: a thought is stored by Dart before the ack
 	}
 	for _, tc := range cases {
 		got := n.shouldDeferDirectAck(envelopeOfType(tc.typ))

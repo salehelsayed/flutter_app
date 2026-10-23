@@ -2171,7 +2171,7 @@ func messageEnvelopeType(msgBytes []byte) string {
 
 func requiresCommittedAckReserve(msgBytes []byte) bool {
 	switch messageEnvelopeType(msgBytes) {
-	case "chat_message", "message_reaction", "message_deletion", "contact_request":
+	case "chat_message", "message_reaction", "message_deletion", "contact_request", "post_create":
 		return true
 	default:
 		return false
@@ -2188,8 +2188,10 @@ func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
 	// masks that drop and the sender's success short-circuit skips the durable
 	// relay inbox. Deferring the ack forces a cold receiver to time out -> the
 	// sender falls back to the inbox -> the request is durably delivered + auto-
-	// added on replay. Other types (introductions, …) are legitimately
-	// fire-and-forget and ack immediately.
+	// added on replay. A post_create (plan 407 thought) has the same shape: the
+	// sender counts it delivered only on this ack, so the ack must wait for
+	// Dart's PostListener to store it. Other types (introductions, …) are
+	// legitimately fire-and-forget and ack immediately.
 	if !requiresCommittedAckReserve(msgBytes) {
 		return false
 	}
