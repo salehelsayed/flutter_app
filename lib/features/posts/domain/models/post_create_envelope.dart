@@ -407,10 +407,13 @@ class PostCreateEnvelope {
     });
   }
 
+  /// `post_id` rides in the clear so the relay can forward it in a push and the
+  /// phone can route to the post before it has decrypted the payload.
   static String buildEncryptedEnvelope({
     required String eventId,
     required String createdAt,
     required String senderPeerId,
+    required String postId,
     required String kem,
     required String ciphertext,
     required String nonce,
@@ -421,6 +424,7 @@ class PostCreateEnvelope {
       'event_id': eventId,
       'created_at': createdAt,
       'sender_peer_id': senderPeerId,
+      'post_id': postId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     });
   }

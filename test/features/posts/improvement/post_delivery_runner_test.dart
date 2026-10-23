@@ -269,6 +269,43 @@ void main() {
   );
 
   test(
+    'execute stores an inbox envelope whose top-level post_id names the post',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final bobService = FakeP2PService(peerId: 'peer-bob', network: network);
+      addTearDown(bobService.dispose);
+      final aliceService = _PolicyFakeP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: const {
+          'peer-bob': _PeerPolicy(requireDiscoverAndDialBeforeSend: true),
+        },
+      );
+      addTearDown(aliceService.dispose);
+
+      final created = await _createLocalPost(
+        posts: posts,
+        contacts: contacts,
+        recipientPeerIds: const ['peer-bob'],
+      );
+
+      final (result, post) = await PostDeliveryRunner(
+        p2pService: aliceService,
+        postRepo: posts,
+        bridge: FakeBridge(),
+      ).execute(created);
+
+      expect(result, SendPostResult.success);
+      final stored = network.retrieveInbox('peer-bob').single;
+      final envelope =
+          jsonDecode(stored['message'] as String) as Map<String, dynamic>;
+      expect(envelope['type'], 'post_create');
+      expect(envelope['post_id'], post.id);
+      expect(envelope['event_id'], post.eventId);
+    },
+  );
+
+  test(
     'executePostPass encrypts repost payloads for each recipient and persists sent status',
     () async {
       final bridge = PassthroughCryptoBridge();

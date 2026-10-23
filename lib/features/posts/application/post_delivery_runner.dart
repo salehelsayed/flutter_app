@@ -599,6 +599,7 @@ Future<String> _buildWireEnvelope({
     eventId: post.eventId,
     createdAt: post.createdAt,
     senderPeerId: post.senderPeerId,
+    postId: post.id,
     kem: kem,
     ciphertext: ciphertext,
     nonce: nonce,
