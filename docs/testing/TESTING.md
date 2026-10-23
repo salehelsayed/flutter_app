@@ -5581,6 +5581,20 @@ visible and cannot become an ordinary first-attempt PASS.
   fixture observes one active start and one subsequent refresh; existing failed
   startup retry, Bonsoir error containment, denial gating and disposal controls
   still pass. Evidence is under `.codex-test-logs/dual-stack-recovery/`.
+  A separate host regression reproduces a resume before first local startup:
+  re-advertising had no identity/WebSocket port and returned normally, but the
+  health owner marked discovery active, suppressing every later early-start
+  trigger even after the node started. The existing refresh now reports whether
+  it ran; only a real successful refresh marks discovery active. Initial startup
+  still owns its successful activation, and refresh failures retain their
+  existing inactive/retry behavior. The real local-service test distinguishes
+  the pre-start no-op from a completed refresh; the P2P regression observes one
+  first start after the pre-onboarding resume. Evidence is under
+  `.codex-test-logs/onboarding-early-discovery-20261023/`. The supplied Pixel
+  `move1_failed_fresh_onboarding.logcat` begins after startup and shows a running
+  node, no discovery events and `localPeerUnavailable`; its exact original
+  resume/start ordering is not captured, so host proof does not establish the
+  device trigger or a fresh device pass.
 
 - **Move Account receiver discovery freshness:** read-time TTL expiry previously
   removed both a stale endpoint and its live browser's service handle. After

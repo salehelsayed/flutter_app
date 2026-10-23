@@ -245,9 +245,9 @@ class _P2PPeerTransportCoordinator {
     _localP2P?.markAppResumed();
   }
 
-  Future<void> restartLocalAdvertising() async {
-    if (_disposed) return;
-    await _localP2P?.restartAdvertising();
+  Future<bool> restartLocalAdvertising() async {
+    if (_disposed) return false;
+    return await _localP2P?.restartAdvertising() ?? false;
   }
 
   void setLocalDiscoveryActive() {

@@ -24,7 +24,7 @@ class LocalP2PService {
   int? _quicPort;
   int? _tcpPort;
   Future<void>? _startFuture;
-  Future<void>? _restartFuture;
+  Future<bool>? _restartFuture;
   bool _restartDiscoveryRequested = false;
 
   LocalP2PService({
@@ -86,21 +86,22 @@ class LocalP2PService {
   }
 
   /// Refresh the advert while retaining a healthy browser and pending resolves.
-  Future<void> restartAdvertising() => _refreshAdvertising();
+  /// Returns false when the local identity/server has not started yet.
+  Future<bool> restartAdvertising() => _refreshAdvertising();
 
-  Future<void> _refreshAdvertising() =>
+  Future<bool> _refreshAdvertising() =>
       _restartFuture ??= _restartAdvertising().whenComplete(() {
         _restartFuture = null;
         _restartDiscoveryRequested = false;
       });
 
-  Future<void> _restartAdvertising() async {
+  Future<bool> _restartAdvertising() async {
     // Resume and address updates may arrive while native readiness is still
     // pending. Join startup, then share one refresh with the latest ports.
     await _startFuture;
     final peerId = _peerId;
     final port = _wsServer.port;
-    if (peerId == null || port == null) return;
+    if (peerId == null || port == null) return false;
 
     int? advertisedQuicPort;
     int? advertisedTcpPort;
@@ -133,6 +134,7 @@ class LocalP2PService {
         'tcpPort': ?_tcpPort,
       },
     );
+    return true;
   }
 
   /// FDC-11 (174): re-advertise the bonsoir TXT with freshly-resolved libp2p

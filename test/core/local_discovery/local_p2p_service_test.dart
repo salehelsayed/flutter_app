@@ -58,12 +58,18 @@ void main() {
     });
 
     test('start launches WS server and advertises', () async {
+      expect(await service.restartAdvertising(), isFalse);
+      expect(wsServer.port, isNull);
+      expect(fakeDiscovery.startAdvertisingCallCount, 0);
+
       await service.start('myPeerId');
 
       expect(wsServer.port, isNotNull);
       expect(fakeDiscovery.isAdvertising, isTrue);
       expect(fakeDiscovery.advertisedPeerId, equals('myPeerId'));
       expect(fakeDiscovery.advertisedPort, equals(wsServer.port));
+      expect(await service.restartAdvertising(), isTrue);
+      expect(fakeDiscovery.startAdvertisingCallCount, 2);
     });
 
     test(

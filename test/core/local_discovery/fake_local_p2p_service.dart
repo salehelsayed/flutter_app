@@ -77,7 +77,7 @@ class FakeLocalP2PService implements LocalP2PService {
   }
 
   @override
-  Future<void> restartAdvertising() async {}
+  Future<bool> restartAdvertising() async => started;
 
   @override
   void markAppResumed() {}

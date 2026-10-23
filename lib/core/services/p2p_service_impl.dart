@@ -3379,8 +3379,9 @@ class P2PServiceImpl
 
       // Restart mDNS advertising (e.g. after iOS returns from background)
       try {
-        await _peerTransportCoordinator.restartLocalAdvertising();
-        _peerTransportCoordinator.setLocalDiscoveryActive();
+        if (await _peerTransportCoordinator.restartLocalAdvertising()) {
+          _peerTransportCoordinator.setLocalDiscoveryActive();
+        }
       } catch (e) {
         if (kDebugMode) {
           debugPrint('[P2PService] Local P2P restart advertising failed: $e');

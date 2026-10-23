@@ -55,6 +55,39 @@ void main() {
   }
 
   test(
+    'resume before onboarding does not suppress the first discovery start',
+    () async {
+      final order = <String>[];
+      final localP2P = _RecordingLocalP2PService(order);
+      final service = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        localP2PService: localP2P,
+        isAppForeground: () => true,
+      );
+      addTearDown(service.dispose);
+
+      // Permission/lifecycle resume can precede identity creation. Re-advertising
+      // an unstarted local service is a successful no-op, not an active browser.
+      service.markResumeStarted();
+      await service.performImmediateHealthCheck();
+      expect(service.currentState.isStarted, isFalse);
+      expect(localP2P.startCount, 0);
+
+      stubStartedNode();
+      expect(
+        await service.startNode('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+        isTrue,
+      );
+      await settle();
+
+      expect(localP2P.started, isTrue);
+      expect(localP2P.startCount, 1);
+      expect(order, ['discovery']);
+    },
+  );
+
+  test(
     'startNode starts local discovery before the inbox-drain warm body, exactly once',
     () async {
       final order = <String>[];
@@ -62,11 +95,17 @@ void main() {
       stubStartedNode();
       bridge.whenCommand('inbox:retrieve_pending', (_) {
         order.add('drain');
-        return jsonEncode({'ok': true, 'messages': <dynamic>[], 'hasMore': false});
+        return jsonEncode({
+          'ok': true,
+          'messages': <dynamic>[],
+          'hasMore': false,
+        });
       });
       debugSetFlowEventSink((payload) {
         final event = payload['event'];
-        if (event == 'P2P_SERVICE_WARM_BACKGROUND_BEGIN') order.add('warm_begin');
+        if (event == 'P2P_SERVICE_WARM_BACKGROUND_BEGIN') {
+          order.add('warm_begin');
+        }
       });
 
       final service = P2PServiceImpl(
@@ -153,8 +192,8 @@ class _RecordingLocalP2PService extends FakeLocalP2PService {
 /// Minimal command-recording fake bridge (self-contained; mirrors the private
 /// fake used elsewhere in this directory).
 class _RecordingBridge extends Bridge {
-  final Map<String, FutureOr<String> Function(Map<String, dynamic>?)> _handlers =
-      {};
+  final Map<String, FutureOr<String> Function(Map<String, dynamic>?)>
+  _handlers = {};
   final List<String> calledCommands = [];
   bool _initialized = false;
 
