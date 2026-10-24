@@ -2904,6 +2904,8 @@ class _FeedWiredState extends State<FeedWired>
 
   void _onHostPointerDown(PointerDownEvent event) {
     if (_hostSwipePointer != null) {
+      // A second finger makes this a pinch (Orbit thoughts), not a swipe.
+      _abortHostSwipe();
       return;
     }
 
@@ -3034,7 +3036,10 @@ class _FeedWiredState extends State<FeedWired>
     if (event.pointer != _hostSwipePointer) {
       return;
     }
+    _abortHostSwipe();
+  }
 
+  void _abortHostSwipe() {
     final startingTab = _hostSwipeStartTab ?? _activeTab;
     final claimed = _hostSwipeClaimed;
     _resetHostSwipeTracking();

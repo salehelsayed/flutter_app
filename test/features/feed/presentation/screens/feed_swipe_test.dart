@@ -974,6 +974,43 @@ void main() {
   );
 
   testWidgets(
+    'YIELD-3: a two-thumb pinch on Orbit stays on Orbit, even after the first '
+    'thumb has started a swipe',
+    (tester) async {
+      setPhoneViewport(tester);
+      suppressFeedNavErrors();
+      identityRepo.seed(testIdentity);
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.drag(feedOrbitSwipeHost(), const Offset(-170, 0));
+      await pumpFrames(tester);
+      expect(appShellController.activeTab, 'orbit');
+
+      final host = tester.getRect(feedOrbitSwipeHost());
+      final y = host.bottom - 120;
+      final left = await tester.startGesture(
+        Offset(host.left + 40, y),
+        pointer: 21,
+      );
+      await left.moveBy(const Offset(20, 0));
+      await tester.pump();
+      final right = await tester.startGesture(
+        Offset(host.right - 40, y),
+        pointer: 22,
+      );
+      for (var i = 0; i < 6; i++) {
+        await left.moveBy(const Offset(25, 0));
+        await right.moveBy(const Offset(-25, 0));
+        await tester.pump();
+      }
+      await left.up();
+      await right.up();
+      await pumpFrames(tester);
+      expect(appShellController.activeTab, 'orbit');
+    },
+  );
+
+  testWidgets(
     'YIELD-2: the host swipe restores after the edit session exits',
     (tester) async {
       setPhoneViewport(tester);

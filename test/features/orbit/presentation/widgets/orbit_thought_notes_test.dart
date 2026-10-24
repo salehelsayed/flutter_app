@@ -183,7 +183,11 @@ void main() {
     // The app theme's inherited text style (on phones, a real font) must size
     // the bubble too, or the last letters are clipped.
     for (final shown in [
-      note('label', text: '', media: const MediaPreviewDescriptor(type: 'image', count: 1)),
+      note(
+        'label',
+        text: '',
+        media: const MediaPreviewDescriptor(type: 'image', count: 1),
+      ),
       note('bold', text: 'Reply thought from B'),
     ]) {
       await tester.pumpWidget(
@@ -201,10 +205,12 @@ void main() {
         ),
       );
       final box = tester.getSize(
-        find.descendant(
-          of: find.byType(OrbitThoughtNoteBubble),
-          matching: find.byType(Container),
-        ).first,
+        find
+            .descendant(
+              of: find.byType(OrbitThoughtNoteBubble),
+              matching: find.byType(Container),
+            )
+            .first,
       );
       // Never clipped: the laid-out lines fit the bubble, and text is only cut
       // where the ellipsis shows.
@@ -471,6 +477,47 @@ void main() {
     expect(reloads, 1);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'thumbs pinch anywhere on a phone screen, not only on the orbit',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        wrap(
+          InnerCircleInteractiveSurface(
+            userPeerId: 'self',
+            items: items.take(2).toList(),
+            onFriendTap: (_) {},
+            onGroupTap: (_) {},
+            thoughtsByPeerId: {'friend-0': note('thumbs', text: 'Thumb note')},
+            nowProvider: () => start,
+          ),
+        ),
+      );
+      expect(find.text('Thumb note'), findsOneWidget);
+      Future<void> thumbs(Offset left, Offset right, double travel) async {
+        final a = await tester.startGesture(left, pointer: 11);
+        final b = await tester.startGesture(right, pointer: 12);
+        for (var i = 0; i < 6; i++) {
+          await a.moveBy(Offset(travel / 6, 0));
+          await b.moveBy(Offset(-travel / 6, 0));
+          await tester.pump();
+        }
+        await a.up();
+        await b.up();
+        await tester.pump();
+      }
+
+      await thumbs(const Offset(20, 700), const Offset(370, 700), 120);
+      expect(find.text('Thumb note'), findsNothing);
+      await thumbs(const Offset(140, 760), const Offset(250, 760), -110);
+      expect(find.text('Thumb note'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
 
   testWidgets(
     'deadline removes note without store/sweep changes and reloads host',

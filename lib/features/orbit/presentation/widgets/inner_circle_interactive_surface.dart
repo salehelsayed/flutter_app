@@ -834,49 +834,52 @@ class _InnerCircleInteractiveSurfaceState
             _canvasMeasurement!.signature != _measureSignature(constraints)) {
           _scheduleCanvasMeasure();
         }
-        return Stack(
-          children: [
-            // Layer 1 — scroll view. Inside, the background gesture layer is a
-            // SIBLING BEHIND the visualization (NOT an ancestor of the nodes),
-            // so node taps fire immediately with no double-tap latency (TC-54)
-            // while empty-space long-press / double-tap / tap fall through to it.
-            Positioned.fill(
-              child: SingleChildScrollView(
-                controller: _scroll,
-                padding: EdgeInsets.zero,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  // The ConstrainedBox floors the Stack at the viewport height so
-                  // a short population is centered (via the leading spacer below)
-                  // while an overflow-tall population scrolls (the Stack grows
-                  // past the floor and the scroll view takes over).
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: GestureDetector(
-                          key: const ValueKey('orbit-inner-circle-background'),
-                          behavior: HitTestBehavior.opaque,
-                          onLongPressStart: _editing
-                              ? null
-                              : (_) => _enterEdit(),
-                          onDoubleTap: _toggleLabels,
-                          onTap: _onBackgroundTap,
+        // Thumbs pinch anywhere on the surface, not only on the orbit canvas.
+        return Listener(
+          key: const ValueKey('orbit-thought-pinch-surface'),
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _thoughtPointerDown,
+          onPointerMove: _thoughtPointerMove,
+          onPointerUp: _thoughtPointerUp,
+          onPointerCancel: _thoughtPointerUp,
+          child: Stack(
+            children: [
+              // Layer 1 — scroll view. Inside, the background gesture layer is a
+              // SIBLING BEHIND the visualization (NOT an ancestor of the nodes),
+              // so node taps fire immediately with no double-tap latency (TC-54)
+              // while empty-space long-press / double-tap / tap fall through to it.
+              Positioned.fill(
+                child: SingleChildScrollView(
+                  controller: _scroll,
+                  padding: EdgeInsets.zero,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
+                    ),
+                    // The ConstrainedBox floors the Stack at the viewport height so
+                    // a short population is centered (via the leading spacer below)
+                    // while an overflow-tall population scrolls (the Stack grows
+                    // past the floor and the scroll view takes over).
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: GestureDetector(
+                            key: const ValueKey(
+                              'orbit-inner-circle-background',
+                            ),
+                            behavior: HitTestBehavior.opaque,
+                            onLongPressStart: _editing
+                                ? null
+                                : (_) => _enterEdit(),
+                            onDoubleTap: _toggleLabels,
+                            onTap: _onBackgroundTap,
+                          ),
                         ),
-                      ),
-                      Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Listener(
-                              key: const ValueKey(
-                                'orbit-thought-pinch-surface',
-                              ),
-                              behavior: HitTestBehavior.translucent,
-                              onPointerDown: _thoughtPointerDown,
-                              onPointerMove: _thoughtPointerMove,
-                              onPointerUp: _thoughtPointerUp,
-                              onPointerCancel: _thoughtPointerUp,
-                              child: AnimatedBuilder(
+                        Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              AnimatedBuilder(
                                 animation: _thoughtAnimation,
                                 builder: (context, _) => OrbitalVisualization(
                                   userPeerId: widget.userPeerId,
@@ -925,48 +928,50 @@ class _InnerCircleInteractiveSurfaceState
                                   canvasKey: _canvasKey,
                                 ),
                               ),
-                            ),
-                            if (widget.items.isEmpty)
-                              Padding(
-                                key: const ValueKey('orbit-empty-hint-padding'),
-                                padding: const EdgeInsets.fromLTRB(
-                                  24,
-                                  12,
-                                  24,
-                                  0,
-                                ),
-                                child: Text(
-                                  l10n.orbit_inner_circle_empty_hint,
+                              if (widget.items.isEmpty)
+                                Padding(
                                   key: const ValueKey(
-                                    'orbit-inner-circle-empty-hint',
+                                    'orbit-empty-hint-padding',
                                   ),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: readableColors.textMuted,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    24,
+                                    12,
+                                    24,
+                                    0,
+                                  ),
+                                  child: Text(
+                                    l10n.orbit_inner_circle_empty_hint,
+                                    key: const ValueKey(
+                                      'orbit-inner-circle-empty-hint',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: readableColors.textMuted,
+                                    ),
                                   ),
                                 ),
-                              ),
-                          ],
+                            ],
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
 
-            // Layer 2 — edit overlay (banner, Reset, anchored handles, bubble,
-            // corner steppers).
-            if (_editing)
-              ..._buildEditOverlay(context, l10n, constraints, bottomInset),
+              // Layer 2 — edit overlay (banner, Reset, anchored handles, bubble,
+              // corner steppers).
+              if (_editing)
+                ..._buildEditOverlay(context, l10n, constraints, bottomInset),
 
-            // Layer 3 — find chip strip + pill (bottom-right). Kept ABOVE the
-            // edit overlay for the shared bottom bands (refute C4): the mockup
-            // z-order (edit above find) is honored only where spatially
-            // disjoint, which the armed-state re-flow guarantees.
-            ..._buildFind(context, l10n, readableColors, find, bottomInset),
-          ],
+              // Layer 3 — find chip strip + pill (bottom-right). Kept ABOVE the
+              // edit overlay for the shared bottom bands (refute C4): the mockup
+              // z-order (edit above find) is honored only where spatially
+              // disjoint, which the armed-state re-flow guarantees.
+              ..._buildFind(context, l10n, readableColors, find, bottomInset),
+            ],
+          ),
         );
       },
     );
