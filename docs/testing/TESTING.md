@@ -4573,6 +4573,17 @@ visible and cannot become an ordinary first-attempt PASS.
   catch-up coalescing is introduced. Host evidence:
   `.codex-test-logs/startup-group-catchup-20261024/`.
 
+- **Notification-tap missing group keys:** MyApp passes its durable pending-key
+  repository and active repair sender into the shared route preparation;
+  StartupRouter forwards the same sender for cold FCM fallback. The helper
+  retains the log-only default when no sender is supplied. Behavioral tests
+  build a signed replay for an absent epoch, run the real targeted drain,
+  and check its pending placeholder plus active/default request outcome.
+  The former source-only assertion labelling this shared helper NSE-only
+  was refuted by its foreground callers and replaced by those tests.
+  Evidence: `.codex-test-logs/startup-group-catchup-20261024/`. These host
+  callback assertions do not prove device packet delivery.
+
 - **Legacy group dissolve/removal audit identity:** when a member has no device
   roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
   account-signed transition omits device/transport fields. Go publication fills

@@ -1866,6 +1866,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
       pendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      requestGroupKeyRepair: widget.requestGroupKeyRepair,
       historyGapRepairRepository: widget.groupHistoryGapRepairRepository,
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,

@@ -8,9 +8,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// UDM-G threads a SENDER-CAPABLE key-repair request closure
 /// (`requestGroupKeyRepairViaSender`) into every foreground group listener /
 /// use-case site so an undecryptable group message can trigger a real
-/// `group_key_repair_request` send back to the author. The matching NSE /
-/// background route-target path deliberately DEGRADES to the log-only
-/// `emitGroupKeyRepairRequest` (no network in the extension).
+/// `group_key_repair_request` send back to the author. The shared route-target
+/// helper also serves foreground notification opens; its optional log-only
+/// fallback is covered by behavioral route-target tests.
 ///
 /// Every behavioral UDM-G test injects its OWN spy closure into the listeners,
 /// so the production-bootstrap wiring is never exercised. A future
@@ -27,13 +27,11 @@ void main() {
 
   const productionPath =
       'lib/app/bootstrap/production_application_bootstrap.dart';
-  const nsePath =
-      'lib/features/push/application/prepare_notification_route_target_use_case.dart';
   const routerPath = 'lib/core/services/incoming_message_router.dart';
 
   // The production sender-capable closure that every FOREGROUND site must wire.
   const senderToken = 'requestGroupKeyRepair: requestGroupKeyRepairViaSender';
-  // The intentional log-only degrade used by the NSE/background path.
+  // Legacy log-only fallback; production foreground bootstrap uses the sender.
   const logOnlyToken = 'requestGroupKeyRepair: emitGroupKeyRepairRequest';
 
   test('production defines the sender-capable key-repair closure', () async {
@@ -111,30 +109,9 @@ void main() {
     },
   );
 
-  test(
-    'NSE/background route-target path intentionally degrades to log-only',
-    () async {
-      final source = await readSource(nsePath);
-      expect(
-        source,
-        contains(logOnlyToken),
-        reason:
-            'prepare_notification_route_target_use_case.dart runs in the '
-            'notification-service extension where there is NO network, so it '
-            'MUST use the log-only emitGroupKeyRepairRequest. This degrade is '
-            'INTENTIONAL — if this assertion fails because it was swapped to '
-            'requestGroupKeyRepairViaSender, that closure cannot send from the '
-            'NSE and would silently no-op or crash.',
-      );
-      expect(
-        source,
-        isNot(contains(senderToken)),
-        reason:
-            'the NSE/background path must NOT wire the sender-capable '
-            'requestGroupKeyRepairViaSender closure.',
-      );
-    },
-  );
+  // The shared route-target helper serves foreground MyApp/StartupRouter.
+  // Its active sender and legacy log-only fallback are exercised with actual
+  // missing-key inbox replays in prepare_notification_route_target_use_case_test.
 
   test(
     'incoming_message_router routes the group_key_repair_request type',
