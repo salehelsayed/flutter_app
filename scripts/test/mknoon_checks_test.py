@@ -1033,8 +1033,11 @@ class FlutterFileReuseTest(RepositoryFixture):
                 checks._LAUNCH_CONTEXT.capture_failure = {'stream': 'stdout', 'reason': 'fixture_capacity'}
             return '\n'.join(json.dumps(event) for event in events) + '\n', int(failure), False, .01
 
+        # Replayed output never starts Flutter; live host admission belongs to
+        # the real launch boundary, not this file-receipt fixture.
         with contextlib.redirect_stdout(io.StringIO()), \
                 mock.patch.object(checks, 'launch', side_effect=replay), \
+                mock.patch.object(checks.device_preflight, 'host_test_slot', side_effect=contextlib.nullcontext), \
                 mock.patch.object(checks, 'toolchain_identity', return_value={'fixture': 'no SDK execution'}):
             code = checks.execute_plan(args, self.root, rules, plan, files, {}, {}, directory, time.monotonic())
         self.last_plan = plan
@@ -1092,6 +1095,15 @@ class FlutterFileReuseTest(RepositoryFixture):
         self.assertEqual(report['status'], 'FAIL')
         self.assertEqual([p for p in commands[1] if p in self.paths], self.paths[:2])
         self.assertEqual(sum(self.paths[1] in command for command in commands), 3)
+
+    def test_mocked_flutter_replay_does_not_consult_live_host_guard(self):
+        with mock.patch.dict(os.environ, {'MKNOON_HOST_SLOT_WAIT_SECONDS': '0'}), \
+                mock.patch.object(checks.device_preflight, 'default_host_guard', return_value=False) as guard:
+            code, report, commands, _ = self.execute_lanes()
+        self.assertEqual(code, 0)
+        self.assertEqual(report['status'], 'PASS')
+        self.assertEqual(len(commands), 2)
+        guard.assert_not_called()
 
     def test_cache_is_invocation_local(self):
         for _ in range(2):
