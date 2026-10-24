@@ -409,7 +409,10 @@ const _productionBootstrapNormalizedSha256 =
     // SE-42 Task 20 owner decision A (2026-10-16): the listener's
     // requestReciprocalCallWakeRecovery closure is restored beside the repair
     // wiring, with markAsNewRequest: false, for unmarked legacy retries only.
-    '4ee3c4a26440b576963391e7f9ba0491e03569b854b807cadc3844c8b4132920';
+    // Contact-request burst fix: the received-call-wake recovery send passes
+    // requireFresh: true so it never reuses an earlier coalesced send. One
+    // argument at the existing call site; no owner moves.
+    '81e5a4e1d90e12ec5d1c17b4c788f343ec6cfe3537b7640c217f5695c437f494';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -434,7 +437,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same approved media erasure/shared-store wiring changes this remainder;
 // the exact historical notification callback remains byte-identical and unique.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '87a55249188fb3a49669f311335e867311ae1c5381ed7444be8963327f2115ae';
+    '8118f99bbae579730230a0f5cb2685caec507f6c902b71f8fe73a195d0eb82ec';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
