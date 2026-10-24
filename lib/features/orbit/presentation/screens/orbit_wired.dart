@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
 import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
@@ -211,6 +212,7 @@ class OrbitWired extends StatefulWidget {
   /// 198 — bubbles the Inner-Circle edit-session active flag to the embedding
   /// host (the feed↔orbit host-swipe yield gate). Invoked on edit enter/exit.
   final ValueChanged<bool>? onEditSessionActiveChanged;
+  final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
   final PendingPostTargetStore? pendingPostTargetStore;
   final PostsPrivacySettingsRepository? postsPrivacySettingsRepository;
   final String? initialFilterTab;
@@ -290,6 +292,7 @@ class OrbitWired extends StatefulWidget {
     this.onEmbeddedExitActionChanged,
     this.onRowActionOpenChanged,
     this.onEditSessionActiveChanged,
+    this.onDepthOwnsHostGestureChanged,
     this.pendingPostTargetStore,
     this.postsPrivacySettingsRepository,
     this.initialFilterTab,
@@ -362,6 +365,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<String>? _thoughtSubscription;
   final _thoughtEligibilityChanges = StreamController<void>.broadcast();
   Map<String, OrbitThoughtNote> _thoughtsByPeerId = const {};
+  Map<String, PostModel> _depthThoughtsByPeerId = const {};
+  VoidCallback? _depthStepBack;
+  final _depthSeenPending = <String>{};
   int _thoughtLoadRevision = 0;
   bool _thoughtCardOpen = false;
   PendingPostTargetStore? _queuedThoughtStore;
@@ -1015,7 +1021,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final identity = _identity;
     if (repository == null || identity == null) {
       if (mounted && _thoughtsByPeerId.isNotEmpty) {
-        setState(() => _thoughtsByPeerId = const {});
+        setState(() {
+          _thoughtsByPeerId = const {};
+          _depthThoughtsByPeerId = const {};
+        });
       }
       return;
     }
@@ -1025,6 +1034,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final own = await query.executeOwn(localPeerId: identity.peerId);
       if (!mounted || revision != _thoughtLoadRevision) return;
       setState(() {
+        _depthThoughtsByPeerId = {
+          for (final post in thoughts) post.authorPeerId: post,
+        };
         _thoughtsByPeerId = {
           for (final post in thoughts)
             post.authorPeerId: OrbitThoughtNote.fromPost(post),
@@ -1037,6 +1049,70 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         _reportThoughtFailure(error);
       }
     }
+  }
+
+  Future<void> _markDepthThoughtSeen(String postId) async {
+    final repository = widget.postRepository;
+    final identity = _identity;
+    if (repository == null ||
+        identity == null ||
+        !_depthSeenPending.add(postId)) {
+      return;
+    }
+    try {
+      final post = await repository.getPost(postId);
+      if (!mounted ||
+          post == null ||
+          !post.isIncoming ||
+          post.isRead ||
+          post.authorPeerId == identity.peerId) {
+        return;
+      }
+      final contact = await widget.contactRepo.getContact(post.authorPeerId);
+      if (!mounted ||
+          contact == null ||
+          contact.isBlocked ||
+          contact.isArchived) {
+        return;
+      }
+      final current =
+          (await _thoughtQuery(
+                repository,
+              ).execute(localPeerId: identity.peerId))
+              .where((thought) => thought.authorPeerId == post.authorPeerId)
+              .firstOrNull;
+      final now = (widget.thoughtNowProvider ?? DateTime.now)().toUtc();
+      if (!mounted ||
+          current?.id != postId ||
+          !DateTime.parse(post.expiresAt).isAfter(now)) {
+        return;
+      }
+      await repository.markFocused(postId);
+    } catch (error) {
+      if (mounted) _reportThoughtFailure(error);
+    } finally {
+      _depthSeenPending.remove(postId);
+    }
+  }
+
+  Future<List<PostMediaAttachmentModel>> _loadDepthMedia(String postId) async {
+    final repository = widget.postRepository;
+    if (repository == null ||
+        !_depthThoughtsByPeerId.values.any((post) => post.id == postId)) {
+      return const [];
+    }
+    final media = await repository.loadPostMediaAttachmentsForPosts([postId]);
+    if (!mounted ||
+        !_depthThoughtsByPeerId.values.any(
+          (post) =>
+              post.id == postId &&
+              DateTime.parse(
+                post.expiresAt,
+              ).isAfter((widget.thoughtNowProvider ?? DateTime.now)().toUtc()),
+        )) {
+      return const [];
+    }
+    return media[postId] ?? const [];
   }
 
   void _notifyThoughtEligibilityChanged() {
@@ -3431,6 +3507,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   void _onClose() {
+    if (_isOrbitActive &&
+        _viewMode == OrbitViewMode.innerCircle &&
+        (ModalRoute.of(context)?.isCurrent ?? true) &&
+        _depthStepBack != null) {
+      _depthStepBack!();
+      return;
+    }
     if (widget.onEmbeddedExit != null) {
       widget.appShellController?.switchTo(AppShellTab.feed);
       widget.onEmbeddedExit!(_buildRouteChanges());
@@ -3530,6 +3613,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onClose: _onClose,
       onFriendTap: _onFriendTap,
       thoughtsByPeerId: _thoughtsByPeerId,
+      depthThoughtsByPeerId: _depthThoughtsByPeerId,
+      depthActive: _isOrbitActive,
+      onDepthBackActionChanged: (action) => _depthStepBack = action,
+      onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
+      onDepthThoughtDeparted: (postId) =>
+          unawaited(_markDepthThoughtSeen(postId)),
+      loadDepthMedia: _loadDepthMedia,
+      downloadDepthMedia: widget.postRepository == null
+          ? null
+          : (attachment) => downloadPostMedia(
+              bridge: widget.bridge,
+              postRepo: widget.postRepository!,
+              mediaFileManager: widget.mediaFileManager,
+              attachment: attachment,
+            ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
       onComposeThought: widget.postRepository == null || _identity == null
           ? null

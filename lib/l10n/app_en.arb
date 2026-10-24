@@ -197,6 +197,7 @@
   "pinned_edit": "Edit",
   "pinned_remove": "Remove",
   "edit_pinned_hint": "Update your post",
+  "orbit_depth_outer_ring": "Outer circle",
   "orbit_view_toggle_to_list": "Show all chats",
   "orbit_view_toggle_to_circle": "Show inner circle",
   "orbit_inner_circle_empty_hint": "Add friends to see your inner circle",

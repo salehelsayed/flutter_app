@@ -42,6 +42,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -1430,6 +1431,48 @@ void main() {
 
         expect(appShellController.activeTab, 'orbit');
         expect(find.byType(OrbitWired), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'vertical orbit entry owns the whole raw sequence and depth sideways turn cannot move Feed',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester, count: 10);
+        final surface = find.byType(OrbitDepthSurface);
+        final entry = await tester.startGesture(tester.getCenter(surface));
+        await entry.moveBy(const Offset(6, -30));
+        await tester.pump();
+        // Feed sees these same raw moves after the descendant publishes ownership.
+        await entry.moveBy(const Offset(190, -200));
+        await entry.up();
+        await pumpFeedFrames(tester, count: 30);
+        expect(appShellController.activeTab, 'orbit');
+        expect(
+          find.byKey(const ValueKey('orbit-depth-inner-top')),
+          findsOneWidget,
+        );
+        await tester.drag(surface, const Offset(190, 0));
+        await pumpFeedFrames(tester, count: 30);
+        expect(appShellController.activeTab, 'orbit');
+        // Re-entry resets to flat; its ordinary horizontal gesture remains the incumbent Feed swipe.
+        appShellController.switchTo('feed');
+        await pumpFeedFrames(tester, count: 10);
+        appShellController.switchTo('orbit');
+        await pumpFeedFrames(tester, count: 10);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-inner-top')),
+          findsNothing,
+        );
+        await tester.drag(surface, const Offset(190, 0));
+        await pumpFeedFrames(tester, count: 10);
+        expect(appShellController.activeTab, 'feed');
       },
     );
 

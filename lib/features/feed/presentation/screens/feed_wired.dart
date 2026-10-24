@@ -361,6 +361,7 @@ class _FeedWiredState extends State<FeedWired>
   // mechanism keeping a rightward handle drag from sliding the tab to Feed
   // mid-sculpt (mirrors [_orbitRowActionOpen] / [_feedCardSwipeActive]).
   bool _orbitEditSessionActive = false;
+  bool _orbitDepthOwnsGesture = false;
 
   List<FeedItem> get _feedItems => _feedStore.items;
   void _clearEditState({
@@ -2893,6 +2894,11 @@ class _FeedWiredState extends State<FeedWired>
     _orbitEditSessionActive = active;
   }
 
+  void _onOrbitDepthOwnsGestureChanged(bool active) {
+    _orbitDepthOwnsGesture = active;
+    if (active) _abortHostSwipe();
+  }
+
   void _resetHostSwipeTracking() {
     _hostSwipePointer = null;
     _hostSwipeStartPosition = null;
@@ -2903,6 +2909,7 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   void _onHostPointerDown(PointerDownEvent event) {
+    if (_orbitDepthOwnsGesture) return;
     if (_hostSwipePointer != null) {
       // A second finger makes this a pinch (Orbit thoughts), not a swipe.
       _abortHostSwipe();
@@ -2919,6 +2926,10 @@ class _FeedWiredState extends State<FeedWired>
   }
 
   void _onHostPointerMove(PointerMoveEvent event) {
+    if (_orbitDepthOwnsGesture) {
+      _abortHostSwipe();
+      return;
+    }
     if (event.pointer != _hostSwipePointer || _hostSwipeStartPosition == null) {
       return;
     }
@@ -3147,6 +3158,7 @@ class _FeedWiredState extends State<FeedWired>
       onEmbeddedExitActionChanged: _registerOrbitEmbeddedExitAction,
       onRowActionOpenChanged: _onOrbitRowActionOpenChanged,
       onEditSessionActiveChanged: _onOrbitEditSessionActiveChanged,
+      onDepthOwnsHostGestureChanged: _onOrbitDepthOwnsGestureChanged,
       transportMetrics: widget.transportMetrics,
       accountMigrationRunTransfer: widget.accountMigrationRunTransfer,
       accountMigrationSizeGate: widget.accountMigrationSizeGate,

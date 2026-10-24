@@ -832,6 +832,12 @@ abstract class AppLocalizations {
   /// **'Update your post'**
   String get edit_pinned_hint;
 
+  /// No description provided for @orbit_depth_outer_ring.
+  ///
+  /// In en, this message translates to:
+  /// **'Outer circle'**
+  String get orbit_depth_outer_ring;
+
   /// No description provided for @orbit_view_toggle_to_list.
   ///
   /// In en, this message translates to:

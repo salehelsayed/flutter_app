@@ -456,6 +456,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get edit_pinned_hint => 'حدّث منشورك';
 
   @override
+  String get orbit_depth_outer_ring => 'الدائرة الخارجية';
+
+  @override
   String get orbit_view_toggle_to_list => 'عرض كل المحادثات';
 
   @override

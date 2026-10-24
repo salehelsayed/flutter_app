@@ -33,6 +33,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/message_c
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/nav_bar_button.dart';
@@ -651,6 +652,76 @@ void main() {
       // profile-download retry; let it observe disposal before test teardown.
       await tester.pump(const Duration(seconds: 6));
     }
+
+    testWidgets(
+      'depth arrival stays unread; departure marks exact post and block removes its seat',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final second = testContact.copyWith(
+          peerId: 'depth-second',
+          username: 'Second',
+        );
+        contactRepo.seed([testContact, second]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('depth-first'));
+        await posts.savePost(
+          thought(
+            'depth-second-post',
+          ).copyWith(authorPeerId: second.peerId, senderPeerId: second.peerId),
+        );
+        final depthChatListener = _FakeChatMessageListener(
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            chatMessageListener: depthChatListener,
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final surface = find.byType(OrbitDepthSurface);
+        await tester.timedDrag(
+          surface,
+          const Offset(0, -260),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-depth-first')),
+          findsOneWidget,
+        );
+        expect(posts.focusedIds, isEmpty);
+        await tester.timedDrag(
+          surface,
+          const Offset(-240, 0),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-depth-second-post')),
+          findsOneWidget,
+        );
+        expect(posts.focusedIds, ['depth-first']);
+        expect((await posts.getPost('depth-first'))!.isRead, isTrue);
+        await contactRepo.blockContact(second.peerId);
+        depthChatListener.emitContactUpdate(second.copyWith(isBlocked: true));
+        await pumpOrbitFrames(tester, count: 10);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-face-depth-second')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-depth-second-post')),
+          findsNothing,
+        );
+        expect(posts.focusedIds, ['depth-first']);
+        await finishThoughtCase(tester);
+      },
+    );
 
     testWidgets(
       'own-node plus shares with every current active unblocked friend',

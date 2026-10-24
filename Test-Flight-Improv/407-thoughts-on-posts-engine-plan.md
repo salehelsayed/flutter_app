@@ -1,6 +1,6 @@
 # 407 — Thoughts on the Posts engine
 
-Status: Steps 1–3 implemented and scoped verification recorded, with owner-accepted baseline gaps (2026-10-22). Steps 4 and 5 not started.
+Status: Steps 1–3 implemented and scoped verification recorded, with owner-accepted baseline gaps (2026-10-22). Step 4 implemented; acceptance checks in progress. Step 5 not started.
 Branch: UI-Update
 Date: 2026-10-20 (line numbers checked after rebasing UI-Update on main 999a297ef). Scope cut to a first version the same day (owner decision).
 
@@ -273,6 +273,10 @@ Tests (from `test/features/orbit/prototypes/orbit_depth_prototype_screen_test.da
 - With Reduce Motion, 3D opens and turns without animation.
 
 Device check: the Android pair, opening 3D up and down, turning once, flying to the outer ring and back to 2D.
+
+Implementation (2026-10-24): `OrbitDepthSurface` wraps the unchanged `InnerCircleInteractiveSurface`. Its geometry uses the existing `computeOrbitLayout` seats before excluding groups, preserving the two rings, empty seats and overflow. `OrbitWired` supplies the same eligible newest thoughts as the 2D notes, existing media downloads and navigation, and exact-post seen writes. Feed yields its raw swipe while depth owns the gesture. The prototype's center/radius interpolation, springs, card fold and top/bottom anchors are retained; the plan's pinch-to-overview and fold-on-turn requirements take precedence over the prototype's divergent dial branches.
+
+Acceptance is in progress. The focused geometry, media, surface, complete Orbit wiring and Feed wiring suites passed 236 tests with no failures or skips. They cover production widgets and repository fakes, including expiry, RTL, two-pointer cancellation, media completion, hidden replacements and Reduce Motion interrupted during Back. Targeted analysis has no errors or warnings and one brace-style information. These are host assertions, not device rendering or transport proof. The affected selection and `feature-host-all` remain in progress. First failures and corrected runs are retained under `.codex-test-logs/plan407-step4/implementation/`. Kayan owns the Android-pair end-to-end check and will receive a reviewed commit; no device pass is claimed yet. Step 5 is excluded from this implementation.
 
 ### Step 5 — Opening a chat from the orbit
 

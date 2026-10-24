@@ -458,6 +458,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get edit_pinned_hint => 'Deinen Beitrag aktualisieren';
 
   @override
+  String get orbit_depth_outer_ring => 'Äußerer Kreis';
+
+  @override
   String get orbit_view_toggle_to_list => 'Alle Chats anzeigen';
 
   @override

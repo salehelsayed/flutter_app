@@ -3209,7 +3209,41 @@ complete footer, raw-log hash and unchanged before/after source are retained in
 the receipt. Current application production files match that tested source;
 later iOS test-fixture and documentation changes have separate proof.
 
-The generated-localization mapping also selected general audio, group-media,
+Step 4's production depth tests are `orbit_depth_geometry_test.dart`,
+`orbit_depth_surface_test.dart`, and `orbit_depth_media_test.dart`, with real
+Orbit/Feed wiring assertions in their existing screen test files. Build depth
+seats from `computeOrbitLayout` before filtering groups: groups leave their
+original holes, partial rings retain their spread, and arc friends stay behind
+the outer overflow control. Arrival chooses the first unseen thought; a
+committed departure writes the exact displayed post ID, while a folded card or
+overview bubble must not make a replacement thought a read target. Binding-clock
+expiry tests need a second live peer and must assert its face rotates to the
+front as well as its card changing. A static replacement-card assertion misses
+that geometry failure.
+
+Depth media must resolve persisted relative paths through
+`MediaFileManager.resolveStoredPathSync` before checking for cached files.
+Calling the downloader again for a valid relative cache can delete that cache
+on an offline failure. Await the existing downloader's coalesced future for
+unavailable media, including `downloading` and `retry_waiting`; media-status
+updates do not emit `postChanges`. Keep asynchronous loads fenced to the
+displayed card. Host image/video/voice fixtures prove metadata, renderer reuse,
+retry and stale-completion behavior, not native decoding or audible playback.
+
+Gesture cases include a stationary primary tap plus a second finger moving
+13 pixels across the pinch threshold: current pointer count at tap callback
+time cannot prove the sequence was single-touch. Suppress the entire cancelled
+sequence for faces, cards, outer peek and overflow. Reduce Motion can change
+mid-spring; stopping animation tickers cancels their futures, so the same
+guarded landing completion must release Feed/Back ownership and record a
+departure exactly once. Held partial-entry geometry and actual reverse drags
+separately prove interpolation and outer → inner → flat travel. Preserved
+failing-before cases and corrected runs are in
+`.codex-test-logs/plan407-step4/implementation/`. Kayan's source-bound Android
+acceptance remains separate; host checks do not certify device rendering or
+a signed release.
+
+The Step 3 generated-localization mapping also selected general audio, group-media,
 group-mute, media, Android notification, iOS notification and reconnect device
 campaigns. These seven campaigns were not rerun on `d81655bf0`; earlier Step 1/2
 device records and the Step 3 real-photo acceptance retain their own scopes.

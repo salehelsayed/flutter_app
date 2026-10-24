@@ -1,4 +1,7 @@
 import 'dart:math' as math;
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show ScrollCacheExtent;
@@ -311,6 +314,14 @@ class OrbitScreen extends StatefulWidget {
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onComposeThought;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final Map<String, PostModel> depthThoughtsByPeerId;
+  final bool depthActive;
+  final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
+  final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
+  final ValueChanged<String>? onDepthThoughtDeparted;
+  final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
+  downloadDepthMedia;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
@@ -391,6 +402,13 @@ class OrbitScreen extends StatefulWidget {
     this.onSelfAvatarTap,
     this.onComposeThought,
     this.thoughtsByPeerId = const {},
+    this.depthThoughtsByPeerId = const {},
+    this.depthActive = true,
+    this.onDepthOwnsHostGestureChanged,
+    this.onDepthBackActionChanged,
+    this.onDepthThoughtDeparted,
+    this.loadDepthMedia,
+    this.downloadDepthMedia,
     this.onThoughtTap,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
@@ -502,6 +520,13 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onSelfAvatarTap: widget.onSelfAvatarTap,
     onComposeThought: widget.onComposeThought,
     thoughtsByPeerId: widget.thoughtsByPeerId,
+    depthThoughtsByPeerId: widget.depthThoughtsByPeerId,
+    depthActive: widget.depthActive,
+    onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
+    onDepthBackActionChanged: widget.onDepthBackActionChanged,
+    onDepthThoughtDeparted: widget.onDepthThoughtDeparted,
+    loadDepthMedia: widget.loadDepthMedia,
+    downloadDepthMedia: widget.downloadDepthMedia,
     onThoughtTap: widget.onThoughtTap,
     onThoughtsExpired: widget.onThoughtsExpired,
     thoughtNowProvider: widget.thoughtNowProvider,
@@ -575,6 +600,14 @@ class _OrbitScreenView extends StatelessWidget {
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onComposeThought;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
+  final Map<String, PostModel> depthThoughtsByPeerId;
+  final bool depthActive;
+  final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
+  final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
+  final ValueChanged<String>? onDepthThoughtDeparted;
+  final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
+  final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
+  downloadDepthMedia;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
@@ -661,6 +694,13 @@ class _OrbitScreenView extends StatelessWidget {
     this.onSelfAvatarTap,
     this.onComposeThought,
     this.thoughtsByPeerId = const {},
+    this.depthThoughtsByPeerId = const {},
+    this.depthActive = true,
+    this.onDepthOwnsHostGestureChanged,
+    this.onDepthBackActionChanged,
+    this.onDepthThoughtDeparted,
+    this.loadDepthMedia,
+    this.downloadDepthMedia,
     this.onThoughtTap,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
@@ -1126,7 +1166,7 @@ class _OrbitScreenView extends StatelessWidget {
         // friends already dropped, archived groups already excluded upstream).
         // 198: the interactive surface owns the sculpt/find/labels/expansion
         // session state + persistence; the caption + empty hint live inside it.
-        return InnerCircleInteractiveSurface(
+        final flatChild = InnerCircleInteractiveSurface(
           userPeerId: projection.userPeerId,
           userAvatarBytes: projection.userAvatarBytes,
           items: projection.innerItems,
@@ -1147,6 +1187,30 @@ class _OrbitScreenView extends StatelessWidget {
           onThoughtsExpired: onThoughtsExpired,
           nowProvider: thoughtNowProvider,
           bottomClearance: _innerCircleBottomClearance(context),
+        );
+        return ValueListenableBuilder<bool>(
+          valueListenable: ringsFindOpenListenable,
+          builder: (context, findOpen, child) => OrbitDepthSurface(
+            items: projection.innerItems,
+            thoughts: depthThoughtsByPeerId,
+            selfPeerId: projection.userPeerId,
+            selfAvatarBytes: projection.userAvatarBytes,
+            active: depthActive,
+            gesturesEnabled: !innerEditing && !findOpen,
+            resetSignal: innerCircleResetListenable,
+            nowProvider: thoughtNowProvider,
+            onFriendTap: onFriendTap,
+            onThoughtTap: onThoughtTap,
+            onOpenFriends: onToggleView,
+            onOwnsHostGestureChanged: onDepthOwnsHostGestureChanged,
+            onBackActionChanged: onDepthBackActionChanged,
+            onThoughtDeparted: onDepthThoughtDeparted,
+            onThoughtsExpired: onThoughtsExpired,
+            loadMedia: loadDepthMedia,
+            downloadMedia: downloadDepthMedia,
+            child: child!,
+          ),
+          child: flatChild,
         );
       },
     );
