@@ -316,6 +316,17 @@ Accept control passes. Evidence is retained under
 `.codex-test-logs/introduction-pass-atomic-20261023/`; these host repository-fault
 assertions do not establish device or native SQLite crash behavior.
 
+The IN-009/IN-003 companion in
+`existing_contacts_and_conversations_preserved_test.dart` uses three file-backed
+production-schema SQLite repositories and the existing integration transport.
+Four cases cover either passing role before/after the other's acceptance,
+failed two-target Pass outbox rows preserved across complete repository/listener
+recreation, exact serialized carrier retry, duplicate and delayed acceptance
+ingress, and terminal state/contact counts after another reopen. All four pass;
+no new product code or KNOWN GAP skip is needed for these host assertions.
+Evidence: `.codex-test-logs/astra-batch5/023-focused-summary.json`. Encryption,
+transport and secure storage remain host seams; this is not device/crash proof.
+
 `QRScannerScreen` reports a code without awaiting the handler, then pops its own
 route only if that route is still current. `QRScannerWired` must therefore not
 use that route's context after
@@ -2257,22 +2268,34 @@ attempts and the corrected subset invocation are retained. GC-001 needs all
 six registered create/invite/online-add/offline-add companions, with the actual
 two-, three- or four-role topology kept explicit.
 
-The DC-007 disposable direct-media fixture now offers explicit
+The DC-007 disposable direct-media fixture offers explicit
 `upload_storage_block` and `upload_storage_restore` faults against its owned
-filesystem storage root. The block rejects active upload reservations and
-request-level attachment/lane selectors; restore preserves an unexpected
-replacement and the original saved directory. Three focused Go contracts in
-`go-relay-server/direct_media_blob_upload_storage_faults_test.go` pass against
-real framed production upload/download handlers: storage rejection followed by
-same-upload retry, HTTP scope/busy rejection, and replacement preservation.
-The previously stored control blob and retried blob remain byte-identical.
-Evidence is the private directory's `095-dc007-go-summary.json` and retained
-`094-dc007-go-upload-storage.log`; the single native lease lasted 48.463 seconds,
-with unchanged dependency manifests and zero swap growth. This is host fixture
-proof only. App SQLite/custody projection, visible terminal manual Retry and
-same-ID app convergence remain unverified; the broader selected Go and affected
-suites were not executed. These controls do not close DC-007 or add device
-coverage.
+filesystem root, rejecting active upload reservations and target selectors.
+Restore preserves an unexpected replacement and the original saved directory.
+Three focused Go contracts cover real framed storage rejection, same-upload
+retry, HTTP scope/busy rejection and replacement preservation; original evidence
+remains in `.codex-test-logs/astra-update-relay-sims/item3/095-dc007-go-summary.json`.
+
+`direct_media_storage_retry_sqlite_test.dart` now exercises production strict
+blob preparation, automatic incomplete-upload retry, receipt minting/settlement
+and real sender/receiver SQLite reopen. A storage error retains the same owned
+ciphertext, key, attachment/message identity and durable generation; recovery
+uploads it once without re-encryption, moves the attachment to done, then the
+receiver's persisted message and actual receipt settle the sender to delivered.
+No manual Retry button is invented for this silent recovery path. Strict host
+transport fixtures must implement both ACK-or-expiry and the separate
+media-expiry-bounded capability; the test asserts that the envelope ceiling
+matches the persisted blob proof. A bool-only or ordinary ACK-only fake is
+correctly refused by production admission.
+
+The three changed Dart suites pass 42 host cases, including six new cases, and
+one existing real receiver-stop sentinel passes separately. Evidence is in
+`.codex-test-logs/astra-batch5/023-focused-summary.json` and
+`024-receiver-stop-summary.json`; initial fixture failures remain retained.
+Go and Dart results are separate host proofs with fake crypto/transport/secure
+storage on the Dart side, not a live native-bridge or device journey. Full
+affected lanes belong to the execution owner; signed-candidate UI/transport
+glyph and device evidence remain separate and incomplete.
 
 The introduction Catalog P0 journeys reuse the production group-profile
 three-role runtime with introducer-only contact edges; the default full contact
@@ -9031,6 +9054,19 @@ difference in outcomes remains unexplained; those passes do not establish a
 fix for the earlier failures. The retained first failures remain authoritative
 for their own run. See the focused investigation record and
 `artifacts/testflight-crash-investigation-20260910/check-final/results.json`.
+
+Move Account code mismatch uses the confirmation surface's existing Back
+control rather than starting a transfer. The TRANSFER-003 journey test compares
+different rendered codes, returns both host fixture routes, preserves the old
+identity keys and active authority, stops the receiving callback exactly once,
+and creates no export file or identity activation. The unchanged runtime
+`stopNewPhoneReceiver` sentinel separately proves a pre-verification stop revokes
+the actual host migration route and rejects a later proof. Evidence:
+`.codex-test-logs/astra-batch5/023-focused-summary.json` and
+`024-receiver-stop-summary.json`. Live startup/onboarding/device proof remains
+separate. Widget fixtures need synchronous temporary-file setup (or
+`tester.runAsync`) and bounded route pumping: ordinary file I/O cannot finish
+inside fake-async, and animated backgrounds do not globally settle.
 
 Move Account export cleanup (2026-10-23): the reported TRANSFER-007 cancellation
 left an encrypted database snapshot beside plaintext secure-values metadata in

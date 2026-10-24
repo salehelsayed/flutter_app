@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
@@ -27,6 +30,8 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
+import '../../identity/domain/repositories/fake_identity_repository.dart'
+    as identity_fake;
 
 class _FakeBridge implements Bridge {
   @override
@@ -209,6 +214,182 @@ void main() {
     expect(find.text('Move account to new phone'), findsNothing);
     expect(find.text('Open migration'), findsOneWidget);
   });
+
+  testWidgets(
+    'TRANSFER-003 mismatched displayed codes close both journeys without a move',
+    (tester) async {
+      final newPayload = payload(sessionId: 'mismatch-new-session');
+      final scannedPayload = payload(sessionId: 'mismatch-other-session');
+      final newCode = deriveMigrationPairingConfirmationCode(newPayload);
+      final oldCode = deriveMigrationPairingConfirmationCode(scannedPayload);
+      expect(oldCode, isNot(newCode));
+      final oldStore = FakeSecureKeyStore();
+      final oldAuthority = SecureKeyStoreAccountMigrationAuthorityRepository(
+        secureKeyStore: oldStore,
+      );
+      final active = AccountMigrationAuthorityRecord(
+        state: AccountMigrationAuthorityState.active,
+        accountPeerId: 'old-phone-peer',
+      );
+      await oldAuthority.saveAuthority(active);
+      final oldIdentity = identity_fake.FakeIdentityRepository()
+        ..seed((await _FakeIdentityRepository().loadIdentity())!);
+      final identityBefore = (await oldIdentity.loadIdentity())!;
+      final oldValuesBefore = await oldStore.readAll();
+      final temp = Directory.systemTemp.createTempSync('code_mismatch_');
+      addTearDown(() => temp.deleteSync(recursive: true));
+      final export = File('${temp.path}/export/should-not-exist');
+      var transferCalls = 0;
+
+      await tester.pumpWidget(
+        wrap(
+          Builder(
+            builder: (context) {
+              return TextButton(
+                key: const ValueKey('open-old-mismatch-journey'),
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) {
+                      return AccountMigrationJourneyWired.oldPhone(
+                        secureKeyStore: oldStore,
+                        identityRepository: oldIdentity,
+                        initialScannedQr: scannedPayload.toJsonString(),
+                        authorizeExport: (_) async => (
+                          MigrationExportAuthorizationResult.authorized,
+                          AuthenticatedMigrationChannelTranscript(
+                            sessionId: scannedPayload.sessionId,
+                            newPhoneEphemeralPublicKey:
+                                scannedPayload.newPhoneEphemeralPublicKey,
+                            oldPhonePeerId: identityBefore.peerId,
+                            authenticatedChannelBinding: 'test-channel-binding',
+                            authorizationNonce: 'test-authorization',
+                          ),
+                        ),
+                        transferKeepAlive: MigrationTransferKeepAlive(
+                          invoker: (_, _) async {},
+                        ),
+                        runTransfer:
+                            ({
+                              required request,
+                              required onProgress,
+                              required isCancelled,
+                              onSegmentProgress,
+                            }) async {
+                              transferCalls++;
+                              export.parent.createSync(recursive: true);
+                              export.writeAsBytesSync([1]);
+                              return const AccountMigrationTransferResult.success();
+                            },
+                      );
+                    },
+                  ),
+                ),
+                child: const Text('Existing account'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-old-mismatch-journey')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text('Confirm the code'), findsOneWidget);
+      expect(find.text(oldCode), findsOneWidget);
+      expect(find.text(newCode), findsNothing);
+      // The production confirmation surface uses its existing Back action
+      // when the operator does not approve the displayed code.
+      await tester.tap(find.byKey(const ValueKey('account-migration-close')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text('Existing account'), findsOneWidget);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(await oldAuthority.loadAuthority(), active);
+      expect(await oldStore.readAll(), oldValuesBefore);
+      expect((await oldIdentity.loadIdentity())!.peerId, identityBefore.peerId);
+      expect(
+        (await oldIdentity.loadIdentity())!.privateKey,
+        identityBefore.privateKey,
+      );
+
+      // A separate navigator represents the identity-less receiving phone.
+      await tester.pumpWidget(const SizedBox.shrink());
+      final newStore = FakeSecureKeyStore();
+      final newAuthority = SecureKeyStoreAccountMigrationAuthorityRepository(
+        secureKeyStore: newStore,
+      );
+      final events =
+          StreamController<AccountMigrationReceiverEvent>.broadcast();
+      addTearDown(events.close);
+      final started = <String>[];
+      final stopped = <String>[];
+      var activations = 0;
+      await tester.pumpWidget(
+        wrap(
+          Builder(
+            builder: (context) {
+              return TextButton(
+                key: const ValueKey('open-new-mismatch-journey'),
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) {
+                      return AccountMigrationJourneyWired.newPhone(
+                        bridge: _FakeBridge(),
+                        secureKeyStore: newStore,
+                        buildQrPayload: () async => (
+                          BuildMigrationQrPayloadResult.success,
+                          MigrationQrBuildOutput(
+                            payload: newPayload,
+                            qrJson: newPayload.toJsonString(),
+                          ),
+                        ),
+                        startReceiver: (output) async {
+                          started.add(output.payload.sessionId);
+                          return const AccountMigrationReceiverStartResult.started();
+                        },
+                        stopReceiver: (sessionId) async =>
+                            stopped.add(sessionId),
+                        receiverEvents: events.stream,
+                        onReceiverActivated: () async {
+                          activations++;
+                        },
+                        transferKeepAlive: MigrationTransferKeepAlive(
+                          invoker: (_, _) async {},
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                child: const Text('Onboarding'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('open-new-mismatch-journey')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text(newCode), findsOneWidget);
+      expect(started, [newPayload.sessionId]);
+      expect(events.hasListener, isTrue);
+      await tester.tap(find.byKey(const ValueKey('account-migration-close')));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(find.text('Onboarding'), findsOneWidget);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(stopped, [newPayload.sessionId]);
+      expect(events.hasListener, isFalse);
+      expect(activations, 0);
+      expect(await newAuthority.loadAuthority(), isNull);
+      expect(await newStore.readAll(), isEmpty);
+      expect(await oldAuthority.loadAuthority(), active);
+      expect(transferCalls, 0);
+      expect(temp.listSync(recursive: true), isEmpty);
+    },
+  );
 
   testWidgets('new-phone QR shows loading then success without raw secrets', (
     tester,
