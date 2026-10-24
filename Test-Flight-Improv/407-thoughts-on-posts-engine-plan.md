@@ -1,12 +1,12 @@
 # 407 — Thoughts on the Posts engine
 
-Status: Steps 1–3 implemented and scoped verification recorded, with owner-accepted baseline gaps (2026-10-22). Step 4 not started.
+Status: Steps 1–3 implemented and scoped verification recorded, with owner-accepted baseline gaps (2026-10-22). Steps 4 and 5 not started.
 Branch: UI-Update
 Date: 2026-10-20 (line numbers checked after rebasing UI-Update on main 999a297ef). Scope cut to a first version the same day (owner decision).
 
 ## Goal
 
-First version of "thoughts": a user writes a thought, all their friends see it on the orbit the app has today, and it is deleted after 24 hours. Nothing else is in this version. The orbit's design stays as it is today (owner decision 2026-10-20): thoughts are added to the current orbit, not to a redesigned one.
+First version of "thoughts": a user writes a thought, all their friends see it on the orbit the app has today, and it is deleted after 24 hours. Nothing else is in this version. The flat orbit's design stays as it is today (owner decision 2026-10-20): thoughts are added to the current orbit, not to a redesigned one. Step 4 adds the prototype's 3D view behind a vertical swipe (owner decision 2026-10-24).
 
 It reuses the hidden Posts feature (`lib/features/posts/`) instead of writing a new sharing system. Posts already sends a post to chosen friends, encrypted, with an inbox fallback, encrypted media and retries, and all of that runs today at app launch even though no screen shows posts. This plan keeps that engine, changes its rules (C1–C15), turns off what thoughts does not have, and adds only what this first version needs.
 
@@ -245,7 +245,36 @@ Follow-ups (2026-10-23):
 
   Device check: a text thought was acknowledged after the confirm (ack wait 138 ms), and a photo thought was confirmed 41 ms after receipt, before its download. A closed app showed one card for two thoughts.
 
-### Step 4 — Opening a chat from the orbit
+### Step 4 — The 3D view of the orbit
+
+Added by the owner on 2026-10-24, as in the iPhone 11 mockup: today's 2D orbit stays the screen the app opens on, and a vertical swipe tilts it into the prototype's 3D view (`OrbitDepthTuning.dial`, `_OrbitHomeState` in `prototypes/orbit_depth/orbit_depth_prototype_screen.dart`, with the settings in `applyPlaygroundSettings` in `prototypes/orbit_depth/main.dart`). UI that appears:
+
+- **Into 3D.** From the 2D orbit, a swipe up tilts the orbit into depth: a small orbit at the top of the screen around your photo, the front friend nearest and largest, and their thought as a card under it. A swipe down does the same with the orbit at the bottom and the card above it. The orbit springs into place (`_tiltSpan` 320 px of drag, `_spring`), and a fast flick goes all the way.
+- **The card.** The front friend's thought: name, how long ago, text and media, with the text straight on the background (`OrbitPostCards.universe`). Tapping it opens the full-screen thought card from step 2. There is no reply bar (the mockup has none on the dial).
+- **Turning the orbit.** A sideways swipe turns the ring like a pager and lands the nearest friend exactly at the front (`_finishTurn`, `_rotSpring`). The card folds into a small bubble while the finger is turning and opens again on release. Right-to-left languages turn the other way.
+- **Seen.** Arriving on a ring turns it to its first unseen thought. Turning away from a thought marks it seen, like opening its card.
+- **Faces.** Only friends with a live thought sit on a ring in 3D; a friend without one leaves an empty seat, as in the prototype. Tapping a face that isn't at the front turns it to the front; tapping the front face opens the chat.
+- **The other orbits.** The app's two rings are the two orbits of the 3D view: the inner ring first, and one more swipe in the same direction flies on to the outer ring, which waits faintly around the orbit until then (`peek-ring-1`; tapping it also flies there). A swipe the other way comes back one ring, and once more flattens to the 2D orbit. Friends on the "+N" arcs have no seat in 3D; a "+N" face on the outer ring opens the friends list.
+- **Pinch in 3D** trades the card for a note bubble over every face (`_overview`); a spread brings the card back. The 2D pinch from N4 stays as it is.
+- **Back.** System back steps one ring down, then to 2D, before it leaves the screen.
+- **Reduce Motion:** every move lands at once, with no spring.
+
+Real data: the faces, their thoughts and seen state come from the same source as step 2's notes (`postChanges`, the seen marks from opening a card). Groups on the rings are left out of 3D. The 3D view is drawn by its own widget above `InnerCircleInteractiveSurface`, ported from the prototype's dial; the 2D orbit widget is not changed.
+
+Gestures shared with today's screen: the vertical swipe must win over the surface's vertical scroll, and the Feed↔Orbit swipe in `feed_wired.dart` must yield to a sideways turn while the orbit is in 3D (it already yields to a second finger, `56f9761b7`).
+
+Tests (from `test/features/orbit/prototypes/orbit_depth_prototype_screen_test.dart`: "swipe up tilts onto Close at the first unseen; back flattens", "swipe down opens the dial with the orbit at the bottom", "on Close, Friends waits faintly outside; its name goes there", "in depth a face without posts leaves an empty seat", "Reduce Motion keeps the flat orbit and tilts without motion", on real data):
+- A swipe up opens 3D on the inner ring at the first unseen thought, with the orbit above the card; a swipe down puts the orbit below the card.
+- A sideways swipe turns to the next friend and marks the thought you left seen.
+- Tapping a face turns it to the front; tapping the front face opens the chat.
+- One more swipe flies to the outer ring; swiping back returns to the inner ring, then to 2D; system back does the same.
+- A friend without a live thought leaves an empty seat in 3D.
+- While in 3D, a sideways swipe never switches to Feed, and on 2D a sideways swipe still does.
+- With Reduce Motion, 3D opens and turns without animation.
+
+Device check: the Android pair, opening 3D up and down, turning once, flying to the outer ring and back to 2D.
+
+### Step 5 — Opening a chat from the orbit
 
 Pending owner confirmation (2026-10-20): the orbit itself stays as it is, and this step only changes how a chat opens from it. The prototype's "Flatten" transition (`prototypes/orbit_depth/flatten.dart`, chosen by the owner on 2026-10-13 and confirmed on 2026-10-20). UI that appears:
 
@@ -293,8 +322,8 @@ Owner decisions, 2026-10-20:
 2. **24 hours everywhere.** The thought is deleted from friends' phones and from the author's phone after 24 hours.
 3. **Old posts from TestFlight.** Delete them (C14).
 4. **DTR-18 re-pin.** Approved for step 1: re-pin the digest of `production_application_bootstrap.dart` with a comment naming plan 407.
-5. **The orbit keeps its current design.** No 3D world and no new 2D layout (2026-10-20); this replaces the earlier "3D world as step 4", "friends only in 3D" and "one orbit screen" decisions. The old-2D-plus-new-3D mockup on the iPhone 11 was the last look at it.
-6. **Opening a chat from the orbit** ("Flatten": faces fly into a row above the chat) stays as step 4, pending confirmation that it still fits now that the orbit's design is kept.
+5. **The 2D orbit keeps its current design, with the 3D view behind a vertical swipe.** No new 2D layout (2026-10-20). The 3D view of the old-2D-plus-new-3D mockup on the iPhone 11 is step 4 (2026-10-24); this reverses the 2026-10-20 "no 3D world" part of this decision.
+6. **Opening a chat from the orbit** ("Flatten": faces fly into a row above the chat) moves to step 5 (2026-10-24), still pending confirmation that it fits the kept orbit.
 7. **Thoughts on the orbit are note bubbles.** Instagram-style notes over faces on the two rings, on by default, faces drifting aside, pinch to hide and spread to show; the orbit opens at the largest avatar and ring sizes (N4, N7).
 8. **Unseen is shown by the note's weight only** (option A). The unread ring stays for messages; no green dot.
 
@@ -314,6 +343,7 @@ Decided or designed earlier on 2026-10-20, kept here for the next versions:
 
 ## Risks
 
+- **Gestures on one screen.** Step 4 adds a vertical swipe and a sideways turn to a screen that already has a vertical scroll, the Feed↔Orbit swipe, the 2D pinch and the long press. Each needs a test that the others don't fire.
 - **Stale tests.** About 450 posts tests encode the old rules. Step 1 will touch many of them. Change each to the new rule; don't delete them.
 - **Inbox first moves load to the relay.** Every friend who isn't connected now costs one relay inbox store per thought instead of a dial attempt first. Today those friends end up in the inbox anyway after the 4 s wait, so the number of stores barely changes. Watch the relay's inbox store count after release.
 - **Moving faces in the app's orbit widget.** `OrbitalVisualization` seats are fixed today (`computeOrbitLayout`); the swim adds per-seat offsets and a note layer. Keep the seat math as it is and add the offsets on top, so the arcs, the badge and the long-press controls keep working unchanged when the notes are away.
