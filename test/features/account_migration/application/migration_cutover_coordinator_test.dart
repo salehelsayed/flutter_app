@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/account_migration/application/migration_cutover_bridge_cleanup.dart';
 import 'package:flutter_app/features/account_migration/application/migration_cutover_coordinator.dart';
@@ -303,6 +304,108 @@ void main() {
     );
 
     test(
+      'stalled remote cleanup returns retired state and remains retryable',
+      () {
+        for (final stalledCommand in ['rendezvous', 'inbox']) {
+          fakeAsync((async) {
+            final authority = _FakeAuthorityRepository();
+            final cutover = _FakeCutoverRepository();
+            final coordinator = MigrationCutoverCoordinator(
+              authorityRepository: authority,
+              cutoverRepository: cutover,
+              now: clock.now,
+            );
+            final stalled = Completer<void>();
+            final calls = <String>[];
+            var shouldStall = true;
+            var localClears = 0;
+            var stops = 0;
+            Future<void> unregister(String command) {
+              expect(
+                authority.record?.state,
+                AccountMigrationAuthorityState.migratedOut,
+              );
+              calls.add(command);
+              return shouldStall && command == stalledCommand
+                  ? stalled.future
+                  : Future<void>.value();
+            }
+
+            final cleanup = MigrationCutoverLeaseCleanup(
+              clearLocalStalePushToken: () async {
+                localClears += 1;
+              },
+              unregisterPersonalRendezvous: () => unregister('rendezvous'),
+              unregisterInboxPushToken: () => unregister('inbox'),
+              stopLocalRuntime: () async {
+                stops += 1;
+              },
+            );
+            MigrationCutoverRecord? result;
+            coordinator
+                .markOldNetworkBlocked(
+                  sessionId: 'stalled-cleanup',
+                  accountPeerId: 'account-peer',
+                  devicePeerId: 'old-device',
+                )
+                .then(
+                  (oldProof) => coordinator.markOldMigratedOutAfterNewActive(
+                    sessionId: oldProof.sessionId,
+                    accountPeerId: 'account-peer',
+                    devicePeerId: 'old-device',
+                    newActiveProof: oldProof.copyWith(
+                      devicePeerId: 'new-device',
+                      deviceRole: MigrationCutoverDeviceRole.newPhone,
+                      oldBlockProofReceived: true,
+                      oldBlockProofReceivedAt: clock.now(),
+                      newActiveCommitted: true,
+                      newActiveCommittedAt: clock.now(),
+                    ),
+                    leaseCleanup: cleanup,
+                  ),
+                )
+                .then((value) => result = value);
+            async.flushMicrotasks();
+            async.elapse(const Duration(seconds: 3));
+
+            expect(result, isNotNull, reason: stalledCommand);
+            expect(result!.oldMigratedOutCommitted, isTrue);
+            expect(result!.phase, MigrationCutoverPhase.leaseCleanupPending);
+            expect(result!.stalePushTokenCleared, isTrue);
+            expect(
+              result!.rendezvousUnregisterIssued,
+              stalledCommand != 'rendezvous',
+            );
+            expect(
+              result!.inboxPushTokenUnregisterIssued,
+              stalledCommand != 'inbox',
+            );
+            expect(calls, ['rendezvous', 'inbox']);
+            expect(stops, 1);
+
+            // A late bridge reply cannot mark the timed-out attempt complete.
+            final pending = cutover.record;
+            stalled.complete();
+            async.flushMicrotasks();
+            expect(cutover.record, same(pending));
+            shouldStall = false;
+            coordinator
+                .retryLeaseCleanup(leaseCleanup: cleanup)
+                .then((value) => result = value);
+            async.flushMicrotasks();
+            expect(result!.phase, MigrationCutoverPhase.complete);
+            expect(calls, ['rendezvous', 'inbox', stalledCommand]);
+            expect(localClears, 1);
+            expect(
+              authority.record?.state,
+              AccountMigrationAuthorityState.migratedOut,
+            );
+          });
+        }
+      },
+    );
+
+    test(
       'mismatched new active proof cannot mark old phone migrated out',
       () async {
         final validNewActiveProof =
@@ -497,9 +600,7 @@ void main() {
         authority.record = AccountMigrationAuthorityRecord.failClosed();
 
         await expectLater(
-          coordinator.markExportingNetworkPaused(
-            accountPeerId: 'account-peer',
-          ),
+          coordinator.markExportingNetworkPaused(accountPeerId: 'account-peer'),
           throwsStateError,
         );
         expect(authority.record?.isFailClosed, isTrue);

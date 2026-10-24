@@ -9052,6 +9052,18 @@ signed-candidate proof is established by these host results. Metadata remains
 file-backed during a live export; eliminating that plaintext intermediate
 requires a separate memory-backed entry source and streaming-offset checks.
 
+Retired-account remote lease cleanup: after migrated-out authority is
+persisted, each remote rendezvous/inbox unregister callback has a two-second
+Dart timeout. A timeout retains that step's pending cleanup flag and the
+existing retry path, while later cleanup and the sender outcome can settle.
+Authoritative local clearing remains awaited. The host regression independently
+stalls both remote callbacks, checks the retired authority and pending flag,
+rejects late completion as durable success, and verifies that retry repeats
+only the pending command. Evidence is in
+`.codex-test-logs/move-terminal-repairs-20261024/`. This bounds one concrete host
+stall path; it does not prove the cause or resolution of the observed simulator
+finishing stall or a missing final-proof response.
+
 Physical Android local-reset regression: on Pixel 6 / API 37 at
 `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a`, choosing **Erase local data** on
 the migrated-out screen and cold-launching produced
