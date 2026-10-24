@@ -4562,6 +4562,17 @@ visible and cannot become an ordinary first-attempt PASS.
   layouts. Evidence: `.codex-test-logs/group-avatar-square-20261024/`.
   This host geometry proof does not certify a device screenshot.
 
+- **iOS icon-launch group catch-up:** the native APNs helper returns immediately
+  on an empty consume. Its FCM fallback can still await native initial-message
+  discovery indefinitely. StartupRouter now starts its existing group
+  rejoin/drain future independently of that discovery, while canonical
+  notification settlement still waits for initial-open ownership and all
+  required drains. `startup_router_recovery_test.dart` holds the empty-native
+  FCM lookup pending and checks actual group join/inbox calls before release;
+  settlement remains withheld until the lookup completes. No new timeout or
+  catch-up coalescing is introduced. Host evidence:
+  `.codex-test-logs/startup-group-catchup-20261024/`.
+
 - **Legacy group dissolve/removal audit identity:** when a member has no device
   roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
   account-signed transition omits device/transport fields. Go publication fills
