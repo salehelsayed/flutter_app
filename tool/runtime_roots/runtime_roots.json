@@ -2602,6 +2602,20 @@
       ]
     },
     {
+      "path": "lib/features/posts/application/post_engagement_follow_on_support.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "Plan 407 / Thoughts",
+      "reason": "Legacy engagement use cases and their preservation tests still import this helper; it is reachable only from computed test/integration origins.",
+      "condition": "Revisit with removal of the legacy Posts engagement surface and its preservation tests.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
       "path": "lib/features/posts/application/post_pass_follow_on_support.dart",
       "rootKinds": [],
       "disposition": "candidate",
@@ -2609,6 +2623,20 @@
       "reason": "No current computed root reaches this exact source.",
       "condition": "DTR-06 must resolve the Posts product decision before removal.",
       "evidence": []
+    },
+    {
+      "path": "lib/features/posts/application/post_pin_delivery_support.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "Plan 407 / Thoughts",
+      "reason": "Legacy pin use cases and their preservation tests still import this helper; it is reachable only from computed test/integration origins.",
+      "condition": "Revisit with removal of the legacy Posts pin surface and its preservation tests.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
     },
     {
       "path": "lib/features/posts/application/post_surface_hydrator.dart",

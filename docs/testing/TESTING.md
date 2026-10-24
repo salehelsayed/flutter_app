@@ -3108,7 +3108,13 @@ those boundaries, late media completion, encrypted recipient delivery, removed
 audience lists, foreground notification cancellation, and the upgrade reset.
 Legacy feature tests retain their scenarios with denial/no-mutation assertions
 for comments, reactions, passes, presence and pins. Raw dormant storage fixtures
-are not evidence that those features remain enabled. Migration inventory tests
+are not evidence that those features remain enabled. The retained tests also
+reach `post_engagement_follow_on_support.dart` and
+`post_pin_delivery_support.dart`. Both need exact `explained-root` inventory
+declarations with computed `test/integration` evidence and no runtime root
+kinds. The inventory guard verifies those origins; these declarations do not
+enable legacy features. The reproduced missing-declaration failure is retained
+under `.codex-test-logs/uiupdate-runtime-roots-20261024/`. Migration inventory tests
 must advance their final head/tail expectation to 122 while preserving historic
 starting versions. Orphan media cleanup precedes all post retriers and retries
 a failed cold cleanup on a later startup attempt. Bootstrap fingerprint updates
