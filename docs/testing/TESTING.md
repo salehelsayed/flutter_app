@@ -4063,6 +4063,17 @@ The manifest labels inspected checks separately from discovered directory
 selections and records limitations alongside every proposed release check.
 Representative assertions were inspected; the entire inventory was not audited.
 
+The workflow's `FlutterFileReuseTest.execute_lanes` replays mocked process
+output. Its `host_test_slot` must stay inside that same mock boundary; consulting
+the live Mac admission guard can stall a unit fixture behind an unrelated build
+and time out the workflow lane without starting Flutter. The denied-guard
+regression in `mknoon_checks_test.py` proves replay remains independent of live
+admission. The separate `host_test_slot_test.py` contracts retain real guard and
+lease coverage; production admission is unchanged. The reproduced timeout,
+failing-before probe and verified repair are retained under
+`.codex-test-logs/plan407-step4/` (`change-host/`,
+`workflow-fixture-guard-probe.log`, and `workflow-fixture-repair/`).
+
 | Boundary | Verified assertion scope | Remaining device/artifact proof |
 | --- | --- | --- |
 | Bootstrap/returning identity | Phase order, error propagation, identity routing and awaited direct/group recovery | Actual launch, secure storage, preserved contacts/groups/history |
