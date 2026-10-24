@@ -1,4 +1,15 @@
+import 'dart:async';
 import 'dart:convert';
+
+import 'package:clock/clock.dart';
+import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
+import 'package:flutter_app/features/contact_request/application/key_exchange_retry_coordinator.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+
+import '../../../shared/fakes/in_memory_contact_repository.dart';
+import '../../../shared/fakes/deterministic_contact_request_crypto.dart'
+    show InMemoryReceivedCallWakeHandleStore;
 
 import 'package:flutter_app/core/debug/intro_e2e_runner.dart' as intro_runner;
 
@@ -80,7 +91,7 @@ class _FakeP2PService implements P2PService {
   bool localPeerResult = false;
   bool localSendResult = false;
   bool storeInInboxResult = false;
-  SendMessageResult Function(String peerId, String message)?
+  FutureOr<SendMessageResult> Function(String peerId, String message)?
   sendWithReplyHandler;
   int sendWithReplyCalls = 0;
   int localSendCalls = 0;
@@ -249,6 +260,290 @@ void main() {
         addresses: ['/ip4/127.0.0.1/tcp/4001'],
       );
   });
+
+  Future<SendContactRequestResult> sendEquivalent({
+    Future<String?> Function(String)? resolveWakeToken,
+    ResolveCallWakeHandle? resolveCallWakeHandle,
+    ContactRequestSendIntent intent = ContactRequestSendIntent.newRequest,
+    bool requireFresh = false,
+    bool requireExactCallWakeReceipt = false,
+    bool markAsNewRequest = false,
+  }) => sendContactRequest(
+    p2pService: p2pService,
+    identityRepo: identityRepo,
+    bridge: bridge,
+    targetPeerId: 'targetPeer123456789',
+    recipientPublicKey: 'recipientPubKey',
+    resolveWakeToken: resolveWakeToken,
+    resolveCallWakeHandle: resolveCallWakeHandle,
+    intent: intent,
+    requireFresh: requireFresh,
+    requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+    markAsNewRequest: markAsNewRequest,
+  );
+
+  final receivedGrant = CallWakeHandleGrant(
+    handle: 'f' * 32,
+    recipientDevicePeerId: 'targetPeer123456789',
+    deviceKeyEpoch: 1,
+    generation: 1,
+    issuedAtMs: 1,
+    expiresAtMs: CallWakeHandleGrant.maxSafeInteger,
+  );
+
+  InMemoryContactRepository missingKeyContacts() =>
+      InMemoryContactRepository()..addTestContact(
+        const ContactModel(
+          peerId: 'targetPeer123456789',
+          publicKey: 'recipientPubKey',
+          rendezvous: 'fixture-relay',
+          username: 'Fixture contact',
+          signature: 'fixture-signature',
+          scannedAt: '2026-10-24T00:00:00.000Z',
+        ),
+      );
+
+  test(
+    'A-D burst coalesces equivalent retries and sends one fresh reciprocal',
+    () async {
+      var now = DateTime.utc(2026, 10, 24);
+      await withClock(Clock(() => now), () async {
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        p2pService.sendWithReplyHandler = (_, _) async {
+          final signed =
+              jsonDecode(bridge.lastSignPayload!['data'] as String) as Map;
+          if (!entered.isCompleted) entered.complete();
+          await release.future;
+          return SendMessageResult(
+            sent: true,
+            acked: true,
+            reply: jsonEncode({'callWakeReceipt': signed['cwr']}),
+          );
+        };
+        final contacts = missingKeyContacts();
+        final retries = KeyExchangeRetryCoordinator(
+          now: () => now,
+          performRetry: () => retryIncompleteKeyExchanges(
+            contactRepo: contacts,
+            identityRepo: identityRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            resolveCallWakeHandle: (_) async => receivedGrant,
+          ),
+        );
+        final qrSend = sendEquivalent(
+          resolveCallWakeHandle: (_) async => receivedGrant,
+        );
+        await entered.future.timeout(const Duration(seconds: 2));
+        final registered = retries.retryNow(
+          trigger: 'wake_token_registered',
+          requireFresh: true,
+        );
+        await Future<void>.delayed(Duration.zero);
+        final sendsBeforeAck = p2pService.sendWithReplyCalls;
+        release.complete();
+        expect(await qrSend, SendContactRequestResult.success);
+        expect(await registered, 1);
+        expect(
+          sendsBeforeAck,
+          1,
+          reason: 'the equivalent send joins in flight',
+        );
+        now = now.add(const Duration(seconds: 13));
+        expect(
+          await backfillCallWakeAfterContactKeyUpdate(
+            reconcileCallWakeEligibility: () async {},
+            hasPendingCallWakeDistribution: () async => true,
+            retryCallWakeDistribution: retries.retryNow,
+          ),
+          isTrue,
+        );
+        expect(
+          await sendEquivalent(
+            intent: ContactRequestSendIntent.keyExchangeRetry,
+            resolveCallWakeHandle: (_) async => receivedGrant,
+          ),
+          SendContactRequestResult.success,
+        );
+        final receivedStore = InMemoryReceivedCallWakeHandleStore();
+        expect(
+          await receivedStore.storeIfStrictlyNewer(
+            issuerAccountPeerId: 'targetPeer123456789',
+            grant: receivedGrant,
+            nowMs: now.millisecondsSinceEpoch,
+          ),
+          isTrue,
+        );
+        var recoveryCalls = 0;
+        final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
+          receivedCallWakeHandleStore: receivedStore,
+          nowMs: () => now.millisecondsSinceEpoch,
+          requestRecovery: ({required contactAccountPeerId}) async {
+            recoveryCalls++;
+            await sendEquivalent(
+              intent: ContactRequestSendIntent.keyExchangeRetry,
+              requireFresh: true,
+            );
+          },
+        );
+        expect(
+          await recovery.ensureCurrentGrantFor('targetPeer123456789'),
+          isTrue,
+        );
+        expect(recoveryCalls, 0, reason: 'a current grant needs no fresh send');
+        expect(p2pService.sendWithReplyCalls, 1);
+        // D uses the production legacy reciprocal callback's fresh/exact contract.
+        expect(
+          await sendEquivalent(
+            resolveCallWakeHandle: (_) async => receivedGrant,
+            requireExactCallWakeReceipt: true,
+          ),
+          SendContactRequestResult.success,
+        );
+        expect(
+          p2pService.sendWithReplyCalls,
+          2,
+          reason: 'only A and D transmit',
+        );
+        expect(p2pService.storeInInboxCalls, 0);
+      });
+    },
+  );
+
+  for (final timeout in [false, true]) {
+    test(
+      'a genuine ${timeout ? 'timeout' : 'failure'} still auto-retries',
+      () async {
+        p2pService.sendWithReplyHandler = (_, _) {
+          if (p2pService.sendWithReplyCalls == 1) {
+            if (timeout) throw TimeoutException('fixture send timeout');
+            return const SendMessageResult(sent: false, acked: false);
+          }
+          return const SendMessageResult(sent: true, acked: true, reply: 'ack');
+        };
+        expect(await sendEquivalent(), SendContactRequestResult.sendFailed);
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: missingKeyContacts(),
+            identityRepo: identityRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+          ),
+          1,
+        );
+        expect(p2pService.sendWithReplyCalls, 2);
+      },
+    );
+  }
+
+  test(
+    'marked repair retry differs from unmarked delivery but coalesces new IDs',
+    () async {
+      final transmittedPayloads = <Map<String, dynamic>>[];
+      p2pService.sendWithReplyHandler = (_, _) {
+        transmittedPayloads.add(
+          jsonDecode(bridge.lastEncryptPayload!['plaintext'] as String)
+              as Map<String, dynamic>,
+        );
+        return const SendMessageResult(sent: true, acked: true, reply: 'ack');
+      };
+      expect(await sendEquivalent(), SendContactRequestResult.success);
+      expect(transmittedPayloads.single.containsKey('cr'), isFalse);
+      expect(
+        await sendEquivalent(
+          intent: ContactRequestSendIntent.keyExchangeRetry,
+          markAsNewRequest: true,
+        ),
+        SendContactRequestResult.success,
+      );
+      expect(p2pService.sendWithReplyCalls, 2);
+      final sentControl = transmittedPayloads[1]['cr'] as Map;
+      expect(sentControl['kind'], 'new_request');
+      expect(sentControl['to'], 'targetPeer123456789');
+      expect(
+        await sendEquivalent(
+          intent: ContactRequestSendIntent.keyExchangeRetry,
+          markAsNewRequest: true,
+        ),
+        SendContactRequestResult.success,
+      );
+      final rebuilt =
+          jsonDecode(bridge.lastSignPayload!['data'] as String) as Map;
+      expect((rebuilt['cr'] as Map)['id'], isNot(sentControl['id']));
+      expect(p2pService.sendWithReplyCalls, 2);
+    },
+  );
+
+  test('new wake-token material is distributed immediately', () async {
+    expect(await sendEquivalent(), SendContactRequestResult.success);
+    expect(
+      await sendEquivalent(
+        intent: ContactRequestSendIntent.keyExchangeRetry,
+        resolveWakeToken: (_) async => 'new-token',
+      ),
+      SendContactRequestResult.success,
+    );
+    expect(p2pService.sendWithReplyCalls, 2);
+    final signed = jsonDecode(bridge.lastSignPayload!['data'] as String) as Map;
+    expect(signed['wt'], 'new-token');
+  });
+
+  test('recent equivalent success expires and permits later repair', () async {
+    var now = DateTime.utc(2026, 10, 24);
+    await withClock(Clock(() => now), () async {
+      expect(await sendEquivalent(), SendContactRequestResult.success);
+      now = now.add(const Duration(seconds: 13));
+      expect(
+        await sendEquivalent(intent: ContactRequestSendIntent.keyExchangeRetry),
+        SendContactRequestResult.success,
+      );
+      expect(p2pService.sendWithReplyCalls, 1);
+      now = now.add(const Duration(seconds: 18));
+      expect(
+        await sendEquivalent(intent: ContactRequestSendIntent.keyExchangeRetry),
+        SendContactRequestResult.success,
+      );
+      expect(p2pService.sendWithReplyCalls, 2);
+    });
+  });
+
+  test(
+    'missing received grant solicits a fresh reply after an earlier ack',
+    () async {
+      expect(await sendEquivalent(), SendContactRequestResult.success);
+      final receivedStore = InMemoryReceivedCallWakeHandleStore();
+      final nowMs = DateTime.utc(2026, 10, 24).millisecondsSinceEpoch;
+      final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
+        receivedCallWakeHandleStore: receivedStore,
+        nowMs: () => nowMs,
+        requestRecovery: ({required contactAccountPeerId}) async {
+          expect(
+            await sendEquivalent(
+              intent: ContactRequestSendIntent.keyExchangeRetry,
+              requireFresh: true,
+            ),
+            SendContactRequestResult.success,
+          );
+          expect(p2pService.sendWithReplyCalls, 2);
+          await receivedStore.storeIfStrictlyNewer(
+            issuerAccountPeerId: contactAccountPeerId,
+            grant: receivedGrant,
+            nowMs: nowMs,
+          );
+        },
+      );
+      expect(
+        await recovery.ensureCurrentGrantFor('targetPeer123456789'),
+        isTrue,
+      );
+      expect(
+        await recovery.ensureCurrentGrantFor('targetPeer123456789'),
+        isTrue,
+      );
+      expect(p2pService.sendWithReplyCalls, 2);
+    },
+  );
 
   test('success: discovers, dials, and sends contact request', () async {
     final result = await sendContactRequest(

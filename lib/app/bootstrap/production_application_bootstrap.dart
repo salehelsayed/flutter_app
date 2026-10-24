@@ -6337,6 +6337,7 @@ final class ProductionApplicationBootstrap
               targetPeerId: contactAccountPeerId,
               recipientPublicKey: contact.publicKey,
               intent: ContactRequestSendIntent.keyExchangeRetry,
+              requireFresh: true,
               resolveCallWakeHandle:
                   callSignalingComposition.resolveCallWakeHandle,
               onCallWakeHandleDistributed:

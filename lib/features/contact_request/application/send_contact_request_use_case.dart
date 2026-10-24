@@ -1,6 +1,8 @@
 import 'dart:collection';
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/network_constants.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -108,15 +110,20 @@ final class BuiltContactRequestEnvelope {
 /// could be built.
 final class ContactRequestEnvelopeBuild {
   const ContactRequestEnvelopeBuild.built(
-    BuiltContactRequestEnvelope this.envelope,
-  ) : failure = null;
+    BuiltContactRequestEnvelope this.envelope, {
+    this.equivalenceKey,
+  }) : failure = null;
 
   const ContactRequestEnvelopeBuild.failed(
     SendContactRequestResult this.failure,
-  ) : envelope = null;
+  ) : envelope = null,
+      equivalenceKey = null;
 
   final BuiltContactRequestEnvelope? envelope;
   final SendContactRequestResult? failure;
+
+  /// Local send coalescing only; never serialized or carried on the wire.
+  final String? equivalenceKey;
 }
 
 /// Outcome of [transmitContactRequestEnvelope].
@@ -131,6 +138,68 @@ final class ContactRequestTransmitOutcome {
   /// True only when the receiver returned the exact receipt for this
   /// envelope's call-wake challenge.
   final bool exactCallWakeReceipt;
+}
+
+final class _EquivalentContactRequestAttempt {
+  _EquivalentContactRequestAttempt(this.future);
+
+  final Future<ContactRequestTransmitOutcome> future;
+  DateTime? acceptedAt;
+}
+
+final _recentContactRequests =
+    Expando<Map<String, _EquivalentContactRequestAttempt>>();
+const _equivalentContactRequestWindow = Duration(seconds: 30);
+
+Future<ContactRequestTransmitOutcome> _transmitEquivalentContactRequest({
+  required P2PService p2pService,
+  required BuiltContactRequestEnvelope envelope,
+  required String equivalenceKey,
+  required bool requireExactCallWakeReceipt,
+  required bool requireFresh,
+}) {
+  final attempts = _recentContactRequests[p2pService] ??= {};
+  final now = clock.now();
+  attempts.removeWhere(
+    (_, attempt) =>
+        attempt.acceptedAt != null &&
+        now.difference(attempt.acceptedAt!) >= _equivalentContactRequestWindow,
+  );
+  if (!requireFresh && !requireExactCallWakeReceipt) {
+    final previous = attempts[equivalenceKey];
+    if (previous != null) return previous.future;
+  }
+
+  late final _EquivalentContactRequestAttempt attempt;
+  final future =
+      transmitContactRequestEnvelope(
+        p2pService: p2pService,
+        envelope: envelope,
+        requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+      ).then(
+        (outcome) {
+          if (outcome.result == SendContactRequestResult.success &&
+              (envelope.callWakeHandle == null ||
+                  outcome.exactCallWakeReceipt)) {
+            attempt.acceptedAt = clock.now();
+          } else {
+            // A failed send or missing grant receipt must remain immediately retryable.
+            if (identical(attempts[equivalenceKey], attempt)) {
+              attempts.remove(equivalenceKey);
+            }
+          }
+          return outcome;
+        },
+        onError: (Object error, StackTrace stack) {
+          if (identical(attempts[equivalenceKey], attempt)) {
+            attempts.remove(equivalenceKey);
+          }
+          Error.throwWithStackTrace(error, stack);
+        },
+      );
+  attempt = _EquivalentContactRequestAttempt(future);
+  attempts[equivalenceKey] = attempt;
+  return future;
 }
 
 /// Sends a contact request to a peer after scanning their QR code.
@@ -176,6 +245,8 @@ Future<SendContactRequestResult> sendContactRequest({
   // asks for that exact receipt; ordinary contact delivery may succeed without
   // it, but the grant remains distribution-pending until proof arrives.
   bool requireExactCallWakeReceipt = false,
+  // Soliciting a new remote reply cannot reuse an earlier acknowledgement.
+  bool requireFresh = false,
   bool markAsNewRequest = false,
 }) async {
   final targetPrefix = targetPeerId.length > 10
@@ -217,10 +288,12 @@ Future<SendContactRequestResult> sendContactRequest({
   final envelope = build.envelope;
   if (envelope == null) return build.failure!;
 
-  final outcome = await transmitContactRequestEnvelope(
+  final outcome = await _transmitEquivalentContactRequest(
     p2pService: p2pService,
     envelope: envelope,
+    equivalenceKey: build.equivalenceKey!,
     requireExactCallWakeReceipt: requireExactCallWakeReceipt,
+    requireFresh: requireFresh || intent == ContactRequestSendIntent.newRequest,
   );
   if (outcome.exactCallWakeReceipt) {
     await markContactRequestCallWakeHandleDistributed(
@@ -344,6 +417,22 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
     if (control != null) 'cr': control.toCanonicalMap(),
   });
   final dataToSign = jsonEncode(unsignedPayload);
+  // Fresh IDs, signature times and receipt challenges do not change the
+  // identity/capability material already delivered to this exact recipient.
+  final equivalentPayload = SplayTreeMap<String, dynamic>.from(unsignedPayload)
+    ..remove('ts')
+    ..remove('cwr');
+  if (control != null) {
+    // The marker earns a repair reply; only its generated ID is incidental.
+    equivalentPayload['cr'] = control.toCanonicalMap()..remove('id');
+  }
+  final equivalenceKey = sha256
+      .convert(
+        utf8.encode(
+          jsonEncode([targetPeerId, recipientPublicKey, equivalentPayload]),
+        ),
+      )
+      .toString();
 
   // 4. Sign the payload
   emitFlowEvent(
@@ -396,6 +485,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
         messageJson: jsonEncode(v1Message),
         encrypted: false,
       ),
+      equivalenceKey: equivalenceKey,
     );
   }
 
@@ -477,6 +567,7 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
       callWakeHandle: callWakeHandle,
       callWakeReceiptChallenge: callWakeReceiptChallenge,
     ),
+    equivalenceKey: equivalenceKey,
   );
 }
 

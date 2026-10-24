@@ -339,9 +339,30 @@ an app restart. Android emulators with animation scales of 0 (the
 there. With normal animations it needs verification slower than the ~300 ms exit
 transition. The handler now uses the navigator's context.
 `qr_scanner_wired_test.dart` holds `payload.verify` until the pushed route has
-closed, and it fails without the fix. After a successful scan, two request sends
-are expected: the scanner's own, then the key-exchange retry coordinator's about
-one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
+closed, and it fails without the fix. That historical capture expected the
+scanner's request plus a retry about one second later; the owner superseded
+that duplicate-send expectation on 2026-10-24. Original route evidence remains
+in `.codex-test-logs/beta-test-android-20261007/`.
+
+Equivalent background contact requests now share an in-flight/accepted
+transmission for 30 seconds per P2P service. Equivalence binds the signed material,
+target and recipient key, including exact wake-token/call-grant values, while
+excluding fresh timestamps, control IDs and receipt challenges. Control kind
+remains significant: a marked repair request never reuses an unmarked send.
+A changed capability, a new user action and an explicit live exact-receipt request still
+send immediately. Missing received-grant recovery explicitly solicits a fresh
+remote reply; its coordinator skips the send when a current grant is present.
+Failed sends, timeouts and missing grant receipts remain retryable. The host
+burst covers wake-registration and contact-key backfill through the real retry
+entry points: unchanged A-D material sends A once, coalesces B/C, and permits
+the one fresh exact-receipt reciprocal D (two outbound requests total). D still
+requires a fresh exchange even after a previous receipt for that material.
+Failure/timeout, changed-token and expiry controls preserve
+recovery, while the unchanged two-party repair and one-scan backfill sentinels
+preserve deliberate re-adds and capability follow-ups. Evidence:
+`.codex-test-logs/contact-request-burst-20261024/`. These
+host assertions do not certify a device run or promise one packet when new
+capability material genuinely needs distribution.
 
 On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
 dispatched correctly but returned to that screen before confirmation. Both the
