@@ -6218,7 +6218,7 @@ void main() {
     );
 
     test(
-      'IR-016 long-offline mixed-window recovery keeps retained backlog and explicit cutoff state',
+      'IR-016 RG-003 long-offline mixed-window recovery keeps retained backlog and explicit cutoff state',
       () async {
         final user = GroupTestUser.create(
           peerId: 'user-peer',
@@ -6229,6 +6229,7 @@ void main() {
         final userBridge = user.bridge as _CursorInboxBridge;
 
         const groupId = 'group-retention-mixed-window';
+        final retentionNow = DateTime.now().toUtc();
         await user.createGroup(groupId: groupId, name: 'Retention Window');
         await _saveLegacyBacklogSender(
           user,
@@ -6237,7 +6238,7 @@ void main() {
           username: 'Alice',
         );
         final historicalJoinedAt = groupBacklogRetentionCutoff(
-          DateTime.now().toUtc(),
+          retentionNow,
         ).subtract(const Duration(days: 1));
         final retentionGroup = await user.groupRepo.getGroup(groupId);
         await user.groupRepo.updateGroup(
@@ -6259,7 +6260,7 @@ void main() {
           ),
         );
 
-        final cutoff = groupBacklogRetentionCutoff(DateTime.now().toUtc());
+        final cutoff = groupBacklogRetentionCutoff(retentionNow);
         final expiredAt = cutoff.subtract(const Duration(hours: 1));
         final retainedAt = cutoff.add(const Duration(hours: 1));
 
@@ -6303,17 +6304,43 @@ void main() {
           ),
         ], '');
 
+        // Retain epoch 1 while the next retained entry uses epoch 2. The
+        // receiver must cross the page/epoch boundary without losing history.
+        final epoch2At = retainedAt.add(const Duration(minutes: 1));
+        await _saveKey(user, groupId, 2, 'test-key-epoch-2');
+        userBridge.pages['$groupId:cursor-retained-window']!.messages.add(
+          await _signedReplayRelayMessage(
+            bridge: user.bridge,
+            groupRepo: user.groupRepo,
+            groupId: groupId,
+            payload: {
+              'groupId': groupId,
+              'senderId': 'alice-peer',
+              'senderUsername': 'Alice',
+              'keyEpoch': 2,
+              'text': 'Retained next epoch',
+              'timestamp': epoch2At.toIso8601String(),
+              'messageId': 'msg-retained-new-epoch',
+            },
+            senderPeerId: 'alice-peer',
+            senderPublicKey: 'alice-peer-pk',
+            senderPrivateKey: 'alice-peer-sk',
+          ),
+        );
+
         user.start();
 
         await drainGroupOfflineInbox(
           bridge: user.bridge,
           groupRepo: user.groupRepo,
           msgRepo: user.msgRepo,
+          retentionNowUtc: retentionNow,
         );
         await drainGroupOfflineInbox(
           bridge: user.bridge,
           groupRepo: user.groupRepo,
           msgRepo: user.msgRepo,
+          retentionNowUtc: retentionNow,
         );
 
         final messages = await user.msgRepo.getMessagesPage(groupId);
@@ -6323,15 +6350,17 @@ void main() {
             .where((m) => m['cmd'] == 'group:inboxRetrieveCursor')
             .toList();
 
-        expect(messages, hasLength(1));
-        expect(messages.single.id, 'msg-retained-window');
+        expect(messages.map((message) => message.id), [
+          'msg-retained-window',
+          'msg-retained-new-epoch',
+        ]);
         expect(
           messages.where((message) => message.id == 'msg-expired-window'),
           isEmpty,
         );
         expect(group, isNotNull);
         expect(group!.lastBacklogExpiredAt, expiredAt);
-        expect(group.lastBacklogRetainedAt, retainedAt);
+        expect(group.lastBacklogRetainedAt, epoch2At);
         expect(
           cursorCmds,
           hasLength(3),
@@ -6350,8 +6379,45 @@ void main() {
         );
         expect(
           syntheticCursorMs,
-          greaterThanOrEqualTo(retainedAt.millisecondsSinceEpoch - 1),
+          greaterThanOrEqualTo(epoch2At.millisecondsSinceEpoch - 1),
         );
+
+        // Expired backlog and older retained-key replay must not poison a
+        // later current-epoch arrival through the same persisted inbox cursor.
+        final freshCursor = (await user.msgRepo.getInboxCursor(groupId))!;
+        userBridge.addPage(groupId, freshCursor, [
+          await _signedReplayRelayMessage(
+            bridge: user.bridge,
+            groupRepo: user.groupRepo,
+            groupId: groupId,
+            payload: {
+              'groupId': groupId,
+              'senderId': 'alice-peer',
+              'senderUsername': 'Alice',
+              'keyEpoch': 2,
+              'text': 'Fresh after retained backlog',
+              'timestamp': retentionNow.toIso8601String(),
+              'messageId': 'msg-fresh-after-retention',
+            },
+            senderPeerId: 'alice-peer',
+            senderPublicKey: 'alice-peer-pk',
+            senderPrivateKey: 'alice-peer-sk',
+          ),
+        ], '');
+        await drainGroupOfflineInbox(
+          bridge: user.bridge,
+          groupRepo: user.groupRepo,
+          msgRepo: user.msgRepo,
+          retentionNowUtc: retentionNow,
+        );
+        final finalMessages = await user.msgRepo.getMessagesPage(groupId);
+        expect(finalMessages.map((message) => message.id), [
+          'msg-retained-window',
+          'msg-retained-new-epoch',
+          'msg-fresh-after-retention',
+        ]);
+        expect(await user.groupRepo.getKeyByGeneration(groupId, 1), isNotNull);
+        expect(await user.groupRepo.getKeyByGeneration(groupId, 2), isNotNull);
 
         user.dispose();
       },
@@ -8589,11 +8655,9 @@ void main() {
             'During split 2',
             'During split 3',
           ]);
-          expect(
-            partitionedTexts,
-            ['Before split'],
-            reason: 'Partitioned peer should miss split-window live delivery',
-          );
+          expect(partitionedTexts, [
+            'Before split',
+          ], reason: 'Partitioned peer should miss split-window live delivery');
 
           final inboxStores = bridgePayloads(admin.bridge, 'group:inboxStore');
           expect(inboxStores, hasLength(3));
@@ -11266,11 +11330,10 @@ void main() {
                 )
                 .map((message) => message.id)
                 .toList(growable: false);
-            expect(
-              visibleIds,
-              [firstId, secondId],
-              reason: '${user.username} preserves queued delivery order',
-            );
+            expect(visibleIds, [
+              firstId,
+              secondId,
+            ], reason: '${user.username} preserves queued delivery order');
           }
         },
       );

@@ -3830,6 +3830,42 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `full_migration_chain_test.dart` (seeded data preservation). The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
 
+`bidi_transport_rendering_test.dart` joins two-peer production message send and
+receive to both persisted rows and the actual `LetterCard`/`LinkableText`
+rendering. Arabic, mixed first-strong text, emoji/ZWJ sequences and supported
+long text retain their accepted content and expected direction without a line
+limit. Transport and crypto are host fakes; installed-device font/rendering
+and native delivery remain separate proof.
+
+`rejected_events_preserve_valid_delivery_test.dart` exercises the listener's
+subscription/queue after its direct-processing controls: malformed JSON or a
+failed ciphertext precedes an already-queued valid input against the same
+production SQLite repositories. The queue continues, the rejected input adds
+no row, and previous history survives. The IR-016/RG-003 case in
+`group_resume_recovery_test.dart` pins the retention clock for its three drains,
+crosses an expired page into retained replay under two key generations, then
+admits a later current-epoch inbox entry through the durable cursor. It does
+not establish actual relay TTL, native key-ring eviction or later live pubsub.
+
+`notification_consent_route_roundtrip_test.dart` feeds three-party production
+introduction delivery into a recording notification sink and routes the actual
+published payload through notification preparation and the shared coordinator.
+Offer and stale-Pass taps preserve consent and send no response. Mutual
+acceptance is the local-notification trigger; the introducer's anchored route
+opens recipient B even when C accepted last, while the participant keeps the
+Intros destination without another contact/consent mutation. The optional
+notification sink in `IntroTestUser` defaults to absent for existing fixtures.
+These host joins do not prove terminated/locked OS delivery or actual navigation
+on Android/iOS signed candidates.
+
+The VC-002 case in `call_direct_mailbox_convergence_test.dart` observes the
+production control executor/codec and scheduled timers for the same call after
+its coordinator reaches connected. It checks the 40-second signed-envelope
+lifetime, 45-second invite deadline and 30-second no-answer request/effective
+delay. Deterministic crypto and admitted media events remain fixture inputs;
+this metadata proof does not establish audible media or a device no-answer
+journey.
+
 The [Lever 1 host joins](astra-lever1-host-quickwins.md) connect system-picker
 cancel/result adaptation to draft/removal behavior, flag-off received PDF to
 the actual egress service, and current SQL library/history/private authority to
