@@ -344,11 +344,11 @@ class QRScannerWired extends StatelessWidget {
         break;
 
       case AddContactResult.alreadyExists:
-        _showAlreadyExistsDialog(context, contact);
         // A compact QR carries no ML-KEM key, so a contact who re-added us
         // from our QR holds us without one. Only a request from us gives it.
         // It goes to the key we already trust, never to one the QR claims.
         final existing = await contactRepository.getContact(contact.peerId);
+        if (!context.mounted) return;
         final blocked = existing?.isBlocked ?? false;
         final keyMatches = existing?.publicKey == contact.publicKey;
         emitFlowEvent(
@@ -356,7 +356,16 @@ class QRScannerWired extends StatelessWidget {
           event: 'QR_SCAN_EXISTING_CONTACT_RESEND',
           details: {'blocked': blocked, 'keyMatches': keyMatches},
         );
-        if (existing != null && !blocked && keyMatches) {
+        if (!keyMatches) {
+          _showError(
+            context,
+            AppLocalizations.of(context)!.qr_invalid_signature_title,
+            AppLocalizations.of(context)!.qr_invalid_signature_body,
+          );
+          break;
+        }
+        _showAlreadyExistsDialog(context, contact);
+        if (existing != null && !blocked) {
           await _sendContactRequestInBackground(
             existing.peerId,
             existing.publicKey,

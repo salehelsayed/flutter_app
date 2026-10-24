@@ -2590,28 +2590,26 @@ These routing controls stub protocol handlers; they do not certify migration or
 linked-device trust completion. Both normal QR display routes expose the compact
 signed payload including the display name; their signing bridge is faked here.
 
-Seven catalog contracts remain explicitly `KNOWN GAP` / skipped after causal red
-probes on production baseline `3616143`: signed integer `rv` / `un` / `mlkem`
-throws a TypeError instead of scanner error feedback (CR-015); a valid signed QR
-conflicting with a seeded stored public key preserves the row and sends nothing
-but shows the already-in-circle dialog instead of an error; the dedicated no-identity
-screen has no retry action; first-run missing identity and signing failure retain
-the loading shimmer without recovery feedback (CR-022). The malformed-field reds
-asserted zero SQL/outbound effects before the error assertion; neither creation
-of a contact nor an unsigned fallback was observed. Keep the full required
-contracts for reactivation after app fixes; seven skips are incomplete coverage,
-not closure. CR-025's older catalog note about unreadable/future acceptance is
-superseded by current timestamp rejection and its active negative/fresh controls.
-Evidence: `qr_timestamp_admission_test.dart`, `qr_scanner_wired_test.dart`,
-`qr_display_wired_test.dart`, `first_time_experience_wired_test.dart` and
-`.codex-test-logs/astra-batch6-qr/003-qr-causal-red.log` (12 passes, five causal
-failures), `009-remaining-qr-causal-red.log` (two further causal failures), and
-`010-qr-focused-final.log` (77 passes, seven known-gap skips across six files,
-including parser/builder preservation). Retain `002-qr-causal-red.log` with its
-payload-observation fixture compilation errors and `008-remaining-qr-causal-red.log`
-with its fixture repository-method compilation error. The fixtures now read the
-screen's public `qrData`, alongside actual QR rendering assertions, and seed
-through `ContactRepository.addContact`.
+The seven previously skipped catalog contracts are active after the QR fix:
+non-string `rv` / `un` / `mlkem` is rejected through the existing invalid-QR UI;
+a stored-key conflict produces an error before already-in-circle feedback;
+missing identity exposes Retry on both display routes; first-run signing failure
+shows the existing QR error indicator and Retry. Failed generation renders no QR.
+The three error/retry cases also restore identity/signing and tap Retry, then
+require a rendered signed payload. The scanner's conflict case preserves the
+stored row and asserts zero pending requests, sends, stores and encryption.
+
+Evidence: `.codex-test-logs/qr-payload-retry-20261024/qr-red.log` retains all seven
+causal failures on production source from `9dbb319c`; `qr-green-final.log` covers the
+four screen suites plus parser/builder and first-run screen/QR-widget preservation;
+`qr-analyze.log` covers all six changed production files and the four author
+screen test files. No known-gap skips remain in these suites. The previous test requiring no Retry
+button is superseded by a repeated no-identity retry control. The first GREEN
+retains its 91 passes and that one obsolete-expectation failure. Earlier baseline
+and fixture-setup evidence under `.codex-test-logs/astra-batch6-qr/` remains
+historical evidence, superseded only for these seven fixed contracts. CR-025's
+older unreadable/future acceptance note is superseded by current rejection and
+active negative/fresh controls.
 This host evidence does not cover camera decoding, native crypto, physical scans,
 OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
 

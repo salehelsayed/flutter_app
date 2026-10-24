@@ -202,7 +202,7 @@ void main() {
   group('FirstTimeExperienceWired', () {
     for (final missingIdentity in [true, false]) {
       testWidgets(
-        'KNOWN GAP CR-022 first-run ${missingIdentity ? 'missing identity' : 'signing failure'} '
+        'CR-022 first-run ${missingIdentity ? 'missing identity' : 'signing failure'} '
         'shows an error and Retry instead of loading forever',
         (tester) async {
           final events = <String>[];
@@ -231,9 +231,32 @@ void main() {
           );
           expect(find.byIcon(Icons.error_outline), findsWidgets);
           expect(find.text('Try Again'), findsOneWidget);
+          identityRepo.seed(testIdentity);
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'retry-sig',
+          };
+          await tester.ensureVisible(find.text('Try Again'));
+          await tester.tap(find.text('Try Again'));
+          for (var frame = 0; frame < 10; frame++) {
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(find.byType(QrImageView), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('qr-loading-shimmer')),
+            findsNothing,
+          );
+          expect(find.text('Try Again'), findsNothing);
+          final data = tester
+              .widget<FirstTimeExperienceScreen>(
+                find.byType(FirstTimeExperienceScreen),
+              )
+              .qrData!;
+          expect(
+            (jsonDecode(data) as Map<String, dynamic>)['sig'],
+            'retry-sig',
+          );
         },
-        // Baseline 361 leaves the shimmer after either failure marker.
-        skip: true,
       );
     }
 

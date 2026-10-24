@@ -124,16 +124,30 @@ void main() {
     });
 
     testWidgets(
-      'KNOWN GAP CR-022 missing identity exposes Retry without an unsigned QR',
+      'CR-022 missing identity exposes Retry without an unsigned QR',
       (tester) async {
         await tester.pumpWidget(pumpQRDisplay(tester));
         await tester.pumpAndSettle();
         expect(find.text('No Identity'), findsOneWidget);
         expect(find.byType(QrImageView), findsNothing);
         expect(find.text('Try Again'), findsOneWidget);
+        repo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig-123',
+        };
+        await tester.tap(find.text('Try Again'));
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.byType(QrImageView), findsOneWidget);
+        expect(find.text('No Identity'), findsNothing);
+        final data = tester
+            .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+            .qrData!;
+        expect(
+          (jsonDecode(data) as Map<String, dynamic>)['sig'],
+          'test-sig-123',
+        );
       },
-      // Baseline 361 sets showRetry:false for noIdentity; causal red retained.
-      skip: true,
     );
 
     testWidgets('shows error state when bridge signing fails', (tester) async {
@@ -261,13 +275,20 @@ void main() {
       expectTextContrast(scanTitle.style!.color!, colors.glassSurface);
     });
 
-    testWidgets('no retry button on noIdentity state', (tester) async {
+    testWidgets('retry remains available while identity is still missing', (
+      tester,
+    ) async {
       // Do NOT seed identity.
       await tester.pumpWidget(pumpQRDisplay(tester));
       await tester.pumpAndSettle();
 
       expect(find.text('No Identity'), findsOneWidget);
-      expect(find.text('Try Again'), findsNothing);
+      expect(find.text('Try Again'), findsOneWidget);
+      await tester.tap(find.text('Try Again'));
+      await tester.pumpAndSettle();
+      expect(find.text('No Identity'), findsOneWidget);
+      expect(find.text('Try Again'), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
     });
 
     testWidgets('TC-360-02a dual-signed linked-device QR stages only exact '

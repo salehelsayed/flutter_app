@@ -58,14 +58,8 @@ void main() {
         (label: 'own signed QR', overrides: {}, tamper: false, self: true),
       ];
   for (final entry in invalid) {
-    // Confirmed against baseline 361: signed rv/un/mlkem integers escape as TypeError.
-    // Keep the full required error-UI contract for reactivation after an app fix.
-    final knownTypeGap =
-        entry.label == 'wrong-type rv' ||
-        entry.label == 'wrong-type un' ||
-        entry.label == 'wrong-type mlkem';
     testWidgets(
-      '${knownTypeGap ? 'KNOWN GAP ' : ''}CR-015 ${entry.label} shows an error with no contact or request',
+      'CR-015 ${entry.label} shows an error with no contact or request',
       (tester) async {
         final h = await _mount(tester);
         Object? scanError;
@@ -94,12 +88,11 @@ void main() {
         expect(find.byType(SnackBar), findsOneWidget);
         expect(find.text('Added to your circle!'), findsNothing);
       },
-      skip: knownTypeGap,
     );
   }
 
   testWidgets(
-    'KNOWN GAP CR-015 valid signed QR conflicting with stored key shows an error without effects',
+    'CR-015 valid signed QR conflicting with stored key shows an error without effects',
     (tester) async {
       final h = await _mount(tester);
       final stored = ContactModel(
@@ -123,8 +116,6 @@ void main() {
       expect(find.text('Already in your circle!'), findsNothing);
       expect(find.text('Added to your circle!'), findsNothing);
     },
-    // Baseline 361 preserves the row and sends nothing, but shows success copy.
-    skip: true,
   );
 
   group('CR-025 QR timestamp admission through the real scanner', () {
