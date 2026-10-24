@@ -4550,6 +4550,18 @@ visible and cannot become an ordinary first-attempt PASS.
   debug log marker for future RenderFlex overflows. Host layout tests establish
   Flutter constraints, not a rebuilt Android device screenshot.
 
+- **Group sender avatar geometry:** the incoming group message gutter is 40 px,
+  including a 32 px avatar and 8 px gap. Without reserving that gap as padding,
+  the tight gutter constraint stretched the avatar to 40x32 and its photo clip
+  to 38x30. The gutter now reserves the gap before laying out the avatar.
+  `group_sender_avatar_geometry_test.dart` loads a real 160x80 photo through
+  `UserAvatar` in `GroupConversationScreen`, verifies the non-square decode and
+  cover fit, and asserts a square photo clip and 32x32 avatar. The affected
+  `LetterCard` source is identical on main `422c3f4b2` and UI-Update `e37f4f50e`;
+  the header, member/info and Orbit avatar call sites have separate square
+  layouts. Evidence: `.codex-test-logs/group-avatar-square-20261024/`.
+  This host geometry proof does not certify a device screenshot.
+
 - **Legacy group dissolve/removal audit identity:** when a member has no device
   roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
   account-signed transition omits device/transport fields. Go publication fills

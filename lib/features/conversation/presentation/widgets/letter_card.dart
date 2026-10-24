@@ -905,6 +905,7 @@ class LetterCard extends StatelessWidget {
                     ? Padding(
                         padding: const EdgeInsets.only(
                           top: _kBubbleAvatarGutterTopInset,
+                          right: kBubbleAvatarGutterWidth - kBubbleAvatarSize,
                         ),
                         child: UserAvatar(
                           peerId: senderPeerId,
