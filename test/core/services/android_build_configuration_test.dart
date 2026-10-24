@@ -4,6 +4,21 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Android build configuration', () {
+    test('ML Kit registrars retain their reflective no-arg constructors', () {
+      final rules = File(
+        'android/app/proguard-rules.pro',
+      ).readAsLinesSync().map((line) => line.split('#').first).join('\n');
+
+      expect(
+        rules,
+        matches(
+          r'-keep\s+class\s+com\.google\.mlkit\.\*\*\s+implements\s+'
+          r'com\.google\.firebase\.components\.ComponentRegistrar\s*'
+          r'\{\s*<init>\(\);\s*\}',
+        ),
+      );
+    });
+
     test('declares Firebase Google Services support in Gradle settings', () {
       final settings = File('android/settings.gradle.kts').readAsStringSync();
 
