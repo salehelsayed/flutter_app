@@ -182,6 +182,14 @@ Do not claim runtime-input equivalence from source hashes alone. The
 [group replay preservation receipts](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-replay-transport/ios-config-input-restoration.json)
 record this boundary without logging configuration contents.
 
+When the owner reserves Firebase configuration staging to `flutter_app`, Codex
+must leave the file untouched and delegate this source-contract check with the
+exact candidate and selected test files. Plan 407 Step 4 retained its missing-file
+failure and joined `flutter_app`'s matching 115-file affected-push result (1,262
+passed, no failures or skips). The [owner boundary](../../.codex-test-logs/plan407-step4/firebase-prerequisite-owner-boundary.json)
+and [source-bound correction](../../.codex-test-logs/plan407-step4/affected-push-kayan-20261024/receipt.json)
+keep that exception separate from ordinary Codex-run host checks.
+
 The host CV-14 wake-token freshness gate also reads ignored build inputs: the
 iOS device and simulator GoMknoon binaries, the macOS GoMknoon mirror, and
 `android/app/libs/GoMknoon.aar`. A fresh worktree must restore the exact declared
@@ -198,6 +206,13 @@ separate from tracked-source identity and do not copy SIMS attestations. The
 retain the missing-input failures, matching input stamps, complete framework
 repair, passing all-platform API verifier and binary-symbol sentinel, and the
 subsequent affected transport group (1,323 passed, no failures or skips).
+Step 4 encountered the same four absent inputs in its clean host checkout. Its
+[exact Flutter sentinel](../../.codex-test-logs/plan407-step4/native-symbol-existing-inputs/receipt.json)
+passed with the existing declared worktree outputs, and a separate
+[read-only probe](../../.codex-test-logs/plan407-step4/native-symbol-device-candidate/receipt.json)
+passed against all four artifacts in the reviewed device-candidate checkout.
+Both receipts retain before/after hashes; symbol presence does not certify a
+native build's source freshness or an untested signed release.
 
 ## Daily commands
 
@@ -3239,9 +3254,33 @@ guarded landing completion must release Feed/Back ownership and record a
 departure exactly once. Held partial-entry geometry and actual reverse drags
 separately prove interpolation and outer → inner → flat travel. Preserved
 failing-before cases and corrected runs are in
-`.codex-test-logs/plan407-step4/implementation/`. Kayan's source-bound Android
-acceptance remains separate; host checks do not certify device rendering or
-a signed release.
+`.codex-test-logs/plan407-step4/implementation/`. The
+[Step 4 acceptance receipt](../../.codex-test-logs/plan407-step4/step4-acceptance.json)
+joins 236 focused and 25 preservation passes, the full 1,036-file feature sweep,
+all 34 selected host components, and Kayan's six required Android cases on the
+reviewed source. Original reports retain their failures and skips; the receipt
+links source-bound corrections rather than rewriting them. Seven general
+localization-selected device campaigns remain unproven here, and this does not
+certify a signed release.
+
+Committed-candidate sweeps should use a clean checkout with its declared ignored
+inputs. An untracked prototype screenshot experiment was discovered by the
+dirty worktree's broad test glob and produced three unrelated golden failures;
+the original test, goldens and failures were preserved. The clean committed
+selection contained 1,036 files rather than 1,037. Do not narrow a selector or
+overwrite another owner's golden files to make that distinction disappear.
+
+The baseline Go feasibility probe can observe an ordinary direct connection
+without a DCUtR punch. `DirectDialEvt` deliberately increments no punch counters;
+`holepunch_tracer_test.go` protects that boundary. The original loop treated a
+direct connection as an upgrade before establishing successful End-event
+evidence: an ordinary dial never emits that event, and an actual punch can emit
+it after the connection becomes visible. The retained failure cannot distinguish
+those two paths. The test,
+tracer and dependency files match the Step 4 baseline and main. Kayan accepted
+it as a separate baseline issue; its fixture-only repair preserves the original
+eight-second windows, real connection/classification assertions and distinction
+between an ordinary dial and a punch. It is not a Step 4 product regression.
 
 The Step 3 generated-localization mapping also selected general audio, group-media,
 group-mute, media, Android notification, iOS notification and reconnect device
