@@ -2578,6 +2578,43 @@ Focused causal failures and verified host results are retained under
 `.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
 native cryptography proofs.
 
+QR catalog safety checks exercise the real scanner callback, production SQL
+repositories and real Ed25519 signing/verification for altered signatures,
+identity mismatch, required-field/type rejection and self-scan (CR-015). Rejected
+input must preserve empty contacts/pending requests and produce no outbound
+send, inbox store or request encryption. The stored-key conflict control also
+preserves the existing row. Migration and linked-device QR routing (CR-023)
+uses handler-present and unsupported controls with an existing contact: preserve
+that row and require zero pending requests, sends, stores and contact encryption.
+These routing controls stub protocol handlers; they do not certify migration or
+linked-device trust completion. Both normal QR display routes expose the compact
+signed payload including the display name; their signing bridge is faked here.
+
+Seven catalog contracts remain explicitly `KNOWN GAP` / skipped after causal red
+probes on production baseline `3616143`: signed integer `rv` / `un` / `mlkem`
+throws a TypeError instead of scanner error feedback (CR-015); a valid signed QR
+conflicting with a seeded stored public key preserves the row and sends nothing
+but shows the already-in-circle dialog instead of an error; the dedicated no-identity
+screen has no retry action; first-run missing identity and signing failure retain
+the loading shimmer without recovery feedback (CR-022). The malformed-field reds
+asserted zero SQL/outbound effects before the error assertion; neither creation
+of a contact nor an unsigned fallback was observed. Keep the full required
+contracts for reactivation after app fixes; seven skips are incomplete coverage,
+not closure. CR-025's older catalog note about unreadable/future acceptance is
+superseded by current timestamp rejection and its active negative/fresh controls.
+Evidence: `qr_timestamp_admission_test.dart`, `qr_scanner_wired_test.dart`,
+`qr_display_wired_test.dart`, `first_time_experience_wired_test.dart` and
+`.codex-test-logs/astra-batch6-qr/003-qr-causal-red.log` (12 passes, five causal
+failures), `009-remaining-qr-causal-red.log` (two further causal failures), and
+`010-qr-focused-final.log` (77 passes, seven known-gap skips across six files,
+including parser/builder preservation). Retain `002-qr-causal-red.log` with its
+payload-observation fixture compilation errors and `008-remaining-qr-causal-red.log`
+with its fixture repository-method compilation error. The fixtures now read the
+screen's public `qrData`, alongside actual QR rendering assertions, and seed
+through `ContactRepository.addContact`.
+This host evidence does not cover camera decoding, native crypto, physical scans,
+OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
+
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses
 the reciprocal key for exact Unicode/multiline text in both directions. Its QR

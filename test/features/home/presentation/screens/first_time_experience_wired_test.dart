@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -198,6 +200,43 @@ void main() {
   }
 
   group('FirstTimeExperienceWired', () {
+    for (final missingIdentity in [true, false]) {
+      testWidgets(
+        'KNOWN GAP CR-022 first-run ${missingIdentity ? 'missing identity' : 'signing failure'} '
+        'shows an error and Retry instead of loading forever',
+        (tester) async {
+          final events = <String>[];
+          debugSetFlowEventSink(
+            (event) => events.add(event['event'] as String),
+          );
+          addTearDown(() => debugSetFlowEventSink(null));
+          if (!missingIdentity) identityRepo.seed(testIdentity);
+          bridge.responses['payload.sign'] = {'ok': false};
+          await tester.pumpWidget(buildFTE());
+          for (var frame = 0; frame < 10; frame++) {
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(
+            events,
+            contains(
+              missingIdentity
+                  ? 'FTE_FL_NO_IDENTITY'
+                  : 'QR_FL_BUILD_PAYLOAD_ERROR',
+            ),
+          );
+          expect(find.byType(QrImageView), findsNothing);
+          expect(
+            find.byKey(const ValueKey('qr-loading-shimmer')),
+            findsNothing,
+          );
+          expect(find.byIcon(Icons.error_outline), findsWidgets);
+          expect(find.text('Try Again'), findsOneWidget);
+        },
+        // Baseline 361 leaves the shimmer after either failure marker.
+        skip: true,
+      );
+    }
+
     testWidgets('shows QR shimmer before post-frame QR generation completes', (
       tester,
     ) async {
@@ -243,6 +282,21 @@ void main() {
       await tester.pump();
 
       expect(find.byType(QrImageView), findsOneWidget);
+      final payload =
+          jsonDecode(
+                tester
+                    .widget<FirstTimeExperienceScreen>(
+                      find.byType(FirstTimeExperienceScreen),
+                    )
+                    .qrData!,
+              )
+              as Map<String, dynamic>;
+      expect(payload['un'], testIdentity.username);
+      expect(payload['sig'], 'test-sig');
+      expect(
+        payload.keys,
+        unorderedEquals(['ns', 'pk', 'rv', 'ts', 'un', 'sig']),
+      );
       expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
     });
 

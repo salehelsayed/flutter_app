@@ -200,6 +200,26 @@ void main() {
     addTearDown(() => FlutterError.onError = originalOnError);
   }
 
+  Future<void> expectNoContactRequestTraffic() async {
+    expect(await contactRequestRepository.getPendingRequests(), isEmpty);
+    expect(p2pService.sendMessageCallCount, 0);
+    expect(p2pService.storeInInboxCallCount, 0);
+  }
+
+  ContactModel seedPreservedContact() {
+    final identity = _fx('preserved');
+    final contact = ContactModel(
+      peerId: identity.peerId,
+      publicKey: identity.publicKey,
+      rendezvous: 'fixture-rendezvous',
+      username: 'Preserved',
+      signature: 'stored-signature',
+      scannedAt: '2026-01-01T00:00:00.000Z',
+    );
+    contactRepository.addTestContact(contact);
+    return contact;
+  }
+
   testWidgets('contact scanner keeps default contact copy', (tester) async {
     await tester.pumpWidget(buildScanner());
     await pumpFrames(tester);
@@ -258,6 +278,7 @@ void main() {
   testWidgets(
     'migration QR dispatches to migration handler without contact side effects',
     (tester) async {
+      final preserved = seedPreservedContact();
       final scannedMigrationPayloads = <String>[];
       var downloadCalls = 0;
       final qrData = _buildMigrationQrData();
@@ -289,7 +310,12 @@ void main() {
       await pumpFrames(tester);
 
       expect(scannedMigrationPayloads, [qrData]);
-      expect(await contactRepository.getContactCount(), 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(preserved.peerId))!.toMap(),
+        preserved.toMap(),
+      );
+      await expectNoContactRequestTraffic();
       expect(downloadCalls, 0);
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
@@ -300,6 +326,7 @@ void main() {
   testWidgets(
     'migration QR without handler fails safely without contact side effects',
     (tester) async {
+      final preserved = seedPreservedContact();
       await tester.pumpWidget(buildScanner());
       await pumpFrames(tester);
 
@@ -309,10 +336,16 @@ void main() {
       scanner.onScanned(_buildMigrationQrData());
       await pumpFrames(tester);
 
-      expect(await contactRepository.getContactCount(), 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(preserved.peerId))!.toMap(),
+        preserved.toMap(),
+      );
+      await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
       expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.byType(SnackBar), findsOneWidget);
     },
   );
 
@@ -550,6 +583,7 @@ void main() {
       expect(find.text('Invalid Signature'), findsOneWidget);
       expect(find.text('Already in your circle!'), findsNothing);
       expect(_contactRequestRecipientKeys(bridge), isEmpty);
+      await expectNoContactRequestTraffic();
       expect(p2pService.storeInInboxCallCount, 0);
       expect(await contactRepository.getContactCount(), 1);
       expect(
@@ -865,6 +899,7 @@ void main() {
     'TC-360-02a dual-signed linked-device QR stages only exact known-contact '
     'pending authority',
     (tester) async {
+      final preserved = seedPreservedContact();
       // A linked-device document is a different protocol with different
       // authority. Routing it to the legacy contact parser would let a
       // document that parser was never designed to authenticate reach a
@@ -904,7 +939,12 @@ void main() {
       await pumpFrames(tester);
 
       expect(dispatched, <String>[linkedDocument]);
-      expect(await contactRepository.getContactCount(), 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(preserved.peerId))!.toMap(),
+        preserved.toMap(),
+      );
+      await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
       expect(find.text('Added to your circle!'), findsNothing);
@@ -919,10 +959,16 @@ void main() {
           .onScanned(linkedDocument);
       await pumpFrames(tester);
 
-      expect(await contactRepository.getContactCount(), 0);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(preserved.peerId))!.toMap(),
+        preserved.toMap(),
+      );
+      await expectNoContactRequestTraffic();
       expect(bridge.commandLog, isNot(contains('payload.verify')));
       expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
       expect(find.text('Added to your circle!'), findsNothing);
+      expect(find.byType(SnackBar), findsOneWidget);
     },
   );
 }

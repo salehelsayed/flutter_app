@@ -98,6 +98,17 @@ void main() {
       expect(find.byType(QRDisplayScreen), findsOneWidget);
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
+      final encoded = tester
+          .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+          .qrData!;
+      final payload = jsonDecode(encoded) as Map<String, dynamic>;
+      expect(payload['un'], testIdentity.username);
+      expect(payload['sig'], 'test-sig-123');
+      expect(
+        payload.keys,
+        unorderedEquals(['ns', 'pk', 'rv', 'ts', 'un', 'sig']),
+      );
+      expect(encoded, isNot(contains('\n')));
     });
 
     testWidgets('shows noIdentity state when no identity exists', (
@@ -109,7 +120,21 @@ void main() {
 
       expect(find.text('No Identity'), findsOneWidget);
       expect(find.byIcon(Icons.person_off), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
     });
+
+    testWidgets(
+      'KNOWN GAP CR-022 missing identity exposes Retry without an unsigned QR',
+      (tester) async {
+        await tester.pumpWidget(pumpQRDisplay(tester));
+        await tester.pumpAndSettle();
+        expect(find.text('No Identity'), findsOneWidget);
+        expect(find.byType(QrImageView), findsNothing);
+        expect(find.text('Try Again'), findsOneWidget);
+      },
+      // Baseline 361 sets showRetry:false for noIdentity; causal red retained.
+      skip: true,
+    );
 
     testWidgets('shows error state when bridge signing fails', (tester) async {
       repo.seed(testIdentity);
