@@ -14,7 +14,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_blocked_screen.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -615,6 +617,90 @@ void main() {
         findsNothing,
       );
       expect(p2pService.startNodeCallCount, 1);
+    },
+  );
+
+  testWidgets(
+    'old-phone success resets to the retired root and Back cannot reach home',
+    (tester) async {
+      const peerId = '12D3KooWMovedOldPhone';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      await tester.pumpWidget(buildRouterApp());
+      await pumpFrames(tester);
+      expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+
+      final navigator = Navigator.of(
+        tester.element(find.byType(FirstTimeExperienceWired)),
+      );
+      final now = DateTime.now().toUtc();
+      final qr = MigrationQrPayload(
+        sessionId: 'old-completion-route',
+        createdAt: now.subtract(const Duration(minutes: 1)),
+        expiresAt: now.add(const Duration(minutes: 5)),
+        newPhoneEphemeralPublicKey: 'new-phone-public-key',
+        channelNonce: 'fixture-nonce',
+      );
+      unawaited(
+        navigator.push<void>(
+          MaterialPageRoute(
+            builder: (_) => AccountMigrationJourneyWired.oldPhone(
+              secureKeyStore: secureKeyStore,
+              identityRepository: identityRepository,
+              initialScannedQr: qr.toJsonString(),
+              authorizeExport: (_) async => (
+                MigrationExportAuthorizationResult.authorized,
+                AuthenticatedMigrationChannelTranscript(
+                  sessionId: qr.sessionId,
+                  newPhoneEphemeralPublicKey: qr.newPhoneEphemeralPublicKey,
+                  oldPhonePeerId: peerId,
+                  authenticatedChannelBinding: 'fixture-binding',
+                  authorizationNonce: 'fixture-nonce',
+                ),
+              ),
+              runTransfer:
+                  ({
+                    required request,
+                    required onProgress,
+                    required isCancelled,
+                    onSegmentProgress,
+                  }) async {
+                    onProgress(AccountMigrationTransferStep.finishing);
+                    await saveAuthority(
+                      AccountMigrationAuthorityState.migratedOut,
+                      accountPeerId: peerId,
+                    );
+                    return const AccountMigrationTransferResult.success();
+                  },
+            ),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-start-transfer')),
+      );
+      await pumpFrames(tester, count: 60);
+
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      final blocked = tester.widget<AccountMigrationBlockedScreen>(
+        find.byType(AccountMigrationBlockedScreen),
+      );
+      expect(blocked.record?.state, AccountMigrationAuthorityState.migratedOut);
+      expect(blocked.onEraseAccount, isNotNull);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
+      expect(navigator.canPop(), isFalse);
+
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
     },
   );
 

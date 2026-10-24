@@ -9064,6 +9064,17 @@ only the pending command. Evidence is in
 stall path; it does not prove the cause or resolution of the observed simulator
 finishing stall or a missing final-proof response.
 
+Old-phone successful move routing: the journey previously changed only its
+progress view, leaving the retired home underneath it in Navigator history.
+After success with persisted `migratedOut` authority, it now clears the root
+stack and re-enters the registered startup route. `StartupRouter` supplies the
+blocked screen and its existing erase callback. The first-time QR and Settings
+entries share this journey. The widget regression starts at the real first-time
+home, persists retirement during successful transfer, checks the blocked/erase
+binding and empty Back history, then verifies system Back cannot expose the old
+home. Evidence is in `.codex-test-logs/move-sender-retired-route-20261024/`.
+These host results do not certify a fresh device or signed candidate.
+
 Physical Android local-reset regression: on Pixel 6 / API 37 at
 `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a`, choosing **Erase local data** on
 the migrated-out screen and cold-launching produced
