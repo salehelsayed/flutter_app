@@ -237,8 +237,10 @@ const _privacySha256 =
 // presentation suppression; the root owner and import floor are unchanged.
 // 2026-10-23: forward the existing iOS shared secure store to account erasure.
 // No application owner or resume dispatch moves.
+// 2026-10-24: pass the existing pending-key repair repository and repair
+// callback into notification route preparation. No owner or resume dispatch moves.
 const _applicationRootNormalizedSha256 =
-    '254ac920e2916b799c6446effb2367d82562fb7f5462576c6d30b0019c09a7a0';
+    '149611a8ee448d72162fa4adbe084044f4622843b1f74fbca4a2bfecb96b2122';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
