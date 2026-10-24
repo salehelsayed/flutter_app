@@ -2688,6 +2688,18 @@ expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
 
+Repeated Feed contact acceptance must publish the committed contact through
+`ChatMessageListener.contactUpdatedStream` before opening the conversation,
+independently of avatar download. Feed's own connection-card upsert does not
+refresh its retained embedded Orbit. The profile callback only fires on avatar
+success, so absent avatars previously left Orbit and all-chats stale after the
+first empty-shell rebuild. The repeated-accept shell case seeds an established
+contact, drives two real signed requests through Feed and production SQLite,
+preserves the same Orbit State, and checks both circle and all-chats grow from
+one to two to three contacts without avatars. This is host UI/stream/SQL proof,
+not device/native delivery. Evidence:
+`.codex-test-logs/contact-accept-refresh-20261024/`.
+
 Consent ownership must include the decision Future after the dialog route pops.
 Otherwise an observable gate release can read a still-pending row and present it
 again before Accept/Decline persists. The root and shell presenters await the

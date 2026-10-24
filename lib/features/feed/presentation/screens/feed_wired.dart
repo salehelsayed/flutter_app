@@ -1545,6 +1545,7 @@ class _FeedWiredState extends State<FeedWired>
       final openContact =
           await widget.contactRepository.getContact(request.peerId) ?? contact;
       if (!mounted) return;
+      widget.chatMessageListener.emitContactUpdate(openContact);
       unawaited(_openConversationForContact(openContact));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
