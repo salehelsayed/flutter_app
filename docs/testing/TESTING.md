@@ -35,6 +35,17 @@ it does not prove R8 output or a working release scanner. Release artifact and
 device scan evidence remain separate. Host evidence is in
 `.codex-test-logs/mlkit-registrar-keep-20261024/`.
 
+Android notification-cache TypeTokens: pinned `flutter_local_notifications`
+18.0.1 declares Gson 2.8.9, ships no Android consumer ProGuard rules, and directs
+apps to supply Gson rules in its README. Its cache loader creates an anonymous
+`TypeToken<ArrayList<NotificationDetails>>`; cancellation calls that loader.
+The app keeps generic `Signature` attributes and the TypeToken class hierarchy
+per Gson's bundled R8 rules, with class renaming still allowed. The same build
+configuration suite guards these rules and the ML Kit constructor rule. Host
+evidence is in `.codex-test-logs/gson-typetoken-keep-20261024/`; a passing config
+guard does not certify a shrunk release artifact or notification cancellation
+on a device.
+
 The existing App Store artifact entry point is
 `scripts/build_ios_appstore_ipa.sh --build-number=<candidate-number>`; it applies
 `tool/build/voice_call_release_defines.json`. The original testing-wrapper work

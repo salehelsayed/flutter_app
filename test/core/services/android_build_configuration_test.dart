@@ -4,6 +4,26 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Android build configuration', () {
+    test('notification TypeTokens retain generic signatures in release', () {
+      final rules = File(
+        'android/app/proguard-rules.pro',
+      ).readAsLinesSync().map((line) => line.split('#').first).join('\n');
+
+      expect(rules, matches(r'-keepattributes\s+Signature(?:\s|$)'));
+      expect(
+        rules,
+        contains(
+          '-keep,allowobfuscation class com.google.gson.reflect.TypeToken',
+        ),
+      );
+      expect(
+        rules,
+        contains(
+          '-keep,allowobfuscation class * extends com.google.gson.reflect.TypeToken',
+        ),
+      );
+    });
+
     test('ML Kit registrars retain their reflective no-arg constructors', () {
       final rules = File(
         'android/app/proguard-rules.pro',
