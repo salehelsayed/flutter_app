@@ -6837,6 +6837,17 @@ visible and cannot become an ordinary first-attempt PASS.
   optional diagnostic sink failure. Red/green evidence is retained under
   `.codex-test-logs/readiness-exceptions/`. These are host lifecycle and ownership
   proofs, not live microphone, libp2p, audible audio or signed-device evidence.
+- **Blocked direct ingress and the deletion exception:**
+  `block_unblock_ingress_privacy_test.dart` composes production senders, the
+  incoming router, chat/reaction/deletion listeners and block/unblock use cases
+  over the existing two-peer fake network/storage. It observes consumption of
+  blocked text, encrypted-media descriptors and reactions, with no recipient
+  row, orphan attachment, message-stream update or new notification. Blocked
+  reactions do not reach notification dependency admission. A deletion from
+  the blocked author still tombstones its previously stored message; after
+  unblock, a fresh text reaches the notification sink and a fresh reaction is
+  persisted and admitted. These are host ingress/notification-policy proofs,
+  not real blob transfer, OS notification delivery, or device interaction.
 - **TURN availability and frozen call policy:** normal (`all`) setup and restart
   may attempt direct media after a five-second credential timeout or a typed
   transient service failure. Preserve the approved STUN entries supplied by the
@@ -6866,6 +6877,16 @@ visible and cannot become an ordinary first-attempt PASS.
   These host tests model selected direct/TURN routes; they do not prove live
   Wi-Fi calling, TURN allocation or audible device media. Red/green evidence is
   retained under `.codex-test-logs/turn-policy/`.
+  The integration suite also feeds typed `NetworkPathSource` outcomes through
+  `CallNetworkPathBinding` into the real coordinator/executor/WebRTC wrapper.
+  Path preparation retains connected media until readiness opens recovery;
+  later path epochs cannot extend that episode's original 15-second deadline.
+  Ready media recovers the same call, or timeout closes it and a late callback
+  for that retired call cannot connect a replacement. The saved-preference
+  case resolves secure storage with `forceRelay: false`: a TURN outage creates
+  no direct connection, while a later call after service restoration uses the
+  saved relay-only configuration. Native selected-pair/readiness inputs are
+  controlled fixtures, so these cases do not close VC-017/VC-023 device proof.
 - **Saved call privacy and rollout policy:** availability of **Always relay
   calls** no longer selects a transport. Its stable secure-store preference is
   independent of `VOICE_CALL_FORCE_RELAY_ENABLED`; the release defines disable

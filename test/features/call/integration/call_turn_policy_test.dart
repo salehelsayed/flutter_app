@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/network_path_source.dart';
 import 'package:flutter_app/features/call/application/call_audio_controller.dart';
 import 'package:flutter_app/features/call/application/call_audio_negotiation_preparer.dart';
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_effect_executor.dart';
 import 'package:flutter_app/features/call/application/call_negotiation_material_store.dart';
+import 'package:flutter_app/features/call/application/call_network_path_binding.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
@@ -18,7 +20,10 @@ import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/bridge_call_ice_server_provider.dart';
 import 'package:flutter_app/features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import 'package:flutter_app/features/call/infrastructure/webrtc_types.dart';
+import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 final _epoch = DateTime.utc(2030);
 final _first = CallId.parse('11111111-1111-4111-8111-111111111111');
@@ -40,6 +45,164 @@ Map<String, dynamic> _valid(DateTime now) => {
 };
 
 void main() {
+  for (final recovers in [true, false]) {
+    _testClock(
+      'VC-017 network epochs retain the same call and original recovery '
+      'deadline (recovers=$recovers)',
+      (time) async {
+        final h = _Harness(time)..response = Future.value(_valid(_epoch));
+        final pushes = StreamController<Map<String, dynamic>>.broadcast(
+          sync: true,
+        );
+        final source = NetworkPathSource(events: pushes.stream);
+        final binding = CallNetworkPathBinding(
+          outcomes: source.outcomes,
+          coordinator: h.coordinator,
+          clock: h.now,
+        );
+        void push(String event, int epoch) =>
+            pushes.add({'event': event, 'epoch': epoch, 'ownerGeneration': 1});
+        try {
+          h.start();
+          await time.settle();
+          final old = h.current;
+          old.native.connect(WebRtcTransportClass.direct);
+          await time.settle();
+          final connectedAt = h.coordinator.activeSession!.connectedAt;
+          // Path preparation preserves the current media until a newer path
+          // is ready. The binding, not a synthetic reducer event, opens the
+          // reconnect episode at that readiness boundary.
+          push(NetworkPathEvents.changing, 1);
+          await time.settle();
+          expect(h.coordinator.activeSession?.state, CallState.connected);
+          expect(old.native.restarts, 0);
+          await time.elapse(const Duration(seconds: 4));
+          push(NetworkPathEvents.changing, 2);
+          push(NetworkPathEvents.relayReady, 1); // Superseded path.
+          await time.settle();
+          expect(old.native.restarts, 0);
+          old.native.state = WebRtcConnectionState.disconnected;
+          push(NetworkPathEvents.relayReady, 2);
+          await time.settle();
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          expect(old.native.restarts, 1);
+          await time.elapse(const Duration(seconds: 4));
+          push(NetworkPathEvents.changing, 3);
+          push(NetworkPathEvents.relayReady, 2);
+          push(NetworkPathEvents.relayReady, 3);
+          await time.settle();
+          expect(old.native.restarts, 1);
+          await time.elapse(const Duration(seconds: 10));
+          expect(h.coordinator.activeSession?.callId, _first);
+          expect(h.coordinator.activeSession?.state, CallState.reconnecting);
+          if (recovers) {
+            old.native.connect(WebRtcTransportClass.turnUdp);
+            await time.settle();
+            expect(h.coordinator.activeSession?.callId, _first);
+            expect(h.coordinator.activeSession?.connectedAt, connectedAt);
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+            expect((await old.engine.snapshot()).isMediaReady, isTrue);
+            await time.elapse(const Duration(seconds: 2));
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+            expect(h.history.entries, isEmpty);
+            h.hangup();
+            await time.settle();
+          } else {
+            await time.elapse(const Duration(seconds: 1));
+            expect(h.coordinator.activeSession, isNull);
+            expect(
+              h.history.entries.single.terminalReason,
+              CallEndReason.reconnectFailed,
+            );
+            expect(old.engine.isClosed, isTrue);
+            // A late callback for the retired call cannot resurrect it or
+            // promote a replacement that has not established ready media.
+            h.start(id: _next);
+            await time.settle();
+            await h.coordinator.dispatch(
+              CallEvent(
+                type: CallEventType.mediaConnected,
+                eventId: 'retired-call-late-media',
+                occurredAt: h.now(),
+                callId: _first,
+              ),
+            );
+            expect(h.coordinator.activeSession?.callId, _next);
+            expect(
+              h.coordinator.activeSession?.state,
+              isNot(CallState.connected),
+            );
+            expect(h.history.entries, hasLength(1));
+            h.current.native.connect(WebRtcTransportClass.turnUdp);
+            await time.settle();
+            expect(h.coordinator.activeSession?.state, CallState.connected);
+          }
+        } finally {
+          await time.tester.runAsync(binding.dispose);
+          await time.tester.runAsync(source.dispose);
+          await time.tester.runAsync(pushes.close);
+          h.close();
+          await time.settle();
+        }
+      },
+    );
+  }
+
+  _testClock(
+    'VC-023 saved preference without force-relay fails closed during outage '
+    'and permits a relay call after service restoration',
+    (time) async {
+      final store = FakeSecureKeyStore();
+      await saveAlwaysRelayCallsPreference(
+        secureKeyStore: store,
+        alwaysRelay: true,
+      );
+      final h = _Harness(
+        time,
+        policy: await resolveCallTransportPolicy(
+          secureKeyStore: store,
+          forceRelay: false,
+        ),
+      )..response = Future.value(_outage);
+      try {
+        h.start();
+        await time.settle();
+        expect(
+          h.current.native.configurations,
+          isEmpty,
+          reason: 'Unavailable TURN must not create a direct fallback.',
+        );
+        expect(h.coordinator.activeSession, isNull);
+        expect(h.history.entries, hasLength(1));
+        expect(h.current.engine.isClosed, isTrue);
+        // Re-read the durable preference for a new call, independently of the
+        // forced-relay production-audio fixture used by device campaigns.
+        h.policy = await resolveCallTransportPolicy(
+          secureKeyStore: store,
+          forceRelay: false,
+        );
+        h.response = Future.value(_valid(h.now()));
+        h.start(id: _next);
+        await time.settle();
+        expect(
+          h.current.native.configurations.single.iceTransportPolicy,
+          WebRtcIceTransportPolicy.relayOnly,
+        );
+        h.current.native.connect(WebRtcTransportClass.turnUdp);
+        await time.settle();
+        final media = await h.current.engine.snapshot();
+        expect(media.transport, CallTransportClass.turnUdp);
+        expect(media.isMediaReady, isTrue);
+        expect(h.coordinator.activeSession?.callId, _next);
+        expect(h.coordinator.activeSession?.state, CallState.connected);
+        expect(h.history.entries, hasLength(1));
+      } finally {
+        h.close();
+        await time.settle();
+      }
+    },
+  );
+
   _testClock(
     'VC-013 selected relay-to-direct media path preserves both call owners',
     (time) async {
