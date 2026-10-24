@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -26,6 +27,7 @@ import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
+import '../../../shared/fixtures/near_limit_media.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 void main() {
@@ -49,12 +51,15 @@ void main() {
       const receiverId = 'storage-retry-recipient';
       const messageId = 'dc007-storage-retry-message';
       const attachmentId = 'dc007-storage-retry-attachment';
-      const relativeSource = 'pending_uploads/$messageId/$attachmentId.jpg';
+      const relativeSource = 'pending_uploads/$messageId/$attachmentId.png';
       final source = File(
         '${FakeMediaFileManager.testRootPath}/$relativeSource',
       );
       await source.parent.create(recursive: true);
-      await source.writeAsBytes([1, 2, 3, 4]);
+      // DC-018 extends this existing DC-007 custody/restart oracle to the
+      // actual image cap, retaining every same-generation/receipt assertion.
+      final plaintext = nearLimitPngBytes();
+      await source.writeAsBytes(plaintext);
       addTearDown(() => source.parent.delete(recursive: true));
       final manager = FakeMediaFileManager();
       final bridge = PassthroughCryptoBridge();
@@ -107,8 +112,8 @@ void main() {
       final pending = MediaAttachment(
         id: attachmentId,
         messageId: messageId,
-        mime: 'image/jpeg',
-        size: 4,
+        mime: 'image/png',
+        size: plaintext.length,
         mediaType: 'image',
         localPath: relativeSource,
         downloadStatus: 'upload_pending',
@@ -128,10 +133,10 @@ void main() {
             // ownership, hashes, production staging and SQLite are real.
             prepareArtifact: ({required bridge, required localFilePath}) async {
               encryptions++;
-              final bytes = [
-                ...await File(localFilePath).readAsBytes(),
-                ...List.filled(16, 7),
-              ];
+              final sourceBytes = await File(localFilePath).readAsBytes();
+              final bytes = Uint8List(sourceBytes.length + 16);
+              bytes.setRange(0, sourceBytes.length, sourceBytes);
+              bytes.fillRange(sourceBytes.length, bytes.length, 7);
               final encrypted = File(
                 '${temp.path}/candidate-$encryptions.blob',
               );
@@ -142,7 +147,7 @@ void main() {
                 nonce: base64Encode(List.filled(12, 2)),
                 scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
                 contentHash: sha256.convert(bytes).toString(),
-                plaintextSize: 4,
+                plaintextSize: plaintext.length,
               );
             },
             strictUpload:

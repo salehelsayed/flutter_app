@@ -2318,6 +2318,59 @@ storage on the Dart side, not a live native-bridge or device journey. Full
 affected lanes belong to the execution owner; signed-candidate UI/transport
 glyph and device evidence remain separate and incomplete.
 
+Near-limit media catalog fixtures (DC-018/GX-003) reuse a decodable 2-by-2 PNG
+padded after IEND to the actual 25-MiB image send cap minus one byte. They transfer
+and compare all bytes, then decode the recovered image through Flutter's codec;
+this is not a reduced-cap fixture or proof for every supported format. Shared
+composer controls cover every actual per-type cap at minus one, exact and plus
+one, and the actual aggregate cap with two valid video budgets plus one extra
+byte, without allocating a 500-MiB batch. A real over-cap group file is rejected
+before crypto/upload, preserving only its source. Existing direct/group wired
+oversize and group upload-retry controls preserve localized rejection and prevent
+sending invalid attachments.
+
+The existing DC-007 strict SQLite oracle now uses the same near-cap PNG and
+retains its unchanged generation, ciphertext, three upload attempts, restart,
+receipt and single-row assertions. The direct roundtrip uses the existing
+content-transforming test bridge and a real partial output before EOF, then production retry/decrypt and same-envelope
+replay; exactly one attachment remains. Large fixture transforms use Uint8List
+to avoid boxed integer copies. Group fan-out uses the existing group listener,
+member/key setup and passthrough blob-crypto fixture: each eligible recipient
+gets exactly one attachment with exact bytes; one recipient's interrupted path
+is retained pending and recovered through the existing download entry. The
+listener helper does not own the application's periodic retrier. Observe the
+started failed transfer before waiting for pending, then trigger recovery;
+initial pending state alone is not evidence of a failed attempt. Resolve every
+receiver's stored relative path through its own file manager.
+
+DC-017's SQL/bubble fixture leaves both client transports started while its
+relay fault seam rejects custody/delivery. Three original encrypted envelopes
+survive sender reopen, failed retry, recovery and repeated recipient replay/
+reopen in order; actual delivery receipts settle the same sender rows once,
+without re-encryption. Old failed and settled LetterCards show content without
+internal custody/error labels. The complementary Go test withdraws only the
+owned inbox service, transfers bytes over a healthy client link, then restores
+fresh handlers/stores over the same Redis backend and proves ordered replay,
+deduplication and explicit ACK. It does not stop/restart a relay daemon.
+The Go near-cap test reuses the DC-007 owned filesystem fault, interrupts real
+framed upload and download streams, retries the same protected blob and rejects
+cross-recipient access. Protected retrieval/ACK requests require the explicit
+custody contract; a cross-recipient negative must explicitly name the protected
+target, otherwise the authenticated caller's missing tuple correctly returns
+not-found instead of the target-authorization verdict.
+
+Evidence: `near_limit_media.dart`, `one_to_one_media_encryption_round_trip_test.dart`,
+`group_media_fanout_test.dart`, `media_rejection_test.dart`,
+`relay_outage_sqlite_replay_test.dart`, `direct_media_storage_retry_sqlite_test.dart`,
+`catalog_near_limit_media_recovery_test.go`,
+`catalog_relay_outage_recovery_test.go`, and `.codex-test-logs/astra-batch6-group3/`
+(`017-dart-focused-final.log`: 46 passes; `012-size-ui-retry-preservation.log`:
+12 passes; `010-go-causal.log`: two passes; no skips). Retain the earlier fixture
+failures under that directory. These are separate host component proofs with
+fake native transport/crypto on Dart's side; real phone transfer/viewer behavior,
+full relay-process outage, native bridge composition, all-format near-cap transfer,
+and signed-candidate coverage remain unverified. No product gap was confirmed.
+
 The introduction Catalog P0 journeys reuse the production group-profile
 three-role runtime with introducer-only contact edges; the default full contact
 mesh would invalidate the pre-consent assertion. The mutual case requires real

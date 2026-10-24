@@ -12,8 +12,11 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -32,6 +35,7 @@ import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fixtures/near_limit_media.dart';
 
 const _alicePeerId = '12D3KooWAliceRoundTrip0000001';
 const _bobPeerId = '12D3KooWBobRoundTrip000000002';
@@ -46,6 +50,8 @@ class _RelayBridge extends PassthroughCryptoBridge {
 
   final Map<String, List<int>> relayStore;
   int _keygenCount = 0;
+  bool interruptNextDownload = false;
+  final interruptedPaths = <String>[];
   final Map<String, String> _noncesByKey = {};
 
   @override
@@ -67,10 +73,13 @@ class _RelayBridge extends PassthroughCryptoBridge {
       _noncesByKey[key] = nonce;
       final source = await File(filePath).readAsBytes();
       final encryptedPath = '$filePath.$_keygenCount.enc';
-      await File(encryptedPath).writeAsBytes([
-        ...'cipher:$key:$nonce:'.codeUnits,
-        ...source.reversed,
-      ], flush: true);
+      final prefix = 'cipher:$key:$nonce:'.codeUnits;
+      final encrypted = Uint8List(prefix.length + source.length);
+      encrypted.setRange(0, prefix.length, prefix);
+      for (var i = 0; i < source.length; i++) {
+        encrypted[prefix.length + i] = source[source.length - i - 1];
+      }
+      await File(encryptedPath).writeAsBytes(encrypted, flush: true);
       return jsonEncode({
         'ok': true,
         'encryptedPath': encryptedPath,
@@ -94,10 +103,11 @@ class _RelayBridge extends PassthroughCryptoBridge {
         return jsonEncode({'ok': false, 'errorMessage': 'decrypt failed'});
       }
       final decryptedPath = '$filePath.dec';
-      await File(decryptedPath).writeAsBytes(
-        encrypted.skip(prefix.length).toList().reversed.toList(),
-        flush: true,
-      );
+      final plaintext = Uint8List(encrypted.length - prefix.length);
+      for (var i = 0; i < plaintext.length; i++) {
+        plaintext[i] = encrypted[encrypted.length - i - 1];
+      }
+      await File(decryptedPath).writeAsBytes(plaintext, flush: true);
       return jsonEncode({'ok': true, 'decryptedPath': decryptedPath});
     }
     if (cmd == 'media:upload') {
@@ -115,6 +125,15 @@ class _RelayBridge extends PassthroughCryptoBridge {
       final outputPath = payload['outputPath'] as String;
       final outputFile = File(outputPath);
       await outputFile.parent.create(recursive: true);
+      if (interruptNextDownload) {
+        interruptNextDownload = false;
+        interruptedPaths.add(outputPath);
+        await outputFile.writeAsBytes(stored.take(1024).toList(), flush: true);
+        return jsonEncode({
+          'ok': false,
+          'errorMessage': 'download incomplete: wrote 1024, err=EOF',
+        });
+      }
       await outputFile.writeAsBytes(stored, flush: true);
       return jsonEncode({'ok': true, 'size': stored.length});
     }
@@ -229,110 +248,167 @@ void main() {
     }
   });
 
-  test('sender encrypts, key rides the v2 envelope, receiver decrypts to '
-      'byte-identical media', () async {
-    final photo = File('${tempDir.path}/photo.jpg');
-    await photo.writeAsBytes(plaintextBytes, flush: true);
+  for (final nearLimit in [false, true]) {
+    test(
+      nearLimit
+          ? 'DC-018 near-limit PNG survives partial download and replay without duplicate attachment'
+          : 'sender encrypts, key rides the v2 envelope, receiver decrypts to byte-identical media',
+      () async {
+        final expectedBytes = nearLimit ? nearLimitPngBytes() : plaintextBytes;
+        final mime = nearLimit ? 'image/png' : 'image/jpeg';
+        final photo = File(
+          '${tempDir.path}/photo.${nearLimit ? 'png' : 'jpg'}',
+        );
+        await photo.writeAsBytes(expectedBytes, flush: true);
 
-    // 1. Upload (sender).
-    final uploaded = (await uploadMedia(
-      bridge: aliceBridge,
-      localFilePath: photo.path,
-      mime: 'image/jpeg',
-      recipientPeerId: _bobPeerId,
-    )).attachmentOrNull;
-    expect(uploaded, isNotNull);
-    // THE flip assertion: what the relay stores is ciphertext.
-    expect(relayStore[uploaded!.id], isNotNull);
-    expect(relayStore[uploaded.id], isNot(equals(plaintextBytes)));
+        // 1. Upload (sender).
+        final uploaded = (await uploadMedia(
+          bridge: aliceBridge,
+          localFilePath: photo.path,
+          mime: mime,
+          recipientPeerId: _bobPeerId,
+        )).attachmentOrNull;
+        expect(uploaded, isNotNull);
+        // THE flip assertion: what the relay stores is ciphertext.
+        expect(relayStore[uploaded!.id], isNotNull);
+        expect(listEquals(relayStore[uploaded.id], expectedBytes), isFalse);
 
-    // 2. Send (sender) — key/nonce/scheme/hash ride INSIDE the v2
-    // envelope; the outer wire never carries them in cleartext fields.
-    final aliceP2P = FakeP2PService(
-      initialState: const NodeState(isStarted: true, peerId: _alicePeerId),
-    );
-    String? acceptedInboxEnvelope;
-    final (sendResult, _) = await sendChatMessage(
-      p2pService: aliceP2P,
-      messageRepo: aliceMessageRepo,
-      targetPeerId: _bobPeerId,
-      text: 'photo for you',
-      senderPeerId: _alicePeerId,
-      senderUsername: 'Alice',
-      bridge: aliceBridge,
-      recipientMlKemPublicKey: 'mlkem-bob',
-      mediaAttachments: [uploaded],
-      mediaAttachmentRepo: aliceMediaRepo,
-      storeInAckCustodyInboxDetailed:
-          (peerId, envelope, {required custodyKind, timeoutMs}) async {
-            expect(peerId, _bobPeerId);
-            expect(custodyKind, AckCustodyKind.directTextV108);
-            acceptedInboxEnvelope = envelope;
-            return const InboxStoreOutcome(
-              status: InboxStoreStatus.stored,
-              storeStatus: 'stored',
-              expiresAtMs: 1770000000000,
-              custodyContract: ackOrExpiryInboxCustodyContract,
-            );
-          },
-    );
-    expect(sendResult, SendChatMessageResult.success);
-    expect(
-      aliceMessageRepo.directCustodyRows,
-      isEmpty,
-      reason: 'strict ACK-or-expiry acceptance settles exact local custody',
-    );
-    final wire =
-        aliceP2P.lastSendMessageContent ??
-        acceptedInboxEnvelope ??
-        aliceP2P.lastStoreInInboxMessage;
-    expect(wire, isNotNull);
-    final outerEnvelope = jsonDecode(wire!) as Map<String, dynamic>;
-    expect(outerEnvelope['version'], '2');
-    expect(outerEnvelope.containsKey('media'), isFalse);
+        // 2. Send (sender) — key/nonce/scheme/hash ride INSIDE the v2
+        // envelope; the outer wire never carries them in cleartext fields.
+        final aliceP2P = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: _alicePeerId),
+        );
+        String? acceptedInboxEnvelope;
+        final (sendResult, _) = await sendChatMessage(
+          p2pService: aliceP2P,
+          messageRepo: aliceMessageRepo,
+          targetPeerId: _bobPeerId,
+          text: 'photo for you',
+          senderPeerId: _alicePeerId,
+          senderUsername: 'Alice',
+          bridge: aliceBridge,
+          recipientMlKemPublicKey: 'mlkem-bob',
+          mediaAttachments: [uploaded],
+          mediaAttachmentRepo: aliceMediaRepo,
+          storeInAckCustodyInboxDetailed:
+              (peerId, envelope, {required custodyKind, timeoutMs}) async {
+                expect(peerId, _bobPeerId);
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                acceptedInboxEnvelope = envelope;
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  expiresAtMs: 1770000000000,
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                );
+              },
+        );
+        expect(sendResult, SendChatMessageResult.success);
+        expect(
+          aliceMessageRepo.directCustodyRows,
+          isEmpty,
+          reason: 'strict ACK-or-expiry acceptance settles exact local custody',
+        );
+        final wire =
+            aliceP2P.lastSendMessageContent ??
+            acceptedInboxEnvelope ??
+            aliceP2P.lastStoreInInboxMessage;
+        expect(wire, isNotNull);
+        final outerEnvelope = jsonDecode(wire!) as Map<String, dynamic>;
+        expect(outerEnvelope['version'], '2');
+        expect(outerEnvelope.containsKey('media'), isFalse);
 
-    // 3. Receive + hydrate (receiver).
-    final (rxResult, rxMessage, _) = await handleIncomingChatMessage(
-      message: ChatMessage(
-        from: _alicePeerId,
-        to: _bobPeerId,
-        content: wire,
-        timestamp: DateTime.now().toUtc().toIso8601String(),
-        isIncoming: true,
-      ),
-      messageRepo: bobMessageRepo,
-      contactRepo: bobContacts,
-      bridge: bobBridge,
-      ownMlKemSecretKey: 'mlkem-bob-secret',
-      mediaAttachmentRepo: bobMediaRepo,
-    );
-    expect(rxResult, HandleChatMessageResult.chatMessage);
-    expect(rxMessage, isNotNull);
-    final hydrated = rxMessage!.media.single;
-    expect(hydrated.encryptionKeyBase64, uploaded.encryptionKeyBase64);
-    expect(hydrated.encryptionNonce, uploaded.encryptionNonce);
-    expect(hydrated.encryptionScheme, uploaded.encryptionScheme);
-    expect(hydrated.contentHash, uploaded.contentHash);
+        // 3. Receive + hydrate (receiver).
+        final (rxResult, rxMessage, _) = await handleIncomingChatMessage(
+          message: ChatMessage(
+            from: _alicePeerId,
+            to: _bobPeerId,
+            content: wire,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+          messageRepo: bobMessageRepo,
+          contactRepo: bobContacts,
+          bridge: bobBridge,
+          ownMlKemSecretKey: 'mlkem-bob-secret',
+          mediaAttachmentRepo: bobMediaRepo,
+        );
+        expect(rxResult, HandleChatMessageResult.chatMessage);
+        expect(rxMessage, isNotNull);
+        final hydrated = rxMessage!.media.single;
+        expect(hydrated.encryptionKeyBase64, uploaded.encryptionKeyBase64);
+        expect(hydrated.encryptionNonce, uploaded.encryptionNonce);
+        expect(hydrated.encryptionScheme, uploaded.encryptionScheme);
+        expect(hydrated.contentHash, uploaded.contentHash);
 
-    // 4. Download + decrypt (receiver).
-    final persisted = (await bobMediaRepo.getPendingDownloads()).single;
-    final downloaded = await downloadMedia(
-      bridge: bobBridge,
-      mediaAttachmentRepo: bobMediaRepo,
-      mediaFileManager: bobFileManager,
-      attachment: persisted,
-      contactPeerId: _alicePeerId,
-      owner: MediaOwnerLane.direct,
-      messageRepo: bobMessageRepo,
+        // 4. Download + decrypt (receiver).
+        final persisted = (await bobMediaRepo.getPendingDownloads()).single;
+        bobBridge.interruptNextDownload = nearLimit;
+        final downloaded = await downloadMedia(
+          bridge: bobBridge,
+          mediaAttachmentRepo: bobMediaRepo,
+          mediaFileManager: bobFileManager,
+          attachment: persisted,
+          contactPeerId: _alicePeerId,
+          owner: MediaOwnerLane.direct,
+          messageRepo: bobMessageRepo,
+        );
+        expect(downloaded, isNotNull);
+        expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+        expect(
+          listEquals(
+            File(downloaded.localPath!).readAsBytesSync(),
+            expectedBytes,
+          ),
+          isTrue,
+        );
+        expect(bobBridge.commandLog, contains('blob:decrypt'));
+        if (nearLimit) {
+          expect(bobBridge.interruptedPaths, hasLength(1));
+          expect(File(bobBridge.interruptedPaths.single).existsSync(), isFalse);
+          expect(
+            bobBridge.commandLog.where((cmd) => cmd == 'media:download'),
+            hasLength(2),
+          );
+          await handleIncomingChatMessage(
+            message: ChatMessage(
+              from: _alicePeerId,
+              to: _bobPeerId,
+              content: wire,
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              isIncoming: true,
+            ),
+            messageRepo: bobMessageRepo,
+            contactRepo: bobContacts,
+            bridge: bobBridge,
+            ownMlKemSecretKey: 'mlkem-bob-secret',
+            mediaAttachmentRepo: bobMediaRepo,
+          );
+          final rows = await bobMediaRepo.getAttachmentsForMessage(
+            rxMessage.id,
+            owner: MediaOwnerLane.direct,
+          );
+          expect(rows, hasLength(1));
+          expect(rows.single.id, downloaded.id);
+          expect(rows.single.downloadStatus, kMediaDownloadStatusDone);
+          expect(
+            (await aliceMessageRepo.getMessagesForContact(
+              _bobPeerId,
+            )).single.status,
+            isNot('sending'),
+          );
+          final codec = await ui.instantiateImageCodec(
+            await File(downloaded.localPath!).readAsBytes(),
+          );
+          final frame = await codec.getNextFrame();
+          expect(frame.image.width, 2);
+          expect(frame.image.height, 2);
+          frame.image.dispose();
+          codec.dispose();
+        }
+      },
     );
-    expect(downloaded, isNotNull);
-    expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
-    expect(
-      File(downloaded.localPath!).readAsBytesSync(),
-      equals(plaintextBytes),
-    );
-    expect(bobBridge.commandLog, contains('blob:decrypt'));
-  });
+  }
 
   test('legacy plaintext message from old sender still round-trips', () async {
     // Mixed-version matrix cell: an old-build sender shipped a v1 envelope
