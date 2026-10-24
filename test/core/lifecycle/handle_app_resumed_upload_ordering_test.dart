@@ -283,6 +283,10 @@ void main() {
             callOrder.add('retryIncompleteKeyExchanges');
             throw StateError('forced key exchange failure');
           },
+          retryPendingProfilePictureDownloadsFn: () async {
+            callOrder.add('retryPendingProfilePictureDownloads');
+            return 1;
+          },
           retryPendingPostMediaUploads: () async {
             callOrder.add('retryPendingPostMediaUploads');
             throw StateError('forced post media failure');
@@ -307,6 +311,7 @@ void main() {
 
         expect(callOrder, <String>[
           'retryIncompleteKeyExchanges',
+          'retryPendingProfilePictureDownloads',
           'retryPendingPostMediaUploads',
           'retryPendingPostDeliveries',
           'drainDirectInboxCustodyOutbox',

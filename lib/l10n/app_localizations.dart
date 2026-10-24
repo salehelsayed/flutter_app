@@ -2146,6 +2146,12 @@ abstract class AppLocalizations {
   /// **'Copied!'**
   String get settings_recovery_copied;
 
+  /// No description provided for @settings_copy_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t copy. Please try again.'**
+  String get settings_copy_failed;
+
   /// No description provided for @settings_recovery_copy.
   ///
   /// In en, this message translates to:
@@ -2271,6 +2277,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Attachments too large — remove some to send.'**
   String get media_attachments_too_large_note;
+
+  /// No description provided for @media_retry_later.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load yet. Tap to try again.'**
+  String get media_retry_later;
+
+  /// No description provided for @media_no_longer_available.
+  ///
+  /// In en, this message translates to:
+  /// **'No longer available'**
+  String get media_no_longer_available;
+
+  /// No description provided for @media_open_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open this file'**
+  String get media_open_failed;
 
   /// No description provided for @media_unavailable.
   ///
@@ -5528,6 +5552,12 @@ abstract class AppLocalizations {
   /// **'Local account data erased'**
   String get account_migration_erased_snackbar;
 
+  /// No description provided for @account_migration_erased_reopen_message.
+  ///
+  /// In en, this message translates to:
+  /// **'Close and reopen the app to set up again.'**
+  String get account_migration_erased_reopen_message;
+
   /// No description provided for @account_migration_erase_failed.
   ///
   /// In en, this message translates to:
@@ -5870,6 +5900,12 @@ abstract class AppLocalizations {
   /// **'Normal photo · can be saved or shared'**
   String get private_media_summary_ordinary_detail;
 
+  /// No description provided for @private_media_summary_ordinary_video_detail.
+  ///
+  /// In en, this message translates to:
+  /// **'Normal video · can be saved or shared'**
+  String get private_media_summary_ordinary_video_detail;
+
   /// No description provided for @private_media_summary_protected_detail.
   ///
   /// In en, this message translates to:
@@ -6023,13 +6059,13 @@ abstract class AppLocalizations {
   /// No description provided for @media_uploading_percent.
   ///
   /// In en, this message translates to:
-  /// **'Uploading photo · {percent}%'**
+  /// **'Uploading · {percent}%'**
   String media_uploading_percent(int percent);
 
   /// No description provided for @media_uploading.
   ///
   /// In en, this message translates to:
-  /// **'Uploading photo…'**
+  /// **'Uploading…'**
   String get media_uploading;
 
   /// No description provided for @media_view_once_not_viewed.
@@ -7147,6 +7183,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Download'**
   String get media_download;
+
+  /// No description provided for @update_required_store_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t open the store. Try updating again.'**
+  String get update_required_store_failed;
 
   /// SE-41 final copy, owner-approved 2026-10-12 (Rawi)
   ///

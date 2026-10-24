@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -252,6 +253,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   Duration _position = Duration.zero;
   Duration _duration = Duration.zero;
   bool _isLoaded = false;
+  bool _loadFailed = false;
   String? _loadedPath;
   String? _loadingPath;
   int _loadVersion = 0;
@@ -274,6 +276,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           ));
 
   bool get _showsUnavailableMedia =>
+      receiverMediaShowsRetryPrompt(widget.attachment) ||
       GroupMediaIntegrityPolicy.isUnavailableMedia(
         widget.attachment,
         requireVerifiedContentHash: widget.requireVerifiedContentHash,
@@ -281,7 +284,10 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
 
   bool get _canRetryUnavailableMedia =>
       widget.onRetryUnavailableMedia != null &&
-      GroupMediaIntegrityPolicy.isRetryableDownloadFailure(widget.attachment);
+      (GroupMediaIntegrityPolicy.isRetryableDownloadFailure(
+            widget.attachment,
+          ) ||
+          receiverMediaShowsRetryPrompt(widget.attachment));
 
   /// 229: user-removed local copy — renders a truthful removed state (never
   /// a disabled forever-player) with a user-authoritative explicit Retry.
@@ -371,8 +377,9 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
   }
 
   Future<void> _loadAudioSource() async {
-    final path = widget.attachment.localPath;
-    if (path == null || !_isAvailable) return;
+    final storedPath = widget.attachment.localPath;
+    if (storedPath == null || !_isAvailable) return;
+    final path = MediaFileManager.resolveStoredPathSync(storedPath);
     if ((_isLoaded && _loadedPath == path) || _loadingPath == path) return;
     final loadVersion = ++_loadVersion;
     _loadingPath = path;
@@ -404,6 +411,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       );
       if (mounted) {
         setState(() {
+          _loadFailed = true;
           _isLoaded = false;
           _loadedPath = null;
         });
@@ -435,7 +443,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
       return;
     }
 
-    if (!_isLoaded && _isAvailable) {
+    if (!_isLoaded && _isAvailable && !_loadFailed) {
       _loadAudio();
     }
   }
@@ -456,6 +464,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
         _position = Duration.zero;
         _duration = Duration.zero;
         _isLoaded = false;
+        _loadFailed = false;
         _loadedPath = null;
       });
       updateKeepAlive();
@@ -600,14 +609,41 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
     if (_isEvicted) {
       return _buildEvictedAudio();
     }
-    if (_showsUnavailableMedia) {
+    final uploadStatus = retainedUploadStatusText(
+      AppLocalizations.of(context)!,
+      widget.attachment,
+    );
+    if (uploadStatus != null) {
+      return Padding(
+        padding: const EdgeInsets.all(12),
+        child: Text(uploadStatus),
+      );
+    }
+    if (_showsUnavailableMedia || _loadFailed) {
       return _buildUnavailableAudio();
     }
     // 414: a voice message whose automatic download was refused (or has not
     // started) offers an explicit Download instead of a disabled player.
     if (widget.onRetryUnavailableMedia != null &&
-        widget.attachment.downloadStatus == kMediaDownloadStatusPending) {
+        widget.attachment.downloadStatus == kMediaDownloadStatusPending &&
+        (widget.attachment.downloadRetryCount ?? 0) == 0) {
       return _buildDownloadableAudio();
+    }
+    if (!_isAvailable &&
+        {
+          kMediaDownloadStatusPending,
+          kMediaDownloadStatusDownloading,
+          kMediaDownloadStatusFailed,
+          ...kMediaDownloadNotFoundRetryStatuses,
+        }.contains(widget.attachment.downloadStatus)) {
+      return const Padding(
+        padding: EdgeInsets.all(12),
+        child: SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
     }
 
     final totalMs = _duration.inMilliseconds > 0
@@ -800,7 +836,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 color: const Color(0xFF4ecdc4),
                 onPressed: widget.onRetryUnavailableMedia,
-                tooltip: l10n.media_retry_unavailable,
+                tooltip: l10n.btn_retry,
                 icon: const Icon(Icons.refresh_rounded),
               ),
             ),
@@ -829,13 +865,16 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              // Tamper (integrity_failed) gets an honest "couldn't verify"
-              // label, distinct from the generic unavailable/terminal copy.
-              GroupMediaIntegrityPolicy.isQuarantinedGroupMedia(
+              receiverMediaFailureText(
+                    l10n,
                     widget.attachment,
-                  )
-                  ? l10n.media_could_not_verify
-                  : l10n.media_unavailable,
+                    canRetry: _canRetryUnavailableMedia,
+                    cannotOpen:
+                        _loadFailed ||
+                        widget.attachment.downloadStatus ==
+                            kMediaDownloadStatusDone,
+                  ) ??
+                  l10n.media_unavailable,
               style: const TextStyle(
                 color: Color.fromRGBO(255, 255, 255, 0.66),
                 fontSize: 12,
@@ -846,7 +885,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
           if (_canRetryUnavailableMedia)
             Semantics(
               container: true,
-              label: l10n.media_retry_unavailable,
+              label: l10n.btn_retry,
               button: true,
               child: IconButton(
                 key: ValueKey(
@@ -858,7 +897,7 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget>
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 color: const Color(0xFF4ecdc4),
                 onPressed: widget.onRetryUnavailableMedia,
-                tooltip: l10n.media_retry_unavailable,
+                tooltip: l10n.btn_retry,
                 icon: const Icon(Icons.refresh_rounded),
               ),
             ),

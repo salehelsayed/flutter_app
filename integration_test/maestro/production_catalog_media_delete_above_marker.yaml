@@ -1,0 +1,34 @@
+appId: ${APP_ID}
+name: production_catalog_media_delete_above_marker
+---
+# The actual received media tile must open this menu. Caption long-press has
+# no mediaTarget and cannot exercise Delete for me.
+- assertVisible: '(?s-i)^(.*\n)?${TARGET_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${PRESERVED_PATTERN}(\n.*)?$'
+- longPressOn:
+    text: '(?s-i)^Photo(\n.*)?$'
+    above:
+      text: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- tapOn: '^Delete$'
+# Android may expose AlertDialog title/body as one merged label. Both
+# representations must retain the complete title and complete body.
+- runFlow:
+    when:
+      visible: '^Delete for me\?$'
+    commands:
+      - assertVisible: '^This removes the message and its media from this device only\. Other members keep their copy\.$'
+- runFlow:
+    when:
+      notVisible: '^Delete for me\?$'
+    commands:
+      - assertVisible: '(?-i)^Delete for me\?\nThis removes the message and its media from this device only\. Other members keep their copy\.$'
+- assertVisible: '^Cancel$'
+- tapOn: '^Delete for me$'
+- extendedWaitUntil:
+    notVisible: '(?s-i)^(.*\n)?${TARGET_PATTERN}(\n.*)?$'
+    timeout: 30000
+- assertVisible: '(?s-i)^(.*\n)?${MARKER_PATTERN}(\n.*)?$'
+- assertVisible: '(?s-i)^(.*\n)?${PRESERVED_PATTERN}(\n.*)?$'
+- assertVisible:
+    id: chat_composer

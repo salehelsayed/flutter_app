@@ -11,8 +11,22 @@ import 'package:flutter_app/features/push/infrastructure/push_registration_healt
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
+import 'package:flutter_app/features/settings/application/call_privacy_preference_use_cases.dart';
 
 class MigrationSecureStorageRegistry {
+  /// Only these app-wide settings survive explicit local erasure. All other
+  /// entries in the application's secure stores belong to the erased account,
+  /// including orphaned keys and incomplete transfer staging.
+  static const accountErasePreservedPrimaryKeys = <String>{
+    BackgroundPreference.storageKey,
+    ImageQualityPreference.storageKey,
+    ImageQualityPreference.videoStorageKey,
+    OrbitGeometryPrefs.storageKey,
+    MediaDownloadPreferences.storageKey,
+    alwaysRelayCallsStorageKey,
+  };
+
   static const dbEncryptionKey = 'db_encryption_key';
   static const identityPrivateKey = 'identity_private_key';
   static const identityMnemonic12 = 'identity_mnemonic12';

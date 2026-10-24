@@ -559,6 +559,14 @@ class P2PServiceImpl
               timeoutMs: timeoutMs,
               preferQuic: preferQuic,
             ),
+        recoverRelayAfterNetworkChange: () async {
+          if (_stopped || !_currentState.isStarted) return;
+          _beginReadinessProofWindow(
+            phase: 'recovery',
+            trigger: 'network_change',
+          );
+          await _attemptRelayRecovery(recoverySource: 'network_change');
+        },
         drainOfflineInbox: drainOfflineInbox,
         probeRelay: ({required String peerId}) =>
             callP2PRelayProbe(_bridge, peerId: peerId),
@@ -1826,6 +1834,7 @@ class P2PServiceImpl
   @override
   void markResumeStarted() {
     _resumeStartedAt = DateTime.now();
+    _peerTransportCoordinator.markAppResumed();
   }
 
   /// Clears any unconsumed resume timestamp.
@@ -3370,8 +3379,9 @@ class P2PServiceImpl
 
       // Restart mDNS advertising (e.g. after iOS returns from background)
       try {
-        await _peerTransportCoordinator.restartLocalAdvertising();
-        _peerTransportCoordinator.setLocalDiscoveryActive();
+        if (await _peerTransportCoordinator.restartLocalAdvertising()) {
+          _peerTransportCoordinator.setLocalDiscoveryActive();
+        }
       } catch (e) {
         if (kDebugMode) {
           debugPrint('[P2PService] Local P2P restart advertising failed: $e');

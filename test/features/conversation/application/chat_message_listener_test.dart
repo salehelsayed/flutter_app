@@ -17,6 +17,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/download_media_use_case.dart'
+    show debugRelayNotFoundRetryWait;
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart'
     show RecoveredInboxChatDisposition;
@@ -399,6 +401,7 @@ class _FakeMediaAttachmentRepo implements MediaAttachmentRepository {
 class _FakeBridge implements Bridge {
   Map<String, dynamic> downloadResponse = {'ok': true};
   int downloadCallCount = 0;
+  Completer<void>? downloadGate;
   final List<Map<String, dynamic>> requests = [];
 
   @override
@@ -407,6 +410,10 @@ class _FakeBridge implements Bridge {
     requests.add(request);
     if (request['cmd'] == 'media:download') {
       downloadCallCount++;
+      final gate = downloadGate;
+      if (gate != null) {
+        await gate.future;
+      }
       if (downloadResponse['ok'] == true) {
         final payload = request['payload'] as Map<String, dynamic>? ?? const {};
         final outputPath = payload['outputPath'] as String?;
@@ -526,9 +533,17 @@ class _FakeMediaFileManager extends MediaFileManager {
 }
 
 class _ThrowingBridge implements Bridge {
+  int downloadCallCount = 0;
+
   @override
-  Future<String> send(String message) async =>
-      throw Exception('Bridge exploded');
+  Future<String> send(String message) async {
+    if ((jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+        'media:download') {
+      downloadCallCount++;
+    }
+    throw Exception('Bridge exploded');
+  }
+
   @override
   Future<void> initialize() async {}
   @override
@@ -581,6 +596,7 @@ Future<ContactModel?> _noopDownloadProfilePicture({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async => null;
 
 ChatMessage _makeChatMessage({
@@ -1640,21 +1656,20 @@ void main() {
           _makeChatMessage(from: senderPeerId, media: _testMediaJson),
         );
 
-        await _waitUntil(() => emitted.length >= 2);
+        await _waitUntil(
+          () =>
+              emitted.isNotEmpty &&
+              emitted.last.media.isNotEmpty &&
+              emitted.last.media.single.downloadStatus == 'done',
+        );
 
-        // Should get 2 emissions: initial (no media) + re-emit (with media)
-        expect(emitted.length, 2);
-        expect(
-          emitted[0].media,
-          hasLength(1),
-        ); // first emission now carries pending-status attachments from wire payload
-        expect(emitted[0].media[0].downloadStatus, 'pending');
-        expect(
-          emitted[1].media,
-          hasLength(1),
-        ); // re-emission has downloaded media
-        expect(emitted[1].media[0].downloadStatus, 'done');
-        expect(emitted[1].media[0].localPath, isNotNull);
+        expect(emitted.map((message) => message.media.single.downloadStatus), [
+          'pending',
+          'downloading',
+          'done',
+        ]);
+        expect(emitted.last.media.single.localPath, isNotNull);
+        expect(bridge.downloadCallCount, 1);
 
         listener.dispose();
       },
@@ -1748,8 +1763,14 @@ void main() {
     );
 
     test(
-      'marks attachment terminal download_failed on relay not-found',
+      'marks confirmed relay absence unavailable after four bounded downloads',
       () async {
+        final previousWait = debugRelayNotFoundRetryWait;
+        final retryDelays = <Duration>[];
+        debugRelayNotFoundRetryWait = (delay) async {
+          retryDelays.add(delay);
+        };
+        addTearDown(() => debugRelayNotFoundRetryWait = previousWait);
         final senderPeerId = 'sender-peer-003';
         contactRepo.seedContact(_makeContact(senderPeerId));
 
@@ -1774,12 +1795,24 @@ void main() {
           ),
         );
 
-        await Future.delayed(const Duration(milliseconds: 200));
+        await _waitUntil(
+          () =>
+              emitted.isNotEmpty &&
+              emitted.last.media.isNotEmpty &&
+              emitted.last.media.single.downloadStatus == 'unavailable',
+        );
 
-        expect(emitted.length, 2);
-        // 'Blob not found' is a relay-unavailable response -> honest terminal
-        // download_failed, not a retryable failed (INV-DL-4).
-        expect(emitted[1].media[0].downloadStatus, 'download_failed');
+        expect(emitted.map((message) => message.media.single.downloadStatus), [
+          'pending',
+          'downloading',
+          'unavailable',
+        ]);
+        expect(bridge.downloadCallCount, 4);
+        expect(retryDelays, const [
+          Duration(seconds: 15),
+          Duration(seconds: 45),
+          Duration(seconds: 120),
+        ]);
 
         listener.dispose();
       },
@@ -1790,7 +1823,8 @@ void main() {
       contactRepo.seedContact(_makeContact(senderPeerId));
 
       // handleIncomingChatMessage persists media from wire JSON
-      final listener = createListener(overrideBridge: _ThrowingBridge());
+      final throwingBridge = _ThrowingBridge();
+      final listener = createListener(overrideBridge: throwingBridge);
       listener.start();
 
       final emitted = <ConversationMessage>[];
@@ -1804,11 +1838,19 @@ void main() {
         ),
       );
 
-      await _waitUntil(() => emitted.length >= 2);
+      await _waitUntil(
+        () =>
+            emitted.isNotEmpty &&
+            emitted.last.media.isNotEmpty &&
+            emitted.last.media.single.downloadStatus == 'failed',
+      );
 
-      expect(emitted.length, 2);
-      // Re-emitted message should have failed status from catch
-      expect(emitted[1].media[0].downloadStatus, 'failed');
+      expect(emitted.map((message) => message.media.single.downloadStatus), [
+        'pending',
+        'downloading',
+        'failed',
+      ]);
+      expect(throwingBridge.downloadCallCount, 1);
 
       listener.dispose();
     });
@@ -1923,13 +1965,29 @@ void main() {
             ),
       );
 
-      expect(emitted.length, 2);
-      expect(emitted[1].media, hasLength(2));
-      expect(emitted[1].media[0].downloadStatus, 'done');
-      expect(emitted[1].media[1].downloadStatus, 'done');
+      expect(
+        emitted.map(
+          (message) =>
+              message.media.map((item) => item.downloadStatus).toList(),
+        ),
+        [
+          ['pending', 'pending'],
+          ['downloading', 'pending'],
+          ['done', 'downloading'],
+          ['done', 'done'],
+        ],
+      );
 
       // Bridge called twice (once per attachment)
       expect(bridge.downloadCallCount, 2);
+      expect(
+        bridge.requests
+            .where((request) => request['cmd'] == 'media:download')
+            .map(
+              (request) => (request['payload'] as Map<String, dynamic>)['id'],
+            ),
+        ['blob-a', 'blob-b'],
+      );
 
       listener.dispose();
     });
@@ -1941,32 +1999,57 @@ void main() {
         contactRepo.seedContact(_makeContact(senderPeerId));
 
         // handleIncomingChatMessage persists media from wire JSON
+        final downloadGate = Completer<void>();
+        bridge.downloadGate = downloadGate;
         final listener = createListener();
         listener.start();
 
         final emitted = <ConversationMessage>[];
         listener.incomingMessageStream.listen(emitted.add);
 
-        chatStreamController.add(
-          _makeChatMessage(
-            from: senderPeerId,
-            id: 'msg-test-008',
-            text: 'Check out this photo!',
-            media: _testMediaJson,
-          ),
-        );
+        try {
+          chatStreamController.add(
+            _makeChatMessage(
+              from: senderPeerId,
+              id: 'msg-test-008',
+              text: 'Check out this photo!',
+              media: _testMediaJson,
+            ),
+          );
 
-        // First emission should come very quickly (before download)
-        await Future.delayed(const Duration(milliseconds: 50));
-        expect(emitted.length, greaterThanOrEqualTo(1));
-        expect(emitted[0].text, 'Check out this photo!');
-        expect(emitted[0].id, 'msg-test-008');
+          await _waitUntil(
+            () =>
+                emitted.isNotEmpty &&
+                emitted.last.media.isNotEmpty &&
+                emitted.last.media.single.downloadStatus == 'downloading' &&
+                bridge.downloadCallCount == 1,
+          );
+          expect(emitted.first.text, 'Check out this photo!');
+          expect(emitted.first.id, 'msg-test-008');
+          expect(downloadGate.isCompleted, isFalse);
+          expect(
+            emitted.any(
+              (message) =>
+                  message.media.any((item) => item.downloadStatus == 'done'),
+            ),
+            isFalse,
+          );
 
-        // Wait for download to complete
-        await Future.delayed(const Duration(milliseconds: 250));
-        expect(emitted.length, 2);
-
-        listener.dispose();
+          downloadGate.complete();
+          await _waitUntil(
+            () => emitted.last.media.single.downloadStatus == 'done',
+          );
+          expect(
+            emitted.map((message) => message.media.single.downloadStatus),
+            ['pending', 'downloading', 'done'],
+          );
+          expect(bridge.downloadCallCount, 1);
+        } finally {
+          if (!downloadGate.isCompleted) {
+            downloadGate.complete();
+          }
+          listener.dispose();
+        }
       },
     );
   });
@@ -2980,6 +3063,7 @@ void main() {
             required ContactRepository contactRepo,
             required String ownerPeerId,
             required String avatarVersion,
+            bool retryPendingRequest = false,
           }) {
             attempts.add(ownerPeerId);
             final completer = Completer<ContactModel?>();

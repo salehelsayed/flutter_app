@@ -1727,6 +1727,126 @@
           "source": "tool/sign_version_file.dart"
         }
       ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_ordered_replay.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.149.command.2",
+          "value": "integration_test/scripts/run_production_direct_ordered_replay.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_ordered_recovery.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.150.command.2",
+          "value": "integration_test/scripts/run_production_group_ordered_recovery.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_send_cut.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; the existing production observation runtime alias is explicit and app composition remains owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.151.command.2",
+          "value": "integration_test/scripts/run_production_direct_send_cut.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_actions.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; existing routing observation runtime remains explicit, actual UI actions use retained Maestro owner, and application composition stays owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.152.command.2",
+          "value": "integration_test/scripts/run_production_direct_actions.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_direct_sender_offline.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Central SIMS manifest owns the exact command; existing routing observation runtime remains explicit, actual UI actions use retained Maestro owner, and application composition stays owned by lib/main.dart.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.153.command.2",
+          "value": "integration_test/scripts/run_production_direct_sender_offline.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_introduction_mutual.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned introduction journey using the existing three-role group observation alias, selective fixture contacts and existing app-owned intro file receipts. Natural UI precedes active inbox probes; no app graph is constructed.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.154.command.2",
+          "value": "integration_test/scripts/run_production_introduction_mutual.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_introduction_offline.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned introduction journey using the existing three-role group observation alias, selective fixture contacts and existing app-owned intro file receipts. Natural UI precedes active inbox probes; no app graph is constructed.",
+      "condition": "Host registration/oracle tests do not establish device or signed-candidate execution; flutter_app owns native proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.155.command.2",
+          "value": "integration_test/scripts/run_production_introduction_offline.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_production_group_local_media_delete.dart",
+      "owner": "QA / Catalog P0 production journey",
+      "reason": "Manifest-owned received group-image local-deletion leg: existing group-DE002 runtime, actual gallery send and media-target menu, read-only exact-row observations and owned restarts. No app graph or new observer is constructed.",
+      "condition": "Host tests and source registration do not establish device execution, image-frame decoding or physical-file erasure. flutter_app owns runtime proof.",
+      "seedsTooling": true,
+      "evidence": [
+        {
+          "kind": "json-value",
+          "source": "tool/sims/critical_features.json",
+          "keyPath": "capabilities.156.command.2",
+          "value": "integration_test/scripts/run_production_group_local_media_delete.dart"
+        }
+      ]
     }
   ],
   "declarations": [
@@ -1737,6 +1857,20 @@
       "owner": "UI-24 Audio Call / VC2 rollout",
       "reason": "The default-off call slice is currently reachable only from focused test and integration origins.",
       "condition": "Revisit when voice-call production composition is enabled, or with equivalent replacement or removal proof.",
+      "evidence": [
+        {
+          "kind": "computed-origin",
+          "origin": "test/integration"
+        }
+      ]
+    },
+    {
+      "path": "lib/core/media/media_download_recovery_registry.dart",
+      "rootKinds": [],
+      "disposition": "explained-root",
+      "owner": "media / receive recovery",
+      "reason": "The recovery contract test checks this registry of existing durable receive owners; production recovery remains in its existing query and policy owners.",
+      "condition": "Revisit if production composition imports this contract or the owning recovery paths change.",
       "evidence": [
         {
           "kind": "computed-origin",

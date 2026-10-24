@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -52,6 +54,7 @@ void main() {
     WidgetTester tester, {
     FakeIdentityRepository? identityRepo,
     FakeSecureKeyStore? store,
+    PrivateMediaProtectionCoordinator? protectionCoordinator,
     String mnemonic = twelveWords,
     ThemeData? themeOverride,
     bool callPrivacyAvailable = false,
@@ -68,6 +71,18 @@ void main() {
     addTearDown(shell.dispose);
     final privacyRepo = InMemoryPostsPrivacySettingsRepository();
     addTearDown(privacyRepo.dispose);
+    final nativeEvents = StreamController<Object?>.broadcast();
+    addTearDown(nativeEvents.close);
+    final protection =
+        protectionCoordinator ??
+        PrivateMediaProtectionCoordinator(
+          invokeMethod: (method, arguments) async => <String, Object?>{
+            'ok': true,
+            'protectionActive': method == 'enter',
+          },
+          nativeEvents: nativeEvents.stream,
+        );
+    addTearDown(protection.dispose);
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -75,6 +90,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         theme: themeOverride,
         home: SettingsWired(
+          protectionCoordinator: protection,
           identityRepo: repo,
           bridge: FakeBridge(),
           contactRepo: FakeContactRepository(),
@@ -105,6 +121,265 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets(
+    'secure grant precedes recovery sheet and survives dismiss animation',
+    (tester) async {
+      final granted = Completer<Object?>();
+      final methods = <String>[];
+      final nativeEvents = StreamController<Object?>.broadcast();
+      addTearDown(nativeEvents.close);
+      final protection = PrivateMediaProtectionCoordinator(
+        invokeMethod: (method, arguments) async {
+          methods.add(method);
+          return method == 'enter'
+              ? await granted.future
+              : <String, Object?>{'ok': true, 'protectionActive': false};
+        },
+        nativeEvents: nativeEvents.stream,
+      );
+      await pumpWired(tester, protectionCoordinator: protection);
+      await tester.tap(find.byKey(const ValueKey('settings-row-recovery')));
+      await tester.tap(find.byKey(const ValueKey('settings-row-recovery')));
+      await tester.pump();
+      expect(methods, ['enter']);
+      expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+      granted.complete(<String, Object?>{'ok': true, 'protectionActive': true});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(SettingsRecoveryPhraseCard), findsOneWidget);
+      await tester.tap(find.text('Tap to reveal'));
+      await tester.pump();
+      Navigator.of(
+        tester.element(find.byType(SettingsRecoveryPhraseCard)),
+      ).pop();
+      await tester.pump();
+      expect(methods, [
+        'enter',
+      ], reason: 'secure grant must outlive the outgoing sheet pixels');
+      await settleSheetClose(tester);
+      await tester.pump();
+      expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+      expect(methods, ['enter', 'exit']);
+    },
+  );
+
+  testWidgets(
+    'native inactive protection closes recovery before releasing its grant',
+    (tester) async {
+      final nativeEvents = StreamController<Object?>.broadcast(sync: true);
+      addTearDown(nativeEvents.close);
+      final methods = <String>[];
+      final protection = PrivateMediaProtectionCoordinator(
+        invokeMethod: (method, arguments) async {
+          methods.add(method);
+          return <String, Object?>{
+            'ok': true,
+            'protectionActive': method == 'enter',
+          };
+        },
+        nativeEvents: nativeEvents.stream,
+      );
+      await pumpWired(tester, protectionCoordinator: protection);
+      await openSheet(tester, 'settings-row-recovery');
+      await tester.tap(find.text('Tap to reveal'));
+      await tester.pump();
+      expect(find.text('Hide'), findsOneWidget);
+      nativeEvents.add(<String, Object?>{'event': 'inactive'});
+      expect(methods, ['enter']);
+      await tester.pump();
+      expect(methods, [
+        'enter',
+      ], reason: 'native cover must remain through dismissal');
+      await settleSheetClose(tester);
+      expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+      expect(methods, ['enter', 'exit']);
+      await openSheet(tester, 'settings-row-recovery');
+      expect(find.text('Tap to reveal'), findsOneWidget);
+      expect(find.text('Hide'), findsNothing);
+      expect(methods, ['enter', 'exit', 'enter']);
+      Navigator.of(
+        tester.element(find.byType(SettingsRecoveryPhraseCard)),
+      ).pop();
+      await settleSheetClose(tester);
+      expect(methods, ['enter', 'exit', 'enter', 'exit']);
+    },
+  );
+
+  testWidgets(
+    'native inactivity before the first sheet frame cannot strand its cover',
+    (tester) async {
+      final nativeEvents = StreamController<Object?>.broadcast(sync: true);
+      addTearDown(nativeEvents.close);
+      final methods = <String>[];
+      final protection = PrivateMediaProtectionCoordinator(
+        invokeMethod: (method, arguments) async {
+          methods.add(method);
+          return <String, Object?>{
+            'ok': true,
+            'protectionActive': method == 'enter',
+          };
+        },
+        nativeEvents: nativeEvents.stream,
+      );
+      await pumpWired(tester, protectionCoordinator: protection);
+      await tester.tap(find.byKey(const ValueKey('settings-row-recovery')));
+      for (var i = 0; i < 10; i++) {
+        await Future<void>.value();
+      }
+      expect(methods, ['enter']);
+      expect(protection.coverActive, isFalse);
+      expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+      nativeEvents.add(<String, Object?>{'event': 'inactive'});
+      try {
+        await tester.pump();
+        await settleSheetClose(tester);
+        expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+        expect(methods, ['enter', 'exit']);
+      } finally {
+        final card = find.byType(SettingsRecoveryPhraseCard);
+        if (card.evaluate().isNotEmpty) {
+          Navigator.of(tester.element(card)).pop();
+          await settleSheetClose(tester);
+        }
+      }
+    },
+  );
+
+  testWidgets('failed native protection never mounts the recovery phrase', (
+    tester,
+  ) async {
+    final nativeEvents = StreamController<Object?>.broadcast();
+    addTearDown(nativeEvents.close);
+    final protection = PrivateMediaProtectionCoordinator(
+      invokeMethod: (method, arguments) async {
+        if (method == 'enter') {
+          throw PlatformException(code: 'protection_unavailable');
+        }
+        return <String, Object?>{'ok': true, 'protectionActive': false};
+      },
+      nativeEvents: nativeEvents.stream,
+    );
+    await pumpWired(tester, protectionCoordinator: protection);
+    await openSheet(tester, 'settings-row-recovery');
+    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+    expect(find.text('An error occurred. Please try again.'), findsOneWidget);
+  });
+
+  testWidgets('late recovery grant is released after Settings is removed', (
+    tester,
+  ) async {
+    final granted = Completer<Object?>();
+    final nativeEvents = StreamController<Object?>.broadcast();
+    addTearDown(nativeEvents.close);
+    final methods = <String>[];
+    final protection = PrivateMediaProtectionCoordinator(
+      invokeMethod: (method, arguments) async {
+        methods.add(method);
+        return method == 'enter'
+            ? await granted.future
+            : <String, Object?>{'ok': true, 'protectionActive': false};
+      },
+      nativeEvents: nativeEvents.stream,
+    );
+    await pumpWired(tester, protectionCoordinator: protection);
+    await tester.tap(find.byKey(const ValueKey('settings-row-recovery')));
+    await tester.pump();
+    expect(methods, ['enter']);
+    await tester.pumpWidget(const SizedBox.shrink());
+    granted.complete(<String, Object?>{'ok': true, 'protectionActive': true});
+    await tester.pump();
+    expect(methods, ['enter', 'exit']);
+    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+  });
+
+  group('KNOWN GAP', () {
+    testWidgets(
+      'SETTINGS-004 recovery phrase conceals on background and stays hidden on return',
+      (tester) async {
+        await pumpWired(tester);
+        await openSheet(tester, 'settings-row-recovery');
+        await tester.tap(find.text('Tap to reveal'));
+        await tester.pump();
+        expect(find.text('abandon'), findsOneWidget);
+        for (final state in const [
+          AppLifecycleState.inactive,
+          AppLifecycleState.hidden,
+          AppLifecycleState.paused,
+        ]) {
+          tester.binding.handleAppLifecycleStateChanged(state);
+        }
+        await tester.pump();
+        expect(find.text('Tap to reveal'), findsOneWidget);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Tap to reveal'), findsOneWidget);
+        expect(find.text('Hide'), findsNothing);
+      },
+    );
+  });
+
+  testWidgets('SETTINGS-004 navigating away resets reveal for the next sheet', (
+    tester,
+  ) async {
+    await pumpWired(tester);
+    await openSheet(tester, 'settings-row-recovery');
+    await tester.tap(find.text('Tap to reveal'));
+    await tester.pump();
+    expect(find.text('Hide'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await settleSheetClose(tester);
+    expect(find.byType(SettingsRecoveryPhraseCard), findsNothing);
+    expect(find.text('abandon'), findsNothing);
+    await openSheet(tester, 'settings-row-recovery');
+    expect(find.text('Tap to reveal'), findsOneWidget);
+    expect(find.text('Hide'), findsNothing);
+  });
+
+  group('KNOWN GAP', () {
+    testWidgets('SETTINGS-004 failed phrase copy stays truthful and retries', (
+      tester,
+    ) async {
+      var fail = true;
+      final attempts = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            attempts.add((call.arguments as Map)['text'] as String);
+            if (fail) throw PlatformException(code: 'CLIPBOARD_UNAVAILABLE');
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      await pumpWired(tester);
+      await openSheet(tester, 'settings-row-recovery');
+      await tester.tap(find.text('Tap to reveal'));
+      await tester.pump();
+      await tester.tap(find.text('Copy to clipboard'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(attempts, [twelveWords]);
+      expect(find.text('Copied!'), findsNothing);
+      expect(find.text('Copy to clipboard').hitTestable(), findsOneWidget);
+      fail = false;
+      await tester.tap(find.text('Copy to clipboard'));
+      await tester.pump();
+      expect(attempts, [twelveWords, twelveWords]);
+      expect(find.text('Copied!'), findsOneWidget);
+      await tester.tap(find.text('Hide'));
+      await tester.pump();
+      expect(find.text('Tap to reveal'), findsOneWidget);
+    });
+  });
 
   testWidgets(
     'call privacy availability opens the persisted setting in the existing sheet',
@@ -331,6 +606,17 @@ void main() {
     'T6 recovery sheet: warning, blur, reveal, copy, hide re-blurs; phrase '
     'never on the main page',
     (tester) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
       await pumpWired(tester);
 
       // Never-on-page lock: the first mnemonic word is absent at rest.

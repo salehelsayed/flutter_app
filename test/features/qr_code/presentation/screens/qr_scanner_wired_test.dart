@@ -12,6 +12,8 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
@@ -162,6 +164,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async => null,
         shareIntentService: shareIntentService,
         appShellController: appShellController,
@@ -270,6 +273,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadCalls++;
                 return null;
@@ -313,6 +317,83 @@ void main() {
   );
 
   testWidgets(
+    'offline QR add keeps automatic request recovery before local success',
+    (tester) async {
+      final scanned = _fx('new');
+
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(_buildValidQrData(identity: scanned));
+      await pumpFrames(tester, count: 20);
+
+      // The confirmation describes the completed local add. An offline
+      // reciprocal request must remain owned by reconnect/resume recovery.
+      expect(await contactRepository.getContact(scanned.peerId), isNotNull);
+      expect(find.text('Added to your circle!'), findsOneWidget);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(
+        await readMlKemReannounceMarker(secureKeyStore),
+        contains(scanned.peerId),
+      );
+    },
+  );
+
+  testWidgets(
+    'failed QR rescan of a keyed contact is redriven by key exchange recovery',
+    (tester) async {
+      final scanned = _fx('existing');
+      final existing = ContactModel(
+        peerId: scanned.peerId,
+        publicKey: scanned.publicKey,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'Bob (stored)',
+        signature: 'stored-sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+        mlKemPublicKey: 'their-mlkem',
+      );
+      contactRepository.addTestContact(existing);
+      identityRepository.seed(
+        IdentityModel.fromJson({
+          ...identity.toJson(),
+          'mlKemPublicKey': 'own-mlkem',
+        }),
+      );
+      p2pService.emitState(const NodeState(isStarted: true, peerId: ownPeerId));
+      p2pService.storeInInboxResult = false;
+
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(_buildValidQrData(identity: scanned));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('Already in your circle!'), findsOneWidget);
+      expect(p2pService.storeInInboxCallCount, 1);
+      p2pService.storeInInboxResult = true;
+      expect(
+        await retryIncompleteKeyExchanges(
+          contactRepo: contactRepository,
+          identityRepo: identityRepository,
+          p2pService: p2pService,
+          bridge: bridge,
+          secureKeyStore: secureKeyStore,
+        ),
+        1,
+      );
+      expect(p2pService.storeInInboxCallCount, 2);
+      expect(await readMlKemReannounceMarker(secureKeyStore), isEmpty);
+      expect(await contactRepository.getContactCount(), 1);
+      expect(
+        (await contactRepository.getContact(scanned.peerId))!.toMap(),
+        existing.toMap(),
+      );
+    },
+  );
+
+  testWidgets(
     'contact QR sends an encrypted request and isolates profile download failure',
     (tester) async {
       final scannedPeerId = _fx('encrypted').peerId;
@@ -328,6 +409,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadedOwnerPeerId = ownerPeerId;
                 throw StateError('profile download failed');
@@ -398,6 +480,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadCalls++;
                 return null;
@@ -603,6 +686,10 @@ void main() {
       expect(p2pService.storeInInboxCallCount, 1);
       expect(p2pService.lastStoreInInboxPeerId, openPeerId);
       expect(await contactRepository.getContactCount(), 2);
+      expect(
+        await readMlKemReannounceMarker(secureKeyStore),
+        isNot(contains(blockedPeerId)),
+      );
       expect(
         (await contactRepository.getContact(blockedPeerId))!.toMap(),
         blocked.toMap(),

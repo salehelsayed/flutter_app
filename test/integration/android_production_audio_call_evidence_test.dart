@@ -358,6 +358,14 @@ Map<String, Object?> _surfaceProof(
   final nameHash = sha256
       .convert(utf8.encode(id == 'kx0017' ? 'MKnoon caller' : 'Fixture caller'))
       .toString();
+  final inAppNameHash = sha256
+      .convert(
+        utf8.encode(id == 'kx0017' ? 'Unknown contact' : 'Fixture caller'),
+      )
+      .toString();
+  final inAppPackageHash = sha256
+      .convert(utf8.encode('com.example.call'))
+      .toString();
   Map<String, Object?> current(bool subject) => {
     'sourceBound': true,
     'connectionReadSucceeded': true,
@@ -371,9 +379,27 @@ Map<String, Object?> _surfaceProof(
     'connectionPresent': true,
     'localAudioEnabled': true,
   };
+  final inAppRequired = id == 'kx0016' || id == 'kx0017';
   Map<String, Object?> observation(int id) => {
-    'current': current(true),
+    'current': {...current(true), if (id == 504) 'state': 'ringing'},
     'otherCurrent': current(false),
+    if (inAppRequired)
+      'inAppIdentity': {
+        'phase': id == 504 ? 'incoming' : 'connected',
+        'packageSha256': inAppPackageHash,
+        'sourceUiSha256': id == 504 ? _profileSha : _apkSha,
+        'expectedNameSha256': inAppNameHash,
+        'peerSha256s': [
+          otherIdentity,
+          caller ? _callerIdentity : _calleeIdentity,
+        ],
+        'nameNodeCount': 1,
+        'ownedStatusNodeCount': 1,
+        'statusMatches': true,
+        'peerIdVisible': false,
+        'before': {...current(true), if (id == 504) 'state': 'ringing'},
+        'after': {...current(true), if (id == 504) 'state': 'ringing'},
+      },
     'cards': [
       {
         'id': id,
@@ -438,6 +464,10 @@ Map<String, Object?> _surfaceProof(
         },
     ],
     'expectedNameSha256': nameHash,
+    if (inAppRequired) ...{
+      'expectedInAppNameSha256': inAppNameHash,
+      'inAppPackageSha256': inAppPackageHash,
+    },
     'contactName': {
       'contactSha256': otherIdentity,
       'displayNameSha256': id == 'kx0017' ? otherIdentity : nameHash,

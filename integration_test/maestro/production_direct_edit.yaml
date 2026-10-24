@@ -1,0 +1,19 @@
+appId: ${APP_ID}
+name: production_direct_edit
+---
+- longPressOn:
+    id: message_${MESSAGE_ID}
+- tapOn:
+    id: message-context-edit-action
+- assertVisible: '^Editing message$'
+- tapOn:
+    id: chat_composer
+- eraseText: 200
+- inputText: ${EDITED_MESSAGE}
+- assertVisible:
+    id: chat_composer
+    text: '(?-i)^${EDITED_PATTERN}$'
+- tapOn:
+    id: chat_send
+- assertVisible: '(?s-i)^.*\n${EDITED_PATTERN}\n.*$'
+- hideKeyboard

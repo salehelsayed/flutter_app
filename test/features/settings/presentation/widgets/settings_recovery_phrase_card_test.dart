@@ -77,6 +77,35 @@ void main() {
     return container.decoration! as BoxDecoration;
   }
 
+  testWidgets(
+    'hidden phrase words never enter semantics; reveal and hide update it',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        Future<void> pump(bool revealed) => tester.pumpWidget(
+          wrap(
+            SettingsRecoveryPhraseCard(words: testWords, isRevealed: revealed),
+          ),
+        );
+        for (final revealed in [false, true, false]) {
+          await pump(revealed);
+          for (final word in testWords) {
+            expect(
+              find.semantics.byLabel(word),
+              revealed ? findsOneWidget : findsNothing,
+            );
+          }
+          expect(
+            find.semantics.byLabel('Tap to reveal'),
+            revealed ? findsNothing : findsOneWidget,
+          );
+        }
+      } finally {
+        semantics.dispose();
+      }
+    },
+  );
+
   testWidgets('shows RECOVERY PHRASE label', (tester) async {
     await tester.pumpWidget(wrap(SettingsRecoveryPhraseCard(words: testWords)));
 

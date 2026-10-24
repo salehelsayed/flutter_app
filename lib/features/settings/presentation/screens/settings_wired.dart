@@ -15,6 +15,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
@@ -74,6 +75,7 @@ class SettingsWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
   final bool showNavigationBar;
+  final PrivateMediaProtectionCoordinator? protectionCoordinator;
   final Map<String, bool>? voiceCallFeatureFlags;
 
   /// 209 — host-built QR entries (the orbit host wraps its existing
@@ -110,6 +112,7 @@ class SettingsWired extends StatefulWidget {
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
     this.showNavigationBar = true,
+    this.protectionCoordinator,
     this.voiceCallFeatureFlags,
     this.onMyQrRequested,
     this.onScanQrRequested,
@@ -121,11 +124,13 @@ class SettingsWired extends StatefulWidget {
   State<SettingsWired> createState() => _SettingsWiredState();
 }
 
-class _SettingsWiredState extends State<SettingsWired> {
+class _SettingsWiredState extends State<SettingsWired>
+    with WidgetsBindingObserver {
   IdentityModel? _identity;
   bool _isMnemonicRevealed = false;
   bool _isPeerIdCopied = false;
   bool _isMnemonicCopied = false;
+  String? _mnemonicCopyError;
   Uint8List? _pickedAvatarBytes;
   Timer? _peerIdCopyTimer;
   Timer? _mnemonicCopyTimer;
@@ -155,12 +160,14 @@ class _SettingsWiredState extends State<SettingsWired> {
   // changes outside a sheet gesture (the 2s copy-revert timer). Null when no
   // recovery sheet is open.
   VoidCallback? _recoverySheetTick;
+  bool _recoverySheetActive = false;
 
   double _settingsSwipeBackDx = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     emitFlowEvent(layer: 'FL', event: 'SETTINGS_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadBackgroundPreference();
@@ -168,6 +175,16 @@ class _SettingsWiredState extends State<SettingsWired> {
     _loadVideoQualityPreference();
     _loadMediaDownloadPreferences();
     _loadPostsPrivacySettings();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      _onHideMnemonic();
+      _recoverySheetTick?.call();
+    }
   }
 
   Future<void> _loadIdentity() async {
@@ -200,11 +217,29 @@ class _SettingsWiredState extends State<SettingsWired> {
     Navigator.of(context).pop();
   }
 
-  void _onCopyPeerId() {
+  Future<void> _onCopyPeerId() async {
     final peerId = _identity?.peerId;
     if (peerId == null) return;
 
-    Clipboard.setData(ClipboardData(text: peerId));
+    try {
+      await Clipboard.setData(ClipboardData(text: peerId));
+    } catch (_) {
+      if (!mounted) return;
+      _peerIdCopyTimer?.cancel();
+      setState(() => _isPeerIdCopied = false);
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.settings_copy_failed),
+          action: SnackBarAction(
+            label: l10n.btn_retry,
+            onPressed: _onCopyPeerId,
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
 
     _peerIdCopyTimer?.cancel();
     setState(() => _isPeerIdCopied = true);
@@ -218,14 +253,30 @@ class _SettingsWiredState extends State<SettingsWired> {
     setState(() => _isMnemonicRevealed = true);
   }
 
-  void _onCopyMnemonic() {
+  Future<void> _onCopyMnemonic() async {
     final mnemonic = _identity?.mnemonic12;
-    if (mnemonic == null) return;
+    if (mnemonic == null || !_isMnemonicRevealed) return;
 
-    Clipboard.setData(ClipboardData(text: mnemonic));
+    try {
+      await Clipboard.setData(ClipboardData(text: mnemonic));
+    } catch (_) {
+      if (!mounted) return;
+      _mnemonicCopyTimer?.cancel();
+      setState(() {
+        _isMnemonicCopied = false;
+        _mnemonicCopyError = AppLocalizations.of(context)!.settings_copy_failed;
+      });
+      _recoverySheetTick?.call();
+      return;
+    }
+    if (!mounted || !_isMnemonicRevealed) return;
 
     _mnemonicCopyTimer?.cancel();
-    setState(() => _isMnemonicCopied = true);
+    setState(() {
+      _isMnemonicCopied = true;
+      _mnemonicCopyError = null;
+    });
+    _recoverySheetTick?.call();
 
     _mnemonicCopyTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _isMnemonicCopied = false);
@@ -239,6 +290,7 @@ class _SettingsWiredState extends State<SettingsWired> {
     setState(() {
       _isMnemonicRevealed = false;
       _isMnemonicCopied = false;
+      _mnemonicCopyError = null;
     });
     _mnemonicCopyTimer?.cancel();
   }
@@ -798,36 +850,86 @@ class _SettingsWiredState extends State<SettingsWired> {
     );
   }
 
-  Future<void> _openRecoverySheet() {
+  Future<void> _openRecoverySheet() async {
     final words = _identity?.mnemonic12.split(' ') ?? const <String>[];
-    if (words.length != 12) return Future.value();
-    return _showSettingsSheet(
-      builder: (sheetContext, setSheetState) {
-        _recoverySheetTick = () => setSheetState(() {});
-        return SettingsRecoveryPhraseCard(
-          words: words,
-          isRevealed: _isMnemonicRevealed,
-          isCopied: _isMnemonicCopied,
-          onToggleReveal: () {
-            _onToggleMnemonic();
-            setSheetState(() {});
-          },
-          onCopy: () {
-            _onCopyMnemonic();
-            setSheetState(() {});
-          },
-          onHide: () {
-            _onHideMnemonic();
-            setSheetState(() {});
-          },
-        );
-      },
-    ).whenComplete(() {
+    if (_recoverySheetActive || words.length != 12) return;
+    _recoverySheetActive = true;
+    final protection =
+        widget.protectionCoordinator ??
+        (Platform.isAndroid || Platform.isIOS
+            ? PrivateMediaProtectionCoordinator.sharedPlatform()
+            : null);
+    PrivateMediaProtectionOwner? owner;
+    StreamSubscription<PrivateMediaProtectionEvent>? events;
+    ModalRoute<void>? sheetRoute;
+    try {
+      if (protection != null) {
+        // Do not mount phrase pixels until the native window is protected.
+        owner = await protection.enter();
+        if (!mounted) return;
+        if (owner == null || protection.coverActive) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.mnemonic_error_generic,
+              ),
+            ),
+          );
+          return;
+        }
+        events = protection.events.listen((event) {
+          if (event == PrivateMediaProtectionEvent.foreground ||
+              event == PrivateMediaProtectionEvent.captureStopped) {
+            return;
+          }
+          if (!mounted) return;
+          _onHideMnemonic();
+          _recoverySheetTick?.call();
+          // iOS has already placed its opaque native cover before this event.
+          // Close this sheet so releasing its owner reveals only Settings.
+          final route = sheetRoute;
+          if (route != null && route.isCurrent) route.navigator?.pop();
+        });
+      }
+      if (!mounted) return;
+      await _showSettingsSheet(
+        builder: (sheetContext, setSheetState) {
+          sheetRoute = ModalRoute.of<void>(sheetContext);
+          // Native inactivity can arrive after push but before this first frame.
+          if (protection?.latchedCriticalEvent != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final route = sheetRoute;
+              if (route != null && route.isCurrent) route.navigator?.pop();
+            });
+            return const SizedBox.shrink();
+          }
+          _recoverySheetTick = () => setSheetState(() {});
+          return SettingsRecoveryPhraseCard(
+            words: words,
+            isRevealed: _isMnemonicRevealed,
+            isCopied: _isMnemonicCopied,
+            copyError: _mnemonicCopyError,
+            onToggleReveal: () {
+              _onToggleMnemonic();
+              setSheetState(() {});
+            },
+            onCopy: _onCopyMnemonic,
+            onHide: () {
+              _onHideMnemonic();
+              setSheetState(() {});
+            },
+          );
+        },
+      );
+      // Route pop completes before its reverse animation removes the pixels.
+      await sheetRoute?.completed;
+    } finally {
       _recoverySheetTick = null;
-      // Session hygiene: re-blur for the next open — the phrase is NEVER
-      // rendered on the One-Screen page itself (TC-209-29).
       if (mounted) _onHideMnemonic();
-    });
+      unawaited(events?.cancel());
+      if (owner != null) await protection!.exit(owner);
+      _recoverySheetActive = false;
+    }
   }
 
   void _onMoveAccountToNewPhone() {
@@ -906,6 +1008,7 @@ class _SettingsWiredState extends State<SettingsWired> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _peerIdCopyTimer?.cancel();
     _mnemonicCopyTimer?.cancel();
     super.dispose();

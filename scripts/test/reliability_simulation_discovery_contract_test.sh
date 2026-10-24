@@ -215,6 +215,7 @@ production_call_host_tests=(
   test/core/debug/android_production_audio_call_e2e_test.dart
   test/integration/android_production_audio_call_campaign_test.dart
   test/integration/android_production_audio_call_evidence_test.dart
+  test/integration/production_call_in_app_identity_test.dart
   test/integration/production_audio_call_local_fixture_test.dart
 )
 for gate in scripts/run_host_test_gates.sh scripts/run_test_gates.sh; do

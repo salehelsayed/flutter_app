@@ -5,9 +5,13 @@ import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/utils/transient_transport_error.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+
+final _activePostDownloads =
+    Expando<Map<String, Future<PostMediaAttachmentModel>>>();
 
 /// Downloads (and when keyed, decrypts) a posts media blob to its final path.
 ///
@@ -29,6 +33,27 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
   required PostRepository postRepo,
   required MediaFileManager mediaFileManager,
   required PostMediaAttachmentModel attachment,
+}) {
+  final active = _activePostDownloads[postRepo] ??= {};
+  return active.putIfAbsent(attachment.mediaId, () async {
+    try {
+      return await _downloadPostMedia(
+        bridge: bridge,
+        postRepo: postRepo,
+        mediaFileManager: mediaFileManager,
+        attachment: attachment,
+      );
+    } finally {
+      active.remove(attachment.mediaId);
+    }
+  });
+}
+
+Future<PostMediaAttachmentModel> _downloadPostMedia({
+  required Bridge bridge,
+  required PostRepository postRepo,
+  required MediaFileManager mediaFileManager,
+  required PostMediaAttachmentModel attachment,
 }) async {
   final absolutePath = await mediaFileManager.localPathForPostAttachment(
     postId: attachment.postId,
@@ -44,6 +69,7 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
       attachment.encryptionKeyBase64 != null &&
       attachment.encryptionNonce != null;
   final downloadPath = hasKeyMaterial ? '$absolutePath.enc' : absolutePath;
+  var transportInterrupted = false;
 
   try {
     if (attachment.isEncrypted && !hasKeyMaterial) {
@@ -62,13 +88,22 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
       );
     }
 
-    final result = await callP2PMediaDownload(
-      bridge,
-      id: attachment.blobId,
-      outputPath: downloadPath,
-    );
+    late final Map<String, dynamic> result;
+    try {
+      result = await callP2PMediaDownload(
+        bridge,
+        id: attachment.blobId,
+        outputPath: downloadPath,
+      );
+    } catch (error) {
+      transportInterrupted = TransientTransportError.matches(error);
+      rethrow;
+    }
     if (result['ok'] != true) {
-      await postRepo.updatePostMediaDownloadStatus(attachment.mediaId, 'failed');
+      transportInterrupted = TransientTransportError.matches(
+        result['errorMessage'],
+        code: result['errorCode'],
+      );
       throw StateError(
         'Post media download failed for ${attachment.mediaId}: ${result['errorMessage']}',
       );
@@ -79,8 +114,9 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
       // the downloaded ciphertext BEFORE decrypt — never decrypted bytes.
       final expectedHash = attachment.contentHash;
       if (expectedHash != null) {
-        final actualHash =
-            await GroupMediaIntegrityPolicy.computeFileSha256Hex(downloadPath);
+        final actualHash = await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+          downloadPath,
+        );
         if (actualHash != expectedHash) {
           throw StateError(
             'Post media ${attachment.mediaId} ciphertext hash mismatch '
@@ -120,10 +156,7 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
       event: 'POST_MEDIA_DOWNLOAD_SUCCESS',
       details: {'postId': attachment.postId, 'mediaId': attachment.mediaId},
     );
-    return attachment.copyWith(
-      localPath: relativePath,
-      downloadStatus: 'done',
-    );
+    return attachment.copyWith(localPath: relativePath, downloadStatus: 'done');
   } catch (e) {
     // Remove every staged artifact; NEVER the relay blob (KC-P4 — the first
     // downloader must not starve recipients 2..N).
@@ -139,7 +172,10 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
         }
       } catch (_) {}
     }
-    await postRepo.updatePostMediaDownloadStatus(attachment.mediaId, 'failed');
+    final status = transportInterrupted
+        ? kMediaDownloadStatusRetryWaiting
+        : kMediaDownloadStatusFailed;
+    await postRepo.updatePostMediaDownloadStatus(attachment.mediaId, status);
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_MEDIA_DOWNLOAD_ERROR',
@@ -149,6 +185,9 @@ Future<PostMediaAttachmentModel> downloadPostMedia({
         'error': e.toString(),
       },
     );
+    if (transportInterrupted) {
+      return attachment.copyWith(downloadStatus: status);
+    }
     rethrow;
   }
 }

@@ -1743,6 +1743,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             imageQualityPreference ?? widget.qualityPreference,
         videoQualityPreference:
             videoQualityPreference ?? widget.videoQualityPreference,
+        // Explicit overflow compression must override the saved Original choice.
+        useStoredPreferences:
+            imageQualityPreference == null && videoQualityPreference == null,
         onVideoProgress: (progress) {
           if (mounted) {
             _updateComposerState(processingProgress: progress / 100.0);
@@ -2366,6 +2369,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
     if (status == null) return;
+    if (status == 'failed') {
+      final visibleIndex = _messages.indexWhere(
+        (message) => message.id == messageId,
+      );
+      final visible = visibleIndex < 0 ? null : _messages[visibleIndex];
+      if (visible != null &&
+          (_mediaMap[messageId] ?? visible.media).isNotEmpty) {
+        // A background reupload also commits retry custody and completed media.
+        // Apply them together so the optimistic row does not flash failed.
+        _recordMessageMutation(messageId);
+        unawaited(
+          _applyMessageUpdate(
+            visible,
+            markAsRead: false,
+            expectedMutationGeneration: _messageMutationGeneration,
+          ),
+        );
+        return;
+      }
+    }
     _updateLocalMessageStatus(messageId, status);
   }
 
@@ -2899,7 +2922,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           height: m.height,
           durationMs: m.durationMs,
           localPath: m.file.path,
-          downloadStatus: 'done',
+          downloadStatus: 'upload_pending',
           createdAt: createdAt,
           fileName: documentFileNameForPath(
             m.file.path,
@@ -3122,7 +3145,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   .map(
                     (plan) => plan.pendingAttachment.copyWith(
                       localPath: plan.absoluteDurablePath,
-                      downloadStatus: 'done',
                     ),
                   )
                   .toList(growable: false);
@@ -4515,6 +4537,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     final statusIsRecoverable =
         attachment.downloadStatus == kMediaDownloadStatusPending ||
         attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment) ||
         // A transient `failed` row is recoverable only while under the bounded
         // retry budget; the terminal `download_failed` is never re-recovered
         // (INV-DL-1) — isRetryableDownloadFailure encodes both rules.
@@ -4544,11 +4567,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Future<void> _applyMessageUpdate(
     GroupMessage message, {
     bool markAsRead = true,
+    int? expectedMutationGeneration,
   }) async {
     final updateGroupId = message.groupId;
     if (widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
     final latestMessage =
@@ -4557,7 +4583,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
         latestMessage.groupId != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
 
@@ -4580,7 +4608,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!mounted ||
         widget.group.id != updateGroupId ||
         _group.id != updateGroupId ||
-        _locallyRemovedMessageIds.contains(message.id)) {
+        _locallyRemovedMessageIds.contains(message.id) ||
+        (expectedMutationGeneration != null &&
+            _messageMutatedAfter(message.id, expectedMutationGeneration))) {
       return;
     }
 

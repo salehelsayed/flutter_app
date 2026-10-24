@@ -1,7 +1,7 @@
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 /// In-memory [SecureKeyStore] for tests.
-class FakeSecureKeyStore implements SecureKeyStore {
+class FakeSecureKeyStore implements SecureKeyStore, SecureKeyStoreInventory {
   final Map<String, String> _store = {};
 
   @override
@@ -19,4 +19,7 @@ class FakeSecureKeyStore implements SecureKeyStore {
 
   @override
   Future<bool> containsKey(String key) async => _store.containsKey(key);
+
+  @override
+  Future<Map<String, String>> readAll() async => Map.unmodifiable(_store);
 }

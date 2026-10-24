@@ -634,6 +634,7 @@
   "settings_recovery_warning": "Never share this phrase with anyone. It grants full access to your account.",
   "settings_recovery_tap": "Tap to reveal",
   "settings_recovery_copied": "Copied!",
+  "settings_copy_failed": "Couldn't copy. Please try again.",
   "settings_recovery_copy": "Copy to clipboard",
   "settings_recovery_hide": "Hide",
   "connected_title": "Connected!",
@@ -672,6 +673,9 @@
   "media_too_large_chip": "Too large",
   "media_gif_too_large_chip": "GIF too big",
   "media_attachments_too_large_note": "Attachments too large — remove some to send.",
+  "media_retry_later": "Couldn't load yet. Tap to try again.",
+  "media_no_longer_available": "No longer available",
+  "media_open_failed": "Couldn't open this file",
   "media_unavailable": "Media unavailable",
   "media_could_not_verify": "Couldn't verify this media",
   "settings_media_storage": "Media & storage",
@@ -1794,6 +1798,7 @@
   "account_migration_cancel": "Cancel",
   "account_migration_erase_local_data": "Erase local data",
   "account_migration_erased_snackbar": "Local account data erased",
+  "account_migration_erased_reopen_message": "Close and reopen the app to set up again.",
   "account_migration_erase_failed": "Could not erase local account data: {error}",
   "@account_migration_erase_failed": {
     "placeholders": {
@@ -1884,6 +1889,7 @@
   "@private_media_use_mode_cta": {"placeholders": {"mode": {"type": "String"}}},
   "private_media_summary_change": "Change",
   "private_media_summary_ordinary_detail": "Normal photo · can be saved or shared",
+  "private_media_summary_ordinary_video_detail": "Normal video · can be saved or shared",
   "private_media_summary_protected_detail": "Viewable again · no saving or sharing",
   "private_media_summary_view_once_detail": "One view for {name}",
   "@private_media_summary_view_once_detail": {"placeholders": {"name": {"type": "String"}}},
@@ -1916,9 +1922,9 @@
   "offline_banner_title": "You're offline",
   "offline_banner_body": "Messages and media will send when you're back online.",
   "media_sending_automatically": "Sending automatically…",
-  "media_uploading_percent": "Uploading photo · {percent}%",
+  "media_uploading_percent": "Uploading · {percent}%",
   "@media_uploading_percent": {"placeholders": {"percent": {"type": "int"}}},
-  "media_uploading": "Uploading photo…",
+  "media_uploading": "Uploading…",
   "media_view_once_not_viewed": "Not viewed yet.",
   "media_missing_terminal_title_photo": "Photo is no longer on this phone",
   "media_missing_terminal_title_video": "Video is no longer on this phone",
@@ -2154,6 +2160,7 @@
   "media_document_only_pdf": "Only PDF files can be sent.",
   "media_document_open": "Open document",
   "media_download": "Download",
+  "update_required_store_failed": "Couldn't open the store. Try updating again.",
   "update_required_title": "Please update Mknoon",
   "@update_required_title": {
     "description": "SE-41 final copy, owner-approved 2026-10-12 (Rawi)"

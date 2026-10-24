@@ -129,11 +129,14 @@ const _closureConsumerUriRewrites = <String, String>{
       'post_repository_impl.dart',
 };
 
+// Batch 2 (reviewed against dbab73ebc) adds profile-recovery callbacks, their
+// migration gate, and contact reannounce-store threading at existing app owners.
+// The four app-owner digests below include that wiring.
 // Plans 347 and 370 deliberately add app-owned lifecycle callbacks ahead of
 // incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
 const _resumeSha256 =
-    '59e79cb5247d99e0481c952e0ded0de88dd173f1edb268b9332375037c3a9e30';
+    'd922d3be1eae6726670285f210b5ca82a58d924862fc0f4bdda136a86a8cf833';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -232,8 +235,13 @@ const _privacySha256 =
 // and the modal call messenger. Existing owners and resume dispatch stay put.
 // Plan 407 KX8: permission-dialog focus loss keeps the pending callback current;
 // hidden/paused/detached and replacement still fence it. No owner moves.
+// Group B captures and awaits the existing consent decision before releasing
+// presentation suppression; the root owner and import floor are unchanged.
+// 2026-10-23: forward the existing iOS shared secure store to account erasure.
+// No application owner or resume dispatch moves.
+// Main merge preserves both callback fencing and shared-store erasure wiring.
 const _applicationRootNormalizedSha256 =
-    '51a653398dc9df10b3a85441cd6a39eb09c6233cc8de86aa348ddafa74eb6b77';
+    'b6b479d037c93e3b3f79bfd4a1f8cf89063abf8870a7d2c8fbcc8dc514baa7e7';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -289,6 +297,20 @@ const _applicationRootNormalizedSha256 =
 // controls through this app-owned composition; ordinary callbacks stay null.
 // Plan 407: reviewed thought expiry/recovery wiring and disabled nearby publishing.
 // Plan 407 fixes: thought cards skip the foreground and retire once opened.
+// Group B adds the existing contact-request presentation gate as a Listenable
+// at the same listener construction; no bootstrap owner or adapter moves.
+// Live quality loaders add only app-owned preference reads. The exact owner
+// diff reconstructs both prior pins; see quality-pref-live/pin-chain-proof.json.
+// 2026-10-23: include approved media erasure from 473810a6d and forward the
+// existing shared secure store. The app-owned database callback and ownership
+// remain in place; erase-secure-storage-20261023/dtr18-pin-chain-proof.json
+// records the 921bfe759 -> 473810a6d -> current digest chain.
+// 2026-10-23: retain one existing export source and await its stale-artifact
+// sweep before exposing the transfer runtime. The historical notification
+// callback and all app-owned composition responsibilities stay in place.
+// Account erase removes owned notification state from support and the iOS
+// shared container before database/key cleanup, preserving disposable isolation.
+// Both pins retain the exact historical callback; see erase-notification-state-20261023/dtr18-pin-proof.json.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -398,7 +420,7 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 407 fixes: PostListener receives the friend thought-card registry
     // built beside the notification-id registry, so one card per friend holds
     // across the main and background isolates. No owner moves.
-    'cd7397229eae41f92778bb8060ef3543a725ed8a55e5f29ba10b854cb9ee7777';
+    '68d52f403c813f545d81af0625ef18c6c8297fbb628dca2d0d0af8d158f61741';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -422,8 +444,16 @@ const _productionBootstrapNormalizedSha256 =
 // bootstrap digest above; the database proof callback is unchanged.
 // Plan 407 fixes: the same friend thought-card registry wiring described at
 // the bootstrap digest above; the database proof callback is unchanged.
+// Media transport recovery composes the existing incoming listener into the
+// primary lifecycle hook with a paged loader; the historical callback and
+// app-owned P2P responsibility are unchanged. Both bootstrap pins cover this.
+// The same Group B gate callback changes this remainder; the historical
+// notification proof injection remains byte-identical and unique.
+// The same approved media erasure/shared-store wiring changes this remainder;
+// the exact historical notification callback remains byte-identical and unique.
+// Combined main erasure/recovery and Thoughts wiring retain the historical callback.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'ca46ac1f421c4ac2443dd1ffe133a36f0710a3cba7ea953ec582df7d1036b663';
+    '59dad478e7397d875d51f5f389be9b03f547139ff45c7d1ec1500c4075da1485';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
@@ -461,6 +491,7 @@ const _resumeDirectiveFiles = <String>{
   'integration_test/transport_e2e_test.dart',
   'lib/app/application_root.dart',
   'lib/app/bootstrap/production_application_bootstrap.dart',
+  'test/features/conversation/integration/camera_caption_relay_delivery_test.dart',
   'test/core/lifecycle/app_lifecycle_recovery_test.dart',
   'test/core/lifecycle/background_reconnect_smoke_test.dart',
   'test/core/lifecycle/connectivity_lifecycle_test.dart',
@@ -478,6 +509,7 @@ const _resumeDirectiveFiles = <String>{
   'test/core/lifecycle/handle_app_resumed_warm_peer_test.dart',
   'test/core/lifecycle/pause_resume_retry_smoke_test.dart',
   'test/core/lifecycle/private_media_lifecycle_recovery_wiring_test.dart',
+  'test/core/local_discovery/bonsoir_discovery_service_contract_test.dart',
   'test/core/resilience/network_failover_test.dart',
   'test/core/services/p2p_service_fault_injection_test.dart',
   'test/features/contact_request/application/'
@@ -660,12 +692,14 @@ void main() {
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/contact_presence_snapshot_repository_test.dart',
       'test/app/call_back_feedback_test.dart',
+      'test/app/quality_preference_routes_test.dart',
     });
     expect(_directiveFiles(root, _newPrivacyUri), <String>{
       'lib/app/application_root.dart',
       'lib/app/bootstrap/production_application_bootstrap.dart',
       'test/features/posts/phase3/posts_privacy_settings_repository_test.dart',
       'test/app/call_back_feedback_test.dart',
+      'test/app/quality_preference_routes_test.dart',
     });
 
     expect(

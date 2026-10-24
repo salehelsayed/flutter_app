@@ -596,10 +596,15 @@ class RetryIncompleteGroupDownloadsUseCase {
 }
 
 bool _isRecoverableAttachment(MediaAttachment attachment) {
-  if ((attachment.downloadRetryCount ?? 0) >= kMaxDownloadRetries) {
+  final isNotFoundRetry = GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+    attachment,
+  );
+  if (!isNotFoundRetry &&
+      (attachment.downloadRetryCount ?? 0) >= kMaxDownloadRetries) {
     return false;
   }
   final statusIsRecoverable =
+      isNotFoundRetry ||
       attachment.downloadStatus == kMediaDownloadStatusPending ||
       attachment.downloadStatus == kMediaDownloadStatusDownloading ||
       attachment.downloadStatus == kMediaDownloadStatusFailed;

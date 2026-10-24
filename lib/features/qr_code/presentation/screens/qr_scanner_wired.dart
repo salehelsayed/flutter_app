@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -16,6 +18,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -329,9 +332,13 @@ class QRScannerWired extends StatelessWidget {
 
     switch (addResult) {
       case AddContactResult.success:
+        // Persist reconnect/resume ownership before handing off local success.
+        await _sendContactRequestInBackground(
+          contact.peerId,
+          contact.publicKey,
+        );
+        if (!context.mounted) return;
         _showSuccessDialog(context, contact);
-        // Send contact request to the scanned peer (fire and forget)
-        _sendContactRequestInBackground(contact.peerId, contact.publicKey);
         // Download profile picture (fire and forget)
         _downloadProfilePictureInBackground(contact.peerId);
         break;
@@ -350,7 +357,10 @@ class QRScannerWired extends StatelessWidget {
           details: {'blocked': blocked, 'keyMatches': keyMatches},
         );
         if (existing != null && !blocked && keyMatches) {
-          _sendContactRequestInBackground(existing.peerId, existing.publicKey);
+          await _sendContactRequestInBackground(
+            existing.peerId,
+            existing.publicKey,
+          );
         }
         break;
 
@@ -368,31 +378,53 @@ class QRScannerWired extends StatelessWidget {
   ///
   /// This enables bidirectional contact exchange - when Bob scans Alice's QR,
   /// Bob automatically sends his info to Alice so she can add him back.
-  void _sendContactRequestInBackground(
+  Future<void> _sendContactRequestInBackground(
     String targetPeerId,
     String recipientPublicKey,
   ) async {
-    final sendResult = await sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepository,
-      bridge: bridge,
-      targetPeerId: targetPeerId,
-      recipientPublicKey: recipientPublicKey,
-      resolveCallWakeHandle: resolveCallWakeHandle,
-      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
-      markAsNewRequest: await shouldMarkContactRequest(targetPeerId),
-    );
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CONTACT_REQUEST_SENT',
-      details: {
-        'result': sendResult.name,
-        'targetPeerId': targetPeerId.length > 10
-            ? targetPeerId.substring(0, 10)
-            : targetPeerId,
-      },
-    );
+    try {
+      await queueMlKemReannouncePeer(secureKeyStore, targetPeerId);
+      final marked = await shouldMarkContactRequest(targetPeerId);
+      unawaited(
+        sendContactRequest(
+              p2pService: p2pService,
+              identityRepo: identityRepository,
+              bridge: bridge,
+              targetPeerId: targetPeerId,
+              recipientPublicKey: recipientPublicKey,
+              resolveCallWakeHandle: resolveCallWakeHandle,
+              onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+              markAsNewRequest: marked,
+            )
+            .then<void>((sendResult) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'CONTACT_REQUEST_SENT',
+                details: {
+                  'result': sendResult.name,
+                  'targetPeerId': targetPeerId.length > 10
+                      ? targetPeerId.substring(0, 10)
+                      : targetPeerId,
+                },
+              );
+            })
+            .catchError((Object error, StackTrace stackTrace) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'CONTACT_REQUEST_SEND_ERROR',
+                details: {'error': error.toString()},
+              );
+            }),
+      );
+    } catch (error) {
+      // No request is launched without custody. The local add still succeeded;
+      // a new QR contact also retains the existing missing-key recovery owner.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_QUEUE_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
   }
 
   /// Downloads the contact's profile picture in the background.

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 
 import '../../integration_test/support/android_production_audio_call_evidence.dart';
+import '../../integration_test/support/production_call_in_app_identity.dart';
 import 'artifact_evidence.dart';
 
 Map<String, Object?> _object(Object? value) =>
@@ -391,6 +392,13 @@ List<String> validateProductionCallRegression(Map<String, Object?> proof) {
     check(
       named(card('connected', 505), 'ongoing'),
       'readable ongoing name was not retained',
+    );
+    failures.addAll(
+      validateProductionCallInAppIdentity(
+        proof,
+        actorIdentity: '$actorIdentity',
+        otherIdentity: '$otherIdentity',
+      ),
     );
   }
   if (id == 'kx0017') {

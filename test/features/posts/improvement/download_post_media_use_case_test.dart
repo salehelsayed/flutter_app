@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -13,6 +14,25 @@ import '../../../shared/fakes/encrypted_media_test_bridge.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
 const _createdAt = '2026-06-12T10:00:00.000Z';
+
+class _HeldDownloadBridge extends EncryptedMediaTestBridge {
+  _HeldDownloadBridge(super.relayStore);
+
+  final started = Completer<void>();
+  final release = Completer<void>();
+  int downloadAttempts = 0;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] == 'media:download') {
+      downloadAttempts++;
+      if (!started.isCompleted) started.complete();
+      await release.future;
+    }
+    return super.send(message);
+  }
+}
 
 void main() {
   late Directory tempDir;
@@ -85,6 +105,64 @@ void main() {
   }
 
   test(
+    'post recovery joins an active native download instead of overlapping it',
+    () async {
+      final held = _HeldDownloadBridge(relayStore);
+      bridge = held;
+      final row = attachment(
+        keyBase64: base64Encode(key),
+        nonceBase64: base64Encode(nonce),
+        contentHash: ciphertextHash,
+      );
+      await posts.savePostMediaAttachment(row);
+      final first = downloadPostMedia(
+        bridge: bridge,
+        postRepo: posts,
+        mediaFileManager: mediaFileManager,
+        attachment: row,
+      );
+      await held.started.future;
+      final recovered = downloadPostMedia(
+        bridge: bridge,
+        postRepo: posts,
+        mediaFileManager: mediaFileManager,
+        attachment: row,
+      );
+      held.release.complete();
+      final results = await Future.wait([first, recovered]);
+      expect(
+        results.every((result) => result.downloadStatus == 'done'),
+        isTrue,
+      );
+      expect(held.downloadAttempts, 1);
+      expect(
+        File(await finalPathFor(row.blobId)).readAsBytesSync(),
+        orderedEquals(plaintext),
+      );
+    },
+  );
+
+  test(
+    'relay absence remains failed rather than automatic transport recovery',
+    () async {
+      final row = attachment(blobId: 'missing-blob', isEncrypted: false);
+      await posts.savePostMediaAttachment(row);
+      await expectLater(
+        downloadPostMedia(
+          bridge: bridge,
+          postRepo: posts,
+          mediaFileManager: mediaFileManager,
+          attachment: row,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      final stored = (await posts.loadPostMediaAttachments(row.postId)).single;
+      expect(stored.downloadStatus, 'failed');
+      expect(stored.localPath, isNull);
+    },
+  );
+
+  test(
     'isEncrypted with null key or nonce fails closed: status failed, no localPath, no done',
     () async {
       final row = attachment(keyBase64: null, nonceBase64: null);
@@ -110,97 +188,108 @@ void main() {
     },
   );
 
-  test('decrypt failure deletes the .enc staging file and marks failed',
-      () async {
-    bridge.failBlobDecrypt = true;
-    final row = attachment(
-      keyBase64: base64Encode(key),
-      nonceBase64: base64Encode(nonce),
-      scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      contentHash: ciphertextHash,
-    );
-    await posts.savePostMediaAttachment(row);
+  test(
+    'decrypt failure deletes the .enc staging file and marks failed',
+    () async {
+      bridge.failBlobDecrypt = true;
+      final row = attachment(
+        keyBase64: base64Encode(key),
+        nonceBase64: base64Encode(nonce),
+        scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        contentHash: ciphertextHash,
+      );
+      await posts.savePostMediaAttachment(row);
 
-    await expectLater(
-      downloadPostMedia(
-        bridge: bridge,
-        postRepo: posts,
-        mediaFileManager: mediaFileManager,
-        attachment: row,
-      ),
-      throwsA(
-        isA<BlobDecryptOperationalException>().having(
-          (error) => error.code,
-          'safe ambiguous failure code',
-          'UNKNOWN_ERROR',
+      await expectLater(
+        downloadPostMedia(
+          bridge: bridge,
+          postRepo: posts,
+          mediaFileManager: mediaFileManager,
+          attachment: row,
         ),
-      ),
-    );
+        throwsA(
+          isA<BlobDecryptOperationalException>().having(
+            (error) => error.code,
+            'safe ambiguous failure code',
+            'UNKNOWN_ERROR',
+          ),
+        ),
+      );
 
-    expect(bridge.commandLog, contains('blob:decrypt'));
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.downloadStatus, 'failed');
-    final finalPath = await finalPathFor('blob-enc-1');
-    expect(File('$finalPath.enc').existsSync(), isFalse,
-        reason: 'the .enc staging file must not be orphaned');
-    expect(File(finalPath).existsSync(), isFalse);
-  });
+      expect(bridge.commandLog, contains('blob:decrypt'));
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.downloadStatus, 'failed');
+      final finalPath = await finalPathFor('blob-enc-1');
+      expect(
+        File('$finalPath.enc').existsSync(),
+        isFalse,
+        reason: 'the .enc staging file must not be orphaned',
+      );
+      expect(File(finalPath).existsSync(), isFalse);
+    },
+  );
 
-  test('unknown encryption scheme fails closed without calling blob:decrypt',
-      () async {
-    final row = attachment(
-      keyBase64: base64Encode(key),
-      nonceBase64: base64Encode(nonce),
-      scheme: 'blob_future_scheme_v9',
-      contentHash: ciphertextHash,
-    );
-    await posts.savePostMediaAttachment(row);
+  test(
+    'unknown encryption scheme fails closed without calling blob:decrypt',
+    () async {
+      final row = attachment(
+        keyBase64: base64Encode(key),
+        nonceBase64: base64Encode(nonce),
+        scheme: 'blob_future_scheme_v9',
+        contentHash: ciphertextHash,
+      );
+      await posts.savePostMediaAttachment(row);
 
-    await expectLater(
-      downloadPostMedia(
-        bridge: bridge,
-        postRepo: posts,
-        mediaFileManager: mediaFileManager,
-        attachment: row,
-      ),
-      throwsA(isA<StateError>()),
-    );
+      await expectLater(
+        downloadPostMedia(
+          bridge: bridge,
+          postRepo: posts,
+          mediaFileManager: mediaFileManager,
+          attachment: row,
+        ),
+        throwsA(isA<StateError>()),
+      );
 
-    expect(bridge.commandLog, isNot(contains('blob:decrypt')));
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.downloadStatus, 'failed');
-    final finalPath = await finalPathFor('blob-enc-1');
-    expect(File('$finalPath.enc').existsSync(), isFalse);
-    expect(File(finalPath).existsSync(), isFalse);
-  });
+      expect(bridge.commandLog, isNot(contains('blob:decrypt')));
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.downloadStatus, 'failed');
+      final finalPath = await finalPathFor('blob-enc-1');
+      expect(File('$finalPath.enc').existsSync(), isFalse);
+      expect(File(finalPath).existsSync(), isFalse);
+    },
+  );
 
-  test('content_hash mismatch on downloaded ciphertext fails before decrypt',
-      () async {
-    final row = attachment(
-      keyBase64: base64Encode(key),
-      nonceBase64: base64Encode(nonce),
-      scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      contentHash: sha256.convert(utf8.encode('not the ciphertext')).toString(),
-    );
-    await posts.savePostMediaAttachment(row);
+  test(
+    'content_hash mismatch on downloaded ciphertext fails before decrypt',
+    () async {
+      final row = attachment(
+        keyBase64: base64Encode(key),
+        nonceBase64: base64Encode(nonce),
+        scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        contentHash: sha256
+            .convert(utf8.encode('not the ciphertext'))
+            .toString(),
+      );
+      await posts.savePostMediaAttachment(row);
 
-    await expectLater(
-      downloadPostMedia(
-        bridge: bridge,
-        postRepo: posts,
-        mediaFileManager: mediaFileManager,
-        attachment: row,
-      ),
-      throwsA(isA<StateError>()),
-    );
+      await expectLater(
+        downloadPostMedia(
+          bridge: bridge,
+          postRepo: posts,
+          mediaFileManager: mediaFileManager,
+          attachment: row,
+        ),
+        throwsA(isA<StateError>()),
+      );
 
-    expect(bridge.commandLog, contains('media:download'));
-    expect(bridge.commandLog, isNot(contains('blob:decrypt')));
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.downloadStatus, 'failed');
-    final finalPath = await finalPathFor('blob-enc-1');
-    expect(File('$finalPath.enc').existsSync(), isFalse);
-  });
+      expect(bridge.commandLog, contains('media:download'));
+      expect(bridge.commandLog, isNot(contains('blob:decrypt')));
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.downloadStatus, 'failed');
+      final finalPath = await finalPathFor('blob-enc-1');
+      expect(File('$finalPath.enc').existsSync(), isFalse);
+    },
+  );
 
   test(
     'content_hash match decrypts; null content_hash tolerated (legacy pass rows)',
@@ -243,35 +332,37 @@ void main() {
     },
   );
 
-  test('encrypted blob decrypts, renames .dec to final, deletes .enc',
-      () async {
-    final row = attachment(
-      keyBase64: base64Encode(key),
-      nonceBase64: base64Encode(nonce),
-      scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-      contentHash: ciphertextHash,
-    );
-    await posts.savePostMediaAttachment(row);
+  test(
+    'encrypted blob decrypts, renames .dec to final, deletes .enc',
+    () async {
+      final row = attachment(
+        keyBase64: base64Encode(key),
+        nonceBase64: base64Encode(nonce),
+        scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        contentHash: ciphertextHash,
+      );
+      await posts.savePostMediaAttachment(row);
 
-    final hydrated = await downloadPostMedia(
-      bridge: bridge,
-      postRepo: posts,
-      mediaFileManager: mediaFileManager,
-      attachment: row,
-    );
+      final hydrated = await downloadPostMedia(
+        bridge: bridge,
+        postRepo: posts,
+        mediaFileManager: mediaFileManager,
+        attachment: row,
+      );
 
-    expect(hydrated.downloadStatus, 'done');
-    expect(hydrated.localPath, 'post_media/post-1/blob-enc-1.jpg');
+      expect(hydrated.downloadStatus, 'done');
+      expect(hydrated.localPath, 'post_media/post-1/blob-enc-1.jpg');
 
-    final finalPath = await finalPathFor('blob-enc-1');
-    expect(File(finalPath).readAsBytesSync(), orderedEquals(plaintext));
-    expect(File('$finalPath.enc').existsSync(), isFalse);
-    expect(File('$finalPath.enc.dec').existsSync(), isFalse);
+      final finalPath = await finalPathFor('blob-enc-1');
+      expect(File(finalPath).readAsBytesSync(), orderedEquals(plaintext));
+      expect(File('$finalPath.enc').existsSync(), isFalse);
+      expect(File('$finalPath.enc.dec').existsSync(), isFalse);
 
-    final stored = (await posts.loadPostMediaAttachments('post-1')).single;
-    expect(stored.downloadStatus, 'done');
-    expect(stored.localPath, 'post_media/post-1/blob-enc-1.jpg');
-  });
+      final stored = (await posts.loadPostMediaAttachments('post-1')).single;
+      expect(stored.downloadStatus, 'done');
+      expect(stored.localPath, 'post_media/post-1/blob-enc-1.jpg');
+    },
+  );
 
   test(
     'plaintext legacy attachment downloads directly to the final path, no blob:decrypt',

@@ -575,7 +575,8 @@ func (n *Node) handoffOneRelay(ctx context.Context, att *handoffAttempt, h host.
 // dialFreshRelay connects to the relay through the host's normal dial path
 // and returns the connection that rides a new socket. If the swarm handed back
 // an in-flight old-socket dial instead, that connection is retired and the
-// dial is repeated once within the budget.
+// dial is repeated once within the budget. A late old-path failure can also
+// restore backoff after retirement cleared it; retry that backoff once.
 func (n *Node) dialFreshRelay(ctx context.Context, h host.Host, relay peer.AddrInfo, epoch uint64) (network.Conn, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		dialCtx, cancel := context.WithTimeout(ctx, ForegroundRelayDialTimeout)
@@ -583,6 +584,12 @@ func (n *Node) dialFreshRelay(ctx context.Context, h host.Host, relay peer.AddrI
 		err := n.connectRelay(dialCtx, relay)
 		cancel()
 		if err != nil {
+			if attempt == 0 && ctx.Err() == nil && errors.Is(err, swarm.ErrDialBackoff) {
+				if sw, ok := h.Network().(*swarm.Swarm); ok {
+					sw.Backoff().Clear(relay.ID)
+					continue
+				}
+			}
 			return nil, err
 		}
 		var stale []network.Conn

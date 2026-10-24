@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -513,36 +514,55 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('T7: migration QR from settings-hosted scanner routes to the '
-        'old-phone journey', (tester) async {
-      setLargeTestSurface(tester);
-      suppressOverflowErrors();
-      suppressNavAssetErrors();
-      identityRepo.seed(testIdentity);
-      contactRepo.seed([testContact]);
+    for (final entry in ['paste', 'camera']) {
+      testWidgets('T7: migration QR from settings-hosted scanner routes to the '
+          'old-phone journey via $entry', (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
 
-      await tester.pumpWidget(
-        buildOrbitWired(
-          appShellController: freshController(),
-          feedUnreadCountListenable: freshFeedUnread(),
-        ),
-      );
-      await pumpOrbitFrames(tester, count: 4);
+        await tester.pumpWidget(
+          buildOrbitWired(
+            appShellController: freshController(),
+            feedUnreadCountListenable: freshFeedUnread(),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
 
-      await openSettings(tester);
-      await tester.tap(find.byKey(_scanTileKey));
-      await pumpOrbitFrames(tester, count: 6);
+        await openSettings(tester);
+        await tester.tap(find.byKey(_scanTileKey));
+        await pumpOrbitFrames(tester, count: 6);
 
-      final scanner = tester.widget<QRScannerScreen>(
-        find.byType(QRScannerScreen),
-      );
-      scanner.onScanned(_buildMigrationQrData());
-      await pumpOrbitFrames(tester, count: 6);
+        final qrData = _buildMigrationQrData();
+        expect(find.byType(QRScannerScreen), findsOneWidget);
+        if (entry == 'paste') {
+          await tester.tap(find.text('Paste QR Data'));
+          await pumpOrbitFrames(tester, count: 4);
+          await tester.enterText(find.byType(TextField).last, qrData);
+          await tester.tap(find.text('Submit'));
+        } else {
+          tester.widget<MobileScanner>(find.byType(MobileScanner)).onDetect!(
+            BarcodeCapture(barcodes: [Barcode(rawValue: qrData)]),
+          );
+        }
+        await pumpOrbitFrames(tester, count: 6);
 
-      // Orbit's onMigrationQrScanned branch reached through the closure.
-      expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
-      expect(await contactRepo.contactExists('scanned-peer-id'), isFalse);
-    });
+        // Orbit's onMigrationQrScanned branch reached through the closure.
+        expect(find.byType(AccountMigrationJourneyWired), findsOneWidget);
+        expect(find.byType(QRScannerScreen), findsNothing);
+        expect(
+          tester
+              .widget<AccountMigrationJourneyWired>(
+                find.byType(AccountMigrationJourneyWired),
+              )
+              .initialScannedQr,
+          qrData,
+        );
+        expect(await contactRepo.contactExists('scanned-peer-id'), isFalse);
+      });
+    }
 
     testWidgets('T8: My QR from Settings reaches the display; close returns '
         'to the same Settings; ScanFriendCard cross-link opens the scanner', (

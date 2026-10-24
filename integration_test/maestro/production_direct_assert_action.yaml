@@ -1,0 +1,9 @@
+appId: ${APP_ID}
+name: production_direct_assert_action
+---
+- extendedWaitUntil:
+    visible: '(?s-i)^.*(?:${VISIBLE_PATTERN}).*$'
+    timeout: 30000
+- extendedWaitUntil:
+    notVisible: '(?s-i)^.*(?:${ABSENT_PATTERN}).*$'
+    timeout: 30000

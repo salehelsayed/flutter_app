@@ -1,6 +1,12 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
@@ -41,6 +47,7 @@ void main() {
             required onAccept,
             required onDecline,
           }) async {
+            Future<void>? decision;
             await showDialog<void>(
               context: navigator.context,
               barrierDismissible: false,
@@ -51,20 +58,21 @@ void main() {
                   TextButton(
                     onPressed: () {
                       Navigator.of(dialogContext).pop();
-                      onDecline();
+                      decision = onDecline();
                     },
                     child: const Text('Decline'),
                   ),
                   TextButton(
                     onPressed: () {
                       Navigator.of(dialogContext).pop();
-                      onAccept();
+                      decision = onAccept();
                     },
                     child: const Text('Accept'),
                   ),
                 ],
               ),
             );
+            await decision;
           },
       openConversation: ({required navigator, required contact}) {
         return navigator.push(
@@ -83,6 +91,99 @@ void main() {
       home: const Scaffold(body: Text('home')),
     );
   }
+
+  test(
+    'root retains consent ownership until the selected decision completes',
+    () {
+      final source = File('lib/app/application_root.dart').readAsStringSync();
+      final presenter = source.substring(
+        source.indexOf('presentPendingRequest:'),
+        source.indexOf(
+          'openConversation:',
+          source.indexOf('presentPendingRequest:'),
+        ),
+      );
+      expect(presenter, contains('decision = onAccept();'));
+      expect(presenter, contains('decision = onDecline();'));
+      expect(
+        presenter.indexOf('await decision;'),
+        greaterThan(presenter.indexOf('await showDialog<void>(')),
+      );
+    },
+  );
+
+  testWidgets(
+    'notification decline persists before gate release replays pending rows',
+    (tester) async {
+      final delayed = _DelayedDecisionRepository();
+      requestRepository = delayed;
+      addTearDown(() {
+        if (!delayed.writeAllowed.isCompleted) delayed.writeAllowed.complete();
+      });
+      final gate = ContactRequestPresentationGate();
+      final replayed = <ContactRequestModel>[];
+      final listener = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: requestRepository,
+        contactRepo: contactRepository,
+        bridge: bridge,
+        getOwnPeerId: () => 'peer-self',
+        shouldSuppressPresentationForPeerId: gate.shouldSuppress,
+        presentationGateChanges: gate,
+      )..start();
+      final subscription = listener.requestStream.listen(replayed.add);
+      addTearDown(() async {
+        await subscription.cancel();
+        listener.dispose();
+        gate.dispose();
+      });
+      await tester.pumpWidget(buildHost());
+      await tester.pumpAndSettle();
+      final request = _makeRequest();
+      requestRepository.seed([request]);
+      gate.suppress(request.peerId);
+      var completed = false;
+      final routed = (() async {
+        try {
+          await buildMaterializer().handleRoute(
+            navigator: navigatorKey.currentState!,
+            peerId: request.peerId,
+          );
+        } finally {
+          gate.release(request.peerId);
+          completed = true;
+        }
+      })();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Decline'));
+      await tester.pumpAndSettle();
+      expect(find.text('wants to connect with you'), findsNothing);
+      expect(
+        (await requestRepository.getRequest(request.peerId))?.status,
+        ContactRequestStatus.pending,
+      );
+      expect(
+        completed,
+        isFalse,
+        reason: 'route completion must await the database decision',
+      );
+      expect(gate.shouldSuppress(request.peerId), isTrue);
+      expect(replayed, isEmpty);
+      delayed.writeAllowed.complete();
+      await tester.pumpAndSettle();
+      await routed;
+      expect(
+        (await requestRepository.getRequest(request.peerId))?.status,
+        ContactRequestStatus.declined,
+      );
+      expect(gate.shouldSuppress(request.peerId), isFalse);
+      expect(
+        replayed,
+        isEmpty,
+        reason: 'release must read the persisted declined row',
+      );
+    },
+  );
 
   testWidgets('pending request materializes as a dialog', (tester) async {
     final materializer = buildMaterializer();
@@ -217,4 +318,14 @@ ContactModel _makeContact({required String peerId}) {
     signature: 'sig-$peerId',
     scannedAt: '2026-04-03T12:00:00.000Z',
   );
+}
+
+class _DelayedDecisionRepository extends FakeContactRequestRepository {
+  final writeAllowed = Completer<void>();
+
+  @override
+  Future<void> updateStatus(String peerId, ContactRequestStatus status) async {
+    await writeAllowed.future;
+    await super.updateStatus(peerId, status);
+  }
 }

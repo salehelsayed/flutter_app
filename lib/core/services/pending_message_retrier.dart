@@ -68,6 +68,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? retryIncompleteGroupDownloadsFn;
   final Future<int> Function()? retryIncompleteGroupDownloadsPeriodicFn;
   final Future<int> Function()? retryFailedGroupMessagesFn;
+  final Future<int> Function()? retryPendingProfilePictureDownloadsFn;
   final Future<int> Function()? retryPendingIntroductionDeliveriesFn;
   final Future<int> Function()? retryFailedGroupInboxStoresFn;
 
@@ -152,6 +153,7 @@ class PendingMessageRetrier {
     this.retryIncompleteGroupDownloadsFn,
     this.retryIncompleteGroupDownloadsPeriodicFn,
     this.retryFailedGroupMessagesFn,
+    this.retryPendingProfilePictureDownloadsFn,
     this.retryPendingIntroductionDeliveriesFn,
     this.retryFailedGroupInboxStoresFn,
     this.clearGroupRetryBackoffFn,
@@ -332,6 +334,24 @@ class PendingMessageRetrier {
       }
     } finally {
       _isNetworkRestoredFlushing = false;
+    }
+    // The group coordinator owns/coalesces incoming transfers independently.
+    // A held download must not block the next short outgoing restored flush.
+    final retryGroupDownloads = retryIncompleteGroupDownloadsFn;
+    if (retryGroupDownloads != null &&
+        _isGroupRecoveryEnabled() &&
+        _isGroupRecoveryReady(p2pService.currentState)) {
+      unawaited(() async {
+        try {
+          await retryGroupDownloads();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_NETWORK_RESTORED_GROUP_DOWNLOAD_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }
+      }());
     }
   }
 
@@ -811,11 +831,9 @@ class PendingMessageRetrier {
             shouldAcknowledgeRecovery && drainSucceeded,
           );
 
-          // Ordinary incoming group media recovery intentionally belongs only
-          // to the node/relay-ready group pass. The early OS-restored flush
-          // above never invokes it. Production supplies callbacks wrapped by
-          // the account-migration network gate, which remains the final
-          // authority before the shared coordinator does any work.
+          // The same incoming-media owner also runs on OS network restore.
+          // Production's migration gate and the coordinator's per-transfer
+          // authority remain the final admission boundary for both triggers.
           final retryIncompleteGroupDownloadsForPass = periodic
               ? retryIncompleteGroupDownloadsPeriodicFn ??
                     retryIncompleteGroupDownloadsFn
@@ -993,6 +1011,18 @@ class PendingMessageRetrier {
             layer: 'FL',
             event: 'PENDING_RETRIER_INBOX_CUSTODY_ERROR',
             details: {'error': e.toString()},
+          );
+        }
+      }
+
+      if (retryPendingProfilePictureDownloadsFn != null) {
+        try {
+          await retryPendingProfilePictureDownloadsFn!();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PENDING_RETRIER_PROFILE_DOWNLOAD_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
           );
         }
       }

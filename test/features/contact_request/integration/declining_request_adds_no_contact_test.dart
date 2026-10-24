@@ -40,6 +40,7 @@ Future<ContactModel?> _settledAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async =>
     await contactRepo.getContact(ownerPeerId) ??
     ContactModel(
@@ -164,7 +165,10 @@ void main() {
 
         final aliceBridge = Ed25519ContactRequestBridge(_cryptoBus);
         final bobBridge = Ed25519ContactRequestBridge(_cryptoBus);
-        var aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
+        var aliceP2p = FakeP2PService(
+          peerId: _aliceId.peerId,
+          network: network,
+        );
         final bobP2p = FakeP2PService(peerId: _bobId.peerId, network: network);
 
         final bobIncoming = <String>[];
@@ -423,7 +427,10 @@ void main() {
         );
         final aliceBridge = Ed25519ContactRequestBridge(_cryptoBus);
         final bobBridge = Ed25519ContactRequestBridge(_cryptoBus);
-        var aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
+        var aliceP2p = FakeP2PService(
+          peerId: _aliceId.peerId,
+          network: network,
+        );
         final bobP2p = FakeP2PService(peerId: _bobId.peerId, network: network);
 
         var aliceListener = ContactRequestListener(

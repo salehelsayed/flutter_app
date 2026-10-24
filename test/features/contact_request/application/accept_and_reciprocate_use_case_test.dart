@@ -6,6 +6,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -18,6 +19,7 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -31,6 +33,16 @@ class _FakeIdentityRepo implements IdentityRepository {
 
   @override
   Future<void> saveIdentity(IdentityModel identity) async {}
+}
+
+class _FailingMarkerStore extends FakeSecureKeyStore {
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == kMlKemReannouncePendingKey) {
+      throw StateError('simulated marker persistence failure');
+    }
+    await super.write(key, value);
+  }
 }
 
 class _FakeBridge extends Bridge {
@@ -355,6 +367,31 @@ void main() {
     expect(contact, isNotNull);
   });
 
+  test(
+    'retry custody failure keeps request pending and sends nothing',
+    () async {
+      _seedPendingRequest(requestRepo);
+
+      final result = await acceptAndReciprocateContactRequest(
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        peerId: _bobPeerId,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        secureKeyStore: _FailingMarkerStore(),
+      );
+
+      expect(result, AcceptContactRequestResult.updateStatusError);
+      expect(
+        (await requestRepo.getRequest(_bobPeerId))!.status,
+        ContactRequestStatus.pending,
+      );
+      expect(bridge.signCallCount, 0);
+      expect(bridge.encryptCallCount, 0);
+    },
+  );
+
   test('success: reciprocal send produces v2 encrypted envelope', () async {
     _seedPendingRequest(requestRepo);
 
@@ -438,6 +475,7 @@ void main() {
             required contactRepo,
             required ownerPeerId,
             required avatarVersion,
+            bool retryPendingRequest = false,
           }) async {
             capturedPeerId = ownerPeerId;
             return null;
@@ -479,6 +517,7 @@ void main() {
             required contactRepo,
             required ownerPeerId,
             required avatarVersion,
+            bool retryPendingRequest = false,
           }) async {
             return fakeUpdated;
           },
@@ -508,6 +547,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               throw Exception('download failed');
             },
@@ -534,6 +574,7 @@ void main() {
             required contactRepo,
             required ownerPeerId,
             required avatarVersion,
+            bool retryPendingRequest = false,
           }) async {
             wasCalled = true;
             return null;

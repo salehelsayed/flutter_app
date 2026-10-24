@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -21,6 +22,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/groups/application/foreground_group_media_upload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
@@ -28,6 +30,7 @@ import 'package:flutter_app/features/groups/application/prepared_group_media_blo
 import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
 import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/application/retry_failed_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_uploads_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
     show
@@ -40,6 +43,8 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:path/path.dart' as p;
 
@@ -741,6 +746,145 @@ void main() {
   });
 
   group('retryIncompleteGroupUploads', () {
+    testWidgets(
+      'G2 uploaded photo stays pending during retained send failure and converges without reupload',
+      (tester) async {
+        const messageId = 'g2-photo-send-recovery';
+        const attachmentId = 'g2-uploaded-photo';
+        final parent = GroupMessage(
+          id: messageId,
+          groupId: 'group-1',
+          senderPeerId: 'peer-admin',
+          senderUsername: 'Admin',
+          text: 'Photo caption',
+          timestamp: DateTime.utc(2026, 1, 1),
+          status: GroupMessage.statusQueuedOffline,
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 1, 1),
+        );
+        await groupMsgRepo.saveMessage(parent);
+        await mediaRepo.saveAttachment(
+          _pendingAttachment(id: attachmentId, messageId: messageId),
+          owner: MediaOwnerLane.group,
+        );
+        uploadFn.willReturn(
+          _doneAttachment(id: attachmentId, messageId: messageId),
+        );
+        bridge.responses['group:sendReliable'] = {
+          'ok': false,
+          'errorCode': 'RELIABLE_SEND_FAILED',
+          'errorMessage': 'connection reset by peer',
+        };
+
+        expect(
+          await tester.runAsync(
+            () => retryIncompleteGroupUploads(
+              groupRepo: groupRepo,
+              groupMsgRepo: groupMsgRepo,
+              mediaAttachmentRepo: mediaRepo,
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepo: identityRepo,
+              uploadMediaFn: uploadFn.call,
+              mediaFileManager: mediaFileManager,
+            ),
+          ),
+          0,
+        );
+
+        final retained = (await groupMsgRepo.getMessage(messageId))!;
+        final attachments = await mediaRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(retained.status, 'failed');
+        expect(retained.wireEnvelope, isNotEmpty);
+        expect(retained.inboxRetryPayload, isNotEmpty);
+        expect(attachments.single.downloadStatus, 'done');
+        expect(uploadFn.callCount, 1);
+        expect(
+          (await groupMsgRepo.getRetryableOutgoingMessages()).map(
+            (message) => message.id,
+          ),
+          contains(messageId),
+        );
+
+        Future<void> show(GroupMessage message) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: const Locale('en'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: GroupConversationScreen(
+                  group: (await groupRepo.getGroup('group-1'))!,
+                  messages: [message],
+                  mediaMap: {messageId: attachments},
+                  ownPeerId: 'peer-admin',
+                  onSend: (_) {},
+                  onBack: () {},
+                  initialLoadDone: true,
+                  onRetryFailedMedia: (_) =>
+                      fail('automatic retry owns this row'),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+        }
+
+        await show(retained);
+        final pendingCard = tester.widget<LetterCard>(find.byType(LetterCard));
+        expect(
+          pendingCard.status,
+          anyOf('sending', 'pending', GroupMessage.statusQueuedOffline),
+          reason: 'retained send work must not flash a terminal failure',
+        );
+        expect(pendingCard.onRetryFailedMedia, isNull);
+
+        await show(retained.copyWith(status: GroupMessage.statusSendFailed));
+        final terminalCard = tester.widget<LetterCard>(find.byType(LetterCard));
+        expect(terminalCard.status, GroupMessage.statusSendFailed);
+        expect(
+          terminalCard.onRetryFailedMedia,
+          isNotNull,
+          reason: 'retry-exhausted rows retain the existing manual rearm',
+        );
+
+        bridge.responses['group:sendReliable'] = {
+          'ok': true,
+          'publishSucceeded': true,
+          'inboxStored': true,
+          'topicPeerCount': 1,
+          'expectedRecipientCount': 1,
+        };
+        expect(
+          await tester.runAsync(
+            () => retryFailedGroupMessages(
+              groupMsgRepo: groupMsgRepo,
+              groupRepo: groupRepo,
+              identityRepo: identityRepo,
+              bridge: bridge,
+              mediaAttachmentRepo: mediaRepo,
+            ),
+          ),
+          1,
+        );
+        final converged = (await groupMsgRepo.getMessage(messageId))!;
+        expect(converged.status, 'sent');
+        expect(converged.timestamp, parent.timestamp);
+        expect(uploadFn.callCount, 1);
+        expect(await groupMsgRepo.getMessagesPage('group-1'), hasLength(1));
+        await show(converged);
+        expect(
+          tester.widget<LetterCard>(find.byType(LetterCard)).status,
+          'sent',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
     test(
       'TC-366-03b forwarded strict survivor preserves marker without source or authority read',
       () {

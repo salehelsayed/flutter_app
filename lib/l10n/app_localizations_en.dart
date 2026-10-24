@@ -1238,6 +1238,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_recovery_copied => 'Copied!';
 
   @override
+  String get settings_copy_failed => 'Couldn\'t copy. Please try again.';
+
+  @override
   String get settings_recovery_copy => 'Copy to clipboard';
 
   @override
@@ -1309,6 +1312,15 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get media_attachments_too_large_note =>
       'Attachments too large — remove some to send.';
+
+  @override
+  String get media_retry_later => 'Couldn\'t load yet. Tap to try again.';
+
+  @override
+  String get media_no_longer_available => 'No longer available';
+
+  @override
+  String get media_open_failed => 'Couldn\'t open this file';
 
   @override
   String get media_unavailable => 'Media unavailable';
@@ -3316,6 +3328,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get account_migration_erased_snackbar => 'Local account data erased';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'Close and reopen the app to set up again.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'Could not erase local account data: $error';
   }
@@ -3522,6 +3538,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Normal photo · can be saved or shared';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'Normal video · can be saved or shared';
+
+  @override
   String get private_media_summary_protected_detail =>
       'Viewable again · no saving or sharing';
 
@@ -3618,11 +3638,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String media_uploading_percent(int percent) {
-    return 'Uploading photo · $percent%';
+    return 'Uploading · $percent%';
   }
 
   @override
-  String get media_uploading => 'Uploading photo…';
+  String get media_uploading => 'Uploading…';
 
   @override
   String get media_view_once_not_viewed => 'Not viewed yet.';
@@ -4278,6 +4298,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get media_download => 'Download';
+
+  @override
+  String get update_required_store_failed =>
+      'Couldn\'t open the store. Try updating again.';
 
   @override
   String get update_required_title => 'Please update Mknoon';

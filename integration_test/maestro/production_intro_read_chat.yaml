@@ -1,0 +1,8 @@
+appId: ${APP_ID}
+name: production_intro_read_chat
+---
+- assertVisible:
+    id: chat_composer
+- extendedWaitUntil:
+    visible: '(?s-i)^.*\n${MESSAGE_PATTERN}\n.*$'
+    timeout: 30000

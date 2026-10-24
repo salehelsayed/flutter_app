@@ -1263,6 +1263,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_recovery_copied => 'Kopiert!';
 
   @override
+  String get settings_copy_failed =>
+      'Kopieren fehlgeschlagen. Bitte erneut versuchen.';
+
+  @override
   String get settings_recovery_copy => 'In die Zwischenablage kopieren';
 
   @override
@@ -1335,6 +1339,16 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get media_attachments_too_large_note =>
       'Anhänge zu groß – entfernen Sie einige zum Senden.';
+
+  @override
+  String get media_retry_later =>
+      'Noch nicht geladen. Tippe, um es erneut zu versuchen.';
+
+  @override
+  String get media_no_longer_available => 'Nicht mehr verfügbar';
+
+  @override
+  String get media_open_failed => 'Datei konnte nicht geöffnet werden';
 
   @override
   String get media_unavailable => 'Medien nicht verfügbar';
@@ -3398,6 +3412,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get account_migration_erased_snackbar => 'Lokale Kontodaten gelöscht';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'Schließe die App und öffne sie erneut, um sie neu einzurichten.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'Lokale Kontodaten konnten nicht gelöscht werden: $error';
   }
@@ -3605,6 +3623,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Normales Foto · kann gespeichert oder geteilt werden';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'Normales Video · kann gespeichert oder geteilt werden';
+
+  @override
   String get private_media_summary_protected_detail =>
       'Erneut ansehbar · kein Speichern oder Teilen';
 
@@ -3703,11 +3725,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String media_uploading_percent(int percent) {
-    return 'Foto wird hochgeladen · $percent%';
+    return 'Wird hochgeladen · $percent%';
   }
 
   @override
-  String get media_uploading => 'Foto wird hochgeladen…';
+  String get media_uploading => 'Wird hochgeladen…';
 
   @override
   String get media_view_once_not_viewed => 'Noch nicht angesehen.';
@@ -4381,6 +4403,10 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get media_download => 'Herunterladen';
+
+  @override
+  String get update_required_store_failed =>
+      'Der Store konnte nicht geöffnet werden. Versuche es erneut.';
 
   @override
   String get update_required_title => 'Bitte aktualisiere Mknoon';

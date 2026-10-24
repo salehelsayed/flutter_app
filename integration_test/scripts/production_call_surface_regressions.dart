@@ -151,6 +151,77 @@ final class _ProductionCallSurfaceRegression {
         },
       );
 
+  Future<void> _takeInAppIdentity(
+    String phase,
+    AndroidProductionAudioCallIdentity caller,
+    AndroidProductionAudioCallIdentity callee,
+  ) async {
+    final expected = id == 'kx0017' ? 'Unknown contact' : caller.username;
+    final observation = observations[phase] as Map<String, Object?>;
+    final originalCall = (observation['current'] as Map)['callSha256'];
+    var sawFlutterSurface = false;
+    try {
+      await waitForProductionObservation<Map<String, Object?>>(
+        'actual owned Flutter $phase identity in the same current call',
+        Duration(seconds: phase == 'incoming' ? 10 : 45),
+        () async {
+          final before = await subject.command('call.snapshot');
+          String xml;
+          try {
+            xml = await driver._uiDump(subject.device);
+          } on _UiHierarchyUnavailable {
+            return null;
+          }
+          final after = await subject.command('call.snapshot');
+          final value = {
+            ...productionCallInAppIdentitySnapshot(
+              xml,
+              packageName: driver.packageName,
+              expectedName: expected,
+              peerIds: [caller.peerId, callee.peerId],
+              phase: phase,
+            ),
+            'before': before,
+            'after': after,
+          };
+          observation['inAppIdentity'] = value;
+          await File('${output.path}/$phase-in-app-ui.xml').writeAsString(xml);
+          await _save();
+          if (![before, after].every(
+            (current) =>
+                current['callSha256'] == originalCall &&
+                current['sourceBound'] == true &&
+                current['connectionReadSucceeded'] == true &&
+                current['inCall'] == true &&
+                current['contactSha256'] == _sha256Text(otherPeer) &&
+                current['direction'] == 'incoming' &&
+                current['state'] ==
+                    (phase == 'incoming' ? 'ringing' : 'connected'),
+          )) {
+            return null;
+          }
+          if (value['ownedStatusNodeCount'] != 1) return null;
+          sawFlutterSurface = true;
+          if (value['peerIdVisible'] == true) {
+            throw StateError(
+              'Actual same-call Flutter surface exposes an authenticated peer identifier; first UI evidence retained.',
+            );
+          }
+          return value['statusMatches'] == true && value['nameNodeCount'] == 1
+              ? value
+              : null;
+        },
+      );
+    } on TimeoutException {
+      if (!sawFlutterSurface) {
+        throw const FormatException(
+          'Owned Flutter call surface unavailable; native card evidence cannot establish in-app identity.',
+        );
+      }
+      rethrow;
+    }
+  }
+
   Future<Map<String, Object?>> _eventLog({
     List<String> cursor = const [],
   }) async {
@@ -548,6 +619,17 @@ final class _ProductionCallSurfaceRegression {
         'peerId': otherPeer,
       });
       proof['contactName'] = name;
+      if (id == 'kx0016' || id == 'kx0017') {
+        final expected = id == 'kx0017' ? 'Unknown contact' : caller.username;
+        if (id == 'kx0016' &&
+            _sha256Text(expected) != name['displayNameSha256']) {
+          throw StateError(
+            'Fixture identity name disagrees with the authenticated stored contact.',
+          );
+        }
+        proof['expectedInAppNameSha256'] = _sha256Text(expected);
+        proof['inAppPackageSha256'] = _sha256Text(driver.packageName);
+      }
       proof['expectedNameSha256'] = id == 'kx0017'
           ? _sha256Text('MKnoon caller')
           : name['displayNameSha256'];
@@ -580,6 +662,9 @@ final class _ProductionCallSurfaceRegression {
         productionCallNotificationJourneys.contains(id) &&
         id != 'kx0002') {
       await _take('incoming', productionCallIncomingNotificationId);
+      if (id == 'kx0016' || id == 'kx0017') {
+        await _takeInAppIdentity('incoming', caller, callee);
+      }
       if (id == 'kx0003') {
         final marker = await _eventLog();
         final events = marker['events'] as List;
@@ -615,6 +700,9 @@ final class _ProductionCallSurfaceRegression {
         return;
       }
       await _take('connected', productionCallOngoingNotificationId);
+      if (id == 'kx0016' || id == 'kx0017') {
+        await _takeInAppIdentity('connected', caller, callee);
+      }
       if (id == 'kx0003') {
         proof['handoverEvents'] = await _eventLog(cursor: _incomingCursor!);
         await _save();

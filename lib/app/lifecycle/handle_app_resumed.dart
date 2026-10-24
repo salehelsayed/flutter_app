@@ -76,6 +76,7 @@ Future<bool?> handleAppResumed({
   // not landed yet (unknownMessage), and the relay entry is already consumed.
   GroupPendingReactionRepository? pendingReactionRepo,
   NearbyLocationService? nearbyLocationService,
+  Future<int> Function()? retryPendingProfilePictureDownloadsFn,
   Future<int> Function()? retryPendingPostMediaUploads,
   Future<int> Function()? retryPendingPostDeliveries,
   Future<int> Function()? retryIncompleteKeyExchangesFn,
@@ -787,6 +788,18 @@ Future<bool?> handleAppResumed({
         debugPrint(
           '[RESUME] Step 5: refreshSilentlyOnResume() error '
           'after ${nearbyMs}ms: $e',
+        );
+      }
+    }
+
+    if (retryPendingProfilePictureDownloadsFn != null) {
+      try {
+        await retryPendingProfilePictureDownloadsFn();
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_PROFILE_DOWNLOADS_RESUME_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
         );
       }
     }

@@ -1,15 +1,17 @@
 import 'dart:convert';
 
+import 'package:synchronized/synchronized.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 
-/// One-shot "re-announce my new ML-KEM key" marker (P0-B).
+/// Pending distribution of our ML-KEM key, after restore or contact consent.
 ///
-/// Written by the identity restore paths after a successful keygen+save;
+/// Written after identity restore or explicit contact acceptance/QR addition;
 /// drained by `retryIncompleteKeyExchanges`, which removes each peerId only
 /// after its keyExchangeRetry send succeeds (partial failure keeps the rest).
 const kMlKemReannouncePendingKey = 'mlkem_reannounce_pending';
+final _mlKemReannounceMutationLock = Lock();
 
 Future<List<String>> readMlKemReannounceMarker(SecureKeyStore store) async {
   final raw = await store.read(kMlKemReannouncePendingKey);
@@ -43,11 +45,29 @@ Future<void> writeMlKemReannounceMarker(
   await store.write(kMlKemReannouncePendingKey, jsonEncode(peerIds));
 }
 
+/// Establishes durable reconnect/resume ownership before starting a request.
+Future<void> queueMlKemReannouncePeer(SecureKeyStore store, String peerId) =>
+    _mlKemReannounceMutationLock.synchronized(() async {
+      final pending = await readMlKemReannounceMarker(store);
+      if (pending.contains(peerId)) return;
+      await writeMlKemReannounceMarker(store, [...pending, peerId]);
+    });
+
+/// Retires one successful retry without overwriting peers queued in flight.
+Future<void> completeMlKemReannouncePeer(SecureKeyStore store, String peerId) =>
+    _mlKemReannounceMutationLock.synchronized(() async {
+      final pending = await readMlKemReannounceMarker(store);
+      await writeMlKemReannounceMarker(
+        store,
+        pending.where((candidate) => candidate != peerId).toList(),
+      );
+    });
+
 /// Records all active contacts as pending re-announcement targets.
 Future<int> recordMlKemReannouncePending({
   required SecureKeyStore secureKeyStore,
   required ContactRepository contactRepo,
-}) async {
+}) => _mlKemReannounceMutationLock.synchronized(() async {
   final contacts = await contactRepo.getActiveContacts();
   final peerIds = contacts
       .where((contact) => !contact.isBlocked)
@@ -60,4 +80,4 @@ Future<int> recordMlKemReannouncePending({
     details: {'count': peerIds.length},
   );
   return peerIds.length;
-}
+});

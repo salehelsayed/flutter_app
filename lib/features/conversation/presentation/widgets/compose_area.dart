@@ -372,6 +372,11 @@ class _ComposeAreaState extends State<ComposeArea>
   Widget _buildPrivateMediaSelector(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final selection = _pickerSelection(widget.privateMediaPolicy);
+    final kind = switch (widget.privateMediaEligibility.attachmentKind) {
+      PrivateMediaAttachmentKind.video => PrivateMediaPickerKind.video,
+      PrivateMediaAttachmentKind.gif => PrivateMediaPickerKind.gif,
+      _ => PrivateMediaPickerKind.photo,
+    };
     final title = switch (widget.privateMediaEligibility.attachmentKind) {
       PrivateMediaAttachmentKind.video => l10n.private_media_sheet_title_video(
         widget.privateMediaRecipientName,
@@ -390,17 +395,13 @@ class _ComposeAreaState extends State<ComposeArea>
         child: PrivateMediaSummaryChip(
           key: const ValueKey('private-media-selector'),
           selection: selection,
+          kind: kind,
           recipientName: widget.privateMediaRecipientName,
           onTap: () async {
             final picked = await showPrivateMediaPolicyPickerSheet(
               context: context,
               initialSelection: selection,
-              kind: switch (widget.privateMediaEligibility.attachmentKind) {
-                PrivateMediaAttachmentKind.video =>
-                  PrivateMediaPickerKind.video,
-                PrivateMediaAttachmentKind.gif => PrivateMediaPickerKind.gif,
-                _ => PrivateMediaPickerKind.photo,
-              },
+              kind: kind,
               title: title,
               recipientName: widget.privateMediaRecipientName,
               targetPlatform:

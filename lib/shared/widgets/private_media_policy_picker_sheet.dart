@@ -68,8 +68,12 @@ String privateMediaPickerSummaryDetail(
   AppLocalizations l10n,
   PrivateMediaPickerSelection selection, {
   required String recipientName,
+  PrivateMediaPickerKind kind = PrivateMediaPickerKind.photo,
 }) => switch (selection.mode) {
-  PrivateMediaPickerMode.ordinary => l10n.private_media_summary_ordinary_detail,
+  PrivateMediaPickerMode.ordinary =>
+    kind == PrivateMediaPickerKind.video
+        ? l10n.private_media_summary_ordinary_video_detail
+        : l10n.private_media_summary_ordinary_detail,
   PrivateMediaPickerMode.protected =>
     l10n.private_media_summary_protected_detail,
   PrivateMediaPickerMode.viewOnce =>
@@ -86,11 +90,13 @@ class PrivateMediaSummaryChip extends StatelessWidget {
     required this.selection,
     required this.recipientName,
     required this.onTap,
+    this.kind = PrivateMediaPickerKind.photo,
   });
 
   final PrivateMediaPickerSelection selection;
   final String recipientName;
   final VoidCallback onTap;
+  final PrivateMediaPickerKind kind;
 
   @override
   Widget build(BuildContext context) {
@@ -101,6 +107,7 @@ class PrivateMediaSummaryChip extends StatelessWidget {
       l10n,
       selection,
       recipientName: recipientName,
+      kind: kind,
     );
     return Semantics(
       button: true,
@@ -207,6 +214,7 @@ Future<PrivateMediaPickerSelection?> showPrivateMediaPolicyPickerSheet({
           l10n,
           provisional,
           recipientName: recipientName,
+          kind: kind,
           targetPlatform: targetPlatform,
           senderReopenEnabled: senderReopenEnabled,
         );
@@ -420,11 +428,17 @@ String _disclosure(
   AppLocalizations l10n,
   PrivateMediaPickerSelection selection, {
   required String recipientName,
+  required PrivateMediaPickerKind kind,
   required TargetPlatform targetPlatform,
   required bool senderReopenEnabled,
 }) {
   if (selection.mode == PrivateMediaPickerMode.ordinary) {
-    return l10n.private_media_summary_ordinary_detail;
+    return privateMediaPickerSummaryDetail(
+      l10n,
+      selection,
+      recipientName: recipientName,
+      kind: kind,
+    );
   }
   final base = switch (selection.mode) {
     PrivateMediaPickerMode.protected => l10n.private_media_disclosure_protected(

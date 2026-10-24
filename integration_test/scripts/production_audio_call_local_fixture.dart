@@ -26,6 +26,23 @@ const String _coturnDigest =
 const String _coturnVersion = '4.17.2-r0';
 const String _pionVersion = 'v4.2.19';
 
+/// Sims keeps the 45 minute fixture budget. A hand-driven campaign that holds
+/// the fixture for manual legs may raise it, bounded to four hours.
+String productionAudioCallFixtureGoTimeoutFlag(
+  Map<String, String> environment,
+) {
+  final raw = environment['PLAN399_FIXTURE_GO_TIMEOUT']?.trim() ?? '';
+  if (raw.isEmpty) return '-timeout=45m';
+  final match = RegExp(r'^(\d{2,3})m$').firstMatch(raw);
+  final minutes = match == null ? null : int.parse(match.group(1)!);
+  if (minutes == null || minutes < 45 || minutes > 240) {
+    throw const FormatException(
+      'PLAN399_FIXTURE_GO_TIMEOUT must be between 45m and 240m.',
+    );
+  }
+  return '-timeout=${minutes}m';
+}
+
 final class ProductionAudioCallOracleDirectionResult {
   const ProductionAudioCallOracleDirectionResult({
     required this.codecValid,
@@ -204,7 +221,7 @@ final class ProductionAudioCallLocalFixtureLease {
           ..remove(_oracleResultFileEnvironment);
     final process = await Process.start(
       goExecutable,
-      const <String>[
+      <String>[
         'test',
         '-tags=integration',
         '.',
@@ -212,7 +229,7 @@ final class ProductionAudioCallLocalFixtureLease {
         r'^TestProductionAudioCallDeviceFixture_ProductionRelayTurnCredentialsCoturnAndTeardown$',
         '-count=1',
         '-v',
-        '-timeout=120m',
+        productionAudioCallFixtureGoTimeoutFlag(environment),
       ],
       workingDirectory: 'go-relay-server',
       environment: childEnvironment,

@@ -231,14 +231,14 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     return (SendPostResult.success, created.copyWith(mediaDrafts: const []));
   }
   if (secureKeyStore == null || imageProcessor == null) {
-    final failedPost = await _persistFailedMediaPreparationPost(
+    final pendingPost = await _persistPendingMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
       nowProvider: nowProvider,
     );
     return (
       SendPostResult.sendFailed,
-      created.copyWith(post: failedPost, mediaDrafts: drafts),
+      created.copyWith(post: pendingPost, mediaDrafts: drafts),
     );
   }
 
@@ -257,14 +257,14 @@ Future<(SendPostResult, CreatedLocalPost?)> prepareCreatedLocalPostMedia({
     return (SendPostResult.sendFailed, created);
   }
   if (result != AttachPostMediaResult.success) {
-    final failedPost = await _persistFailedMediaPreparationPost(
+    final pendingPost = await _persistPendingMediaPreparationPost(
       postRepo: postRepo,
       post: created.post,
       nowProvider: nowProvider,
     );
     return (
       SendPostResult.sendFailed,
-      created.copyWith(post: failedPost, mediaDrafts: drafts),
+      created.copyWith(post: pendingPost, mediaDrafts: drafts),
     );
   }
 
@@ -425,7 +425,7 @@ Future<PostMediaAttachmentModel?> uploadPostMedia({
   }
 }
 
-Future<PostModel> _persistFailedMediaPreparationPost({
+Future<PostModel> _persistPendingMediaPreparationPost({
   required PostRepository postRepo,
   required PostModel post,
   DateTime Function()? nowProvider,
@@ -445,9 +445,10 @@ Future<PostModel> _persistFailedMediaPreparationPost({
     await postRepo.replacePostMediaUploadRecoveryItems(post.id, const []);
     return post;
   }
-  final failedPost = post.copyWith(deliveryStatus: 'failed', media: const []);
-  await postRepo.savePost(failedPost);
-  return failedPost;
+  // Keep main's durable retry state after the second expiry/existence fence.
+  final pendingPost = post.copyWith(deliveryStatus: 'sending', media: const []);
+  await postRepo.savePost(pendingPost);
+  return pendingPost;
 }
 
 String _draftMime(_PreparedPostMediaDraft prepared, PostMediaDraft original) {

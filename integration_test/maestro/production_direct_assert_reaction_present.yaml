@@ -1,0 +1,11 @@
+appId: ${APP_ID}
+name: production_direct_assert_reaction_present
+---
+- assertVisible:
+    id: message_${MESSAGE_ID}
+- extendedWaitUntil:
+    visible:
+      text: '^👍$'
+      childOf:
+        id: message_${MESSAGE_ID}
+    timeout: 30000

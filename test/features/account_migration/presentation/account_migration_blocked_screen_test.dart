@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
@@ -154,6 +156,47 @@ void main() {
       expect(find.text('Local account data erased'), findsOneWidget);
     },
   );
+
+  testWidgets('successful erase replaces retired state after cleanup settles', (
+    tester,
+  ) async {
+    final erased = Completer<void>();
+    await tester.pumpWidget(
+      wrap(
+        AccountMigrationBlockedScreen(
+          record: const AccountMigrationAuthorityRecord(
+            state: AccountMigrationAuthorityState.migratedOut,
+          ),
+          onEraseAccount: () => erased.future,
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('account-migration-erase-action')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('account-migration-erase-confirm')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Account moved to another phone'), findsOneWidget);
+    expect(find.text('Local account data erased'), findsNothing);
+    erased.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.text('Local account data erased'), findsOneWidget);
+    expect(
+      find.text('Close and reopen the app to set up again.'),
+      findsOneWidget,
+    );
+    expect(find.text('Account moved to another phone'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('account-migration-erase-action')),
+      findsNothing,
+    );
+  });
 
   testWidgets('erase action is disabled when no cleanup callback is supplied', (
     tester,

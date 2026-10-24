@@ -450,6 +450,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private let audio: MknoonCallAudioManaging
   private let webRTCAudioSession: MknoonWebRTCAudioSessionNotifying
   private let capability: NativeCallCapabilityPersisting
+  private let isCallKitCallLive: (UUID) -> Bool
+  private var startupJournal: PendingNativeCallDescriptor?
   private var capabilityDisabledInProcess = false
   private let nowMs: () -> Int64
   private let notificationCenter: NotificationCenter
@@ -483,7 +485,8 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     notificationCenter: NotificationCenter = .default,
     delegateQueue: DispatchQueue? = nil,
     ringback: MknoonCallRingbackPlaying = MknoonCallRingbackTonePlayer(),
-    webRTCAudioSession: MknoonWebRTCAudioSessionNotifying = RTCAudioSession.sharedInstance()
+    webRTCAudioSession: MknoonWebRTCAudioSessionNotifying = RTCAudioSession.sharedInstance(),
+    isCallKitCallLive: ((UUID) -> Bool)? = nil
   ) {
     self.ringback = ringback
     self.provider = provider
@@ -493,9 +496,17 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     self.audio = audio
     self.webRTCAudioSession = webRTCAudioSession
     self.capability = capability
+    let observer = CXCallObserver()
+    self.isCallKitCallLive = isCallKitCallLive ?? { id in
+      observer.calls.contains { $0.uuid == id && !$0.hasEnded }
+    }
     self.nowMs = nowMs
     self.notificationCenter = notificationCenter
     super.init()
+    if let restored = store.snapshot(), restored.phase == .journal,
+       restored.handoffAcknowledgement == .adopted {
+      startupJournal = restored
+    }
     provider.setDelegate(self, queue: delegateQueue)
     notificationCenter.addObserver(
       self,
@@ -515,8 +526,10 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       name: AVAudioSession.mediaServicesWereResetNotification,
       object: nil
     )
-    restorePersistedRuntimeState()
-    expirePendingIfNecessary()
+    synchronized {
+      restorePersistedRuntimeState()
+      expirePendingIfNecessary()
+    }
   }
 
   deinit {
@@ -564,6 +577,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       // withdrawal. Only a successful explicit enable clears this fence.
       capabilityDisabledInProcess = true
       if enabled {
+        guard reconcileStartupJournal() else { return false }
         // Preserve the enable contract: durability must precede registration.
         guard capability.setEnabled(true) else { return false }
         guard capabilityChangeHandler?(true) ?? true else { return false }
@@ -776,6 +790,18 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             && $0.presented
         } == true
       let accepted = self.isCapabilityEnabled() && (result == .presented || acceptedDuplicate)
+      if !accepted {
+        let reason: String
+        switch result {
+        case .busy: reason = "busy"
+        case .disabled: reason = "calls_disabled"
+        case .invalid: reason = "invalid_request"
+        case .persistenceFailure: reason = "native_persistence_failed"
+        case .callKitFailure: reason = "provider_error"
+        case .presented, .duplicate: reason = "adoption_failed"
+        }
+        self.recordLifecycleSnapshot(self.snapshot(), reason: reason, outcome: "rejected")
+      }
       mknoonCallKitDiag(
         "[MKNOON_CALLKIT_DIAG] result=" + (accepted ? "presented" : "rejected")
           + " presentation=" + String(describing: result)
@@ -889,6 +915,11 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   ) -> Bool {
     synchronized {
       guard disposition != .adopted || callsEnabled else { return false }
+      if disposition == .terminal, let current = store.snapshot(),
+         current.nativeCallId == nativeCallId, current.terminalEvent?.type == .orphaned,
+         isCallKitCallLive(nativeCallId) {
+        return false
+      }
       let acknowledged = store.acknowledge(
         nativeCallId: nativeCallId,
         highestConsumedSequence: sequence,
@@ -1877,9 +1908,74 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   private func restorePersistedRuntimeState() {
+    guard reconcileStartupJournal() else {
+      capabilityDisabledInProcess = true
+      return
+    }
     guard let descriptor = store.snapshot(), descriptor.terminalEvent == nil else { return }
     if descriptor.answerRequested { answeredCallIds.insert(descriptor.nativeCallId) }
     if descriptor.muted == true { mutedCallIds.insert(descriptor.nativeCallId) }
+  }
+
+  /// Only a descriptor loaded by this fresh native controller is eligible.
+  /// CallKit liveness, not invitation expiry, proves that its process-owned
+  /// media is gone. Use the same durable terminal/receipt fence as normal ACK.
+  private func reconcileStartupJournal() -> Bool {
+    guard let previous = startupJournal else { return true }
+    guard let current = store.snapshot(), current.nativeCallId == previous.nativeCallId else {
+      // A later owner may already hold the single descriptor. Only the exact
+      // retained receipt can finish the predecessor; it cannot release audio.
+      guard previous.terminalEvent != nil,
+            acknowledge(previous.nativeCallId, through: previous.highestSequence,
+                        disposition: .terminal) else {
+        recordLifecycleSnapshot(previous, reason: "receipt_missing", outcome: "failed")
+        return false
+      }
+      startupJournal = nil
+      return true
+    }
+    guard current.phase == .journal, current.handoffAcknowledgement == .adopted,
+          current.callHandle == previous.callHandle, current.direction == previous.direction,
+          current.expiresAtMs == previous.expiresAtMs else {
+      recordLifecycleSnapshot(current, reason: "authority_invalid", outcome: "failed")
+      return false
+    }
+    if isCallKitCallLive(current.nativeCallId) {
+      recordLifecycleSnapshot(current, reason: "busy", outcome: "skipped")
+      startupJournal = nil
+      return true
+    }
+    var terminal = current
+    if current.terminalEvent == nil {
+      guard case let .appended(updated, _) = store.append(
+        nativeCallId: current.nativeCallId, type: .orphaned
+      ) else {
+        recordLifecycleSnapshot(current, reason: "native_persistence_failed", outcome: "failed")
+        return false
+      }
+      terminal = updated
+    }
+    startupJournal = terminal
+    guard acknowledge(terminal.nativeCallId, through: terminal.highestSequence,
+                      disposition: .terminal) else {
+      recordLifecycleSnapshot(terminal, reason: "receipt_missing", outcome: "failed")
+      return false
+    }
+    recordLifecycleSnapshot(terminal, reason: "native_snapshot_invalid", outcome: "ok")
+    startupJournal = nil
+    return true
+  }
+
+  /// Fixed reasons and booleans only. Here found/accepted describe the retained
+  /// journal's presence/adoption, not the result of a new incoming attempt.
+  private func recordLifecycleSnapshot(
+    _ descriptor: PendingNativeCallDescriptor?, reason: String, outcome: String
+  ) {
+    MknoonCallDiagnostics.shared.record(
+      stage: "runtime", action: "snapshot", outcome: outcome, reason: reason,
+      values: ["found": descriptor != nil, "accepted": descriptor?.phase == .journal,
+               "terminal": descriptor?.terminalEvent != nil]
+    )
   }
 
   private func clearNativeReferences(_ nativeCallId: UUID) {

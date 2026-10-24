@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -104,6 +105,20 @@ void main() {
   });
 
   group('retryIncompleteKeyExchanges', () {
+    test('concurrent contact consents retain both retry owners', () async {
+      final secureKeyStore = FakeSecureKeyStore();
+
+      await Future.wait([
+        queueMlKemReannouncePeer(secureKeyStore, 'first-peer'),
+        queueMlKemReannouncePeer(secureKeyStore, 'second-peer'),
+      ]);
+
+      expect(await readMlKemReannounceMarker(secureKeyStore), [
+        'first-peer',
+        'second-peer',
+      ]);
+    });
+
     test('returns 0 when no identity', () async {
       identityRepo.seed(null);
 
@@ -396,6 +411,38 @@ void main() {
         isFalse,
       );
     });
+
+    test(
+      'successful retry preserves a peer queued while send is in flight',
+      () async {
+        const firstPeer = 'first-marker-1234567890';
+        const laterPeer = 'later-marker-1234567890';
+        contactRepo.seed([
+          _makeContact(firstPeer, mlKemPublicKey: 'their-key'),
+        ]);
+        final secureKeyStore = FakeSecureKeyStore();
+        await writeMlKemReannounceMarker(secureKeyStore, [firstPeer]);
+        final gatedBridge = _GatedSignBridge()
+          ..responses.addAll(bridge.responses);
+
+        final retry = retryIncompleteKeyExchanges(
+          contactRepo: contactRepo,
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          bridge: gatedBridge,
+          secureKeyStore: secureKeyStore,
+        );
+        await gatedBridge.signStarted.future;
+        await writeMlKemReannounceMarker(secureKeyStore, [
+          firstPeer,
+          laterPeer,
+        ]);
+        gatedBridge.releaseSign.complete();
+
+        expect(await retry, 1);
+        expect(await readMlKemReannounceMarker(secureKeyStore), [laterPeer]);
+      },
+    );
   });
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -652,6 +699,21 @@ void main() {
       expect(result, 0);
     });
   });
+}
+
+class _GatedSignBridge extends FakeBridge {
+  final signStarted = Completer<void>();
+  final releaseSign = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    if ((jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+        'payload.sign') {
+      signStarted.complete();
+      await releaseSign.future;
+    }
+    return super.send(message);
+  }
 }
 
 /// A bridge that throws on the Nth send call (1-indexed) and succeeds on others.

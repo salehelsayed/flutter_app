@@ -41,6 +41,7 @@ Future<ContactModel?> _noAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async => null;
 
 final class _Phone {

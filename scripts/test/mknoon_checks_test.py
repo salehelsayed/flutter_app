@@ -1173,6 +1173,13 @@ class CaptureBudgetTest(unittest.TestCase):
         self.assertEqual((code, timed_out), (0, False))
         self.assertEqual((out.count('a'), out.count('b'), budget.used), (48, 48, 96))
 
+    def test_default_budget_keeps_a_large_lane_stdout(self):
+        out, code, timed_out, _ = self.run_script(
+            "import os\nfor _ in range(16): os.write(1, b'x' * (1024 * 1024))", checks.CaptureBudget())
+        self.assertEqual((code, timed_out), (0, False))
+        self.assertEqual(out.count('x'), 16 * 1024 * 1024)
+        self.assertNotIn('MKNOON_EVIDENCE_CAPACITY_EXCEEDED', out)
+
     def test_stream_overflow_keeps_prefix_and_explicit_failure(self):
         budget = checks.CaptureBudget(stream_limit=1024, run_limit=8192)
         out, code, timed_out, _ = self.run_script(

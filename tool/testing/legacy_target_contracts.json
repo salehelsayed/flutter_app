@@ -73,7 +73,7 @@
       "environment": {},
       "config": [],
       "sources": {
-        "scripts/run_test_gates.sh": "d81fd18ec9f7a592d68ceb2a2d31d864cd4cce867e8766f7d3c5ce2fe5956855"
+        "scripts/run_test_gates.sh": "6b35a61f7f809141996e2698babac4f5384e3b698e87b679115f6bea982f6af4"
       },
       "audit": "Static path classification; no target execution.",
       "owns": [
@@ -131,7 +131,7 @@
         "relay_addresses"
       ],
       "sources": {
-        "scripts/run_test_gates.sh": "d81fd18ec9f7a592d68ceb2a2d31d864cd4cce867e8766f7d3c5ce2fe5956855",
+        "scripts/run_test_gates.sh": "6b35a61f7f809141996e2698babac4f5384e3b698e87b679115f6bea982f6af4",
         "scripts/test/go_binding_staleness_contract_test.sh": "bf48e6eb7dade44ce6043c81140e0cb11dd8371ec09ddb8d75e26cd520da68f1",
         "scripts/test/relay_ack_custody_rollout_contract_test.sh": "6b1bac5bc535253d3737d43eb09a66087e7cdeb11729e9b58949d43142f275e1",
         "scripts/test/relay_go_toolchain_contract_test.sh": "95244e9b918b0b94eb3bb6692f941065714073449a6888e3082d85d1fcc0d927",
@@ -3908,7 +3908,7 @@
       "sources": {
         "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "f43a2b52ce076c4042acc52b80f96d802c43b6d665fbdfdc79a0035bb2687375",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a796ab3e8cd57baaa7a414f40e4f58e9118a07baa8e7edf5855fc82bb716baa9",
         "integration_test/support/android_app_state_guard.dart": "132febada7c69f7ac7ee54c527f6dc6d58656cdbcaa06295a7900e3e95ce6a81"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -3941,7 +3941,7 @@
       "sources": {
         "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "f43a2b52ce076c4042acc52b80f96d802c43b6d665fbdfdc79a0035bb2687375",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a796ab3e8cd57baaa7a414f40e4f58e9118a07baa8e7edf5855fc82bb716baa9",
         "integration_test/support/android_app_state_guard.dart": "132febada7c69f7ac7ee54c527f6dc6d58656cdbcaa06295a7900e3e95ce6a81"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -3972,7 +3972,7 @@
       "sources": {
         "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "f43a2b52ce076c4042acc52b80f96d802c43b6d665fbdfdc79a0035bb2687375",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a796ab3e8cd57baaa7a414f40e4f58e9118a07baa8e7edf5855fc82bb716baa9",
         "integration_test/support/android_app_state_guard.dart": "132febada7c69f7ac7ee54c527f6dc6d58656cdbcaa06295a7900e3e95ce6a81"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -4003,7 +4003,7 @@
       "sources": {
         "integration_test/scripts/run_invite_reliability_multi_device.dart": "a44ce8c309965df4c7add87c34409f19f58522b88cb8e6143fb42466702d9897",
         "integration_test/_support/invite_reliability_runner_contract.dart": "9d71f752c9ef88e886be96e23e107b2e2ac806329bbe12687906a7ed68ece26c",
-        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "f43a2b52ce076c4042acc52b80f96d802c43b6d665fbdfdc79a0035bb2687375",
+        "integration_test/scripts/run_direct_media_blob_custody_sims.dart": "a796ab3e8cd57baaa7a414f40e4f58e9118a07baa8e7edf5855fc82bb716baa9",
         "integration_test/support/android_app_state_guard.dart": "132febada7c69f7ac7ee54c527f6dc6d58656cdbcaa06295a7900e3e95ce6a81"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
@@ -4086,7 +4086,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0",
-        "integration_test/notification_open_during_other_chat_harness.dart": "08eebfc174a3b06e71e617611d2067da05a561bd8756304d3510376ab4b62cd1"
+        "integration_test/notification_open_during_other_chat_harness.dart": "7e9cde7c93ba868d858692c3cb8dafb2d90ffad9f09f19d78004d7bd0985c500"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [

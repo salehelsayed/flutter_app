@@ -317,7 +317,9 @@ import 'package:flutter_app/core/local_discovery/native_mdns_resolver.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/erase_account_media.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -331,6 +333,8 @@ import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
+import 'package:flutter_app/core/notifications/erase_account_notification_state.dart';
+import 'package:flutter_app/core/debug/group_media_ios_disposable_profile.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
@@ -5331,7 +5335,12 @@ final class ProductionApplicationBootstrap
     }
 
     // Create image processor (EXIF stripping + quality compression)
-    final imageProcessor = ImageProcessor();
+    final imageProcessor = ImageProcessor(
+      loadImageQualityPreference: () =>
+          loadImageQualityPreference(secureKeyStore: secureKeyStore),
+      loadVideoQualityPreference: () =>
+          loadVideoQualityPreference(secureKeyStore: secureKeyStore),
+    );
 
     // Create audio recorder service
     final audioRecorderService = RecordAudioRecorderService();
@@ -5554,6 +5563,8 @@ final class ProductionApplicationBootstrap
       return completed;
     }
 
+    late final ChatMessageListener chatMessageListener;
+
     Future<int> drainDirectMediaBlobCustody() async {
       final result = await directMediaBlobCustodyDrain.runNetworkBounded();
       emitFlowEvent(
@@ -5564,6 +5575,23 @@ final class ProductionApplicationBootstrap
           'retained': result.retained,
           'failed': result.failed,
         },
+      );
+      // This existing primary-only hook runs on app resume and the OS/network
+      // restored pass. The listener also updates an open conversation, while
+      // durable retries no longer depend on a conversation route being mounted.
+      // A large incoming transfer must not hold the restored-network text and
+      // outgoing flush behind it. The existing listener owns/coalesces the pass.
+      unawaited(
+        chatMessageListener.retryIncompleteMediaDownloads().catchError((
+          Object error,
+        ) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DIRECT_MEDIA_DOWNLOAD_RECOVERY_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+          return 0;
+        }),
       );
       return result.completed;
     }
@@ -5670,6 +5698,15 @@ final class ProductionApplicationBootstrap
       authorityRepository: accountMigrationAuthorityRepository,
       cutoverRepository: accountMigrationCutoverRepository,
     );
+    final accountMigrationBundleSource = AccountMigrationProductionBundleSource(
+      sourceDb: db,
+      primaryStore: secureKeyStore,
+      sharedStore: sharedPushKeyStore,
+      documentsRootPath: appDocDir.path,
+      exportDirectoryPath: '${appDocDir.path}/account_migration/export',
+      snapshotExporter: const MigrationDatabaseSnapshotExporter(),
+    );
+    await accountMigrationBundleSource.sweepStaleExportsOnStartup();
     final accountMigrationTransferRuntime = AccountMigrationLocalTransferRuntime(
       discovery: localDiscovery,
       wsServer: localWsServer,
@@ -5681,14 +5718,7 @@ final class ProductionApplicationBootstrap
         availableBytesProvider: () =>
             diskSpaceChannel.getAvailableBytes(appDocDir.path),
       ),
-      bundleSource: AccountMigrationProductionBundleSource(
-        sourceDb: db,
-        primaryStore: secureKeyStore,
-        sharedStore: sharedPushKeyStore,
-        documentsRootPath: appDocDir.path,
-        exportDirectoryPath: '${appDocDir.path}/account_migration/export',
-        snapshotExporter: const MigrationDatabaseSnapshotExporter(),
-      ).call,
+      bundleSource: accountMigrationBundleSource.call,
       streamCrypto: accountMigrationStreamCrypto,
       bundleReceiver: AccountMigrationProductionBundleReceiver(
         streamCrypto: accountMigrationStreamCrypto,
@@ -5751,7 +5781,6 @@ final class ProductionApplicationBootstrap
     localWsServer.configureMigrationTransferHandler(
       accountMigrationTransferRuntime.handleMigrationTransferRequest,
     );
-    late final ChatMessageListener chatMessageListener;
     late final GroupMessageListener groupMessageListener;
     late final IntroductionListener introductionListener;
     // 171: forward-declared so the p2pService inbox-replay closure (below) can
@@ -6536,6 +6565,7 @@ final class ProductionApplicationBootstrap
       getOwnAccountPeerId: () async =>
           (await repository.loadIdentity())?.peerId,
       onRepairReplyQueued: () => unawaited(contactRepairOutboxWorker.drain()),
+      presentationGateChanges: contactRequestPresentationGate,
       shouldSuppressPresentationForPeerId:
           contactRequestPresentationGate.shouldSuppress,
       // 171 follow-up (user decision): the scanned user is notified via the
@@ -6726,6 +6756,13 @@ final class ProductionApplicationBootstrap
     // Create chat message listener (sendDeliveryReceiptForPeer is hoisted above
     // the P2PServiceImpl construction so the F7 deletion replay can reference it).
     chatMessageListener = ChatMessageListener(
+      loadRetryableMediaMessageIds:
+          ({String? afterMessageId, int limit = 25}) =>
+              dbLoadRetryableDirectMediaMessageIds(
+                db,
+                afterMessageId: afterMessageId,
+                limit: limit,
+              ),
       transportAuthority: directTransportAuthority,
       chatMessageStream: messageRouter.chatMessageStream,
       messageRepo: messageRepository,
@@ -6943,6 +6980,8 @@ final class ProductionApplicationBootstrap
       profileUpdateStream: messageRouter.profileUpdateStream,
       contactRepo: contactRepository,
       bridge: bridge,
+      accountMigrationNetworkGate:
+          accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
     );
 
     // Slice 2 / UDM-G — the real outbound active key-pull. Constructed below once
@@ -9018,6 +9057,7 @@ final class ProductionApplicationBootstrap
       identityRepo: repository,
       contactRepo: contactRepository,
       bridge: bridge,
+      retryPendingProfilePictureDownloadsFn: profileUpdateListener.retryNow,
       mediaAttachmentRepo: mediaAttachmentRepository,
       mediaFileManager: mediaFileManager,
       rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
@@ -10393,6 +10433,7 @@ final class ProductionApplicationBootstrap
         transportMetrics: transportMetrics,
         mediaFileManager: mediaFileManager,
         secureKeyStore: secureKeyStore,
+        sharedSecureKeyStore: sharedPushKeyStore,
         imageProcessor: imageProcessor,
         audioRecorderService: audioRecorderService,
         privateMediaOutboxE2EController: privateMediaOutboxE2EController,
@@ -10516,6 +10557,19 @@ final class ProductionApplicationBootstrap
         // cannot reopen storage between deletion and secure-key cleanup.
         eraseLocalAccountDatabase: () async {
           disposeThoughtExpiry?.call();
+          // Keep the database key and retired authority until every owned
+          // media/cache/notification-state removal has succeeded, including readback.
+          await eraseAccountMedia(documentsDirectory: appDocDir);
+          final support = await getApplicationSupportDirectory();
+          await eraseAccountNotificationState(directory: support);
+          if (Platform.isIOS &&
+              const String.fromEnvironment('SIMS_BUILD_PROFILE_ID') !=
+                  groupMediaIosDisposableBuildProfile) {
+            final shared = await resolveSharedNotificationAppGroupDirectory(
+              supportDirectory: () async => support,
+            );
+            await eraseAccountNotificationState(directory: shared);
+          }
           await eraseEncryptedDatabase(db);
         },
         accountMigrationRecoverExportPause: () async {

@@ -8,6 +8,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/contact_auto_add_rate_limiter.dart';
+import 'package:flutter/foundation.dart' show Listenable;
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
@@ -83,6 +84,7 @@ class ContactRequestListener {
   final Future<String?> Function()? getOwnPrivateKey;
   final DownloadProfilePictureFn downloadProfilePictureFn;
   final bool Function(String peerId)? shouldSuppressPresentationForPeerId;
+  final Listenable? presentationGateChanges;
   final AttemptSilentIntroContactRequestRecovery? attemptSilentIntroRecovery;
   final void Function(IntroductionModel intro)? emitRecoveredIntroductionStatus;
 
@@ -140,6 +142,12 @@ class ContactRequestListener {
   final _contactKeyUpdatedController =
       StreamController<ContactModel>.broadcast();
   final _autoAddedController = StreamController<ContactModel>.broadcast();
+  final Set<String> _presentingPeerIds = <String>{};
+  final _presentationQueue =
+      Queue<({String peerId, Future<void> Function() present})>();
+  bool _presenting = false;
+  int _presentationGeneration = 0;
+  bool _disposed = false;
   final ReplayCache _replayCache;
   final ContactAutoAddRateLimiter _autoAddRateLimiter;
 
@@ -153,6 +161,7 @@ class ContactRequestListener {
     DownloadProfilePictureFn? downloadProfilePictureFn,
     ReplayCache? replayCache,
     this.shouldSuppressPresentationForPeerId,
+    this.presentationGateChanges,
     this.attemptSilentIntroRecovery,
     this.emitRecoveredIntroductionStatus,
     this.receivedWakeTokenStore,
@@ -177,10 +186,61 @@ class ContactRequestListener {
     // the UI (re-)attaches — onListen fires on every 0→1 listener transition
     // of a broadcast controller.
     _requestController.onListen = _replayPendingRequestsOnAttach;
+    _requestController.onCancel = _releasePresentations;
+    presentationGateChanges?.addListener(_replayPendingRequestsOnAttach);
   }
 
   /// Stream of new contact requests for the UI to listen to.
   Stream<ContactRequestModel> get requestStream => _requestController.stream;
+
+  bool _isPresentationSuppressed(String peerId) =>
+      shouldSuppressPresentationForPeerId?.call(peerId) ?? false;
+
+  /// Feed and Orbit share one dialog queue, with one entry per pending peer.
+  void presentRequest(
+    ContactRequestModel request,
+    Future<void> Function() present,
+  ) {
+    if (_disposed || !_presentingPeerIds.add(request.peerId)) return;
+    _presentationQueue.add((peerId: request.peerId, present: present));
+    if (!_presenting) unawaited(_drainPresentations());
+  }
+
+  Future<void> _drainPresentations() async {
+    final generation = _presentationGeneration;
+    _presenting = true;
+    try {
+      while (!_disposed &&
+          generation == _presentationGeneration &&
+          _presentationQueue.isNotEmpty) {
+        final next = _presentationQueue.removeFirst();
+        try {
+          if (!_isPresentationSuppressed(next.peerId)) await next.present();
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONTACT_REQUEST_PRESENTATION_ERROR',
+            details: {'error': error.toString()},
+          );
+        } finally {
+          if (generation == _presentationGeneration) {
+            _presentingPeerIds.remove(next.peerId);
+          }
+        }
+      }
+    } finally {
+      if (generation == _presentationGeneration) _presenting = false;
+    }
+  }
+
+  void _releasePresentations() {
+    // A removed Navigator need not complete its dialog Future. Let the next
+    // attached shell replay durable pending rows without retaining that lease.
+    _presentationGeneration++;
+    _presentationQueue.clear();
+    _presentingPeerIds.clear();
+    _presenting = false;
+  }
 
   /// Stream of contacts whose ML-KEM key was updated from a verified payload.
   Stream<ContactModel> get contactKeyUpdatedStream =>
@@ -236,6 +296,9 @@ class ContactRequestListener {
 
   /// Disposes of the listener and closes streams.
   void dispose() {
+    _disposed = true;
+    _releasePresentations();
+    presentationGateChanges?.removeListener(_replayPendingRequestsOnAttach);
     stop();
     _requestController.close();
     _contactKeyUpdatedController.close();
@@ -493,8 +556,9 @@ class ContactRequestListener {
     );
 
     _prefetchRequestAvatar(request);
-    final shouldSuppressPresentation =
-        shouldSuppressPresentationForPeerId?.call(request.peerId) ?? false;
+    final shouldSuppressPresentation = _isPresentationSuppressed(
+      request.peerId,
+    );
     if (shouldSuppressPresentation) {
       emitFlowEvent(
         layer: 'FL',
@@ -515,7 +579,7 @@ class ContactRequestListener {
     () async {
       try {
         final pending = await requestRepo.getPendingRequests();
-        if (pending.isEmpty || !_requestController.hasListener) {
+        if (_disposed || pending.isEmpty || !_requestController.hasListener) {
           return;
         }
         emitFlowEvent(

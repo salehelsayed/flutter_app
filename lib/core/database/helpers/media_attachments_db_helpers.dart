@@ -4383,11 +4383,14 @@ Future<int> dbRecordDirectPrivateMediaDownloadFailureIfEligible(
   bool clearLocalPath = false,
 }) {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      (failureStatus == kMediaDownloadStatusPending && incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
   return dbWriteTransaction(db, (txn) async {
@@ -4542,11 +4545,14 @@ Future<int> dbRecordGroupPrivateMediaDownloadFailureIfEligible(
   bool clearLocalPath = false,
 }) {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      (failureStatus == kMediaDownloadStatusPending && incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
   return dbWriteTransaction(db, (txn) async {
@@ -5142,6 +5148,16 @@ Future<void> _applyMediaAttachmentPreservingSave(
     merged['download_status'] = kMediaDownloadStatusEvicted;
     merged['local_path'] = existing['local_path'];
   }
+  // Wire replay decodes as pending. It must not reset a bounded absence
+  // window or revive a confirmed unavailable blob under the same identity.
+  if ((kMediaDownloadNotFoundRetryStatuses.contains(
+            existing['download_status'],
+          ) ||
+          existing['download_status'] == kMediaDownloadStatusUnavailable) &&
+      merged['download_status'] == kMediaDownloadStatusPending) {
+    merged['download_status'] = existing['download_status'];
+    merged['download_retry_count'] = existing['download_retry_count'];
+  }
   // Local-only viewer state always survives an ordinary replay.
   merged['is_bookmarked'] = existing['is_bookmarked'];
   // Strict adoption provenance outlives its independent v111 ACK/expiry row.
@@ -5646,6 +5662,9 @@ Future<void> dbUpdateMediaDownloadStatus(
 /// user-retry paths — every automatic entry point filters evicted rows out
 /// before the use case runs.
 const Set<String> kMediaDownloadClaimableStatuses = {
+  kMediaDownloadStatusRetryWaiting,
+  ...kMediaDownloadNotFoundRetryStatuses,
+  kMediaDownloadStatusUnavailable,
   kMediaDownloadStatusPending,
   kMediaDownloadStatusDownloading,
   kMediaDownloadStatusFailed,
@@ -5737,6 +5756,7 @@ Future<int> _dbBeginOrdinaryGroupMediaDownloadExact(
     kMediaDownloadStatusPending,
     kMediaDownloadStatusDownloading,
     kMediaDownloadStatusFailed,
+    ...kMediaDownloadNotFoundRetryStatuses,
     if (explicitUserRetry) kMediaDownloadStatusDownloadFailed,
     if (explicitUserRetry) kMediaDownloadStatusEvicted,
   ];
@@ -5746,7 +5766,7 @@ Future<int> _dbBeginOrdinaryGroupMediaDownloadExact(
   ).join(', ');
   final retryCeiling = explicitUserRetry
       ? ''
-      : 'AND COALESCE(download_retry_count, 0) < ? ';
+      : 'AND (download_status IN (?, ?, ?) OR COALESCE(download_retry_count, 0) < ?) ';
   final affected = await db.rawUpdate(
     'UPDATE media_attachments SET download_status = ? '
     'WHERE id = ? AND message_id = ? AND owner_lane = ? '
@@ -5784,6 +5804,7 @@ Future<int> _dbBeginOrdinaryGroupMediaDownloadExact(
       MediaOwnerLane.group.dbValue,
       expectedDownloadStatus,
       ...claimableStatuses,
+      if (!explicitUserRetry) ...kMediaDownloadNotFoundRetryStatuses,
       if (!explicitUserRetry) kMaxDownloadRetries,
       expectedLocalPath,
       expectedLocalPath,
@@ -5975,11 +5996,17 @@ Future<int> dbRecordOrdinaryGroupMediaDownloadFailureExact(
   required bool clearLocalPath,
 }) async {
   const allowedStatuses = {
+    kMediaDownloadStatusUnavailable,
+    kMediaDownloadStatusPending,
     kMediaDownloadStatusFailed,
     kMediaDownloadStatusDownloadFailed,
     kMediaDownloadStatusIntegrityFailed,
+    ...kMediaDownloadNotFoundRetryStatuses,
   };
-  if (!allowedStatuses.contains(failureStatus)) {
+  if (!allowedStatuses.contains(failureStatus) ||
+      ((failureStatus == kMediaDownloadStatusPending ||
+              kMediaDownloadNotFoundRetryStatuses.contains(failureStatus)) &&
+          incrementRetryCount)) {
     throw ArgumentError.value(failureStatus, 'failureStatus');
   }
 
@@ -6721,10 +6748,33 @@ LIMIT ?
   );
 }
 
-/// Loads all media attachments with download_status = 'pending'.
-///
-/// Untyped by design: its only consumer resolves rows by unique attachment
-/// ID (link_incoming_local_media fallback), which cannot cross lanes.
+/// Bounded direct receive recovery, including pre-fix failures under their cap.
+/// The listener applies the existing parent and user download policies.
+Future<List<String>> dbLoadRetryableDirectMediaMessageIds(
+  Database db, {
+  String? afterMessageId,
+  int limit = 25,
+}) async {
+  final rows = await db.query(
+    'media_attachments',
+    distinct: true,
+    columns: ['message_id'],
+    where:
+        "owner_lane = ? AND message_id > ? AND (download_status IN ('pending', 'downloading', "
+        "'retry_waiting', ?, ?, ?) OR (download_status = 'failed' AND COALESCE(download_retry_count, 0) < ?))",
+    whereArgs: [
+      MediaOwnerLane.direct.dbValue,
+      afterMessageId ?? '',
+      ...kMediaDownloadNotFoundRetryStatuses,
+      kMaxDownloadRetries,
+    ],
+    orderBy: 'message_id ASC',
+    limit: limit,
+  );
+  return rows.map((row) => row['message_id']! as String).toList();
+}
+
+/// Loads pending rows for the unique-ID local-file linking fallback.
 Future<List<Map<String, Object?>>> dbLoadPendingMediaDownloads(
   Database db,
 ) async {
@@ -6817,8 +6867,9 @@ WHERE attachment.owner_lane = ?
         AND custody.state = 'incoming_committed'
     )
   )
-  AND attachment.download_status IN (?, ?, ?)
-  AND COALESCE(attachment.download_retry_count, 0) < ?
+  AND attachment.download_status IN (?, ?, ?, ?, ?, ?)
+  AND (attachment.download_status IN (?, ?, ?)
+       OR COALESCE(attachment.download_retry_count, 0) < ?)
   AND group_parent.is_incoming = 1
   AND group_parent.media_policy_version = 0
   AND group_parent.media_lifecycle = 'standard'
@@ -6850,6 +6901,8 @@ LIMIT ?
         kMediaDownloadStatusPending,
         kMediaDownloadStatusDownloading,
         kMediaDownloadStatusFailed,
+        ...kMediaDownloadNotFoundRetryStatuses,
+        ...kMediaDownloadNotFoundRetryStatuses,
         kMaxDownloadRetries,
         ...cursorArguments,
         limit,
@@ -9952,24 +10005,20 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
               );
           if (!changed) throw const _DirectMediaInboxCustodyRollback();
         }
-        await txn.insert(
-          _directInboxCustodyOutboxTable,
-          <String, Object?>{
-            'recipient_peer_id': binding.recipientPeerId,
-            'message_id': messageId,
-            'incarnation_id': incarnation,
-            'wire_envelope': binding.wireEnvelope,
-            'retry_count': 0,
-            'last_attempt_at': null,
-            'last_error_code': null,
-            'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
-            'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
-            'contact_account_peer_id': contactAccountPeerId,
-            'created_at': createdAt,
-            'updated_at': createdAt,
-          },
-          conflictAlgorithm: ConflictAlgorithm.abort,
-        );
+        await txn.insert(_directInboxCustodyOutboxTable, <String, Object?>{
+          'recipient_peer_id': binding.recipientPeerId,
+          'message_id': messageId,
+          'incarnation_id': incarnation,
+          'wire_envelope': binding.wireEnvelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
+          'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
+          'contact_account_peer_id': contactAccountPeerId,
+          'created_at': createdAt,
+          'updated_at': createdAt,
+        }, conflictAlgorithm: ConflictAlgorithm.abort);
       }
 
       final committedMessages = await txn.query(

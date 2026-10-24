@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/p2p/net/swarm"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/libp2p/go-libp2p/p2p/transport/quicreuse"
@@ -632,6 +634,122 @@ func TestNetworkHandoff_WaitsForRunningRecoveryOwner_NoOverlap(t *testing.T) {
 		if !c.IsClosed() {
 			t.Fatal("old relay connection not retired after ownership passed")
 		}
+	}
+}
+
+// An old-path dial can finish after retirement cleared the relay's backoff.
+// Seed that late backoff at the existing connect seam, then use the real swarm
+// dial. This epoch must recover without another network event or foreground
+// poll: duplicate observations of an attempted epoch are deliberately coalesced.
+func TestNetworkHandoff_LateRelayDialBackoffRecoversWithinEpoch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real relay + proxy fixture; skipped in -short")
+	}
+	_, proxy, relayAddr := startHandoffRelayFixture(t)
+	relay := relayPeerOf(t, relayAddr)
+	n, collector := startHandoffNode(t, relayAddr)
+	waitForEpoch1Reservation(t, n, relay)
+	h := n.Host()
+	sw, ok := h.Network().(*swarm.Swarm)
+	if !ok {
+		t.Fatal("fixture host does not expose its real swarm backoff")
+	}
+	oldConns := h.Network().ConnsToPeer(relay)
+	proxy.BlackholeCurrentClients()
+	var dials atomic.Int32
+	firstDial := make(chan error, 1)
+	n.connectRelayHook = func(ctx context.Context, info peer.AddrInfo) error {
+		first := dials.Add(1) == 1
+		if first {
+			for _, addr := range info.Addrs {
+				sw.Backoff().AddBackoff(info.ID, addr)
+			}
+		}
+		err := h.Connect(ctx, info)
+		if first {
+			firstDial <- err
+		}
+		return err
+	}
+
+	start := time.Now()
+	if adm := n.NetworkPathChanged(NetworkPathRequest{OwnerGeneration: 29, Epoch: 2, Usable: true}); !adm.Accepted {
+		t.Fatalf("admission = %+v", adm)
+	}
+	name, data := waitHandoffTerminal(t, collector, 2, NetworkHandoffBudget+2*time.Second)
+	var firstErr error
+	select {
+	case firstErr = <-firstDial:
+	default:
+		t.Fatal("handoff never reached the late-backoff dial seam")
+	}
+	if !errors.Is(firstErr, swarm.ErrDialBackoff) {
+		t.Fatalf("first dial = %v, want real swarm dial backoff", firstErr)
+	}
+	if name != "network:relay_ready" {
+		t.Fatalf("late relay backoff stranded the admitted epoch: terminal = %s %v; first dial = %v; dials = %d", name, data, firstErr, dials.Load())
+	}
+	if elapsed := time.Since(start); elapsed > NetworkHandoffBudget {
+		t.Fatalf("backoff recovery took %v, over the %v epoch budget", elapsed, NetworkHandoffBudget)
+	}
+	if n.Host() != h || n.relaySessionMgr.WatchdogRestartCount() != 0 {
+		t.Fatal("late relay backoff replaced the host instead of recovering in the owned epoch")
+	}
+	if got := n.NetworkPathStatus()["readyEpoch"].(uint64); got != 2 {
+		t.Fatalf("readyEpoch = %d, want 2", got)
+	}
+	if !n.relaySessionMgr.HasActiveManualReservation(relay) || data["socketFresh"] != true {
+		t.Fatalf("late-backoff recovery did not prove a fresh relay reservation: %v", data)
+	}
+	for _, conn := range oldConns {
+		if !conn.IsClosed() {
+			t.Fatal("late-backoff recovery retained an old-path relay connection")
+		}
+	}
+	if adm := n.NetworkPathChanged(NetworkPathRequest{OwnerGeneration: 29, Epoch: 2, Usable: true}); adm.Accepted || !adm.Coalesced {
+		t.Fatalf("duplicate epoch admission = %+v, want coalesced", adm)
+	}
+	if len(eventsForEpoch(collector, "network:relay_ready", 2)) != 1 || len(eventsForEpoch(collector, "network:relay_failed", 2)) != 0 {
+		t.Fatal("one recovered epoch emitted duplicate or conflicting terminal outcomes")
+	}
+}
+
+func TestDialFreshRelay_BackoffRetryPreservesFailureAndCancellation(t *testing.T) {
+	h := newLoopbackTCPHost(t)
+	relay := peer.AddrInfo{ID: h.ID(), Addrs: h.Addrs()}
+	for _, tc := range []struct {
+		name        string
+		dialErr     error
+		cancelFirst bool
+		wantDials   int
+	}{
+		{name: "repeated backoff remains bounded", dialErr: fmt.Errorf("relay dial: %w", swarm.ErrDialBackoff), wantDials: 2},
+		{name: "ordinary failure is not retried", dialErr: errors.New("relay transport unavailable"), wantDials: 1},
+		{name: "cancelled owner cannot retry", dialErr: swarm.ErrDialBackoff, cancelFirst: true, wantDials: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			n := NewNode()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			dials := 0
+			n.connectRelayHook = func(context.Context, peer.AddrInfo) error {
+				dials++
+				if tc.cancelFirst {
+					cancel()
+				}
+				return tc.dialErr
+			}
+			conn, err := n.dialFreshRelay(ctx, h, relay, 2)
+			if conn != nil || err == nil {
+				t.Fatalf("failed dial = (%v, %v), want no connection and truthful error", conn, err)
+			}
+			if dials != tc.wantDials {
+				t.Fatalf("dial calls = %d, want %d", dials, tc.wantDials)
+			}
+			if !tc.cancelFirst && !errors.Is(err, tc.dialErr) {
+				t.Fatalf("dial error = %v, want retained failure %v", err, tc.dialErr)
+			}
+		})
 	}
 }
 

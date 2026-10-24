@@ -397,13 +397,17 @@ class MigrationCutoverCoordinator {
     );
     await runStep(
       alreadyComplete: record.rendezvousUnregisterIssued,
-      command: leaseCleanup.unregisterPersonalRendezvous,
+      command: () => leaseCleanup.unregisterPersonalRendezvous().timeout(
+        const Duration(seconds: 2),
+      ),
       code: 'rendezvous_unregister_failed',
       markComplete: (value) => value.copyWith(rendezvousUnregisterIssued: true),
     );
     await runStep(
       alreadyComplete: record.inboxPushTokenUnregisterIssued,
-      command: leaseCleanup.unregisterInboxPushToken,
+      command: () => leaseCleanup.unregisterInboxPushToken().timeout(
+        const Duration(seconds: 2),
+      ),
       code: 'inbox_push_token_unregister_failed',
       markComplete: (value) =>
           value.copyWith(inboxPushTokenUnregisterIssued: true),

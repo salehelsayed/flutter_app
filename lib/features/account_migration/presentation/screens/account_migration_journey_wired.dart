@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
@@ -12,6 +13,7 @@ import 'package:flutter_app/features/account_migration/application/migration_pai
 import 'package:flutter_app/features/account_migration/application/migration_qr_payload_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/migration_transfer_keep_alive.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
+import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/presentation/models/account_migration_ui_state.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_screen.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
@@ -559,6 +561,18 @@ class _AccountMigrationJourneyWiredState
           event: 'ACCOUNT_MIGRATION_TRANSFER_SUCCEEDED',
           details: {'sessionId': transcript.sessionId},
         );
+        final authority =
+            await SecureKeyStoreAccountMigrationAuthorityRepository(
+              secureKeyStore: widget.secureKeyStore,
+            ).loadAuthority();
+        if (!mounted) return;
+        if (authority?.state == AccountMigrationAuthorityState.migratedOut) {
+          Navigator.of(
+            context,
+            rootNavigator: true,
+          ).pushNamedAndRemoveUntil(Navigator.defaultRouteName, (_) => false);
+          return;
+        }
         setState(() {
           _progressStage = AccountMigrationProgressStage.completed;
           _progressErrorText = null;
@@ -607,6 +621,8 @@ class _AccountMigrationJourneyWiredState
   void _cancelTransfer() {
     if (_transferRunning) {
       _transferCancellationRequested = true;
+      // The awaited runner reports cancellation after export cleanup settles.
+      return;
     }
     _setTransferCancelled(_transferRunId);
   }

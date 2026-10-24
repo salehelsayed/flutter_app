@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/media/erase_account_media.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -11,7 +14,9 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_blocked_screen.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -30,6 +35,7 @@ import 'package:flutter_app/features/identity/application/linked_installation_au
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -87,6 +93,14 @@ class _SecondAuthorityReadThrowingSecureKeyStore extends FakeSecureKeyStore {
   }
 }
 
+class _SilentAccountEraseFailureStore extends FakeSecureKeyStore {
+  @override
+  Future<void> delete(String key) async {
+    if (key == 'identity_ml_kem_secret_key_ring') return;
+    await super.delete(key);
+  }
+}
+
 class _AuthorityBecomesActiveOnSecondReadSecureKeyStore
     extends FakeSecureKeyStore {
   _AuthorityBecomesActiveOnSecondReadSecureKeyStore({
@@ -116,6 +130,16 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
     pushedRouteNames.add(route.settings.name);
     super.didPush(route, previousRoute);
   }
+}
+
+class _EraseFileDatabase extends Fake implements Database {
+  _EraseFileDatabase(this.path);
+
+  @override
+  final String path;
+
+  @override
+  Future<void> close() async {}
 }
 
 void main() {
@@ -216,6 +240,7 @@ void main() {
   }
 
   Widget buildRouterApp({
+    FakeSecureKeyStore? sharedSecureKeyStore,
     Future<void>? initialShareIntentCapture,
     Future<void> Function()? ensureRuntimeServicesReady,
     Future<void> Function()? afterP2PNodeStarted,
@@ -291,6 +316,7 @@ void main() {
         invalidateAppVisibility: invalidateAppVisibility,
         retireCanonicalNotificationBinding: retireCanonicalNotificationBinding,
         eraseLocalAccountDatabase: eraseLocalAccountDatabase ?? () async {},
+        sharedSecureKeyStore: sharedSecureKeyStore,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
         consumeInitialIosApnsNotificationOpen:
@@ -595,6 +621,90 @@ void main() {
   );
 
   testWidgets(
+    'old-phone success resets to the retired root and Back cannot reach home',
+    (tester) async {
+      const peerId = '12D3KooWMovedOldPhone';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(
+          peerId: peerId,
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        ),
+      );
+      await tester.pumpWidget(buildRouterApp());
+      await pumpFrames(tester);
+      expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+
+      final navigator = Navigator.of(
+        tester.element(find.byType(FirstTimeExperienceWired)),
+      );
+      final now = DateTime.now().toUtc();
+      final qr = MigrationQrPayload(
+        sessionId: 'old-completion-route',
+        createdAt: now.subtract(const Duration(minutes: 1)),
+        expiresAt: now.add(const Duration(minutes: 5)),
+        newPhoneEphemeralPublicKey: 'new-phone-public-key',
+        channelNonce: 'fixture-nonce',
+      );
+      unawaited(
+        navigator.push<void>(
+          MaterialPageRoute(
+            builder: (_) => AccountMigrationJourneyWired.oldPhone(
+              secureKeyStore: secureKeyStore,
+              identityRepository: identityRepository,
+              initialScannedQr: qr.toJsonString(),
+              authorizeExport: (_) async => (
+                MigrationExportAuthorizationResult.authorized,
+                AuthenticatedMigrationChannelTranscript(
+                  sessionId: qr.sessionId,
+                  newPhoneEphemeralPublicKey: qr.newPhoneEphemeralPublicKey,
+                  oldPhonePeerId: peerId,
+                  authenticatedChannelBinding: 'fixture-binding',
+                  authorizationNonce: 'fixture-nonce',
+                ),
+              ),
+              runTransfer:
+                  ({
+                    required request,
+                    required onProgress,
+                    required isCancelled,
+                    onSegmentProgress,
+                  }) async {
+                    onProgress(AccountMigrationTransferStep.finishing);
+                    await saveAuthority(
+                      AccountMigrationAuthorityState.migratedOut,
+                      accountPeerId: peerId,
+                    );
+                    return const AccountMigrationTransferResult.success();
+                  },
+            ),
+          ),
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-start-transfer')),
+      );
+      await pumpFrames(tester, count: 60);
+
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      final blocked = tester.widget<AccountMigrationBlockedScreen>(
+        find.byType(AccountMigrationBlockedScreen),
+      );
+      expect(blocked.record?.state, AccountMigrationAuthorityState.migratedOut);
+      expect(blocked.onEraseAccount, isNotNull);
+      expect(find.byType(AccountMigrationJourneyWired), findsNothing);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
+      expect(navigator.canPop(), isFalse);
+
+      await tester.binding.handlePopRoute();
+      await pumpFrames(tester);
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      expect(find.byType(FirstTimeExperienceWired), findsNothing);
+    },
+  );
+
+  testWidgets(
     'migrated-out identity routes to blocked screen without normal UI or P2P',
     (tester) async {
       const peerId = '12D3KooWMigratedOut';
@@ -644,10 +754,29 @@ void main() {
       var authorityExistedDuringRecoveryClear = false;
       const databaseKey = 'test-database-key';
       await secureKeyStore.write('db_encryption_key', databaseKey);
+      const retiredAccountKeys = [
+        'identity_ml_kem_secret_key_ring',
+        'fdc09_received_wake_tokens',
+        'media_attachment_encryption_key:orphan-media',
+      ];
+      for (final key in retiredAccountKeys) {
+        await secureKeyStore.write(key, 'retired-account-fixture');
+      }
+      await secureKeyStore.write('image_quality_preference', 'high');
+      final sharedSecureKeyStore = FakeSecureKeyStore();
+      await sharedSecureKeyStore.write(
+        'identity_ml_kem_secret_key',
+        'shared-key-fixture',
+      );
+      await sharedSecureKeyStore.write(
+        'group_key:orphan-group:2',
+        'group-key-fixture',
+      );
       final cleanupOrder = <String>[];
 
       await tester.pumpWidget(
         buildRouterApp(
+          sharedSecureKeyStore: sharedSecureKeyStore,
           invalidateAppVisibility: () {
             cleanupOrder.add('visibility-invalidated');
           },
@@ -697,6 +826,11 @@ void main() {
         'database-erased',
       ]);
       expect(await secureKeyStore.read('db_encryption_key'), isNull);
+      for (final key in retiredAccountKeys) {
+        expect(await secureKeyStore.read(key), isNull, reason: key);
+      }
+      expect(await secureKeyStore.read('image_quality_preference'), 'high');
+      expect(await sharedSecureKeyStore.readAll(), isEmpty);
       expect(authorityExistedDuringRecoveryClear, isTrue);
       expect(
         deliveredClearCount,
@@ -711,6 +845,162 @@ void main() {
         ).loadAuthority(),
         isNull,
       );
+    },
+  );
+
+  for (final outcome in ['cancel', 'confirm', 'media-failure']) {
+    testWidgets(
+      'migrated-out file erase $outcome preserves ownership and consent',
+      (tester) async {
+        final sandbox = Directory.systemTemp.createTempSync(
+          'retired-file-erase-',
+        );
+        addTearDown(() => sandbox.deleteSync(recursive: true));
+        final documents = Directory('${sandbox.path}/documents')..createSync();
+        final cache = Directory('${sandbox.path}/app-cache')..createSync();
+        final database = File('${sandbox.path}/identity.db');
+        database.writeAsStringSync('encrypted account fixture');
+        final mediaRoot = Directory('${documents.path}/media');
+        if (outcome == 'media-failure') {
+          final outside = Directory('${sandbox.path}/outside')..createSync();
+          Link(mediaRoot.path).createSync(outside.path);
+        } else {
+          mediaRoot.createSync();
+        }
+        final media = File('${mediaRoot.path}/received.jpg');
+        media.writeAsBytesSync([0xff, 0xd8, 0xff, 0xe0]);
+        final cachedMedia = File('${cache.path}/recording.m4a');
+        cachedMedia.writeAsBytesSync([1, 2, 3]);
+        const peerId = '12D3KooWRetiredFileErase';
+        identityRepository.seed(
+          FakeIdentityRepository.makeIdentity(peerId: peerId),
+        );
+        await saveAuthority(
+          AccountMigrationAuthorityState.migratedOut,
+          accountPeerId: peerId,
+        );
+        await secureKeyStore.write(
+          'db_encryption_key',
+          'retained-until-erased',
+        );
+        var eraseCalls = 0;
+        final eraseSettled = Completer<void>();
+
+        await tester.pumpWidget(
+          buildRouterApp(
+            eraseLocalAccountDatabase: () async {
+              eraseCalls++;
+              try {
+                await eraseAccountMedia(
+                  documentsDirectory: documents,
+                  cacheDirectories: [cache],
+                  temporaryDirectories: [],
+                  externalStorageDirectories: [],
+                );
+                await eraseEncryptedDatabase(_EraseFileDatabase(database.path));
+              } finally {
+                eraseSettled.complete();
+              }
+            },
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('account-migration-erase-action')),
+        );
+        await tester.pumpAndSettle();
+        if (outcome == 'cancel') {
+          await tester.tap(find.text('Cancel'));
+        } else {
+          await tester.tap(
+            find.byKey(const ValueKey('account-migration-erase-confirm')),
+          );
+          // Dialog completion runs on the widget clock; filesystem completion
+          // needs real event-loop turns between those frames.
+          for (
+            var attempt = 0;
+            !eraseSettled.isCompleted && attempt < 200;
+            attempt++
+          ) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 10)),
+            );
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(eraseSettled.isCompleted, isTrue);
+        }
+        await pumpFrames(tester);
+
+        final succeeded = outcome == 'confirm';
+        expect(eraseCalls, outcome == 'cancel' ? 0 : 1);
+        expect(media.existsSync(), !succeeded);
+        expect(cachedMedia.existsSync(), !succeeded);
+        expect(database.existsSync(), !succeeded);
+        expect(
+          await secureKeyStore.read('db_encryption_key'),
+          succeeded ? isNull : 'retained-until-erased',
+        );
+        expect(
+          (await SecureKeyStoreAccountMigrationAuthorityRepository(
+            secureKeyStore: secureKeyStore,
+          ).loadAuthority())?.state,
+          succeeded ? isNull : AccountMigrationAuthorityState.migratedOut,
+        );
+        expect(p2pService.startNodeCallCount, 0);
+        if (outcome == 'media-failure') {
+          expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+          expect(find.byType(SnackBar), findsOneWidget);
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'secure-storage erase readback failure preserves blocked authority',
+    (tester) async {
+      secureKeyStore = _SilentAccountEraseFailureStore();
+      const peerId = '12D3KooWMigratedOutSecureFailure';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(peerId: peerId),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.migratedOut,
+        accountPeerId: peerId,
+      );
+      await secureKeyStore.write('db_encryption_key', 'retained-key');
+      await secureKeyStore.write(
+        'identity_ml_kem_secret_key_ring',
+        'retired-key-fixture',
+      );
+      var databaseErased = false;
+      await tester.pumpWidget(
+        buildRouterApp(
+          eraseLocalAccountDatabase: () async {
+            databaseErased = true;
+          },
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-confirm')),
+      );
+      await pumpFrames(tester);
+
+      expect(databaseErased, isTrue);
+      expect(await secureKeyStore.read('db_encryption_key'), 'retained-key');
+      expect(
+        (await SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: secureKeyStore,
+        ).loadAuthority())?.state,
+        AccountMigrationAuthorityState.migratedOut,
+      );
+      expect(p2pService.startNodeCallCount, 0);
+      expect(find.byType(AccountMigrationBlockedScreen), findsOneWidget);
+      expect(find.byType(SnackBar), findsOneWidget);
     },
   );
 

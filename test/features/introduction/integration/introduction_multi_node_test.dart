@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/introduction/application/check_intro_banner_use_case.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -10,6 +11,27 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/intro_test_user.dart';
+
+class _RecordingIntroNetwork extends FakeP2PNetwork {
+  final liveTargets = <String>[];
+  final stores = <({String target, String wire})>[];
+  @override
+  Future<bool> deliver(
+    String fromPeerId,
+    String toPeerId,
+    String content, {
+    String transport = 'direct',
+  }) {
+    liveTargets.add(toPeerId);
+    return super.deliver(fromPeerId, toPeerId, content, transport: transport);
+  }
+
+  @override
+  bool storeInInbox(String fromPeerId, String toPeerId, String content) {
+    stores.add((target: toPeerId, wire: content));
+    return super.storeInInbox(fromPeerId, toPeerId, content);
+  }
+}
 
 Future<IntroductionModel> waitForIntroReceived(
   IntroTestUser user,
@@ -76,14 +98,14 @@ Future<void> liveMutualAcceptance({
 }
 
 void main() {
-  late FakeP2PNetwork network;
+  late _RecordingIntroNetwork network;
   late IntroTestUser userA;
   late IntroTestUser userB;
   late IntroTestUser userC;
   late IntroTestUser userD;
 
   setUp(() {
-    network = FakeP2PNetwork();
+    network = _RecordingIntroNetwork();
     userA = IntroTestUser.create(
       peerId: 'peer-A',
       username: 'Noor',
@@ -126,6 +148,148 @@ void main() {
   });
 
   group('multi-node introduction tests', () {
+    test(
+      'INTRO-002 multi-target partial send retries only the failed durable target',
+      () async {
+        userA.addContact(userD);
+        userD.addContact(userA);
+        userD.setOnline(false);
+        network.inboxDisabled = true;
+        final friends = [
+          (await userA.contactRepo.getContact('peer-C'))!,
+          (await userA.contactRepo.getContact('peer-D'))!,
+        ];
+        final sent = await userA.sendIntroductions(
+          recipientPeerId: 'peer-B',
+          friends: friends,
+        );
+        expect(sent, hasLength(2));
+        await waitForAsyncCondition(
+          () async =>
+              (await userB.introRepo.getIntroductionsByRecipient(
+                    'peer-B',
+                  )).length ==
+                  2 &&
+              (await userC.introRepo.getIntroductionsByIntroduced(
+                    'peer-C',
+                  )).length ==
+                  1,
+        );
+        final pending = userA.introRepo.allOutboxDeliveries();
+        expect(pending, hasLength(1));
+        expect(pending.single.targetPeerId, 'peer-D');
+        expect(pending.single.action, 'send');
+        expect(pending.single.deliveryStatus, 'failed');
+        final canonical = pending.single;
+        final priorLiveTargets = List<String>.of(network.liveTargets);
+        final priorStores = network.stores.length;
+        network.inboxDisabled = false;
+        expect(
+          await retryPendingIntroductionDeliveries(
+            introRepo: userA.introRepo,
+            p2pService: userA.p2pService,
+            olderThan: Duration.zero,
+          ),
+          1,
+        );
+        expect(userA.introRepo.allOutboxDeliveries(), isEmpty);
+        expect(network.liveTargets, priorLiveTargets);
+        expect(network.stores.skip(priorStores).toList(), [
+          (target: 'peer-D', wire: canonical.rawEnvelope),
+        ]);
+        expect(network.inboxCount('peer-B'), 0);
+        expect(network.inboxCount('peer-C'), 0);
+        expect(network.inboxCount('peer-D'), 1);
+        userD.setOnline(true);
+        expect(await userD.drainOfflineInbox(), 1);
+        await waitForAsyncCondition(
+          () async =>
+              (await userD.introRepo.getIntroduction(
+                canonical.introductionId,
+              )) !=
+              null,
+        );
+        expect(
+          (await userD.introRepo.getIntroductionsByIntroduced(
+            'peer-D',
+          )).single.id,
+          canonical.introductionId,
+        );
+        expect(
+          (await userB.introRepo.getIntroductionsByRecipient(
+            'peer-B',
+          )).map((i) => i.id).toSet(),
+          sent.map((i) => i.id).toSet(),
+        );
+        final storeCount = network.stores.length;
+        expect(
+          await retryPendingIntroductionDeliveries(
+            introRepo: userA.introRepo,
+            p2pService: userA.p2pService,
+            olderThan: Duration.zero,
+          ),
+          0,
+        );
+        expect(network.stores.length, storeCount);
+      },
+    );
+
+    for (final recipientDeclines in [true, false]) {
+      for (final acceptFirst in [true, false]) {
+        test(
+          'IN-003 either-side decline creates no contact edge: recipient=$recipientDeclines acceptFirst=$acceptFirst',
+          () async {
+            final introId = await sendSingleIntroduction(
+              introducer: userA,
+              recipientPeerId: 'peer-B',
+              introducedPeerId: 'peer-C',
+            );
+            await waitForAsyncCondition(
+              () async =>
+                  (await userB.introRepo.getIntroduction(introId)) != null &&
+                  (await userC.introRepo.getIntroduction(introId)) != null,
+            );
+            final decliner = recipientDeclines ? userB : userC;
+            final other = recipientDeclines ? userC : userB;
+            if (acceptFirst) {
+              await other.acceptIntro(introId);
+              await waitForAsyncCondition(() async {
+                final visible = await decliner.introRepo.getIntroduction(
+                  introId,
+                );
+                return recipientDeclines
+                    ? visible?.introducedStatus == IntroductionStatus.accepted
+                    : visible?.recipientStatus == IntroductionStatus.accepted;
+              });
+            }
+            await decliner.passIntro(introId);
+            await waitForAsyncCondition(
+              () async =>
+                  (await userB.introRepo.getIntroduction(introId))?.status ==
+                      IntroductionOverallStatus.passed &&
+                  (await userC.introRepo.getIntroduction(introId))?.status ==
+                      IntroductionOverallStatus.passed,
+            );
+            if (!acceptFirst) await other.acceptIntro(introId);
+            for (final user in [userB, userC]) {
+              final intro = (await user.introRepo.getIntroduction(introId))!;
+              expect(intro.status, IntroductionOverallStatus.passed);
+              expect(
+                recipientDeclines
+                    ? intro.recipientStatus
+                    : intro.introducedStatus,
+                IntroductionStatus.passed,
+              );
+            }
+            expect(await userB.contactRepo.getContact('peer-C'), isNull);
+            expect(await userC.contactRepo.getContact('peer-B'), isNull);
+            expect(await userB.contactRepo.getAllContacts(), hasLength(1));
+            expect(await userC.contactRepo.getAllContacts(), hasLength(1));
+          },
+        );
+      }
+    }
+
     test('A sends intros → B receives via listener stream', () async {
       final bReceived = Completer<IntroductionModel>();
       userB.introListener.introReceivedStream.listen((intro) {
@@ -1081,11 +1245,17 @@ void main() {
       final aFinalBeforeHeal = await userA.introRepo.getIntroduction(introId);
       final bSplit = await userB.introRepo.getIntroduction(introId);
       final cFinalBeforeHeal = await userC.introRepo.getIntroduction(introId);
-      expect(aFinalBeforeHeal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(
+        aFinalBeforeHeal!.status,
+        IntroductionOverallStatus.mutualAccepted,
+      );
       expect(bSplit!.recipientStatus, IntroductionStatus.accepted);
       expect(bSplit.introducedStatus, IntroductionStatus.pending);
       expect(bSplit.status, IntroductionOverallStatus.pending);
-      expect(cFinalBeforeHeal!.status, IntroductionOverallStatus.mutualAccepted);
+      expect(
+        cFinalBeforeHeal!.status,
+        IntroductionOverallStatus.mutualAccepted,
+      );
       expect(await userB.contactRepo.contactExists('peer-C'), isFalse);
       expect(await userC.contactRepo.contactExists('peer-B'), isTrue);
 
@@ -1247,14 +1417,8 @@ void main() {
 
         final cReplayedIntro = await userC.introRepo.getIntroduction(introId);
         expect(cReplayedIntro, isNotNull);
-        expect(
-          cReplayedIntro!.recipientStatus,
-          IntroductionStatus.accepted,
-        );
-        expect(
-          cReplayedIntro.introducedStatus,
-          IntroductionStatus.pending,
-        );
+        expect(cReplayedIntro!.recipientStatus, IntroductionStatus.accepted);
+        expect(cReplayedIntro.introducedStatus, IntroductionStatus.pending);
         expect(cReplayedIntro.status, IntroductionOverallStatus.pending);
 
         await userC.acceptIntro(introId);
@@ -1403,10 +1567,7 @@ void main() {
         expect(bIntro1!.status, IntroductionOverallStatus.passed);
         expect(cFinalIntro1!.status, IntroductionOverallStatus.passed);
         expect(bIntro2!.status, IntroductionOverallStatus.mutualAccepted);
-        expect(
-          aFinalIntro2!.status,
-          IntroductionOverallStatus.mutualAccepted,
-        );
+        expect(aFinalIntro2!.status, IntroductionOverallStatus.mutualAccepted);
         expect(dIntro2!.status, IntroductionOverallStatus.mutualAccepted);
 
         expect(await userB.contactRepo.contactExists('peer-C'), isFalse);

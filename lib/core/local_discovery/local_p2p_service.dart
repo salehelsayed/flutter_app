@@ -24,7 +24,8 @@ class LocalP2PService {
   int? _quicPort;
   int? _tcpPort;
   Future<void>? _startFuture;
-  Future<void>? _restartFuture;
+  Future<bool>? _restartFuture;
+  bool _restartDiscoveryRequested = false;
 
   LocalP2PService({
     required LocalDiscoveryService discovery,
@@ -72,30 +73,45 @@ class LocalP2PService {
 
   /// Stop mDNS and the WebSocket server.
   Future<void> stop() async {
+    _restartDiscoveryRequested = false;
     await _discovery.stopAdvertising();
     await _wsServer.stop();
 
     emitFlowEvent(layer: 'FL', event: 'LOCAL_P2P_SERVICE_STOP', details: {});
   }
 
-  /// Restart mDNS advertising (e.g. after iOS returns from background).
-  Future<void> restartAdvertising() => _restartFuture ??= _restartAdvertising()
-      .whenComplete(() => _restartFuture = null);
+  /// Queue a fresh native epoch for the next refresh after lifecycle resume.
+  void markAppResumed() {
+    _restartDiscoveryRequested = true;
+  }
 
-  Future<void> _restartAdvertising() async {
+  /// Refresh the advert while retaining a healthy browser and pending resolves.
+  /// Returns false when the local identity/server has not started yet.
+  Future<bool> restartAdvertising() => _refreshAdvertising();
+
+  Future<bool> _refreshAdvertising() =>
+      _restartFuture ??= _restartAdvertising().whenComplete(() {
+        _restartFuture = null;
+        _restartDiscoveryRequested = false;
+      });
+
+  Future<bool> _restartAdvertising() async {
     // Resume and address updates may arrive while native readiness is still
     // pending. Join startup, then share one refresh with the latest ports.
     await _startFuture;
     final peerId = _peerId;
     final port = _wsServer.port;
-    if (peerId == null || port == null) return;
+    if (peerId == null || port == null) return false;
 
     int? advertisedQuicPort;
     int? advertisedTcpPort;
     do {
       advertisedQuicPort = _quicPort;
       advertisedTcpPort = _tcpPort;
-      await _discovery.stopAdvertising();
+      if (_restartDiscoveryRequested) {
+        _restartDiscoveryRequested = false;
+        await _discovery.stopAdvertising();
+      }
       await _discovery.startAdvertising(
         peerId,
         port,
@@ -104,7 +120,9 @@ class LocalP2PService {
       );
       // An address update during native start shares this future. Publish that
       // newer snapshot before completing it; do not launch a parallel start.
-    } while (advertisedQuicPort != _quicPort || advertisedTcpPort != _tcpPort);
+    } while (_restartDiscoveryRequested ||
+        advertisedQuicPort != _quicPort ||
+        advertisedTcpPort != _tcpPort);
 
     emitFlowEvent(
       layer: 'FL',
@@ -116,6 +134,7 @@ class LocalP2PService {
         'tcpPort': ?_tcpPort,
       },
     );
+    return true;
   }
 
   /// FDC-11 (174): re-advertise the bonsoir TXT with freshly-resolved libp2p
@@ -130,7 +149,7 @@ class LocalP2PService {
   Future<void> updateLibp2pPorts({int? quicPort, int? tcpPort}) async {
     if (quicPort == _quicPort && tcpPort == _tcpPort) return;
 
-    // 179 (CV-34 sub-cause B): a re-advert is a native bonsoir stop+start. While
+    // 179 (CV-34 sub-cause B): a re-advert replaces the native broadcast. While
     // the iOS suspected-denied gate is latched the broadcast (re)start is SKIPPED
     // (the 178 watchdog mitigation), so tearing down the prior advert would strand
     // the device advertising nothing — exactly the portless-iPhone failure. Defer:
@@ -152,7 +171,7 @@ class LocalP2PService {
     final port = _wsServer.port;
     if (peerId == null || port == null) return;
 
-    await restartAdvertising();
+    await _refreshAdvertising();
 
     emitFlowEvent(
       layer: 'FL',

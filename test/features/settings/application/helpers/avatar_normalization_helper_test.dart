@@ -9,8 +9,8 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 
 /// Plan 200 — the canonical avatar contract must center-square non-square picks
-/// after compress, while leaving every failure/undecodable/already-square path
-/// byte-identical (so the many fake-compressor locks stay green).
+/// after compress, preserving already-square bytes and rejecting failed or
+/// undecodable output before a canonical commit.
 void main() {
   late Directory tempDir;
 
@@ -133,7 +133,7 @@ void main() {
   );
 
   test(
-    'TC-200-15: undecodable compress output passes through byte-identical (crop skipped)',
+    'TC-200-15: undecodable compress output is rejected before commit',
     () async {
       final input = File('${tempDir.path}/in.jpg')..writeAsBytesSync(<int>[0]);
       final junk = Uint8List.fromList(<int>[0xCA, 0xFE, 0xBA, 0xBE]);
@@ -141,11 +141,12 @@ void main() {
         imageProcessor: processorWriting(junk),
       );
 
-      final outPath = await helper.prepareAvatar(inputPath: input.path);
-
-      // Undecodable -> crop skipped -> the compress output is returned intact.
-      expect(outPath, '${input.path}_compressed.jpg');
-      expect(File(outPath).readAsBytesSync(), junk);
+      await expectLater(
+        helper.prepareAvatar(inputPath: input.path),
+        throwsStateError,
+      );
+      expect(input.readAsBytesSync(), <int>[0]);
+      expect(File('${input.path}_compressed.jpg').readAsBytesSync(), junk);
     },
   );
 

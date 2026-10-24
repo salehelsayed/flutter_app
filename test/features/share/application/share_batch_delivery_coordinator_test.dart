@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -2338,6 +2340,85 @@ void main() {
     },
   );
 
+  for (final quality in ImageQualityPreference.values) {
+    for (final throws in [false, true]) {
+      test(
+        'failed $quality photo encoder (throws=$throws) never shares raw input',
+        () async {
+          final tempDir = await Directory.systemTemp.createTemp(
+            'share_failed_photo_',
+          );
+          addTearDown(() async => tempDir.delete(recursive: true));
+          final failed = File('${tempDir.path}/failed.jpg')
+            ..writeAsBytesSync([1, 2, 3]);
+          final ready = File('${tempDir.path}/ready.jpg')
+            ..writeAsBytesSync([4, 5, 6]);
+          List<PendingComposerMedia>? deliveredMedia;
+          final coordinator = DefaultShareBatchDeliveryCoordinator(
+            identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+            contactRepository: InMemoryContactRepository(),
+            messageRepository: InMemoryMessageRepository(),
+            mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+            groupRepository: InMemoryGroupRepository(),
+            groupMessageRepository: InMemoryGroupMessageRepository(),
+            bridge: FakeBridge(),
+            p2pService: FakeP2PService(),
+            mediaFileManager: FakeMediaFileManager(),
+            qualityPreference: quality,
+            imageProcessor: ImageProcessor(
+              compressFile:
+                  ({
+                    required path,
+                    required quality,
+                    required keepExif,
+                    minWidth = 1920,
+                    minHeight = 1080,
+                  }) async {
+                    if (path == failed.path) {
+                      if (throws) throw StateError('fixture encoder failed');
+                      return null;
+                    }
+                    return XFile(path);
+                  },
+            ),
+            sendToContactFn:
+                ({
+                  required identity,
+                  required shareIntent,
+                  required contact,
+                  required processedMedia,
+                  required uploadHooks,
+                }) async {
+                  deliveredMedia = processedMedia;
+                  return ShareBatchTargetResult(
+                    target: ShareTargetSelection.contact(contact),
+                    status: ShareBatchTargetStatus.sent,
+                    detail: 'Sent.',
+                  );
+                },
+          );
+          final result = await coordinator.deliver(
+            shareIntent: ShareIntent(
+              type: ShareIntentType.files,
+              filePaths: [failed.path, ready.path],
+            ),
+            targets: [
+              ShareTargetSelection.contact(_makeContact('peer-alice', 'Alice')),
+            ],
+          );
+          expect(result.skippedOversizedGifCount, 1);
+          expect(
+            result.skippedOversizedGifReason,
+            contains('could not be processed'),
+          );
+          expect(deliveredMedia, hasLength(1));
+          expect(deliveredMedia!.single.file.path, ready.path);
+          expect(failed.readAsBytesSync(), [1, 2, 3]);
+        },
+      );
+    }
+  }
+
   test(
     'stalled shared video is skipped without sending its raw source',
     () async {
@@ -2370,7 +2451,7 @@ void main() {
                 required keepExif,
                 minWidth = 1920,
                 minHeight = 1080,
-              }) async => null,
+              }) async => XFile(path),
           compressVideo: ({required path, required compress, onProgress}) =>
               Completer<VideoProcessResult?>().future,
           cancelVideoCompression: () async {},
@@ -2447,7 +2528,7 @@ void main() {
                 required keepExif,
                 minWidth = 1920,
                 minHeight = 1080,
-              }) async => null,
+              }) async => XFile(path),
           compressVideo: ({required path, required compress, onProgress}) =>
               Future.error(videoError),
         ),
@@ -7367,7 +7448,7 @@ ImageProcessor _imageProcessor() {
           required keepExif,
           minWidth = 1920,
           minHeight = 1080,
-        }) async => null,
+        }) async => XFile(path),
     compressVideo: ({required path, required compress, onProgress}) async =>
         const VideoProcessResult(path: '/tmp/video.mp4'),
   );

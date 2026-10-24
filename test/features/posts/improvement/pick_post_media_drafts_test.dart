@@ -27,6 +27,21 @@ void main() {
   );
 
   test(
+    'HEIF selection keeps the other selected images and excludes video',
+    () async {
+      final picker = FakeMediaPicker()
+        ..multipleMediaResult = [
+          XFile('/tmp/a.HEIF'),
+          XFile('/tmp/b.jpg'),
+          XFile('/tmp/c.mov'),
+        ];
+      final drafts = await pickPostMediaDrafts(picker: picker);
+      expect(drafts.map((d) => d.localFilePath), ['/tmp/a.HEIF', '/tmp/b.jpg']);
+      expect(drafts.map((d) => d.mime), ['image/heic', 'image/jpeg']);
+    },
+  );
+
+  test(
     'video selection produces one existing video draft without mixed media',
     () async {
       final picker = FakeMediaPicker()

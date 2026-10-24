@@ -30,11 +30,13 @@ internal enum PendingNativeCallEventType: String, Codable, CaseIterable, Equatab
   case audioActivated
   case audioDeactivated
   case nativeFailure
+  /// Fresh-process recovery proved this adopted call absent from CallKit.
+  case orphaned
 
   var isTerminal: Bool {
     switch self {
     case .declineRequested, .endRequested, .remoteCancelled, .expired,
-         .providerRemoved, .nativeFailure:
+         .providerRemoved, .nativeFailure, .orphaned:
       return true
     default:
       return false
@@ -55,6 +57,7 @@ internal enum PendingNativeCallEventType: String, Codable, CaseIterable, Equatab
     case .audioActivated: return "audioActivated"
     case .audioDeactivated: return "audioDeactivated"
     case .nativeFailure: return "nativeFailure"
+    case .orphaned: return "orphaned"
     }
   }
 }

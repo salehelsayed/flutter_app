@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -222,7 +223,7 @@ void main() {
                     id: 'retry',
                     mime: 'image/jpeg',
                     mediaType: 'image',
-                    downloadStatus: 'failed',
+                    downloadStatus: kMediaDownloadStatusRetryWaiting,
                     localPath: null,
                   ),
                   onRetryUnavailableMedia: () => retries++,
@@ -233,20 +234,20 @@ void main() {
         );
         expect(find.text('Retry'), findsOneWidget);
         expect(
-          tester.widget<Text>(find.text('Media unavailable')).style!.color,
+          tester
+              .widget<Text>(find.text("Couldn't load yet. Tap to try again."))
+              .style!
+              .color,
           colors.textSecondary,
         );
         expect(
           tester.widget<Icon>(find.byIcon(Icons.broken_image_outlined)).color,
           colors.iconMuted,
         );
-        expect(
-          find.semantics.byLabel('Retry unavailable media'),
-          findsOneWidget,
-        );
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
         await tester.tap(find.text('Retry'));
         expect(retries, 1);
-        tester.semantics.tap(find.semantics.byLabel('Retry unavailable media'));
+        tester.semantics.tap(find.semantics.byLabel('Retry'));
         expect(retries, 2);
         semantics.dispose();
         expect(tester.takeException(), isNull);
@@ -340,6 +341,51 @@ void main() {
   );
 
   testWidgets(
+    'retained failed upload uses canonical owned source for truthful status '
+    '(replicates the device repro: pending path deleted, owned copy present)',
+    (tester) async {
+      MediaGridCell.debugResetUnavailableDiagnostics();
+      MediaFileManager.cacheDocumentsDir(tempDir.path);
+      const peer = '12D3KooWBob';
+      const blob = '19a57608-0afc-4c5a-a88f-f9d425016a2e';
+      // The durable owned copy EXISTS (what the upload actually committed).
+      File('${tempDir.path}/media/$peer/$blob.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(_validPngBytes);
+      // The displayed attachment still holds the DELETED optimistic
+      // pending_uploads ABSOLUTE path (never swapped for the durable copy) —
+      // exactly what the device diagnostic showed.
+      final stalePending = '${tempDir.path}/pending_uploads/msg-1/$blob.jpg';
+      expect(File(stalePending).existsSync(), isFalse);
+
+      await tester.pumpWidget(
+        wrap(
+          SizedBox(
+            width: 200,
+            height: 200,
+            child: MediaGridCell(
+              attachment: _attachment(
+                id: blob,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+                downloadStatus: 'upload_failed',
+                localPath: stalePending,
+              ),
+              ownedMediaPeerId: peer,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      // Render gate falls back to media/<peer>/<blob>.jpg -> displayable.
+      expect(find.text('failed'), findsOneWidget);
+      expect(find.byType(MediaThumbnailImage), findsNothing);
+      expect(find.text('Media unavailable'), findsNothing);
+    },
+  );
+
+  testWidgets(
     '128: a done image whose path does not exist emits the gate diagnostic',
     (tester) async {
       MediaGridCell.debugResetUnavailableDiagnostics();
@@ -370,7 +416,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(find.text('No longer available'), findsOneWidget);
       final diag = events
           .where((e) => e['event'] == 'MEDIA_RENDER_GATE_UNAVAILABLE')
           .toList();
@@ -476,7 +522,7 @@ void main() {
       await tester.pump();
 
       expect(find.byType(MediaThumbnailImage), findsNothing);
-      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(find.text('No longer available'), findsOneWidget);
     },
   );
 
@@ -729,7 +775,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Media unavailable'), findsOneWidget);
+      expect(find.text("Couldn't open this file"), findsOneWidget);
       expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
       expect(find.byType(MediaThumbnailImage), findsNothing);
     },
@@ -936,7 +982,7 @@ void main() {
     },
   );
 
-  testWidgets('failed video media still shows unavailable retry', (
+  testWidgets('deferred video exposes Retry without claiming absence', (
     tester,
   ) async {
     final videoFile = File('${tempDir.path}/failed-video.mp4')
@@ -954,7 +1000,7 @@ void main() {
               id: 'failed-video',
               mime: 'video/mp4',
               mediaType: 'video',
-              downloadStatus: 'failed',
+              downloadStatus: kMediaDownloadStatusRetryWaiting,
               localPath: videoFile.path,
             ),
             onTap: () => tapped = true,
@@ -965,11 +1011,11 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Media unavailable'), findsOneWidget);
+    expect(find.text("Couldn't load yet. Tap to try again."), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
     expect(find.byType(MediaThumbnailImage), findsNothing);
     expect(find.byType(VideoThumbnailOverlay), findsNothing);
-    expect(find.bySemanticsLabel('Retry unavailable media'), findsOneWidget);
+    expect(find.bySemanticsLabel('Retry'), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('unavailable-media-retry-msg-1-failed-video')),
@@ -1007,11 +1053,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Media unavailable'), findsOneWidget);
+    expect(find.text('No longer available'), findsOneWidget);
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
     expect(find.byType(MediaThumbnailImage), findsNothing);
     expect(find.byType(VideoThumbnailOverlay), findsNothing);
-    expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+    expect(find.bySemanticsLabel('Retry'), findsNothing);
 
     await tester.tap(find.byType(MediaGridCell));
     expect(tapped, isFalse);
@@ -1167,7 +1213,7 @@ void main() {
           localPath: jpgFile.path,
           contentHash: _validContentHash,
           withEncryption: true,
-        ),
+        ).copyWith(ownerLane: MediaOwnerLane.group),
         _attachment(
           id: 'integrity-video',
           mime: 'video/mp4',
@@ -1200,24 +1246,30 @@ void main() {
         await pumpCell(attachment);
         await tester.pump();
 
-        // Tamper (integrity_failed) shows the distinct "couldn't verify" label;
-        // every other unavailable case shows the generic one.
-        final expectedLabel =
-            attachment.downloadStatus == kMediaDownloadStatusIntegrityFailed
-            ? "Couldn't verify this media"
-            : 'Media unavailable';
-        expect(find.text(expectedLabel), findsOneWidget);
+        if (attachment.downloadStatus == kMediaDownloadStatusFailed) {
+          expect(find.byType(CircularProgressIndicator), findsOneWidget);
+          expect(find.text("Couldn't open this file"), findsNothing);
+          expect(find.text('Media unavailable'), findsNothing);
+        } else {
+          expect(find.text("Couldn't open this file"), findsOneWidget);
+        }
         expect(find.byType(MediaThumbnailImage), findsNothing);
         expect(find.byType(VideoThumbnailOverlay), findsNothing);
-        expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+        expect(find.bySemanticsLabel('Retry'), findsNothing);
 
         await tester.tap(find.byType(MediaGridCell));
         expect(tapped, isFalse);
       }
 
-      await pumpCell(cases.first, retry: true);
+      await pumpCell(
+        cases.first.copyWith(
+          downloadStatus: kMediaDownloadStatusDownloadFailed,
+          downloadRetryCount: 3,
+        ),
+        retry: true,
+      );
       await tester.pump();
-      expect(find.bySemanticsLabel('Retry unavailable media'), findsOneWidget);
+      expect(find.bySemanticsLabel('Retry'), findsOneWidget);
 
       await tester.tap(
         find.byKey(

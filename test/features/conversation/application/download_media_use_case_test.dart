@@ -14,6 +14,8 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
         kGroupMediaBlobCustodyKind;
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
     show kDirectMediaBlobCustodyTable;
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show dbLoadRetryableDirectMediaMessageIds;
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -743,11 +745,13 @@ class _AtomicOrdinaryGroupFailureMediaRepo extends _FakeMediaAttachmentRepo
         current.messageId != messageId ||
         current.downloadStatus != expectedDownloadStatus ||
         current.localPath != expectedLocalPath ||
-        (current.downloadRetryCount ?? 0) >= kMaxDownloadRetries ||
+        (!GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(current) &&
+            (current.downloadRetryCount ?? 0) >= kMaxDownloadRetries) ||
         !const {
           kMediaDownloadStatusPending,
           kMediaDownloadStatusDownloading,
           kMediaDownloadStatusFailed,
+          ...kMediaDownloadNotFoundRetryStatuses,
         }.contains(current.downloadStatus)) {
       return false;
     }
@@ -815,6 +819,7 @@ class _AtomicOrdinaryGroupFailureMediaRepo extends _FakeMediaAttachmentRepo
           kMediaDownloadStatusPending,
           kMediaDownloadStatusDownloading,
           kMediaDownloadStatusFailed,
+          ...kMediaDownloadNotFoundRetryStatuses,
           kMediaDownloadStatusDownloadFailed,
           kMediaDownloadStatusEvicted,
         }.contains(current.downloadStatus)) {
@@ -1058,7 +1063,10 @@ void main() {
     createdAt: '2026-02-20T10:00:00.000Z',
   );
 
+  Future<void> Function(Duration)? previousNotFoundWait;
   setUp(() async {
+    previousNotFoundWait = debugRelayNotFoundRetryWait;
+    debugRelayNotFoundRetryWait = (_) async {};
     debugGroupMediaDownloadPostCommitProbeDelays = const [];
     bridge = _FakeBridge();
     mediaRepo = _FakeMediaAttachmentRepo();
@@ -1068,6 +1076,7 @@ void main() {
   });
 
   tearDown(() async {
+    debugRelayNotFoundRetryWait = previousNotFoundWait;
     debugGroupMediaDownloadPostCommitProbeDelays = const [
       Duration(milliseconds: 250),
       Duration(seconds: 1),
@@ -1078,6 +1087,349 @@ void main() {
   });
 
   group('downloadMedia', () {
+    test(
+      'bounded relay not-found recovers automatically when the blob returns',
+      () async {
+        mediaRepo.seedAttachment(testAttachment);
+        bridge.beforeDownloadResponse = (_) {
+          final attempts = bridge.commandLog
+              .where((command) => command == 'media:download')
+              .length;
+          bridge.downloadResponse = attempts == 1
+              ? {'ok': false, 'errorMessage': 'not found'}
+              : {'ok': true};
+        };
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment,
+          contactPeerId: 'contact-A',
+        );
+        expect(result?.downloadStatus, kMediaDownloadStatusDone);
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(2),
+        );
+        expect(mediaRepo.localPathUpdates, hasLength(1));
+        expect(
+          await mediaRepo.getAttachmentsForMessage(
+            testAttachment.messageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('bounded relay not-found stops after four total attempts', () async {
+      final previouslyRetried = testAttachment.copyWith(downloadRetryCount: 1);
+      mediaRepo.seedAttachment(previouslyRetried);
+      bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+      final delays = <Duration>[];
+      debugRelayNotFoundRetryWait = (delay) async {
+        delays.add(delay);
+      };
+      expect(
+        await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: previouslyRetried,
+          contactPeerId: 'contact-A',
+        ),
+        isNull,
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'media:download'),
+        hasLength(4),
+      );
+      final stored = (await mediaRepo.getAttachmentsForMessage(
+        testAttachment.messageId,
+        owner: MediaOwnerLane.direct,
+      )).single;
+      expect(stored.downloadStatus, kMediaDownloadStatusUnavailable);
+      expect(
+        stored.downloadRetryCount,
+        1,
+        reason:
+            'the new absence window does not consume the generic failure budget',
+      );
+      expect(mediaRepo.localPathUpdates, isEmpty);
+      expect(bridge.deleteRequests, isEmpty);
+      expect(delays, [
+        const Duration(seconds: 15),
+        const Duration(seconds: 45),
+        const Duration(minutes: 2),
+      ]);
+    });
+
+    test(
+      'bounded relay not-found resumes the remaining budget after real SQLite reopen',
+      () async {
+        var fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${tempDir.path}/not-found-restart.sqlite',
+        );
+        addTearDown(() => fixture.dispose());
+        await fixture.messageRepo.saveMessage(
+          (await _defaultDirectMessageRepo.getMessage(
+            testAttachment.messageId,
+          ))!,
+        );
+        final priorFailure = testAttachment.copyWith(
+          downloadStatus: kMediaDownloadStatusFailed,
+          downloadRetryCount: 2,
+        );
+        await fixture.repo.saveAttachment(
+          priorFailure,
+          owner: MediaOwnerLane.direct,
+        );
+        bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+        var waits = 0;
+        debugRelayNotFoundRetryWait = (_) async {
+          if (++waits == 2) {
+            throw StateError('simulated process interruption');
+          }
+        };
+        await expectLater(
+          downloadMedia(
+            owner: MediaOwnerLane.direct,
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: fileManager,
+            attachment: priorFailure,
+            contactPeerId: 'contact-A',
+            messageRepo: fixture.messageRepo,
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(2),
+        );
+        await fixture.repo.saveAttachment(
+          priorFailure.copyWith(
+            downloadStatus: kMediaDownloadStatusPending,
+            downloadRetryCount: 0,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        fixture = await fixture.reopen();
+        final stored = (await fixture.repo.getAttachmentsForMessage(
+          testAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(
+          GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(stored),
+          isTrue,
+        );
+        expect(
+          await dbLoadRetryableDirectMediaMessageIds(fixture.db),
+          contains(testAttachment.messageId),
+        );
+        debugRelayNotFoundRetryWait = (_) async {};
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.direct,
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: fileManager,
+            attachment: stored,
+            contactPeerId: 'contact-A',
+            messageRepo: fixture.messageRepo,
+          ),
+          isNull,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(4),
+        );
+        await fixture.repo.saveAttachment(
+          priorFailure.copyWith(
+            downloadStatus: kMediaDownloadStatusPending,
+            downloadRetryCount: 0,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          await dbLoadRetryableDirectMediaMessageIds(fixture.db),
+          isNot(contains(testAttachment.messageId)),
+        );
+        final finalRow = (await fixture.repo.getAttachmentsForMessage(
+          testAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(finalRow.downloadStatus, kMediaDownloadStatusUnavailable);
+        expect(finalRow.downloadRetryCount, 2);
+      },
+    );
+
+    test(
+      'bounded relay not-found coalesces callers throughout backoff',
+      () async {
+        mediaRepo.seedAttachment(testAttachment);
+        bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
+        final waiting = Completer<void>();
+        final resume = Completer<void>();
+        debugRelayNotFoundRetryWait = (_) async {
+          waiting.complete();
+          await resume.future;
+        };
+        Future<MediaAttachment?> invoke(MediaAttachment attachment) =>
+            downloadMedia(
+              owner: MediaOwnerLane.direct,
+              bridge: bridge,
+              mediaAttachmentRepo: mediaRepo,
+              mediaFileManager: fileManager,
+              attachment: attachment,
+              contactPeerId: 'contact-A',
+            );
+        final first = invoke(testAttachment);
+        await waiting.future.timeout(const Duration(seconds: 2));
+        final current = (await mediaRepo.getAttachmentsForMessage(
+          testAttachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        final second = invoke(current);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(1),
+        );
+        bridge.downloadResponse = {'ok': true};
+        resume.complete();
+        final results = await Future.wait([first, second]);
+        expect(
+          results.map((result) => result?.downloadStatus),
+          everyElement(kMediaDownloadStatusDone),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(2),
+        );
+        expect(mediaRepo.localPathUpdates, hasLength(1));
+      },
+    );
+
+    for (final returnsBlob in [true, false]) {
+      test(
+        'bounded relay not-found group window returnsBlob=$returnsBlob preserves atomic ownership',
+        () async {
+          const groupId = 'group-notfound-window';
+          final groups = InMemoryGroupMessageRepository();
+          await groups.saveMessage(
+            GroupMessage(
+              id: testAttachment.messageId,
+              groupId: groupId,
+              senderPeerId: 'group-sender',
+              text: '',
+              timestamp: DateTime.utc(2026, 7, 22),
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: DateTime.utc(2026, 7, 22),
+            ),
+          );
+          final attachment = _encryptedGroupAttachment(
+            testAttachment.copyWith(
+              ownerLane: MediaOwnerLane.group,
+              downloadRetryCount: 2,
+            ),
+            _jpegBytes,
+          );
+          final repository = _AtomicOrdinaryGroupFailureMediaRepo()
+            ..seedAttachment(attachment);
+          bridge.downloadedBytes = _encryptedBytes(_jpegBytes);
+          bridge.beforeDownloadResponse = (_) {
+            final attempts = bridge.commandLog
+                .where((command) => command == 'media:download')
+                .length;
+            bridge.downloadResponse = returnsBlob && attempts > 1
+                ? {'ok': true}
+                : {'ok': false, 'errorMessage': 'not found'};
+          };
+          final result = await downloadMedia(
+            owner: MediaOwnerLane.group,
+            bridge: bridge,
+            mediaAttachmentRepo: repository,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: groupId,
+            groupMessageRepo: groups,
+            enforceGroupMediaPolicy: true,
+          );
+          final rows = await repository.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.group,
+          );
+          expect(rows, hasLength(1));
+          expect(
+            rows.single.downloadStatus,
+            returnsBlob
+                ? kMediaDownloadStatusDone
+                : kMediaDownloadStatusUnavailable,
+          );
+          expect(result != null, returnsBlob);
+          expect(
+            bridge.commandLog.where((command) => command == 'media:download'),
+            hasLength(returnsBlob ? 2 : 4),
+          );
+          expect(repository.legacySaveCalls, 0);
+          if (!returnsBlob) {
+            expect(rows.single.downloadRetryCount, 2);
+          }
+        },
+      );
+    }
+
+    test(
+      'bounded relay not-found never retries subsequent corrupt ciphertext',
+      () async {
+        final encrypted = _encryptedBytes(_jpegBytes);
+        final attachment = testAttachment.copyWith(
+          size: _jpegBytes.length,
+          contentHash: _hashBytes(encrypted),
+          encryptionKeyBase64: _mediaKey,
+          encryptionNonce: _mediaNonce,
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        mediaRepo.seedAttachment(attachment);
+        bridge.downloadedBytes = [...encrypted]..[encrypted.length - 1] ^= 1;
+        bridge.beforeDownloadResponse = (_) {
+          final attempts = bridge.commandLog
+              .where((command) => command == 'media:download')
+              .length;
+          bridge.downloadResponse = attempts == 1
+              ? {'ok': false, 'errorMessage': 'not found'}
+              : {'ok': true};
+        };
+        expect(
+          await downloadMedia(
+            owner: MediaOwnerLane.direct,
+            bridge: bridge,
+            mediaAttachmentRepo: mediaRepo,
+            mediaFileManager: fileManager,
+            attachment: attachment,
+            contactPeerId: 'contact-A',
+          ),
+          isNull,
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(2),
+        );
+        expect(bridge.commandLog, isNot(contains('blob:decrypt')));
+        final stored = (await mediaRepo.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(stored.downloadStatus, kMediaDownloadStatusIntegrityFailed);
+        expect(stored.localPath, isNull);
+        expect(bridge.deleteRequests, isEmpty);
+      },
+    );
+
     test(
       'coalesced download waiters retain the transfer failure and retry independently',
       () async {
@@ -1742,30 +2094,38 @@ void main() {
       expect(stored.downloadRetryCount, kMaxDownloadRetries);
     });
 
-    test('relay not found short-circuits to download_failed without burning the '
-        'retry budget (INV-DL-4)', () async {
-      bridge.downloadResponse = {'ok': false, 'errorMessage': 'not found'};
-      // Seed a partially-used budget; the short-circuit must NOT increment it.
-      mediaRepo.seedAttachment(testAttachment.copyWith(downloadRetryCount: 1));
+    test(
+      'relay authorization denial stays terminal without consuming the generic '
+      'retry budget',
+      () async {
+        bridge.downloadResponse = {
+          'ok': false,
+          'errorMessage': 'not authorized',
+        };
+        // Seed a partially-used budget; the short-circuit must NOT increment it.
+        mediaRepo.seedAttachment(
+          testAttachment.copyWith(downloadRetryCount: 1),
+        );
 
-      final result = await downloadMedia(
-        owner: MediaOwnerLane.direct,
-        bridge: bridge,
-        mediaAttachmentRepo: mediaRepo,
-        mediaFileManager: fileManager,
-        attachment: testAttachment.copyWith(downloadRetryCount: 1),
-        contactPeerId: 'contact-A',
-      );
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: testAttachment.copyWith(downloadRetryCount: 1),
+          contactPeerId: 'contact-A',
+        );
 
-      expect(result, isNull);
-      final stored = (await mediaRepo.getAttachmentsForMessage(
-        owner: MediaOwnerLane.direct,
-        'msg-001',
-      )).firstWhere((a) => a.id == testAttachment.id);
-      expect(stored.downloadStatus, kMediaDownloadStatusDownloadFailed);
-      // Budget unchanged: the relay-unavailable terminal burns 0 retries.
-      expect(stored.downloadRetryCount, 1);
-    });
+        expect(result, isNull);
+        final stored = (await mediaRepo.getAttachmentsForMessage(
+          owner: MediaOwnerLane.direct,
+          'msg-001',
+        )).firstWhere((a) => a.id == testAttachment.id);
+        expect(stored.downloadStatus, kMediaDownloadStatusUnavailable);
+        // Budget unchanged: the relay-unavailable terminal burns 0 retries.
+        expect(stored.downloadRetryCount, 1);
+      },
+    );
 
     test(
       'P269 ordinary group transient failure uses one atomic retry transition while relay authorization denial stays terminal',
@@ -1866,7 +2226,7 @@ void main() {
           isNull,
         );
         persisted = await stored(unauthorized.id);
-        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(persisted.downloadStatus, kMediaDownloadStatusUnavailable);
         expect(
           persisted.downloadRetryCount,
           2,
@@ -1876,7 +2236,7 @@ void main() {
         expect(atomicRepo.atomicFailureCalls.last.incrementRetryCount, isFalse);
         expect(
           atomicRepo.atomicFailureCalls.last.failureStatus,
-          kMediaDownloadStatusDownloadFailed,
+          kMediaDownloadStatusUnavailable,
         );
         expect(
           events.where(
@@ -1906,19 +2266,19 @@ void main() {
           isNull,
         );
         persisted = await stored(notFound.id);
-        expect(persisted.downloadStatus, kMediaDownloadStatusDownloadFailed);
+        expect(persisted.downloadStatus, kMediaDownloadStatusUnavailable);
         expect(
           persisted.downloadRetryCount,
           1,
           reason: 'relay not-found consumes no retry budget',
         );
-        expect(atomicRepo.atomicFailureCalls, hasLength(3));
+        expect(atomicRepo.atomicFailureCalls, hasLength(6));
         expect(atomicRepo.atomicFailureCalls.last, (
           id: notFound.id,
           groupId: groupId,
           messageId: notFound.messageId,
           incrementRetryCount: false,
-          failureStatus: kMediaDownloadStatusDownloadFailed,
+          failureStatus: kMediaDownloadStatusUnavailable,
           expectedDownloadStatus: kMediaDownloadStatusDownloading,
           expectedLocalPath: null,
           clearLocalPath: false,
@@ -1930,7 +2290,7 @@ void main() {
                 (event['details'] as Map<String, dynamic>)['error'] ==
                     'not found',
           ),
-          hasLength(1),
+          hasLength(4),
         );
 
         final corrupt = groupAttachment(
@@ -1957,7 +2317,7 @@ void main() {
         expect(persisted.downloadStatus, kMediaDownloadStatusIntegrityFailed);
         expect(persisted.downloadRetryCount, 0);
         expect(bridge.sendCallCount, sendsBeforeIntegrity);
-        expect(atomicRepo.atomicFailureCalls, hasLength(4));
+        expect(atomicRepo.atomicFailureCalls, hasLength(7));
         expect(atomicRepo.atomicFailureCalls.last, (
           id: corrupt.id,
           groupId: groupId,
@@ -2006,7 +2366,7 @@ void main() {
           reason: 'post-download integrity quarantine consumes no retry budget',
         );
         expect(bridge.sendCallCount, sendsBeforeHashMismatch + 1);
-        expect(atomicRepo.atomicFailureCalls, hasLength(5));
+        expect(atomicRepo.atomicFailureCalls, hasLength(8));
         expect(atomicRepo.atomicFailureCalls.last, (
           id: hashMismatch.id,
           groupId: groupId,
@@ -2956,16 +3316,21 @@ void main() {
         );
 
         expect(result, isNull);
-        expect(bridge.sendCallCount, 1);
+        expect(bridge.sendCallCount, 4);
         expect(canonicalFile.existsSync(), isTrue);
         expect(canonicalFile.readAsBytesSync(), preExistingBytes);
-        // INV-DL-4: a relay "not found" flips straight to the terminal
-        // download_failed state (honest "expired on server"), not transient.
+        // All four attempts preserve the pre-existing file; only exhausted
+        // relay absence becomes terminal. No candidate is promoted to done.
         expect(
           mediaRepo.downloadStatusUpdates,
           equals([
-            (testAttachment.id, kMediaDownloadStatusDownloading),
-            (testAttachment.id, kMediaDownloadStatusDownloadFailed),
+            for (final status in [
+              ...kMediaDownloadNotFoundRetryStatuses,
+              kMediaDownloadStatusUnavailable,
+            ]) ...[
+              (testAttachment.id, kMediaDownloadStatusDownloading),
+              (testAttachment.id, status),
+            ],
           ]),
         );
         expect(mediaRepo.localPathUpdates, isEmpty);
@@ -3199,32 +3564,51 @@ void main() {
       },
     );
 
-    test('watchdog timeout preserves the .part file', () async {
-      final timeoutBridge = _TimeoutAfterWriteBridge();
-      final sizedAttachment = testAttachment.copyWith(size: 3);
-
-      final result = await downloadMedia(
-        owner: MediaOwnerLane.direct,
-        bridge: timeoutBridge,
-        mediaAttachmentRepo: mediaRepo,
-        mediaFileManager: fileManager,
-        attachment: sizedAttachment,
-        contactPeerId: 'contact-A',
-      );
-
-      expect(result, isNull);
-      expect(
-        mediaRepo.downloadStatusUpdates.last.$2,
-        'failed',
-        reason: 'row goes failed so the UI can offer retry',
-      );
-      final partPath = '${tempDir.path}/contact-A/blob-download-001.jpg.part';
-      expect(
-        await File(partPath).exists(),
-        isTrue,
-        reason: 'transient failure must never destroy completed bytes',
-      );
-    });
+    test(
+      'watchdog preserves complete part then automatic retry adopts without redownload',
+      () async {
+        final timeoutBridge = _TimeoutAfterWriteBridge();
+        final sizedAttachment = testAttachment.copyWith(size: 3);
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final result = await downloadMedia(
+          owner: MediaOwnerLane.direct,
+          bridge: timeoutBridge,
+          mediaAttachmentRepo: mediaRepo,
+          mediaFileManager: fileManager,
+          attachment: sizedAttachment,
+          contactPeerId: 'contact-A',
+        );
+        final preserved = events.indexWhere(
+          (e) =>
+              e['event'] == 'MEDIA_DOWNLOAD_PART_PRESERVED' &&
+              (e['details'] as Map)['stagedExists'] == true &&
+              (e['details'] as Map)['stagedBytes'] == 3,
+        );
+        final adopted = events.indexWhere(
+          (e) => e['event'] == 'MEDIA_DOWNLOAD_COMPLETE_PART_ADOPTED',
+        );
+        expect(
+          preserved,
+          greaterThanOrEqualTo(0),
+          reason: 'the first watchdog failure retained its actual bytes',
+        );
+        expect(adopted, greaterThan(preserved));
+        expect(result!.downloadStatus, kMediaDownloadStatusDone);
+        expect(
+          timeoutBridge.sendCallCount,
+          1,
+          reason:
+              'recovery uses retained complete bytes, not another native transfer',
+        );
+        final resolved = await fileManager.resolveStoredPath(result.localPath!);
+        expect(
+          await File(resolved).readAsBytes(),
+          timeoutBridge.downloadedBytes,
+        );
+      },
+    );
 
     test('retry adopts complete .part without bridge call', () async {
       final sizedAttachment = testAttachment.copyWith(size: 3);

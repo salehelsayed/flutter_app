@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
@@ -35,6 +36,7 @@ class ContactRequestNotificationMaterializer {
   final IdentityRepository identityRepository;
   final P2PService p2pService;
   final Bridge bridge;
+  final SecureKeyStore? secureKeyStore;
   final void Function(ContactModel contact)? onProfileDownloaded;
   final ResolveCallWakeHandle? resolveCallWakeHandle;
   final OnCallWakeHandleDistributed? onCallWakeHandleDistributed;
@@ -48,6 +50,7 @@ class ContactRequestNotificationMaterializer {
     required this.identityRepository,
     required this.p2pService,
     required this.bridge,
+    this.secureKeyStore,
     required this.presentPendingRequest,
     required this.openConversation,
     this.onProfileDownloaded,
@@ -95,6 +98,7 @@ class ContactRequestNotificationMaterializer {
       p2pService: p2pService,
       identityRepo: identityRepository,
       bridge: bridge,
+      secureKeyStore: secureKeyStore,
       onProfileDownloaded: onProfileDownloaded,
       resolveCallWakeHandle: resolveCallWakeHandle,
       onCallWakeHandleDistributed: onCallWakeHandleDistributed,

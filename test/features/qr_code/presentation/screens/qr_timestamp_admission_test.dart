@@ -43,55 +43,42 @@ void main() {
       ),
     ]) {
       // testWidgets accepts only bool skip; its one-case group retains the exact reason.
-      group(
-        entry.label,
-        () {
-          testWidgets('is refused without contact or outbound request', (
-            tester,
-          ) async {
-            final h = await _mount(tester);
-            await h.scan(tester, entry.timestamp);
-            expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+      group(entry.label, () {
+        testWidgets('is refused without contact or outbound request', (
+          tester,
+        ) async {
+          final h = await _mount(tester);
+          await h.scan(tester, entry.timestamp);
+          expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+          expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+          expect(h.network.sendMessageCallCount, 0);
+          expect(h.network.storeInInboxCallCount, 0);
+          expect(h.bridge.encrypts, isEmpty);
+          if (entry.error == 'Expired QR Code') {
+            expect(find.text(entry.error), findsOneWidget);
+          } else {
             expect(
-              await tester.runAsync(h.requests.getPendingRequests),
-              isEmpty,
+              find.byWidgetPredicate(
+                (w) =>
+                    w is Text &&
+                    const {
+                      'Invalid QR Code',
+                      'Expired QR Code',
+                    }.contains(w.data),
+              ),
+              findsOneWidget,
             );
-            expect(h.network.sendMessageCallCount, 0);
-            expect(h.network.storeInInboxCallCount, 0);
-            expect(h.bridge.encrypts, isEmpty);
-            if (entry.error == 'Expired QR Code') {
-              expect(find.text(entry.error), findsOneWidget);
-            } else {
-              expect(
-                find.byWidgetPredicate(
-                  (w) =>
-                      w is Text &&
-                      const {
-                        'Invalid QR Code',
-                        'Expired QR Code',
-                      }.contains(w.data),
-                ),
-                findsOneWidget,
-              );
-            }
-            if (entry.error == 'Expired QR Code') {
-              expect(
-                find.text(
-                  'This QR code has expired. Ask your friend for a new one.',
-                ),
-                findsOneWidget,
-              );
-            }
-          });
-        },
-        skip: switch (entry.label) {
-          'unreadable timestamp' =>
-            'KNOWN GAP CR-025: malformed timestamps bypass expiry and add/send, lib/features/qr_code/application/parse_qr_payload_use_case.dart:130. Remove when fixed.',
-          'future timestamp' =>
-            'KNOWN GAP CR-025: a future timestamp has negative age and adds/sends, lib/features/qr_code/application/parse_qr_payload_use_case.dart:122. Remove when fixed.',
-          _ => false,
-        },
-      );
+          }
+          if (entry.error == 'Expired QR Code') {
+            expect(
+              find.text(
+                'This QR code has expired. Ask your friend for a new one.',
+              ),
+              findsOneWidget,
+            );
+          }
+        });
+      });
     }
 
     testWidgets('fresh signed control adds one contact and sends one request', (
@@ -194,6 +181,7 @@ Future<_Scanner> _mount(WidgetTester tester) async {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async => null,
         shouldMarkContactRequest: (_) async => false,
       ),

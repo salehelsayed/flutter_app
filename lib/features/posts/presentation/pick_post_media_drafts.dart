@@ -26,7 +26,7 @@ String _mimeFromPath(String path) {
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.png')) return 'image/png';
   if (lower.endsWith('.webp')) return 'image/webp';
-  if (lower.endsWith('.heic')) return 'image/heic';
+  if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'image/heic';
   if (lower.endsWith('.mp4')) return 'video/mp4';
   if (lower.endsWith('.mov')) return 'video/quicktime';
   if (lower.endsWith('.m4a')) return 'audio/mp4';

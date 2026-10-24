@@ -40,6 +40,165 @@ Map<String, dynamic> _valid(DateTime now) => {
 };
 
 void main() {
+  _testClock(
+    'VC-013 selected relay-to-direct media path preserves both call owners',
+    (time) async {
+      // The existing fixture supplies accepted call-control signals and the
+      // native WebRTC boundary. Production coordinator/executor/engine own the
+      // sessions; this does not initiate or certify native DCUtR/NAT traversal.
+      final peers = [_Harness(time), _Harness(time)];
+      final observed = [<CallState>[], <CallState>[]];
+      final subscriptions = <StreamSubscription<CallSessionSnapshot>>[];
+      try {
+        for (var i = 0; i < peers.length; i++) {
+          final peer = peers[i]..response = Future.value(_valid(_epoch));
+          subscriptions.add(
+            peer.coordinator.snapshots.listen((s) => observed[i].add(s.state)),
+          );
+          peer.start();
+        }
+        await time.settle();
+        for (final peer in peers) {
+          peer.current.native.connect(WebRtcTransportClass.turnUdp);
+        }
+        await time.settle();
+        final connectedAt = peers
+            .map((p) => p.coordinator.activeSession!.connectedAt)
+            .toList();
+        for (final peer in peers) {
+          final media = await peer.current.engine.snapshot();
+          expect(media.transport, CallTransportClass.turnUdp);
+          expect(media.isMediaReady, isTrue);
+          expect(peer.coordinator.activeSession!.state, CallState.connected);
+          expect(
+            peer.coordinator.activeSession!.callId!.value,
+            '11111111-1111-4111-8111-111111111111',
+          );
+          expect(peer.history.entries, isEmpty);
+        }
+        final connectedOffsets = observed
+            .map((states) => states.length)
+            .toList();
+        await time.elapse(const Duration(seconds: 5));
+        for (final peer in peers) {
+          peer.current.native.connect(WebRtcTransportClass.direct);
+        }
+        await time.settle();
+        for (var i = 0; i < peers.length; i++) {
+          final peer = peers[i];
+          final media = await peer.current.engine.snapshot();
+          expect(media.transport, CallTransportClass.direct);
+          expect(media.isMediaReady, isTrue);
+          expect(media.state, CallConnectionState.connected);
+          expect(
+            peer.coordinator.activeSession!.callId!.value,
+            '11111111-1111-4111-8111-111111111111',
+          );
+          expect(peer.coordinator.activeSession!.state, CallState.connected);
+          expect(peer.coordinator.activeSession!.connectedAt, connectedAt[i]);
+          expect(peer.coordinator.activeSession!.reconnectGeneration, 0);
+          expect(
+            observed[i].skip(connectedOffsets[i]),
+            everyElement(CallState.connected),
+          );
+          expect(peer.bundles, hasLength(1));
+          expect(peer.current.native.configurations, hasLength(1));
+          expect(peer.current.native.restarts, 0);
+          expect(peer.current.engine.iceGeneration, 0);
+          expect(peer.current.engine.isClosed, isFalse);
+          expect(peer.history.entries, isEmpty);
+        }
+        // A later connected callback must not create a second session/history.
+        for (final peer in peers) {
+          peer.current.native.emit();
+        }
+        await time.settle();
+        for (final peer in peers) {
+          peer.hangup();
+        }
+        await time.settle();
+        for (final peer in peers) {
+          expect(peer.history.entries, hasLength(1));
+          expect(
+            peer.history.entries.single.callId.value,
+            '11111111-1111-4111-8111-111111111111',
+          );
+          expect(
+            peer.history.entries.single.terminalReason,
+            CallEndReason.localHangup,
+          );
+          expect(peer.current.engine.isClosed, isTrue);
+        }
+      } finally {
+        // Dispose recording listeners before the coordinators close their streams.
+        for (final subscription in subscriptions) {
+          await time.tester.runAsync(subscription.cancel);
+        }
+        for (final peer in peers) {
+          peer.close();
+        }
+        await time.settle();
+      }
+    },
+  );
+
+  _testClock(
+    'VC-013 upgrade hint without selected direct media retains both relay calls',
+    (time) async {
+      final peers = [_Harness(time), _Harness(time)];
+      try {
+        for (final peer in peers) {
+          peer.response = Future.value(_valid(_epoch));
+          peer.start();
+        }
+        await time.settle();
+        for (final peer in peers) {
+          peer.current.native.connect(WebRtcTransportClass.turnUdp);
+        }
+        await time.settle();
+        final connectedAt = peers
+            .map((p) => p.coordinator.activeSession!.connectedAt)
+            .toList();
+        // A stale/advisory event is not selected-pair evidence. Simulate an
+        // unsuccessful opportunity while native snapshot still selects TURN.
+        for (final peer in peers) {
+          peer.current.native.emit(eventTransport: WebRtcTransportClass.direct);
+        }
+        await time.elapse(const Duration(seconds: 5));
+        for (var i = 0; i < peers.length; i++) {
+          final peer = peers[i];
+          final media = await peer.current.engine.snapshot();
+          expect(media.transport, CallTransportClass.turnUdp);
+          expect(media.isMediaReady, isTrue);
+          expect(peer.coordinator.activeSession!.state, CallState.connected);
+          expect(
+            peer.coordinator.activeSession!.callId!.value,
+            '11111111-1111-4111-8111-111111111111',
+          );
+          expect(peer.coordinator.activeSession!.connectedAt, connectedAt[i]);
+          expect(peer.coordinator.activeSession!.reconnectGeneration, 0);
+          expect(peer.bundles, hasLength(1));
+          expect(peer.current.native.configurations, hasLength(1));
+          expect(peer.current.native.restarts, 0);
+          expect(peer.current.engine.isClosed, isFalse);
+          expect(peer.history.entries, isEmpty);
+        }
+        for (final peer in peers) {
+          peer.hangup();
+        }
+        await time.settle();
+        for (final peer in peers) {
+          expect(peer.history.entries, hasLength(1));
+        }
+      } finally {
+        for (final peer in peers) {
+          peer.close();
+        }
+        await time.settle();
+      }
+    },
+  );
+
   for (final reason in [
     WebRtcFailureReason.transportUnavailable,
     WebRtcFailureReason.configurationRejected,
@@ -456,7 +615,7 @@ final class _Harness implements CallEffectExecutor {
           return bundles[s.callId]!.executor.close();
         }),
       ]),
-      historyProjector: CallHistoryProjector(_History(), clock: now),
+      historyProjector: CallHistoryProjector(history, clock: now),
       effectExecutor: this,
       clock: now,
       idSource: () => current.id,
@@ -468,6 +627,7 @@ final class _Harness implements CallEffectExecutor {
   late final CallCoordinator coordinator;
   late _Bundle current;
   final bundles = <CallId, _Bundle>{};
+  final history = _History();
   int fetches = 0;
   int sequence = 0;
   DateTime now() => _epoch.add(time.elapsed);
@@ -560,10 +720,14 @@ final class _Bridge implements Bridge {
 }
 
 final class _History implements CallHistoryRepository {
+  final entries = <CallHistoryEntry>[];
   @override
   Future<CallHistoryEntry?> getByCallId(CallId id) async => null;
   @override
-  Future<void> upsertTerminal(CallHistoryEntry entry) async {}
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {
+    entries.add(entry);
+  }
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -638,12 +802,13 @@ final class _Native
 
   void emit({
     WebRtcConnectionState? eventState,
+    WebRtcTransportClass? eventTransport,
     WebRtcFailureReason reason = WebRtcFailureReason.none,
   }) => controller.add(
     WebRtcPeerConnectionEvent(
       kind: WebRtcPeerConnectionEventKind.state,
       connectionState: eventState ?? state,
-      transport: transport,
+      transport: eventTransport ?? transport,
       quality: WebRtcQualityBand.good,
       failureReason: reason,
     ),

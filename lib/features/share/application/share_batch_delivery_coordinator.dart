@@ -1565,7 +1565,7 @@ class DefaultShareBatchDeliveryCoordinator
 
     final processed = <PendingComposerMedia>[];
     var skippedOversizedGifCount = 0;
-    var skippedStalledVideoCount = 0;
+    var skippedUnprocessableMediaCount = 0;
     var skippedUnsupportedFileCount = 0;
     for (final path in shareIntent.filePaths) {
       PendingComposerMedia prepared;
@@ -1583,18 +1583,24 @@ class DefaultShareBatchDeliveryCoordinator
       } on VideoProcessingTimeoutException {
         // Re-encoding strips metadata. Never replace a timed-out transcode
         // with the unprocessed source video.
-        skippedStalledVideoCount++;
+        skippedUnprocessableMediaCount++;
         continue;
       } on VideoProcessingUnavailableException {
         // A stuck encoder cannot sanitize this source video. Preserve the
         // metadata-stripping boundary for all later share attempts.
-        skippedStalledVideoCount++;
+        skippedUnprocessableMediaCount++;
         continue;
       } on VideoProcessingFailedException {
         // Native transcoding errors must not silently forward the source.
-        skippedStalledVideoCount++;
+        skippedUnprocessableMediaCount++;
         continue;
       } catch (_) {
+        if (imageProcessor.isProcessableImage(path)) {
+          // Photo processing strips metadata. Never share its raw source when
+          // the native encoder or metadata sanitizer fails.
+          skippedUnprocessableMediaCount++;
+          continue;
+        }
         final file = File(path);
         if (!file.existsSync()) {
           continue;
@@ -1638,10 +1644,10 @@ class DefaultShareBatchDeliveryCoordinator
       processedMedia: processed,
       skippedUnsupportedDocumentCount: skippedUnsupportedFileCount,
       skippedOversizedGifCount:
-          skippedOversizedGifCount + skippedStalledVideoCount,
+          skippedOversizedGifCount + skippedUnprocessableMediaCount,
       // Media-agnostic: the per-type gate skips ANY oversized type (image,
       // video, audio, file, gif), so the summary must not claim "GIF".
-      skippedOversizedGifReason: skippedStalledVideoCount > 0
+      skippedOversizedGifReason: skippedUnprocessableMediaCount > 0
           ? skippedOversizedGifCount > 0
                 ? 'Some attachments could not be processed or were too large and were skipped.'
                 : 'Some attachments could not be processed and were skipped.'

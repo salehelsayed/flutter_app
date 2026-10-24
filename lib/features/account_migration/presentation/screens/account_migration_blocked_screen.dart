@@ -21,10 +21,11 @@ class AccountMigrationBlockedScreen extends StatefulWidget {
 class _AccountMigrationBlockedScreenState
     extends State<AccountMigrationBlockedScreen> {
   bool _isErasing = false;
+  bool _isErased = false;
 
   Future<void> _confirmErase() async {
     final erase = widget.onEraseAccount;
-    if (erase == null || _isErasing) return;
+    if (erase == null || _isErasing || _isErased) return;
 
     final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
@@ -63,9 +64,7 @@ class _AccountMigrationBlockedScreenState
     try {
       await erase();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.account_migration_erased_snackbar)),
-      );
+      setState(() => _isErased = true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -85,6 +84,10 @@ class _AccountMigrationBlockedScreenState
     final l10n = AppLocalizations.of(context)!;
     final record = widget.record;
     final (title, message) = switch (record) {
+      _ when _isErased => (
+        l10n.account_migration_erased_snackbar,
+        l10n.account_migration_erased_reopen_message,
+      ),
       final authority when authority?.isFailClosed == true => (
         l10n.account_migration_blocked_title,
         l10n.account_migration_blocked_message,
@@ -103,6 +106,7 @@ class _AccountMigrationBlockedScreenState
       ),
     };
     final showEraseAction =
+        !_isErased &&
         record != null &&
         !record.isFailClosed &&
         !record.allowsNormalStartup &&
@@ -118,8 +122,10 @@ class _AccountMigrationBlockedScreenState
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.phonelink_lock_outlined,
+                Icon(
+                  _isErased
+                      ? Icons.check_circle_outline
+                      : Icons.phonelink_lock_outlined,
                   size: 56,
                   color: AppColors.primaryAccent,
                 ),

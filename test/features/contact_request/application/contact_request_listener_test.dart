@@ -485,6 +485,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               capturedPeerId = ownerPeerId;
               capturedAvatarVersion = avatarVersion;
@@ -519,6 +520,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               prefetchCalls++;
               throw Exception('profile download failed');
@@ -591,6 +593,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               prefetchCalls++;
               return null;

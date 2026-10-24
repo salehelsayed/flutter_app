@@ -1,4 +1,6 @@
-class ContactRequestPresentationGate {
+import 'package:flutter/foundation.dart';
+
+class ContactRequestPresentationGate extends ChangeNotifier {
   final Set<String> _suppressedPeerIds = <String>{};
   bool _suppressAll = false;
 
@@ -7,7 +9,9 @@ class ContactRequestPresentationGate {
   }
 
   void releaseAll() {
+    if (!_suppressAll) return;
     _suppressAll = false;
+    notifyListeners();
   }
 
   void suppress(String peerId) {
@@ -19,7 +23,7 @@ class ContactRequestPresentationGate {
   }
 
   void release(String peerId) {
-    _suppressedPeerIds.remove(peerId.trim());
+    if (_suppressedPeerIds.remove(peerId.trim())) notifyListeners();
   }
 
   bool shouldSuppress(String peerId) {

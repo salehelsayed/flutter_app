@@ -518,6 +518,7 @@ class MyApp extends StatefulWidget {
   final TransportMetrics? transportMetrics;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? sharedSecureKeyStore;
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
   final PrivateMediaOutboxE2EController? privateMediaOutboxE2EController;
@@ -700,6 +701,7 @@ class MyApp extends StatefulWidget {
     this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.sharedSecureKeyStore,
     required this.imageProcessor,
     required this.audioRecorderService,
     this.privateMediaOutboxE2EController,
@@ -978,6 +980,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           identityRepository: widget.repository,
           p2pService: widget.p2pService,
           bridge: widget.bridge,
+          secureKeyStore: widget.secureKeyStore,
           onProfileDownloaded: widget.chatMessageListener.emitContactUpdate,
           resolveCallWakeHandle: widget.resolveCallWakeHandle,
           onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
@@ -991,6 +994,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 if (kE2ETestMode) {
                   return;
                 }
+                Future<void>? decision;
                 await showDialog<void>(
                   context: navigator.context,
                   barrierDismissible: false,
@@ -998,14 +1002,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                     request: request,
                     onAccept: () {
                       Navigator.of(dialogContext).pop();
-                      unawaited(onAccept());
+                      decision = onAccept();
                     },
                     onDecline: () {
                       Navigator.of(dialogContext).pop();
-                      unawaited(onDecline());
+                      decision = onDecline();
                     },
                   ),
                 );
+                await decision;
               },
           openConversation: ({required navigator, required contact}) =>
               _openConversationForContact(
@@ -2800,6 +2805,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         reactionRepo: widget.reactionRepository,
         pendingReactionRepo: widget.groupPendingReactionRepository,
         nearbyLocationService: widget.nearbyLocationService,
+        retryPendingProfilePictureDownloadsFn:
+            widget.profileUpdateListener.retryNow,
         retryPendingPostMediaUploads:
             widget.pendingPostMediaUploadRetrier.retryNow,
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
@@ -3568,6 +3575,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           transportMetrics: widget.transportMetrics,
           mediaFileManager: widget.mediaFileManager,
           secureKeyStore: widget.secureKeyStore,
+          sharedSecureKeyStore: widget.sharedSecureKeyStore,
           imageProcessor: widget.imageProcessor,
           audioRecorderService: widget.audioRecorderService,
           conversationTracker: widget.conversationTracker,

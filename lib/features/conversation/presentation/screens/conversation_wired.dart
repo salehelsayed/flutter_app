@@ -1977,6 +1977,9 @@ class _ConversationWiredState extends State<ConversationWired>
             imageQualityPreference ?? widget.qualityPreference,
         videoQualityPreference:
             videoQualityPreference ?? widget.videoQualityPreference,
+        // Explicit overflow compression must override the saved Original choice.
+        useStoredPreferences:
+            imageQualityPreference == null && videoQualityPreference == null,
         onVideoProgress: (progress) {
           if (mounted) {
             _updateComposerState(processingProgress: progress / 100.0);
@@ -2434,6 +2437,15 @@ class _ConversationWiredState extends State<ConversationWired>
             await _autoDownloadAllowed(resolved)) {
           MediaAttachment? downloaded;
           try {
+            await _refreshMessageWithMediaSnapshot(
+              message.id,
+              _replaceAttachmentById(
+                storedAttachments,
+                resolved.copyWith(
+                  downloadStatus: kMediaDownloadStatusDownloading,
+                ),
+              ),
+            );
             downloaded = await widget.downloadMediaFn(
               bridge: bridge,
               mediaAttachmentRepo: mediaAttachmentRepo,
@@ -2499,6 +2511,7 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _shouldRecoverVisibleAttachment(MediaAttachment attachment) {
     return attachment.downloadStatus == kMediaDownloadStatusPending ||
         attachment.downloadStatus == kMediaDownloadStatusDownloading ||
+        GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment) ||
         // A transient `failed` row is recoverable only while under the bounded
         // retry budget; the terminal `download_failed` is never re-recovered
         // (INV-DL-1) — mirrors the group recovery path.
@@ -2864,6 +2877,13 @@ class _ConversationWiredState extends State<ConversationWired>
       }
 
       final resolved = await _resolveAttachmentForDisplay(attachment);
+      await _refreshMessageWithMediaSnapshot(
+        messageId,
+        _replaceAttachmentById(
+          attachments,
+          resolved.copyWith(downloadStatus: kMediaDownloadStatusDownloading),
+        ),
+      );
       final downloaded = await widget.downloadMediaFn(
         bridge: bridge,
         mediaAttachmentRepo: mediaAttachmentRepo,
@@ -5028,6 +5048,13 @@ class _ConversationWiredState extends State<ConversationWired>
                 result == SendChatMessageResult.dialFailed ||
                 result == SendChatMessageResult.sendFailed) &&
             message != null;
+        final automaticallyQueued =
+            keepRetriable ||
+            (result == SendChatMessageResult.nodeNotRunning &&
+                message != null &&
+                message.media.isEmpty &&
+                message.privateMediaMode == PrivateMediaMode.ordinary &&
+                (message.wireEnvelope?.trim().isNotEmpty ?? false));
 
         if (message != null) {
           final persistedMedia =
@@ -5082,7 +5109,8 @@ class _ConversationWiredState extends State<ConversationWired>
           }
         }
 
-        if (result != SendChatMessageResult.success) {
+        // Existing recovery owns retained sends; keep that retry silent.
+        if (result != SendChatMessageResult.success && !automaticallyQueued) {
           // 185: name the REAL cause. When WE are offline, a connectivity-class
           // failure must not blame the contact — say so honestly (and truthfully
           // promise the queued send). nodeNotRunning is inherently sender-side,
@@ -5841,6 +5869,12 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_PICK_CAMERA_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
     }
   }
 

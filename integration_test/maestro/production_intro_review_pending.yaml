@@ -1,0 +1,20 @@
+appId: ${APP_ID}
+name: production_intro_review_pending
+---
+# The existing cold-reopen flow normalizes to all chats. The semantic review
+# dock is mounted only in Inner Circle, so choose its actual owning surface.
+- runFlow:
+    when:
+      visible:
+        id: orbit.view.inner_circle
+    commands:
+      - tapOn:
+          id: orbit.view.inner_circle
+- extendedWaitUntil:
+    visible: '^Open introductions review, [1-9][0-9]* new$'
+    timeout: 30000
+- tapOn: '^Open introductions review, [1-9][0-9]* new$'
+- assertVisible: '(?s-i)^.*${OTHER_PATTERN}.*$'
+- assertVisible: '(?s-i)^.*${INTRODUCER_PATTERN}.*$'
+- assertVisible: '^Accept$'
+- assertVisible: '^Pass$'

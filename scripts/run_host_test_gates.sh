@@ -88,6 +88,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/debug/android_production_audio_call_e2e_test.dart"
   "test/integration/android_production_audio_call_campaign_test.dart"
   "test/integration/android_production_audio_call_evidence_test.dart"
+  "test/integration/production_call_in_app_identity_test.dart"
   "test/integration/production_audio_call_local_fixture_test.dart"
   # VC2-05: iOS CallKit journal adoption/audio activation plus typed PushKit
   # token publication, rotation and refresh-epoch-scoped invalidation.
@@ -152,6 +153,12 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/download_media_use_case_test.dart"
   "test/features/conversation/application/upload_media_use_case_test.dart"
   "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+  "test/features/conversation/integration/camera_caption_relay_delivery_test.dart"
+  "test/core/utils/transient_transport_error_test.dart"
+  "test/core/media/media_download_recovery_contract_test.dart"
+  "test/core/media/media_download_transport_budget_test.dart"
+  "test/features/conversation/application/media_transport_error_classification_test.dart"
+  "test/shared/widgets/media/received_media_status_wording_test.dart"
   "test/core/bridge/go_bridge_client_test.dart"
   "test/core/bridge/bridge_blob_decrypt_test.dart"
   "test/core/bridge/p2p_bridge_client_test.dart"

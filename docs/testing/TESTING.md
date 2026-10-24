@@ -47,6 +47,14 @@ configuration and signed artifact, not just the Dart revision or version label.
   `scripts/run_flutter_full_regression.sh` retain their existing gate/full-runner
   responsibilities. The wrapper adds deterministic change/release selection and
   evidence checks; it does not replace Flutter, Go, native, or JavaScript runners.
+  App composition paths under `test/app/` are included in host-all discovery and
+  must be classified too. A classification-only edit still requires refreshing
+  the two exact legacy owner source pins after reviewing its unchanged commands.
+- The Android bridge lease census distinguishes constructor declarations from
+  calls using the existing analyzer dependency. It excludes only the declared
+  name: same-file subclass calls and calls inside constructor bodies still need
+  a lease. The test-only media recovery registry has an exact computed
+  `test/integration` declaration in the runtime inventory, with no manual root.
 - Wrapper reports default to ignored `.codex-test-logs/checks-*/` directories;
   use that ignored directory for raw runs; arbitrary `artifacts/` paths are not automatically ignored. Legacy
   full runs retain `.full_regression_logs/`. Keep tokens, keys, personal data, and private
@@ -314,8 +322,18 @@ All 40 intro-runner preservation tests, 240 workflow tests and five provider
 contracts passed. Original evidence: `friends-folded-readiness-failure-001/`.
 Full owning checks remain pending.
 
-`QRScannerScreen` reports a code and pops its route without awaiting the
-handler. `QRScannerWired` must therefore not use that route's context after
+Pass introduction responses use the existing guarded response/outbox transaction,
+matching Accept: both notification carriers must be durable before transport
+starts. `pass_introduction_outbox_failure_test.dart` injects an unavailable
+outbox and requires both party/overall state to remain pending, with no outbound
+rows or network calls. The original Pass path fails this assertion while the
+Accept control passes. Evidence is retained under
+`.codex-test-logs/introduction-pass-atomic-20261023/`; these host repository-fault
+assertions do not establish device or native SQLite crash behavior.
+
+`QRScannerScreen` reports a code without awaiting the handler, then pops its own
+route only if that route is still current. `QRScannerWired` must therefore not
+use that route's context after
 asynchronous work. It used to, and parsing awaits `payload.verify`, so the
 handler stopped at `context.mounted` whenever the route was gone first. That
 dropped the contact, the request and the "Added to your circle!" hand-off with
@@ -328,6 +346,27 @@ transition. The handler now uses the navigator's context.
 closed, and it fails without the fix. After a successful scan, two request sends
 are expected: the scanner's own, then the key-exchange retry coordinator's about
 one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
+
+On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
+dispatched correctly but returned to that screen before confirmation. Both the
+first-time and Orbit handlers synchronously replace the scanner with the
+migration journey; the scanner's unconditional pop then removed that new
+journey. Camera detection and debug paste Submit now share completion logic
+that captures the scanner route before calling the handler and only dismisses
+it while it remains current. The existing caller tests previously invoked
+`onScanned` directly, bypassing the faulty dismissal. Their paste UI and
+`MobileScanner.onDetect` cases now reproduce all four failures without the fix
+and retain the migration journey and original payload with the fix. The
+first-time cases also assert the confirmation screen after the actual route
+transition completes. All 28 caller tests and 18 unchanged scanner tests passed,
+including verification completing after the scanner route closes; analysis of
+the three changed Dart files reported no issues. Camera callbacks are injected
+in host tests; this does not establish optical scanning or native camera
+behavior. Initial failures and scoped wrapper results are retained in
+`.codex-test-logs/migration-qr-20261023/` in the
+`flutter_app_codex_migration_qr_20261023` worktree; the device reproduction is
+recorded in the main worktree's
+`.codex-test-logs/safe-transfer-b-20261023T1310Z/SUMMARY.md`.
 
 A USB Android 8.1 phone (Honor JSN-L22, API 27, SwiftKey) passed all five
 Group invites and Media production journeys on 2026-10-17 (`invites`,
@@ -1334,6 +1373,28 @@ unsupported. Wrong values, other owners, comment decoys, unused constants and
 quoted tokens are rejected. All 21 inventory cases and the repository check
 passed in `.codex-test-logs/S2-baseline-fixes-20261018/F3/`.
 
+The SE-41 hard-update gate's close action remembers the dismissed `minBuild`
+only in gate state: resume, reason changes and lower/equal requirements keep it
+hidden, while a higher requirement or fresh gate shows it again. Dismissal must
+release Back, focus and semantics blocking without changing the controller's
+decision or writing the soft-banner dismissal. The gate sits above the navigator
+in `MaterialApp.builder`, so its close tooltip needs a local `Overlay.wrap`, as
+the call surface does; keep an explicit localized icon semantics label too.
+Reserve the close row without consuming the scroll body's previous vertical
+padding, so German store-failure copy keeps its retry button reachable. The
+existing gate and text-scale widget tests cover these boundaries; focused raw
+failure and passing evidence is under `.codex-test-logs/update-x/`. Store-launch
+recovery distinguishes refusal/throw from a successful handoff followed by return
+without installing: the latter must retain the required gate without a false
+launch error. A false-to-true retry clears stale localized failure feedback while
+the hard decision remains; the session X remains usable afterward. The unchanged
+EN/DE/AR cases plus the added retry case passed in the 31-case gate widget file,
+with zero skips/failures and a clean focused analyzer on 2026-10-23. Evidence in
+the Astra worktree is `.codex-test-logs/astra-update-relay-sims/item1/009-gate-summary.json`
+and `010-analyze.log`; earlier interrupted/held attempts remain preserved. This
+is injected host evidence, not an actual external-store, install, signed-candidate
+or native-notification result.
+
 The SE-41 production notification parser recognizes package-grouped Android
 PendingIntent headers (`#N: PendingIntentRecord{...}`) as well as legacy
 bare/asterisk headers. It still requires exactly one record for the active
@@ -2200,6 +2261,167 @@ configuration hash on all three roles and exact package restoration on each
 builds, and four scenario action receipts. This closes ML-001 on that candidate;
 the other 108 cases and final stable-candidate closure remain incomplete.
 
+The Catalog P0 host contracts additionally cover three registered, test-only
+journeys: `production.direct_catalog.ordered_offline_replay` (100 online and
+ten recipient-offline messages with exact logical identities and ordered
+restart replay), `production.group_catalog.ordered_text_recovery` (100 creator
+texts, both other authors, and an accepted text recovered after owned process
+deaths), and `production.direct_catalog.inflight_sender_cut`. The last journey
+uses the existing disposable Redis relay fixture with a one-shot committed
+store acknowledgement gate. Its host contracts preserve protected custody
+through release and cancellation; the actual cut also requires a sending UI
+receipt and verified sender death below 2.5 seconds on the same device clock,
+before the production three-second interactive store budget. A late cut is a
+harness failure and cannot prove an application defect. Persisted `failed`
+ordinary text with durable custody can render as pending automatic recovery;
+the runner must not infer a visible manual Retry action from that row alone.
+Thirty-five causal oracle/registry tests pass in
+`.codex-test-logs/astra-update-relay-sims/item3/006-units-summary.json`; the
+first attempt's two host-fixture type errors remain in `005-units.log`.
+Three focused integration-tagged Go host contracts pass in the same evidence
+directory's `007-go-checkpoint-summary.json`. These are host results, not device
+coverage. GC-005 still needs its separate membership process-death companion,
+and call content audio still needs the unapproved test-build audio hook.
+Changes to the nested direct-media target owner also require reviewed source
+hash updates in `tool/testing/legacy_target_contracts.json`; its four route
+commands, roles and environments remain fixed. The bounded host checkpoint
+client has one exact composition-guard import allowance, with the original app
+graph bans retained. The first batch has 1,240 passing production-journey host
+contracts in `017-production-contracts-summary.json`; the first import-guard failure remains
+in `014-affected-sims/` under the same private evidence directory.
+
+Two additional Catalog P0 journeys use the same routing observer:
+`production.direct_catalog.actions_convergence` binds real quote/edit/delete UI
+to three stable logical rows, a retained deletion tombstone, and both owned
+process restarts. Reaction chips are interactive child semantics, so presence
+and removal assertions select the child under the actual `message_<id>` row;
+a concatenated text/emoji label cannot establish the reaction target. Removal
+must remain absent after restart on both peers. This observer has no raw quote
+or reaction-table fields, so those assertions stay in the rendered UI scope.
+`production.direct_catalog.sender_offline_recovery` requires an actual stopped
+production node, authoritative failed ordinary-text custody, visible automatic
+pending semantics, native start and supported warm recovery, then same-ID
+delivery/current transport labels preserved across both restarts. It does not
+prove OS airplane mode or an envelope-less terminal manual Retry flow; DC-007
+still needs that separate leg. Twenty-eight exact oracle/registry host tests
+pass in the private evidence directory's `030-batch2-units-summary.json`, and
+all seven changed Dart files analyze clean in `029-batch2-analyze.log` after
+retaining and fixing four initial lint infos. These host facts confer no device
+coverage. The current SIMS host lane passes 389 cases in
+`033-batch2-sims-summary.json`; workflow 306, Maestro 9, production journey 1240
+and runtime roots 21 scoped lanes pass in `034-batch2-affected-summary.json`.
+The wider diagnostic-wrapper verdict remains NOT RUN; first resource-held
+attempts and the corrected subset invocation are retained. GC-001 needs all
+six registered create/invite/online-add/offline-add companions, with the actual
+two-, three- or four-role topology kept explicit.
+
+The DC-007 disposable direct-media fixture now offers explicit
+`upload_storage_block` and `upload_storage_restore` faults against its owned
+filesystem storage root. The block rejects active upload reservations and
+request-level attachment/lane selectors; restore preserves an unexpected
+replacement and the original saved directory. Three focused Go contracts in
+`go-relay-server/direct_media_blob_upload_storage_faults_test.go` pass against
+real framed production upload/download handlers: storage rejection followed by
+same-upload retry, HTTP scope/busy rejection, and replacement preservation.
+The previously stored control blob and retried blob remain byte-identical.
+Evidence is the private directory's `095-dc007-go-summary.json` and retained
+`094-dc007-go-upload-storage.log`; the single native lease lasted 48.463 seconds,
+with unchanged dependency manifests and zero swap growth. This is host fixture
+proof only. App SQLite/custody projection, visible terminal manual Retry and
+same-ID app convergence remain unverified; the broader selected Go and affected
+suites were not executed. These controls do not close DC-007 or add device
+coverage.
+
+The introduction Catalog P0 journeys reuse the production group-profile
+three-role runtime with introducer-only contact edges; the default full contact
+mesh would invalidate the pre-consent assertion. The mutual case requires real
+picker/consent UI, a private participant chat, original introduction/contact
+provenance and stable chat identity after owned restarts. The existing intro
+probe performs health checks and drains inboxes, so pending/mutual UI witnesses
+must precede that probe; its snapshot is not unassisted-delivery timing proof.
+The offline case also preserves actual failed invitation/acceptance carriers
+through owned process cuts. Accepted relay custody deletes outbound rows, so
+an absent recipient alone does not prove local queued custody. Its existing
+native stop controls use nested 240-second and 120-second windows, fresh
+owned-process action fences and actual acceptance while both response nodes
+are stopped. This proves only the acceptance-response leg when executed;
+IN-003 pass/late-acceptance and IN-009 pass-response proof remain separate.
+Twenty-four current introduction oracle tests pass in the private evidence
+directory's `057-batch3-intro-units-summary.json`. Fourteen additive call-identity
+tests, eight registry checks and 40 retained native-evidence tests pass in
+`044-batch3-units-summary.json` on their unchanged source. Five revised intro
+Dart files analyze clean in `056-batch3-intro-analyze.log`; the other 11 files
+retain `043-batch3-analyze.log`. The exact file-byte join is recorded in
+`057-joined-source-evidence.json`: 86 cases across five disjoint test files and
+16 analyzed current Dart files, with unchanged-file retention scoped to those
+bytes.
+Initial analyzer error/infos remain in `039-batch3-analyze.log` and the repaired
+additional lint info remains in `054-batch3-intro-analyze.log`. The census contract passes in
+`058-batch3-census-contract.log` on the corrected source. Source fit found that the actual
+review fold excludes mutual-accepted rows (`load_introductions_use_case.dart`),
+so its shipped Message label is unavailable in that review. The corrected
+test-only route requires the real empty review, then the naturally created
+contact bound by identity/name before opening the composer. The
+pending-review flow switches from the existing cold-reopen
+all-chats view to Inner Circle, where the actual semantic review dock is
+mounted. The dock itself selects the all-chats Intros filter in place; the
+ready-contact flow selects the actual All filter before its exact contact.
+The offline case
+first confirms Bob's acceptance at Charlie through the existing active probe
+before stopping both nodes; this is an assisted fixture precondition, not
+unassisted first-response timing. The corrected intro sources and two added
+causal tests pass their fresh analysis/execution above. Fresh scoped attempt
+`062-batch3-affected-host/results.json` records completed passes for workflow
+306, Maestro flow contracts 9, production journey contracts 1254, audio
+harness contracts 199, runtime roots 21 and SIMS contracts 413, with no failed
+or skipped cases. Counts overlap across lanes. Metadata-only runbook audit
+`063-batch3-runbook-metadata-audit.json` verifies 15 exact exclusion files and
+the introduction dependency closures without executing a device scenario.
+The broader required selection remains NOT RUN. None of these host results
+is device coverage.
+
+The GC-009 received-media local-deletion leg reuses group-DE002's three-role
+runtime and existing gallery JPEG. One author's target image, text marker and
+preserved image establish actual selector order. Only the exact incoming Photo
+tile exposes the media-target Delete-for-me action; caption long-press is not
+that action. The outgoing author's viewer has no incoming-media action menu,
+so the common Back/caption and absent composer establish its route. Read-only
+media-tile opening may retry while download completes, including after relaunch;
+deletion actions, exact-row comparisons, process deaths and nonce checks never
+retry. Complete confirmation title/body and Cancel
+remain required for both separate and Android-merged dialog semantics. Before,
+after and fresh-owned-restart snapshots bind original message/group identities,
+attachment counts and unchanged membership. The target disappears only for the
+deleting receiver, with unrelated text and preserved image routes intact for
+all members. The 12 causal oracle and eight registry cases pass in private item3
+`080-batch4-gc009-units-summary.json`, and all four changed Dart files analyze
+clean in 079. Census 084 passes. Fresh `085c-batch4-affected-host/results.json`
+records completed passes for workflow 306, Maestro 9, production journey 1254, runtime roots 21 and SIMS 425.
+Counts overlap; no lane has failed/skipped cases. Metadata-only owner audit
+`086-batch4-runbook-metadata-audit.json` verifies 19 exclusions and all four GC-009
+dependency closures/three-role topologies without any scenario or device command.
+The initial 074 analyzer, 077 negative-fixture type errors and 085 resource
+cancellation plus 085b coordinator yield remain retained; source repairs pass fresh checks. Broader
+required checks remain NOT RUN. This is no decoded-frame, attachment-key,
+physical-file-erasure or device claim. Existing quote/reaction companions
+remain required for GC-009.
+
+A separate IN-009 Pass-response blocker is confirmed at source
+`e1466134e4b25f8eade7e64d7f315c309692c933`: the real Pass use-case updates
+party and overall state before its first outbound repository save. Injecting
+a failure before that save leaves both statuses passed with no outbound rows
+or transport calls; the real Accept control stays pending under the same
+fault. The exact two-test host probe records one pass and one failure in
+`070-pass-probe-units.log`, with clean analysis in
+`069-pass-probe-analyze.log` and source hashes/scope in
+`071-pass-probe-confirmed.json` under the private item3 evidence directory.
+The reproducer is retained in its ignored `batch-four/test/features/introduction/application/`
+folder; its temporary executable copy was removed. This establishes the
+use-case/repository-fault behavior with existing in-memory fakes; native
+SQLite crash or device behavior remains unverified. Stop the IN-009 Pass
+row for an application-owner repair; the acceptance-only journey does not
+close it. No application repair was made in this test-only task.
+
 The additive PL-009 reaction module preserves the exact case identity through
 its shared create/accept/message observer and the unchanged original oracle.
 It requires a real successful send result, independent receiver stream events on
@@ -2370,20 +2592,45 @@ Focused causal failures and verified host results are retained under
 `.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
 native cryptography proofs.
 
+The shared contact-request roundtrip also reverses the initiating logical peer,
+requires the receiver to remain unlinked before explicit acceptance, and uses
+the reciprocal key for exact Unicode/multiline text in both directions. Its QR
+scan is simulated and its repositories/network/native crypto are faked; this
+does not certify a physical iPhone/Android fresh add. Preserve the existing
+physical pairing; the [Group C device runbook](astra-group-c-device-runbook.md)
+defines a separate disposable available-simulator leg after UI-Update lands.
+
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
-Their case-scoped `KNOWN GAP` groups retain three separate failing obligations:
-releasing presentation suppression must retry an already-subscribed shell;
-one broadcast must open one dialog across both retained screens; and distinct
-burst requests must queue behind the current dialog. Storage preservation,
-consent/reciprocal convergence, replay deduplication and repair overflow/retry
-remain enabled independently. The scanner tests similarly retain separate
-malformed/future timestamp rejection gaps while expired and fresh controls run.
-`testWidgets.skip` accepts only a boolean; place a descriptive skip reason on a
-one-case `group`, and prove its intended failure with `--run-skipped`.
+The three presentation obligations are now active: observable suppression release
+replays durable pending rows, both retained screens share one presentation queue,
+and distinct burst requests wait for their own explicit answer. The queue starts
+eagerly; releasing it on the last stream-subscriber cancellation is necessary
+because removing a Navigator does not complete its old dialog Future. A generation
+check keeps that obsolete callback from releasing a new mount's presentation.
+All nine shell cases pass, including remount, blocked-peer filtering, duplicate
+input/restart, reciprocal acceptance and repair overflow/retry. The scanner's
+expired, unreadable and future timestamp cases plus its fresh control all pass;
+malformed/future timestamps are rejected before contact or outbound effects.
+The original assertions and per-case 45-second deadlines remain unchanged.
+
+Consent ownership must include the decision Future after the dialog route pops.
+Otherwise an observable gate release can read a still-pending row and present it
+again before Accept/Decline persists. The root and shell presenters await the
+captured decision. The notification materializer's delayed-write test causally
+proves persistence precedes replay; its companion source guard checks the root
+callback wiring. This host fixture uses an in-memory delayed repository/presenter,
+so it is not an OS notification or complete application-root journey.
 Evidence: `test/features/contact_request/presentation/screens/pending_request_shell_test.dart`,
-`test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart` and
-the green and explicit run-skipped logs under `.codex-test-logs/astra-it4/`.
+`test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart`,
+`test/features/contact_request/application/contact_request_notification_materializer_test.dart`
+and `.codex-test-logs/groupB-fixes/` (`018-shell-persistence.log`,
+`006-qr-admission.log`, `016-consent-race-red.log`, `017-consent-race.log`).
+Keep the first resource-aborted run and intermediate causal failures there;
+`001-shared-dialogs` exited 75 after the swap-out limit and is not a pass.
+The final focused set is 14 files / 200 passes / zero skips. Native transport,
+real OS delivery and the planned VC-013 upgrade capability remain outside this
+host proof; broader affected lanes and full host-all remain for the coordinator.
 
 Direct notification lifecycle widgets use the real SQL read projector and
 `FlutterNotificationService`, with native notification publication and registry
@@ -2409,6 +2656,11 @@ two production Dart call graphs and SQL histories through native/WebRTC/transpor
 fakes (`.codex-test-logs/astra-it4/VC-012-final.log`, four passing cases).
 Actual bidirectional RTP, microphone privacy and acoustic behavior remain device
 obligations; simulated native snapshots cannot certify them.
+The same paired call fixture reverses caller/answerer roles through the real
+envelope/router/negotiation adapters, then ends from the answering side. Both
+native-bound owners close once and both SQLite histories retain the correct
+local/remote terminal reason. This is shared protocol/ownership evidence for
+VC-015, with native WebRTC, transport, authority, crypto and audio still faked.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
@@ -3434,6 +3686,16 @@ and `proposed-notification-readiness-probe-001.log`. Preserve the initial five
 timeout errors in `pilot-device-002/workflow-1.raw.log`. The protected legacy
 registry must bind the approved harness bytes; its former digest correctly
 blocked execution in `pilot-device-003/workflow-1.raw.log`.
+  Shared fixture-helper changes likewise invalidate each protected route that
+  pins that helper. The bounded direct-media fixture timeout update required
+  four reviewed invite-reliability source hashes to be refreshed. Exact-selection,
+  protected-runner subprocess and changed-owner refusal controls then passed;
+  the first rejection and focused result remain under
+  `.codex-test-logs/integrate-main-20261023/`.
+  Go fixture utilities used by ordinary tests must also compile without the
+  `integration` build tag. The relay fault controls initially referenced a probe
+  validator hidden behind that tag; moving its byte-identical predicate into the
+  existing shared helper restores both default and tagged fixture selections.
 The notification matrix's first attempt passed three warm cases, then failed
 to locate the group-image body while Springboard logged XPC interruptions.
 Later actual MCP inspection found the exact delivered card. Its focused native
@@ -3743,12 +4005,12 @@ Representative assertions were inspected; the entire inventory was not audited.
 | Boundary | Verified assertion scope | Remaining device/artifact proof |
 | --- | --- | --- |
 | Bootstrap/returning identity | Phase order, error propagation, identity routing and awaited direct/group recovery | Actual launch, secure storage, preserved contacts/groups/history |
-| Contact and direct chat | Mutual contact rows without reciprocal loop; received content, status, order, duplicate counts in both directions | Real QR/camera, real crypto/transport path, disk persistence after restart |
-| Offline/group | Fake inbox drain/deduplication; selected three-member fanout, truthful sent state, route-away persistence and fallback recovery | Physical disconnection, live group offline catch-up and path evidence |
-| Media | Transformed ciphertext differs; receiver file bytes equal original; separate widget test opens typed received-media viewer | Received transfer and native decode/open in the same real peer journey |
+| Contact and direct chat | Mutual contact rows without reciprocal loop; received content/status; exact 100-message transcript across both current-SQL/runtime restarts and duplicate replay | Real QR/camera, native crypto/transport and actual OS process-kill recovery |
+| Offline/group | Fake inbox drain/deduplication; selected fanout/truthful sent state; accepted group text and membership retained across both current-SQL/runtime restarts | Physical process death, live group offline catch-up, revoked-key isolation and actual path evidence |
+| Media | Transformed ciphertext differs; full receiver bytes/hash/frame/caption after persisted interruption and SQL/runtime reopen; current SQL libraries now join real files, typed viewer identity, guarded batch egress/retry and private open admission | Actual native transfer kills, camera/compression and mobile decode/open in the same real peer journey |
 | Notifications | Foreground/background policy and warm/cold payload route callbacks | OS tray/effect, muted conversation, real tap navigation and platform background limits |
-| Migration | Real host SQLite FFI schema/data preservation and post-migration writes | Actual previous-published signed build upgraded in place with native secure storage |
-| Bridge/call | Dart method/event channel contracts and signaling/mailbox convergence | Native binding, actual bidirectional audible audio and end-call cleanup |
+| Migration | Real host SQLite FFI snapshot/data/files and post-migration writes; imported JPEG opens through host codec with pixel/caption assertions | Native SQLCipher/keychain, previous-published signed upgrade and mobile video/voice/PDF/viewer proof |
+| Bridge/call | Dart method/event channel contracts and signaling/mailbox convergence; terminal SQL reopen joins CallsPage/current redial identity and contact-deletion refusal | Native binding, actual bidirectional audible audio and end-call cleanup |
 
 Exact selectors and paths are in the manifest. Useful assertion anchors include
 `two_user_message_exchange_test.dart` (bidirectional exchange),
@@ -3756,6 +4018,57 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `conversation_received_media_actions_test.dart` (typed viewer opening), and
 `full_migration_chain_test.dart` (seeded data preservation). The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
+
+The [Lever 1 host joins](astra-lever1-host-quickwins.md) connect system-picker
+cancel/result adaptation to draft/removal behavior, flag-off received PDF to
+the actual egress service, and current SQL library/history/private authority to
+their presentation/action consumers. Actual over-limit image/PDF file lengths
+replace invented budget metadata in the new controls. PDF fixtures used for
+the open join are complete documents; the app's signature check is not a full
+PDF parser. Native picker/protection/export/call-start ports remain replaced
+and are named per case. The focused evidence is
+`.codex-test-logs/astra-levers12/` (final runs 009–015); these tests do not prove
+native OS process death, audible calls, mobile viewer rendering or a signed
+candidate. Existing current-SQL expiry/hide/late-write download races and sparse
+forward retry are complementary preservation, not duplicate new test counts.
+
+Real-file image widget fixtures must precache with a bounded timeout before a
+grid/viewer first resolves FileImage under fake async. Precache after the grid
+can await its already-pending fake-clock resolution indefinitely. Group fixtures
+also need canonical owner/item paths and complete persisted encryption metadata
+to cross the actual display gate. Do not disable that gate or replace all frame
+waits with an unbounded `pumpAndSettle`; unrelated pending thumbnails can keep
+animating after a route closes. Wait for the exact route/item state instead.
+
+The [Lever 2 native ledger](astra-lever2-media-native-runbook.md) adds a test-only
+native-client observer of the actual `blob:encrypt` input, after processing,
+with full plaintext/ciphertext hashes and pinned cross-process receipts. Its
+receiver gate reloads exact owner/parent/item, current authority and complete
+decrypted file; the ciphertext descriptor hash is not a plaintext digest.
+The 23 host adversarial cases in `media_content_oracle_test.dart` use a replaced
+native crypto port and prove observer/receipt/hash/refusal logic only. Native
+open requires a mobile-produced source, an actual mobile executor and a named
+reviewed frame/player/page assertion; byte PASS alone leaves native NOT RUN.
+The helper is not installed automatically in existing apps/campaigns and does
+not add a persisted production plaintext digest or certify arbitrary delegates.
+
+The exact numbered transcript is in
+`group_a_text_journeys_test.dart`: both database handles and runtime graphs are
+rebuilt every 25 messages, with exact IDs/text/order/direction checked before and
+after replay. `group_text_custody_restart_test.dart` cuts after the real group
+send use case accepts a fake relay's custody, recreates both current-SQL owners,
+then verifies/decrypts/replays the retained envelope into one received identity.
+Its removal/re-add checks durable roster/roles; clean close/reopen and fake
+native crypto/relay/keychain do not establish an Android kill or complete revoked
+transport access. Scoped evidence is in `.codex-test-logs/astra-groupCD/`
+(`009-D-numbered-restarts`, `016-D-group-custody`).
+
+`qr_camera_permission_journey_test.dart` replaces only MobileScanner's native
+platform interface: the real scanner/controller route admits no code after
+cancel/denial, then admits one fresh code after modeled grant/reopen despite
+duplicate events. It does not observe real OS Settings, authenticate the QR
+payload or count full-root contact/request mutations. The remaining Android
+steps are in the [Group D runbook](astra-group-d-device-runbook.md).
 
 Initial static discovery found 1,959 candidate test files across Flutter
 host/device, Go modules, Python unittest, shell contracts, Node JavaScript, JVM
@@ -3829,6 +4142,63 @@ do not count `test(...)` strings as executions. Runner listings took about
   relay addresses retain permanent peerstore custody; the Go address-expiry test
   covers expiry of transient connected-address TTLs. This does not establish
   that every internal Go relay task is suspended.
+- The production image processor reads the saved photo/video quality when each
+  new file is prepared. Route-constructor quality values are fallbacks for
+  processors without storage loaders. A failed store read emits one content-free
+  diagnostic and retains that fallback so preparation can complete. Cached Orbit
+  values and default-only
+  notification, post-contact, first-time and linked entry points cannot replace
+  a saved Original selection. Explicit composer overflow compression bypasses
+  the saved choice; avatars retain their separate fixed-quality path.
+  `quality_preference_routes_test.dart` exercises real MyApp notification direct
+  and group route construction with the shared processor; the Orbit widget
+  regression changes the actual Settings sheet in both directions without
+  remounting Orbit. Encoder calls are host substitutes, not native/device proof.
+  Processor, pending-media and group overflow tests preserve forced Compressed
+  behavior. Evidence is in ignored `build/kayan-safe/quality-pref-live/`.
+- Original now strips supported 8-bit baseline/progressive JPEG containers
+  without re-encoding the primary image: frame/tables/scan bytes stay unchanged.
+  Original APPn/COM metadata and bytes after the primary EOI are removed. The
+  exceptions are unchanged `ICC_PROFILE` APP2 colour segments and a newly built
+  EXIF IFD containing only display Orientation when it is not 1. No source GPS,
+  MakerNote, XMP/IPTC or thumbnail IFD is copied. ICC profiles are deliberately
+  retained as colour data; there is no ICC parser/rebuilder (owner decision
+  `m-e4771e73`). Unsupported/malformed JPEGs, Adobe colour-transform variants
+  and other existing image formats keep the native quality-100, source-resolution,
+  `keepExif: false` fallback. This supersedes the earlier native-only Original
+  implementation retained in `build/kayan-safe/original-full-res/`.
+  `image_processor_original_jpeg_test.dart` checks exact coded-byte and ICC
+  retention, metadata absence, all eight orientations through the real Flutter
+  codec, bounded TIFF/marker failures and a structural progressive scan fixture.
+  The progressive fixture tests marker traversal, not raster decoding. Pending
+  composer budget assertions use the stripped file length.
+- Photo preparation refuses a null native result for either quality instead of
+  returning raw input. The shared batch coordinator also skips failed photo
+  processing rather than reviving raw input in its generic catch; null and
+  throwing native ports are covered for both qualities. Its existing processing
+  failure summary is reused. Forwarding tests retain the original source and
+  assert exact sanitized JPEG bytes in fresh group copies and upload budgets.
+  Native-quality route tests use PNG and `tester.runAsync` for the processor's
+  real file probe; Original JPEG intentionally bypasses the native encoder.
+  Group overflow fixtures must also drain that real I/O with the existing
+  `pumpUntilAsyncWorkSettles` helper while retaining size and quality assertions.
+  A successful forwarding fixture needs a decodable JPEG and a successful host
+  encoder port; a truncated signature and null encoder exercise failure instead.
+  Compressed keeps its existing 1920×1080/quality-85 policy.
+  `.heif` now follows `.heic`, including the Posts picker MIME classification;
+  their native routing/metadata flags are covered per quality with a host port
+  substitute and the real Posts picker callback. A maximum 32-byte signature
+  read recognizes existing JPEG/PNG/WebP/HEIC-HEIF files without a useful suffix.
+  Uppercase HEIC and WebP were already supported. No HEICS, AVIF or DNG codec or
+  MIME admission is added. GIF behaviour remains unchanged; its application/XMP
+  and comment metadata is a separate low-priority follow-up, explicitly outside
+  this packet (`m-b1fa2076`).
+  `image_processor_test.dart` preserves native fallback/Compressed dimensions
+  and exercises the real bounded Flutter thumbnail codec (320 px/49,152 bytes).
+  Bounded returned rasters do not certify native transient peak memory. Native
+  HEIC decode, real camera/picker metadata and Android's existing lower-resolution
+  OOM retries still need phone evidence. Host evidence and patch are under
+  `build/kayan-safe/original-lossless/` in the delivering checkout.
 - Original-quality images and videos still undergo metadata stripping, which
   can change their byte length. Composer budgets also become authored attachment
   sizes and must use the processed file's length. Using the raw input length
@@ -3845,6 +4215,15 @@ do not count `test(...)` strings as executions. Runner listings took about
   installed iOS artifact. Red and green evidence is retained in
   `.codex-test-logs/image-original-debug-20261014/` and
   `.codex-test-logs/image-original-regression-confirm-20261014/`.
+- Camera-picker exceptions must show the same bounded localized
+  `media_unavailable` notice as gallery failures, after checking the screen is
+  still mounted. Keep the draft and pending media intact; a refusal must not
+  upload or send. The conversation `MEDIA-010` widget cases check visible
+  camera-denial feedback and camera/photo denial, grant and retry with one
+  staged attachment and one send. Permission is faked at the picker boundary;
+  these cases do not prove OS Settings interaction. Astra's original failure
+  and focused reproduction/fix receipts are retained in
+  `.codex-test-logs/astra-d1/`.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired
@@ -3887,6 +4266,12 @@ do not count `test(...)` strings as executions. Runner listings took about
   lane but did not launch it because another campaign owned the shared
   native-build lease; the direct host result is retained in ignored
   `.codex-test-logs/r2-5-affected-media.log`.
+  Ordinary pending-video summaries and picker disclosure use the existing
+  selected media kind and say “Normal video”; photo wording stays unchanged.
+  The full private-media composer widget file passes 14 cases, including one
+  photo/video distinction case across English, German and Arabic. This is copy
+  and kind-wiring proof, not native video preparation or device certification.
+  Group composers do not enable this private-media chip.
 - Bridge/event and transport/lifecycle changes affect direct messages, groups,
   media, notification consumers, and calls. A bridge-only unit test cannot
   establish that these consumers still behave correctly.
@@ -4056,6 +4441,314 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **Settings, consent, group creation and update recovery boundaries:** recovery
+  phrase visibility is page-owned but its modal sheet must also rebuild when
+  inactive/hidden/paused conceals it. A visual blur does not exclude phrase
+  words from accessibility; exclude the hidden word grid from semantics and
+  retain only the reveal label. Android can snapshot before the Dart inactive
+  rebuild, so acquire the existing native privacy owner before mounting the
+  recovery sheet. Keep the owner until `ModalRoute.completed`: the route-pop
+  Future completes before dismissal removes the phrase pixels. The same owner
+  enables the existing iOS opaque cover on native application/scene inactivity,
+  before its event reaches Dart; the recovery sheet then conceals and closes
+  before releasing the cover. Check the coordinator's critical latch in the
+  first sheet build as well: inactivity can arrive after route push but before
+  the builder captures its route, and must not strand a live native cover.
+  Failed or late native grants must never mount a
+  phrase or leave a secure-window owner behind. Focused host tests use the real
+  protection coordinator with native grants/events faked; these do not certify
+  an actual Android/iOS app-switcher image. The Pixel 6 failure was reported by
+  the device owner in Kayan task m-e15dc1cc; native/device revalidation remains
+  with that owner. Source and first-failure/green evidence are retained under
+  `.codex-test-logs/groupAB-secure/`. Semantics visibility checks traverse the
+  current tree with `find.semantics.byLabel`; a widget-based semantics finder can
+  retain a detached render node after re-hiding. Dispose the semantics handle
+  within the test's `finally`, before Flutter's end-of-test verification.
+  Clipboard success must follow the awaited
+  platform write; platform failures keep copy retryable and show localized
+  feedback. Host success fixtures must explicitly provide a clipboard handler.
+  Avatar normalizer output must decode before replacing a canonical file;
+  nonempty bytes are insufficient, and decoders can throw on malformed input.
+  Success fixtures use real square images without dropping byte/path/version
+  assertions. Group-download and repost avatar fixtures also need encoded square
+  images, including GDR-001's recovery-blocked replacement: malformed output
+  otherwise fails before its intended metadata/commit boundary. Use real square
+  PNGs for both the source and processed output; a signature-only PNG/JPEG or
+  arbitrary nonempty bytes cannot stand in for a decodable image. Preserve the
+  exact processed-byte, 64-KiB omission, durable snapshot and rendered-author
+  assertions when aligning these fixtures; keep malformed-output controls.
+  Evidence: `.codex-test-logs/groupAB-align/` and the existing group storage,
+  pass-along and repost-avatar smoke tests. Simulated profile recipients need
+  separate documents directories
+  and actual failed-download request markers for replay, matching separate apps.
+  Contact-request display strips bidi controls without altering signed bytes
+  and bounds long names so both consent actions remain reachable. Group creation
+  rejects empty or invalid selected identities and blocked contacts before any
+  write or warming; valid legacy contacts missing ML-KEM retain the existing
+  explicit invite-degradation path. A thrown store launcher keeps the required
+  update overlay blocking and exposes localized retry feedback. Introduction
+  Close has a localized spoken name in EN/DE/AR. Focused host evidence is in
+  `.codex-test-logs/groupA-fixes/`; it does not certify native clipboard/store
+  behavior, device lifecycle screenshots, or screen-reader execution.
+
+- **Ordinary direct-media transport interruption:** a QUIC `stateless reset`
+  or `connection closed ... transport error` does not establish that the relay
+  lost the blob. Go can surface premature stream closure as `download incomplete:
+  wrote N/size, err=EOF` or `read response: EOF`; the shared upload/download
+  transport classifier recognizes these forms. Offline/reconnecting native
+  attempts can end in `all 1 relays failed, last error: connection failed`:
+  the multi-address fallback hides an earlier `all dials failed` / `dial backoff`
+  or `no good addresses`. These errors, `network is unreachable`, and startup's
+  `node not started` are transport failures too. The default relay list is two
+  addresses of one peer, and Go can issue two server requests within one Dart
+  download attempt. The legacy receiver formerly persisted `failed` after its
+  first transient failure, rendering unavailable without autonomous backoff.
+  Transport failures now preserve the nontransport counter and persist `pending`
+  during a three-attempt burst with 1s/2s delays, then `retry_waiting`. The next
+  tap, app resume, OS restore or relay-ready event can start another bounded burst.
+  Older `failed` rows retain their original bounded counter.
+
+  Ordinary legacy direct/group relay `not found` now starts an independent,
+  bounded absence window, superseding the first-response terminal rule by owner
+  decision `m-ff569538`. There are at most four Dart `media:download` invocations:
+  the initial request and three further requests after 15 s, 45 s and 120 s
+  (three minutes of backoff). Native address/dial fallback within one command
+  remains unchanged. Listener fixtures use the existing scheduling seam to
+  assert all four invocations, all three delays, and final `unavailable` without
+  real-time sleeps. First integration failures and bounded follow-up evidence
+  are retained in `.codex-test-logs/integrate-main-20261023/`.
+  Three persisted waiting stages track this window without
+  consuming or resetting the generic retry counter, adding a database column,
+  or creating another recovery service. Reopen re-evaluates the stored stage
+  and only its remaining requests; pending wire replay cannot reset it or revive
+  the final `unavailable` row. Existing direct/group queries, policy gates and
+  exact ordinary-group failure/claim qualifiers own recovery. The incumbent
+  in-flight map also covers the waits, so concurrent callers join one window.
+  Waiting image/video/voice/document UI uses its existing loading state without
+  Retry; the group Info sheet uses its existing Pending label and never shows
+  the stored stage name. Authorization denial and integrity/hash rejection
+  remain terminal.
+  Private/strict transfer owners retain their separate paths. A truly expired
+  relay blob ends at the same unavailable state after the bounded window.
+  Verified host coverage includes real SQLite interruption/reopen and replay,
+  direct/group return/exhaustion, coalescing, corruption, group SQL admission,
+  and EN/DE/AR loading/no-Retry cases. The wait seam substitutes scheduling,
+  while asserting the declared intervals; it does not measure three real minutes.
+  Evicted direct/group/announcement widget regressions retain zero transfers
+  on open/reopen, allow one explicit action to exhaust four absence requests,
+  assert all three delays, and prove final expiry stays quiet on another reopen.
+  Evidence is retained in `build/kayan-safe/media-notfound-retry/`.
+
+  Existing primary app-level recovery uses a paged direct-owner query across all
+  media types, even without a mounted chat, and reuses the normal policy and UI
+  stream. A restore edge during active work is coalesced into a follow-up pass
+  after that work finishes. OS-restored flush starts the existing group download
+  coordinator only when the existing group feature/readiness predicates allow
+  it, after releasing its short outgoing-flush guard, so a held incoming
+  transfer cannot swallow a fresh zero-age outgoing restore pass. Async group
+  errors remain isolated; the permanent overlap regression preserves two outgoing
+  passes before the held receive completes. Parent lifecycle, private-media policy,
+  user download preferences and typed ownership remain authoritative. The small recovery
+  registry has one contract test for eligible owned states and lifecycle wiring
+  and remains limited to direct/group receive rows. Profile and post storage use
+  their existing feature recovery owners described below.
+  Image/video, voice and document tiles show loading during automatic recovery,
+  a localized tap-to-retry prompt after transport backoff, confirmed unavailable
+  only for absence or lost local copies, and a distinct cannot-open message for
+  integrity/decode failures. EN/DE/AR widget cases assert the approved exact copy.
+  Listener publications include `pending` → `downloading` → completion; publication
+  counts are not transfer counts. Tests assert one native command per attachment
+  and hold a transfer to prove text appears before completion. The stall simulator
+  uses the existing persistent owner-enforcing fake: three watchdog timeouts retain
+  actual partial bytes, `retry_waiting`, and a zero nontransport counter.
+
+  Profile downloads now retain the desired version in an owner-specific avatar
+  retry marker, independently of the contact's committed `avatarVersion`.
+  The existing profile listener owns startup and explicit recovery passes;
+  the existing pending-message retrier and resume path request those same
+  passes. Recovery checks the account-migration network gate, scans known
+  contacts, skips blocked contacts, and avoids overlapping native transfers.
+  Successful commit or a nontransport failure retires the matching request;
+  an older completion cannot clear a newer requested version. Recovery replay
+  checks the saved version before claiming work and cannot overwrite a newer
+  desired request after an awaited contact lookup. The host
+  [profile cases](../../test/features/settings/application/download_profile_picture_use_case_test.dart)
+  cover interrupted transfer, a newly started owner without another profile
+  event, normalized commit, supersession, terminal absence and recovery gates.
+
+  Post downloads persist `retry_waiting` for classified transport interruption
+  and reuse the existing pending-post-media owner for startup, relay readiness
+  and resume. Shared-tile projection maps that durable backoff to normal loading
+  while preserving `retry_waiting` in storage. Its feed query is unpaginated, and it loads attachment rows
+  separately, so recovery is not restricted to a mounted or first-page feed.
+  The host [post recovery case](../../test/features/posts/improvement/post_media_restart_recovery_test.dart)
+  writes a real encrypted prefix, recovers without another post event or tap,
+  and checks exact plaintext bytes plus blocked-contact and migration gates.
+  Its bridge crypto is a content-transforming XOR fake; this does not certify
+  Go AES-GCM, a live relay or OS delivery. Relay absence, encrypted rows without
+  required keys, unknown encryption schemes, ciphertext-hash mismatch and
+  decrypt failure remain fail-closed;
+  post fetches never delete the shared relay blob. Retained outgoing source
+  rows stay pending with the existing localized upload copy while the same
+  owner can retry them. Missing source files remain terminal.
+
+  Sender `upload_failed` is terminal even at retry count zero; only
+  `upload_pending` claims automatic upload activity. Existing manual retry
+  ceilings remain authoritative. Retry-owned text sends stay pending without
+  a failure snackbar; failures without a retained envelope preserve the manual
+  error path. Contact consent/QR key announcements reuse the existing durable
+  reannounce marker and key-exchange owner. CR-018 restart coverage and a held
+  send/fresh-list mutation case verify recovery and preservation of newly
+  queued peers. The QR "Added to your circle!" finding was refuted: the copy
+  describes the completed local addition, and offline protocol work has an
+  existing retry owner. An interface handoff explicitly requests existing relay
+  recovery before inbox drain; background polling remains disabled. Actual
+  Android background OS delivery is **UNTESTED** by these host fixtures.
+
+  A mounted sender voice player must resolve a newly committed relative path
+  before handing it to the platform player. The audio widget regression keeps
+  the same state mounted across durable commit, preserves exact source bytes,
+  and covers recovery from an earlier load failure. Its fake player checks
+  file existence and playback dispatch, not native codec decoding. Group
+  optimistic media must keep `upload_pending` until upload completes: marking
+  retained plaintext `done` makes the receive verification gate correctly
+  reject its not-yet-created encryption metadata. The held-upload wired test
+  proves exact JPEG retention, pending tiles and disabled opening without
+  weakening that gate. A completed ordinary group upload with a retained send
+  envelope stays pending while automatic send replay owns the row; the causal
+  application/screen test also preserves terminal `send_failed` manual retry
+  and proves same-row convergence without reupload. On an already mounted
+  group conversation, a status-only local notification leaves the optimistic
+  row's retry payload and `upload_pending` media stale. Failed-media local
+  notifications must hydrate the persisted row and media together before
+  applying the display projection. The wired regression runs the actual
+  incomplete-upload and failed-message retriers on the same mounted state;
+  it proves pending-to-sent convergence with one upload and one message.
+  Held-read controls preserve newer `sent` and terminal `send_failed` updates
+  through the existing mutation-generation fence. Causal RED, the initial
+  fixture's insufficient real-I/O wait, and focused GREEN receipts are in
+  `.codex-test-logs/batch2-g2-live-fix-20261021/`. Device confirmation remains
+  separate from this host evidence.
+
+  Relay retirement already clears swarm dial backoff. A late old-path failure
+  can restore it before the epoch's fresh dial; the handoff reuses its existing
+  second attempt after clearing only that relay's backoff. The real loopback
+  relay/proxy test requires an initial actual backoff error, then a fresh socket
+  and reservation in the same epoch without a host restart or another event.
+  Repeated backoff remains bounded; ordinary failure and cancellation preserve
+  their existing behavior. These host fixtures do not certify Android freezer
+  behavior or background delivery. Causal REDs, initial fixture failures,
+  resource stops and focused GREEN receipts are retained in
+  `.codex-test-logs/batch2-voice-fix-20261021/`.
+
+  A profile listener's delayed second attempt is a continuation of its retained
+  request, not a new desired version. The real listener/use-case race test lets
+  v3 commit during v2's existing five-second retry delay and proves the old
+  continuation neither fetches again nor recreates its marker or overwrites
+  v3. The existing durable marker supplies that guard; no new retry owner is
+  needed. The full profile use-case, listener and integration files preserve
+  their existing behavior after the guard is applied.
+
+  Focused Batch 2 receipts and causal REDs are retained in
+  `.codex-test-logs/batch2-20261021/`, including first-attempt obsolete UI
+  expectations before alignment with the silent-retry requirement. Focused
+  receipts do not establish the broader batch gate or certify an
+  installed/signed candidate.
+
+  An exact `dbab73ebc` replay confirms two preexisting group-screen assertion
+  failures: pending voice expects `--:--`, and quarantined media expects the old
+  "Couldn't verify this media" label. Both fail identically in the Batch 2
+  host pass; evidence is in `base-group-probe/` under the receipts directory.
+  Keep this assertion debt separate from new regressions. Isolated worktrees
+  also lack ignored inputs unless provisioned: the iOS Firebase project-config
+  test and CV-14 native-symbol gate fail on absent configuration/frameworks/AAR.
+  Those failures are environment limits, not passing native-build evidence.
+
+  [The camera/caption regression](../../test/features/conversation/integration/camera_caption_relay_delivery_test.dart)
+  uses a real multi-megabyte EXIF-oriented JPEG, actual legacy upload/send,
+  online receive or real inbox staging/replay, current SQLite migrations and
+  repositories, durable files, exact byte hash, grid decode/open gate, full
+  recipient frame and persisted caption. Original uses the real lossless JPEG
+  metadata path with an independent fixture retaining the camera coding suffix
+  plus a minimal Orientation IFD; it asserts zero native compressor calls.
+  Only Compressed uses a prepared-image native port substitute, and bridge crypto
+  remains XOR. The active cases pass with the pre-existing mixed-relay known-gap
+  skip retained separately. Its closed-chat recovery case
+  mirrors the native errors from the first four interrupted/reconnecting attempts,
+  exhausts two bounded transport bursts without consuming the generic budget,
+  then emits relay readiness and completes on attempt seven without a tap or
+  mounted chat. It retains a real encrypted prefix until successful commit.
+  These host fixtures do not certify iOS camera/compression, Go AES-GCM,
+  a live relay/circuit or a signed build. The
+  first causal baseline fails on `pending` versus `failed`; online/offline
+  image controls pass. The former mixed-multi-relay aggregate-not-found KNOWN
+  GAP is superseded by the bounded absence window above. Its active camera
+  regression observes the persisted waiting state without Retry, recovers on
+  the second request, and preserves the full image, caption and replay dedup.
+  The default single-peer configuration alone does not establish a real
+  multi-relay device topology; controlled native replies prove this host leg.
+  Raw first attempts and final check receipts are retained in
+  `build/kayan-safe/media-unavailable/logs/`; fixture/setup failures must stay
+  distinguished from product regression failures and passing scenarios.
+
+   The camera fixture now joins both Original (quality 100) and Compressed
+   (quality 85) argument selection to separate prepared real JPEG dimensions,
+   full recipient decode/caption and replay deduplication. Reversed logical
+   sender identities cover the other data-owner direction; they are not an OS
+   simulation. Group C focused validation on base `f14f7d369` / tests
+   `6ce42d583` passed 28 cases across the camera, contact-roundtrip and paired
+   call files, with the one existing mixed-relay KNOWN GAP skip. The first full
+   camera attempt was resource-aborted at swapouts +37,768 pages before any
+   completed case and is not a pass; its later complete 19-pass/one-skip run had
+   zero swap-out delta. Keep both under `.codex-test-logs/astra-groupCD/`.
+   Native capture/compression, witnessed relay-only delivery, actual platform
+   video/voice/open and audible calls remain separate obligations in the
+   [Group C Appium runbook](astra-group-c-device-runbook.md); no device run or
+   broad affected lane/full host-all result is implied by these host checks.
+
+   `ordinary_media_receiver_restart_test.dart` covers the default legacy lane
+   with current SQL/files: a native EOF burst leaves retryable durable work,
+   a residual ciphertext prefix is reconstructed at that persisted checkpoint,
+   and a new receiver graph recovers a full hash-identical, host-decodable image
+   and exact caption once. This models a checkpoint; it does not abruptly kill
+   a process during native I/O or an uncommitted SQL operation. The existing
+   committed-share sender recovery case is separate and explicitly enables the
+   strict-custody cohort with synthetic media bytes. Fresh scoped passes are
+   `018-D-receiver-restart` and `020-D-sender-custody-support` under the same
+   evidence directory; do not combine them into a native legacy sender proof.
+
+   Camera/photos deny-then-grant widget controls preserve the draft and invoke
+   upload/send once through the existing picker boundary. At the tested f14
+   app base, case-scoped **ASTRA-D-1** means `_pickFromCamera` only logs the caught error
+   (`conversation_wired.dart:5850`, catch at 5862), leaving no visible failure
+   notice. The desired-feedback assertion is retained as KNOWN GAP; causal RED
+   `011-D-media-permission` and final two-pass/one-skip `013` remain separate.
+   Native permissions and actual recipient delivery are not proved by these
+   stubbed picker/upload/send controls. The executor's saved Group D report
+   confirms this feedback failure on device source `62450cba4`, while draft and
+   single-send passed; its photo system picker had no permission boundary
+   (N/A), and cancel retained the draft
+   (`build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:5`). Codex owns
+   fix `6f7e11ed55e99bc85e8b00f8936f776979498ef8` for main integration. This
+   device candidate does not include it; this run supplies no post-fix native
+   validation.
+
+   Migration's existing `TC-347-07` end-to-end case now seeds a real portrait
+   JPEG, transfers/imports it through the full loopback chain and opens the
+   receiver's authoritative imported row/path with the host Flutter codec.
+   Frame dimensions, colored pixel regions and the persisted caption are
+   checked alongside the existing custody/file/authority assertions
+   (`019-D-migrated-photo`). Its schema/SQLCipher adapter, crypto and secure
+   stores remain test boundaries; native mobile video/voice/PDF opening and
+   signed-candidate cutover stay separate device obligations.
+
+  Current [relay store source](../../go-relay-server/media.go) persists blob
+  metadata in disk sidecars and loads it on restart. The June reliability
+  audit's in-memory-only description is superseded for current source.
+  Successful fetch alone does not delete: relay ACK follows verified durable
+  local commit. Recipient documents/media storage is not an OS cache, and
+  user storage eviction commits `evicted` before removing its local file.
+
 - **R2-7 short chat viewport:** the Pixel 7a landscape keyboard left about
   128 logical pixels for the direct chat, and the normal header plus composer
   overflowed (device screenshot in
@@ -4166,12 +4859,27 @@ visible and cannot become an ordinary first-attempt PASS.
   prepared tools are removed in suite teardown; preparation is not a scenario
   pass. The repaired fixture completed with its Go process at 6.75 seconds in
   `source045-focused-green.log`; the two full focused files passed 137 cases.
-  The disposable relay's Go test deadline must also cover the full campaign:
-  its former 45-minute limit killed the relay during a 47-minute run, causing
-  later connection failures and unrun rows. The fixture and its exact-command
-  shim now use 120 minutes; individual scenario deadlines and assertions stay
-  unchanged. The [runner evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/audio-runner-summary.md)
-  retains that first failure and the subsequent passing fixture-affected rows.
+  The earlier disposable relay's 45-minute Go deadline killed the relay during
+  a 47-minute manual campaign, causing later connection failures and unrun rows.
+  Its temporary fixed 120-minute runner limit is superseded by the fixture's
+  bounded `PLAN399_FIXTURE_GO_TIMEOUT` override: automatic runs keep the
+  45-minute default; a manual fixture may explicitly request 45–240 minutes.
+  Individual scenario deadlines and assertions stay unchanged. The
+  [runner evidence](../../.codex-test-logs/plan407-three-fixes/kx8-permission-focus/audio-runner-summary.md)
+  retains the first failure and subsequent passing fixture-affected rows.
+  The shared-host diagnosis in Kayan m-408cbc28 identified wildcard `netsimd`
+  UDP sockets fragmenting the ephemeral range, leaving too few contiguous blocks
+  for the fixture's 24 relay ports. This is range fragmentation, not exhaustion
+  of all local ports. The local audio fixture uses relay pool 40200–40999,
+  below macOS's 49152+ ephemeral range and separate from the mixed-policy
+  40000–40100 and TURN-path 41000–41060 probes. The selected block feeds both
+  generated coturn config and Docker UDP publication. After image preparation,
+  preflight rebinds the listener and whole relay block, releases its temporary
+  bindings, and fails before Docker startup if occupied. Diagnostics report
+  protocol, port and the local holder's process name/PID via bounded `lsof -Fpcn`;
+  unavailable owner lookup is reported explicitly with an inspection command.
+  Inspect the holder rather than restarting another owner's emulator/netsimd.
+  This fixture policy does not change the deployed relay's coturn range.
 - **Bounded journal publication:** `recordTerminal` may return after its 200 ms
   caller-impact budget while atomic persistence continues. Tests asserting the
   published JSON must observe the existing atomic-writer completion seam before
@@ -4413,7 +5121,24 @@ visible and cannot become an ordinary first-attempt PASS.
   in ignored `artifacts/relay-startup-20260916/`.
 
 - **Old pending-send notification boundary:** delivered-history suppression
-  does not establish an age policy for undelivered backlogs. A verified private
+  does not establish an age policy for undelivered backlogs. The separate
+  `go-relay-server/catalog_relay_recovery_test.go` protocol fixture exercises
+  the real framed relay handler over authenticated local mocknet streams and
+  production memory backends: seven-day direct/group expiry, retained exact-ID
+  pages, unchanged replay before exact ACK, expired group cursor gaps, recipient
+  authorization and later valid delivery. Its rejected-request sequence retains
+  earlier custody while malformed JSON, unknown actions, missing recipients and
+  spoofed senders fail through their exact error branches; later valid store/
+  retrieve/ACK succeeds without replacing hosts or stores. Streams have an
+  explicit owned reset bound because mocknet deadlines alone do not enforce it.
+  The focused three top-level cases and four rejection subcases pass with no
+  skips/failures, `GOMAXPROCS=4`, one package and `-p=4`; dependencies are
+  unchanged. Evidence in the Astra worktree is
+  `.codex-test-logs/astra-update-relay-sims/item2/001-rg-summary.json` and its
+  receipt. This is relay protocol/memory-backend proof, not Redis/process
+  durability, app decryption, the application's eight-generation key ring or a
+  native/mobile recovery result. It does not replace authored-age notification
+  policy or the broader registered Go sweep. A verified private
   iPhone incident on 2026-09-12 linked three 11:50:28 Berlin push receipts to
   message traces whose Android build 112 send attempts failed on September 9.
   The same authenticated sender started build 118 seconds before today's relay
@@ -5153,6 +5878,79 @@ visible and cannot become an ordinary first-attempt PASS.
   fixture observes one active start and one subsequent refresh; existing failed
   startup retry, Bonsoir error containment, denial gating and disposal controls
   still pass. Evidence is under `.codex-test-logs/dual-stack-recovery/`.
+  A separate host regression reproduces a resume before first local startup:
+  re-advertising had no identity/WebSocket port and returned normally, but the
+  health owner marked discovery active, suppressing every later early-start
+  trigger even after the node started. The existing refresh now reports whether
+  it ran; only a real successful refresh marks discovery active. Initial startup
+  still owns its successful activation, and refresh failures retain their
+  existing inactive/retry behavior. The real local-service test distinguishes
+  the pre-start no-op from a completed refresh; the P2P regression observes one
+  first start after the pre-onboarding resume. Evidence is under
+  `.codex-test-logs/onboarding-early-discovery-20261023/`. The supplied Pixel
+  `move1_failed_fresh_onboarding.logcat` begins after startup and shows a running
+  node, no discovery events and `localPeerUnavailable`; its exact original
+  resume/start ordering is not captured, so host proof does not establish the
+  device trigger or a fresh device pass.
+
+- **Move Account receiver discovery freshness:** read-time TTL expiry previously
+  removed both a stale endpoint and its live browser's service handle. After
+  confirmation took more than 30 seconds, resolve-on-send could only wait for an
+  unsolicited fresh announcement. TTL expiry now evicts the endpoint while
+  retaining the handle for a fresh resolve; it never returns the stale address.
+  Actual peer loss and full teardown still remove handles. The 12-second move
+  deadline and per-peer single-flight behavior stay unchanged.
+  TXT/advertisement refresh now replaces only the broadcaster while a healthy
+  browser, cached peers, pending resolves, timers and Android native resolver
+  remain alive. Relay-state and ordinary network health checks also preserve
+  that browser. Only the actual lifecycle's existing `markResumeStarted` signal
+  queues a fresh native epoch, independent of whether a stream error arrived.
+  A queued resume joining an active health/TXT refresh escalates the shared
+  work before completion. Real stop clears old handles and queued resume intent.
+  The existing startup and refresh futures continue to serialize/coalesce work.
+  Factory-seam regressions reproduce both original assertion failures using
+  found/resolved callbacks and a backdated endpoint; both now pass. Early and
+  expired migration peers without libp2p TXT ports resolve to their HTTP endpoint.
+  `LOCAL_MDNS_PEER_SKIPPED_NO_LIBP2P_ADDR` belongs to generic libp2p forwarding;
+  migration resolves its own session peer and uses its host/port directly, so no
+  additional eligibility filter or first-time routing change was needed.
+  Coupled regressions exercise the actual relay-state push through P2P health
+  recovery and the actual `handleAppResumed` entry: relay recovery retains peers,
+  resolver handles and pending queries; lifecycle resume replaces the browser,
+  including when coalesced with relay recovery. A later ordinary health check
+  does not reuse the consumed resume intent. The P2PService interface is unchanged.
+  Focused discovery contracts pass 33 tests; 197 local-discovery, LAN-forwarding,
+  early-start, health-drain, watchdog, stop-race, composition and lifecycle
+  preservation cases also pass, with no skips or failures. The shared LAN fake
+  needs the new local marker's conformance; after that update, its two initially
+  compile-blocked consumers pass seven cases. Other passing source inputs stayed
+  unchanged. Analysis of all six changed Dart files is clean. The scoped
+  wrapper remains `NOT RUN` overall with 18 omitted checks and no unmapped
+  changes. RED inputs, exact GREEN hashes, commands and resource receipts are in
+  the `flutter_app_codex_discovery_refresh_20261023` worktree under
+  `.codex-test-logs/discovery-refresh-20261023/`; the rebased resume regressions
+  and reruns are in `.codex-test-logs/discovery-resume-review-20261023/`, including
+  the first resource-aborted preview and separate successful `fresh-1` evidence.
+  The real health-ingress regressions, retained first attempts and final source
+  hashes are in `.codex-test-logs/discovery-health-ingress-review-20261023/`.
+  These host results do not establish fresh device or signed-candidate proof.
+  Native receipt of an already-advertising peer remains a separate device leg:
+  the locked Android plugin starts active browse and queries initial TXT, but
+  delivery is not proved by host callbacks. Follow-up host regressions confirm
+  two application stall paths: initial services without peer-ID TXT were never
+  explicitly resolved, and resolve failures left the per-peer single-flight set.
+  Unidentified service handles now resolve through NSD immediately, survive for
+  retry on the existing 20-second timer, and bind to the peer once resolved;
+  resolve failures release the in-flight guard. Own-name filtering also covers
+  initial callbacks without TXT. Lost services and full stop clear unidentified
+  handles. The original-code regressions fail on both stalls and the missing
+  timer retry; the own-service control passes. Evidence, including the corrected
+  fake-clock fixture's retained first attempts, is under
+  `.codex-test-logs/discovery-initial-txt-20261023/` in the
+  `flutter_app_codex_discovery_initial_20261023` worktree. The device startup log
+  was not retained, so the exact branch behind that relaunch sample remains
+  unproved. Native plugin code and the default native-resolver flag are unchanged;
+  a fresh Pixel relaunch remains the separate device proof.
 
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code
@@ -5161,8 +5959,16 @@ visible and cannot become an ordinary first-attempt PASS.
   this was an unhandled stream error, not proof of failed recovery. The existing
   subscription now consumes errors and records only a fixed reason and numeric
   native code. No error message, peer or address is copied into that diagnostic.
-  The factory-seam regression reproduces the error and preserves stop/start
-  recovery, without adding a new retry or native lifecycle owner. First device
+  The vendored plugin reports `.failed` as an error, `.cancelled` as a stopped
+  event, and ignores other browser states; its optional event sink establishes
+  no suspension-to-error-delivery guarantee. The observed-error regression
+  alone cannot prove that guarantee. Normal resume therefore replaces the
+  browser independently of error delivery: old cache/pending resolves settle,
+  old native handles are discarded, and the new browser requires a new found
+  event. The silent-error resume and resume-during-TXT regressions protect this
+  distinction. Failed browser startup also retries with a fresh epoch. Healthy
+  TXT updates retain the browser; no new retry or native lifecycle owner is added.
+  First device
   failures and host red/green evidence remain under
   `.codex-test-logs/live-phones-20260912T084648Z/`.
   The final normal profile build reproduced native code `-65569` after
@@ -5506,6 +6312,19 @@ visible and cannot become an ordinary first-attempt PASS.
   pins before P1 and accounts for all three changes. The four DTR-18 cases pass
   with callback uniqueness, import/relocation and exception sets unchanged;
   evidence is in `.codex-test-logs/F10-host-fixes-20261018/c-pin-chain-proof.json`.
+  Group B's consent-decision await changes the app-root digest, while the single
+  observable presentation-gate callback changes both bootstrap digests. Reversing
+  only those exact hunks reproduces `a345dee2f` and all three old fingerprints;
+  resume/adapter fingerprints and the unique historical notification callback
+  stay unchanged. Preserve that proof before refreshing the three explained pins
+  (`.codex-test-logs/groupAB-align/pin-chain-proof.json`).
+  The live-quality loader wiring changes only the two bootstrap fingerprints;
+  exact reconstruction against `886b49d66` reproduces both prior pins with all
+  25 URI rewrites and the single historical callback unchanged. The real-root
+  quality regression fixture adds one explicit test importer to each Posts
+  adapter census. Those reviewed changes move no production owner or adapter;
+  retain `quality-pref-live/pin-chain-proof.json` and the exact owner diff.
+
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now
@@ -5751,6 +6570,50 @@ visible and cannot become an ordinary first-attempt PASS.
   tests cover recovery only after acknowledgement of the exact old terminal,
   both cancellation/presentation orderings and both new-call admission orders.
   Missing receipts, live predecessors and adopted-call fences remain protected.
+  **VC-026 process-loss candidate:** owner-approved task `m-ea6ea1ed`, based
+  on RCA SHA256 `66974a7ebb2156d7466a46d4877b0acb12f382a6d6f06cbb3175cc368b35b4de`,
+  adds fresh-native-controller reconciliation for a persisted ADOPTED journal.
+  Only absence of its exact UUID from the live CallKit observer permits orphan
+  recovery; a live UUID remains under the normal lifecycle and expiry policy.
+  The native owner durably appends the closed `orphaned` terminal when needed,
+  then uses the existing exact terminal ACK/receipt before enabling admission.
+  An existing terminal is acknowledged without rewriting its event identity.
+  Failed persistence/ACK blocks enable and retains that exact startup candidate
+  for an explicit retry. A retained predecessor receipt cannot release a
+  successor's audio. No provider reset or time-based orphan inference is used.
+  The iOS shared reconciler accepts that proof only in journal phase, preserves
+  ordinary adopted-call fences, and finishes an attached orphan's exact ACK
+  before graph advertisement. A well-formed expired incoming preStart snapshot
+  containing a native terminal can also reach exact cleanup on iOS cold start;
+  expired nonterminal snapshots remain rejected, and incoming invite admission
+  deadlines are unchanged. This prevents ordinary terminal expiry from globally
+  invalidating the adapter. An already authenticated successor remains owned
+  by its canonical coordinator while that predecessor is retired. Headless
+  decline/ringing, wake tokens, two pending slots and the foreground-start
+  retry invalidation latch retain their existing owners.
+  Runtime snapshots reuse closed reason codes to distinguish malformed batches,
+  journal authority mismatch and missing receipts from ordinary refusal/expiry;
+  native presentation also records its closed busy/provider/persistence result.
+  In these lifecycle snapshots `found` means a descriptor exists, `accepted`
+  means its phase is journal/adopted, and `terminal` means it contains a terminal.
+  Thus false/false, true/false and true/true identify none, preStart and journal
+  without exporting call IDs, handles, payloads or exception text. No diagnostic
+  schema or relay deployment is required.
+  The eight-file Dart preservation selection passes 444 cases without skips,
+  including 18 added recovery/ACK-order/diagnostic-privacy cases; two-file
+  analysis is clean. The earlier Swift syntax-only result is superseded by
+  flutter_app's RunnerTests execution: 172 tests, zero failures, including all
+  four added lifecycle methods. Its `bbdd5a5e6` build has identical app/native
+  source to `84f02f53d`. The iPhone 13 install preserved identity; two ringing
+  kills and two active-call kills each recovered through relaunch to a connected
+  next incoming call, without the calling-unavailable refusal. This establishes
+  the tested recovery behavior; the original refusal's orphan-journal cause
+  remains a source-supported candidate. Delegated build/device evidence is in
+  `build/wt-iosrecovery/.codex-test-logs/iosrecovery/SUMMARY.md`; it does not
+  certify completion of the separate native 371/373/374 host tails.
+  Raw first fixture failures,
+  unsupported-proof RED, authenticated-successor-first RED, and corrected
+  preservation results remain in `.codex-test-logs/ios-call-recovery-20261022/`.
   Receipt acknowledgement must also leave a successor's shared native audio
   and timeout work intact. Appium subsequently exercised that exact sequence
   on the physical iPhone 13 and Pixel 6. Native journal copies established an
@@ -7493,6 +8356,50 @@ visible and cannot become an ordinary first-attempt PASS.
   for unrelated changes and device/release obligations. The original red probe
   and first cleanup-ordering regression remain preserved. These are host
   queue/custody proofs, not audible-media or signed-device certification.
+  **Foreground idle call discovery:** a stored call invite could remain unread
+  after the callee's startup drain when direct delivery failed and no wake
+  arrived. Owner task `m-a51a5832`, with cadence approval `m-568058b5`,
+  extends the existing canonical mailbox poller to foreground idle time every
+  four seconds. Its live-call interval stays two seconds, including hidden or
+  background native calls. Idle polling stops on background, graph withdrawal
+  and shutdown; unrelated snapshots do not restart the interval, and a slow
+  drain stays single across cadence changes. This adds at most 15 idle drain
+  attempts per minute; an empty pending mailbox normally takes one client
+  retrieve, with existing relay routing and pagination unchanged.
+  The existing runtime still owns network/migration readiness, authenticated
+  admission, expiry, superseded invites, bounded ingress and ACK custody.
+  The full poller/composition/runtime host files pass 213 active cases with
+  zero skips, including store-only discovery without direct traffic or wake,
+  denied-network recovery, expired/cancelled refusal, lifecycle stop/resume,
+  graph replacement and slow-drain coalescing. Three missing-drain RED
+  assertions and the first graph-replacement fixture failure remain in
+  `.codex-test-logs/call-idle-poll-20261022/`. These are host scheduling and
+  authenticated-admission proofs, not phone ringing latency, battery cost,
+  native transport repair, provider delivery or signed-device certification.
+  **Foreground call startup recovery:** owner follow-up `m-0a8b23bd`
+  covers a withdrawn graph after startup/resume advertisement failure when no
+  positive healthy-relay edge arrives. The composition retries its existing
+  authenticated startup after five, 15 and 30 seconds, then every 60 seconds
+  after completed failures while foreground and enabled. Startup stays
+  single-flight; background, shutdown and successful startup cancel/reset the
+  timer. Failed native cleanup still blocks replacement. Current-graph
+  callability invalidation also cancels/suppresses this automatic retry until
+  explicit resume or a fresh successful authenticated start, so a late failed
+  advertisement cannot retry a permanently invalidated native owner. Existing
+  native-wake and healthy-relay-edge recovery remain available; no adapter,
+  authority gate, wake-distribution or pending-slot policy changed.
+  Twelve focused host cases pass without skips: Android/iOS startup/resume
+  recovery restores four-second idle polling, failure intervals stay bounded,
+  slow startup coalesces wakes, background/shutdown cancel, native invalidation
+  suppresses a late retry, failed cleanup stays closed, and terminal/idle
+  transitions keep their eligible polling. Seven missing-retry RED assertions,
+  the native-invalidation race RED and first clock/stream-retirement fixture
+  failures are retained under `.codex-test-logs/call-start-retry-20261022/`.
+  The device read-only correlation found call-control unavailability followed
+  by graph withdrawal in the two reduced-poll windows; why their healthy relay
+  count remained zero is unestablished and may be investigated separately.
+  These host proofs do not certify native transport repair, the underlying iOS
+  adapter failure, real-device recovery latency or a signed candidate.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
@@ -7890,7 +8797,31 @@ visible and cannot become an ordinary first-attempt PASS.
   for KX29.
   The retained KX29 device proof observes both earpiece and speaker, selects
   speaker, then releases it back to the earpiece; Bluetooth and wired routes
-  remain unavailable in that run. Contact rollback
+  remain unavailable in that run.   KX-0016/17 also
+  require the actual owned Flutter incoming and connected call surface,
+  bracketed by snapshots of the same current call/contact. The displayed name
+  must be a sibling of the owned call-status node; an underlying conversation
+  cannot supply it. Both actual peer IDs are rejected in visible owned nodes,
+  including disabled nodes; hidden ancestors exclude their descendants. The
+  Flutter `Unknown contact` fallback differs from native `MKnoon caller`.
+  Fourteen pure XML/oracle tests and 40 retained native-evidence tests pass in
+  `.codex-test-logs/astra-update-relay-sims/item3/044-batch3-units-summary.json`,
+  including the binding to actual English ARB copy. The additive collector
+  preserves native-card, RTP and restoration assertions; missing actual Flutter
+  surface is a harness blocker and an observed visible raw peer ID retains its
+  first witness and fails the row. Its new host test remains classified in
+  both legacy call gates and the census contract. KX-0015 stays a complementary
+  native-card leg. Adding the legacy gate selector also changes the protected
+  `scripts/run_test_gates.sh` source hash for both `gate completeness-check`
+  and `gate all` in `tool/testing/legacy_target_contracts.json`; refresh only
+  those owner hashes while preserving commands, roles and environments.
+  The initial stale-hash failure/error is retained in the same private
+  evidence directory's `052-batch3-affected-host/workflow-1.raw.log`; the
+  two-entry source repair is verified by all 306 passing workflow cases in
+  `062-batch3-affected-host/results.json`. Fresh device
+  execution, emulator audio input OFF and the
+  separate unapproved content-audio hook are still required for their respective
+  proof scopes. Contact rollback
   uses an owned SQLite abort trigger. Android exposes the contact-delete
   dialog title and body as one accessibility label separated by a newline;
   both contact dialog flows therefore assert the exact merged ARB title/body,
@@ -8456,6 +9387,70 @@ fix for the earlier failures. The retained first failures remain authoritative
 for their own run. See the focused investigation record and
 `artifacts/testflight-crash-investigation-20260910/check-final/results.json`.
 
+Move Account export cleanup (2026-10-23): the reported TRANSFER-007 cancellation
+left an encrypted database snapshot beside plaintext secure-values metadata in
+`account_migration/export`, including after relaunch. Cleanup previously ran
+only after a successful move; assembly failures also left partial artifacts.
+The host regressions reproduced both filesystem leftovers and the journey
+reporting cancellation before its runner settled.
+
+The production bundle source now owns session files until terminal cleanup.
+Its existing dedicated export directory is swept before exposing the transfer
+runtime on startup, and before starting another export. The startup-only sweep
+catches filesystem failures, reports only the error type and lets runtime wiring
+continue; the next export's strict sweep still fails closed. A real replaced-root
+regression reproduced the launch exception before this catch and now proves
+startup continuation plus strict export refusal. A shared lock protects
+session registration, sweeping and cleanup; live session files are preserved,
+duplicate active sessions are refused, and each completed session removes only
+its own snapshot, sidecars and metadata with presence readback. Directory-root
+symlinks are refused and nested links are not followed. Assembly errors clean
+partial files; runtime `finally` cleanup covers cancellation, rejection,
+timeout, disconnect and exceptions before returning an outcome or restoring
+account networking. Cleanup failure prevents a normal cancelled outcome;
+an already completed cutover retains its existing success semantics and logs
+cleanup failure. The UI waits for the runner before reporting cancellation.
+
+The focused host checks on the rebased tree passed 168 distinct tests, with one
+unchanged skipped SQLCipher plugin-capability case and no failures. This includes seeded startup
+leftovers, two live exports, same-session refusal, replaced-root recovery,
+terminal failure paths, cancellation ordering and original streaming/snapshot
+preservation. Final analysis of nine changed Dart files is clean. The first
+analyzer result retains one test-fixture brace lint; only that style changed,
+then its cleanup-error case and analysis passed. The scoped wrapper omitted
+other selected checks and remains `NOT RUN` overall. Evidence, exact RED inputs
+and the reviewed bootstrap pin transition are in the
+`flutter_app_codex_migration_export_cleanup_20261023` worktree's
+`.codex-test-logs/migration-export-cleanup-20261023/`; the startup-failure RED,
+combined bootstrap pin proof and all rebased reruns are in
+`.codex-test-logs/migration-export-cleanup-review-20261023/`. No post-fix device or
+signed-candidate proof is established by these host results. Metadata remains
+file-backed during a live export; eliminating that plaintext intermediate
+requires a separate memory-backed entry source and streaming-offset checks.
+
+Retired-account remote lease cleanup: after migrated-out authority is
+persisted, each remote rendezvous/inbox unregister callback has a two-second
+Dart timeout. A timeout retains that step's pending cleanup flag and the
+existing retry path, while later cleanup and the sender outcome can settle.
+Authoritative local clearing remains awaited. The host regression independently
+stalls both remote callbacks, checks the retired authority and pending flag,
+rejects late completion as durable success, and verifies that retry repeats
+only the pending command. Evidence is in
+`.codex-test-logs/move-terminal-repairs-20261024/`. This bounds one concrete host
+stall path; it does not prove the cause or resolution of the observed simulator
+finishing stall or a missing final-proof response.
+
+Old-phone successful move routing: the journey previously changed only its
+progress view, leaving the retired home underneath it in Navigator history.
+After success with persisted `migratedOut` authority, it now clears the root
+stack and re-enters the registered startup route. `StartupRouter` supplies the
+blocked screen and its existing erase callback. The first-time QR and Settings
+entries share this journey. The widget regression starts at the real first-time
+home, persists retirement during successful transfer, checks the blocked/erase
+binding and empty Back history, then verifies system Back cannot expose the old
+home. Evidence is in `.codex-test-logs/move-sender-retired-route-20261024/`.
+These host results do not certify a fresh device or signed candidate.
+
 Physical Android local-reset regression: on Pixel 6 / API 37 at
 `5a9bb5c94503d3e48dca734f4d2b2cb06fe8141a`, choosing **Erase local data** on
 the migrated-out screen and cold-launching produced
@@ -8468,11 +9463,107 @@ close/deletion preserves the key and migrated-out authority. The canonical lease
 remains held until normal teardown to prevent reopening during erasure.
 Real temporary-file tests cover removal and failure propagation; startup tests
 cover ordering, durable authority and notification-preservation guards. The
-device erase/restart journey has not been repeated after this fix, so a passing
-host erase or secure-key deletion alone does not prove that native journey.
-This is separate from the earlier notification-preservation fixture failure.
+2026-10-23 TRANSFER-015 device attempt removed the database and reached fresh
+setup after relaunch, but exposed a separate privacy gap: received photo, video,
+thumbnail, voice and PDF bytes remained in the retired account's media folder.
+Cancel preserved the original files and blocked state. This is separate from
+the earlier notification-preservation fixture failure.
+After successful erasure, the blocked screen now shows a persistent erased
+acknowledgement, removes its Erase action and asks the user to close and reopen
+the app to set up again. It waits for the complete erase callback; pending or
+failed cleanup retains the retired screen. It does not reuse repositories whose
+database was closed by erasure. The widget regression holds cleanup pending,
+then verifies the terminal copy and absent Erase action after success. Host
+evidence is in `.codex-test-logs/move-terminal-repairs-20261024/`; this UI repair
+does not establish the cause or resolution of the separate sender finishing
+stall observed during the device move.
 Redacted device evidence:
 `.codex-test-logs/live-phones-20260912T084648Z/android-reset-regression.redacted.log`.
+The media regression evidence is
+`.codex-test-logs/safe-transfer-20261023T1246Z/SUMMARY.md`.
+
+Production account erasure now awaits `eraseAccountMedia` before removing the
+database and secure keys. It removes the canonical media/avatar, pending-upload,
+local/post media, ciphertext custody and migration-staging roots, application
+cache contents, and the bounded media artifacts in temporary/external-files
+storage. Application cache comes from the package-specific cache API; shared
+desktop temporary roots are never cleared wholesale. Directory-root symlinks
+are rejected, nested links do not authorize outside deletion, deletion is read
+back, and a media/database cleanup failure preserves the database key and
+retired-account authority and reaches the existing failure UI. Only the blocked-account screen exposes
+the shipping erase action; its confirmation still precedes all cleanup.
+
+The same callback awaits `eraseAccountNotificationState` before database/key
+erasure. It removes `ReactionNotificationClaims`, `NotificationConversationIds`
+(including its ledger), `PendingConversationNotificationOverlay`, recent-remote
+JSON/account/alias files, and the corresponding direct iOS dedupe/tone/proof
+namespaces. Cleanup covers app support plus the normal iOS App Group container;
+the disposable iOS profile retains its existing local-only isolation. An
+unavailable shared container emits a fixed reason and is skipped; actual
+deletion/readback failures preserve the database key and retired authority.
+Missing entries are successful no-ops;
+containers, unrelated files and the persisted App Group path survive.
+
+The Pixel follow-up in `.codex-test-logs/erase-claims-20261023T2103Z/SUMMARY.md`
+found the registry, overlay lock and account marker surviving the initial
+claims-only cleanup. Registry owners contain conversation hashes; the overlay
+disk file is an empty lock, while its content is covered by secure-store erase.
+An account marker may contain the null-binding tombstone rather than an ID.
+The single `erase_account_notification_state_test.dart` uses the real claim,
+tone, registry, overlay and recent-remote writers in temporary support/shared
+containers, verifies removal, preserves unrelated/configuration files, and
+repeats cleanup after entries are absent. Evidence is under
+`.codex-test-logs/erase-notification-state-20261023/`; host shared-path coverage
+does not establish device or out-of-process NSE erasure proof.
+
+The focused host run passed all 59 cases across media erasure, startup recovery,
+database-file erasure and secure-storage cleanup, with zero failures/skips and a
+clean analyzer for the four changed Dart files. Real-file widget fixtures use
+synchronous setup and interleave real event-loop turns with widget frames until
+the actual erase callback settles; fake-time pumping or awaiting the dialog
+only inside `runAsync` does not settle native file I/O. Initial fixture failures
+and the pre-fix filesystem/confirmation RED results remain in the owning
+worktree's `.codex-test-logs/erase-account-media-20261023/`. Kayan subsequently
+reported the media erase/relaunch device proof passed (`m-452e0107`), but the
+secure-storage count falling from 20 to nine did not identify or clear all
+account-owned entries.
+
+The ensuing source audit found that reset passed only the fixed migration
+registry, leaving historical ML-KEM private keys, peer wake tokens/call handles,
+retry peer lists, transport/cutover metadata, orphaned group/media decryption
+keys, and incomplete secure-storage transfer staging outside cleanup. Explicit
+local reset now inventories each available application secure store before any
+secure-key deletion and deletes entries individually with presence readback.
+Only six primary-store app settings survive: `background_preference`,
+`image_quality_preference`, `video_quality_preference`,
+`orbit_geometry_prefs_v1`, `media_download_preferences`, and
+`settings_always_relay_calls`. Their preservation policy is centralized in
+`MigrationSecureStorageRegistry`; migration export/promotion policies remain
+unchanged. Shared-store entries are all account data. Production now forwards
+the actual iOS shared secure store to reset, rather than aliasing the primary
+store. Media/database erasure still precedes secure cleanup; inventory or
+ordinary-key deletion/readback failure retains the database key and blocked
+authority, and authority is deleted last. Android storage-provider encryption
+metadata is outside the plugin's application-key inventory, so encrypted XML
+entry counts alone cannot certify account erasure.
+
+The secure-storage regression failed in both the cleanup unit test and the
+confirmed startup erase flow before the fix. The final host run passed 105
+tests across startup/database, bootstrap, secure storage, migration preservation
+and media erasure, with zero failures/skips and a clean analyzer for 12 changed
+Dart files. Fixtures prove all six settings survive, orphaned/staged account
+keys are removed, primary/shared stores are distinct, and inventory/deletion
+failures remain blocked. Visibility ordering tracks four direct erase operations;
+the cleanup-owner test asserts the database key is deleted immediately before
+authority, after ordinary primary/shared entries. The first GREEN attempt's
+compile failure and stale
+DTR-18 pins are retained; the pin-chain proof reconstructs the approved
+`921bfe759 -> 473810a6d -> current` source changes without relaxing the historical
+callback or ownership assertions. Evidence is in the erase worktree's
+`.codex-test-logs/erase-secure-storage-20261023/`. The scoped wrapper reports
+omitted checks as `NOT RUN`; these host results do not certify a new device or
+release candidate. The complete secure-storage device proof remains
+flutter_app-owned and pending.
 
 A two-file diagnostic rerun reproduced both failures (43 passed, two failed,
 9.470 seconds); focused failed-case reruns also failed. Sanitized follow-up
@@ -8519,9 +9610,8 @@ any additional screenshots or diagnostic artifacts before sharing them.
 
 Native SIMS execution and `mknoon_checks` stream private raw output while
 children run, with independent stdout/stderr limits and a shared 256 MiB capture
-budget per executor/wrapper invocation. Native SIMS defaults to 8 MiB per
-stream; the wrapper defaults to 16 MiB.
-SIMS declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
+budget per executor/wrapper invocation. `mknoon_checks` uses 64 MiB per stream;
+SIMS keeps its own 8 MiB default and declares two larger-row allowances in `capture_budget.dart`: 64 MiB per
 stream for `host.dart.all` and 32 MiB for `native.ios.runner_tests`. Complete
 retained runs measured 19,848,816 and 15,953,210 bytes respectively; the former
 default aborted a fresh full-host attempt at 8 MiB. Measured Go and Android

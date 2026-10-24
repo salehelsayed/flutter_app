@@ -6,10 +6,124 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 void main() {
   group('preparePendingComposerMedia', () {
+    test(
+      'failed preference reads retain fallback and complete image/video preparation',
+      () async {
+        final root = Directory.systemTemp.createTempSync(
+          'quality-read-fallback-',
+        );
+        addTearDown(() => root.deleteSync(recursive: true));
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+        final image = File('${root.path}/source.jpg')
+          ..writeAsStringSync('image bytes');
+        final video = File('${root.path}/source.mp4')
+          ..writeAsStringSync('video bytes');
+        final imageRequests = <int>[];
+        final videoRequests = <bool>[];
+        final processor = ImageProcessor(
+          loadImageQualityPreference: () async =>
+              throw StateError('private-keychain-error'),
+          loadVideoQualityPreference: () async =>
+              throw StateError('private-keychain-error'),
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                imageRequests.add(quality);
+                return XFile(path);
+              },
+          compressVideo:
+              ({required path, required compress, onProgress}) async {
+                videoRequests.add(compress);
+                return VideoProcessResult(path: path);
+              },
+        );
+        for (final fallback in ImageQualityPreference.values) {
+          for (final source in [image, video]) {
+            final prepared = await preparePendingComposerMedia(
+              inputPath: source.path,
+              imageProcessor: processor,
+              imageQualityPreference: fallback,
+              videoQualityPreference: fallback,
+            );
+            expect(prepared.file.path, source.path);
+            expect(prepared.budgetBytes, source.lengthSync());
+            expect(await prepared.file.readAsBytes(), source.readAsBytesSync());
+          }
+        }
+        expect(imageRequests, [85, 100]);
+        expect(videoRequests, [true, false]);
+        final failures = events
+            .where(
+              (event) =>
+                  event['event'] == 'MEDIA_QUALITY_PREFERENCE_READ_FAILED',
+            )
+            .toList();
+        expect(
+          failures,
+          hasLength(4),
+          reason: 'one diagnostic per failed load',
+        );
+        expect(failures.map((event) => event['details']), [
+          {'mediaType': 'image'},
+          {'mediaType': 'video'},
+          {'mediaType': 'image'},
+          {'mediaType': 'video'},
+        ]);
+        expect(failures.toString(), isNot(contains('private-keychain-error')));
+        expect(failures.toString(), isNot(contains(root.path)));
+      },
+    );
+
+    test(
+      'saved Original applies to default entry values; explicit compression still wins',
+      () async {
+        final root = Directory.systemTemp.createTempSync(
+          'live-quality-pending-',
+        );
+        addTearDown(() => root.deleteSync(recursive: true));
+        final input = File('${root.path}/source.jpg')
+          ..writeAsStringSync('photo');
+        final requested = <int>[];
+        final processor = ImageProcessor(
+          loadImageQualityPreference: () async =>
+              ImageQualityPreference.original,
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                requested.add(quality);
+                return XFile(input.path);
+              },
+        );
+        for (final stored in [true, false]) {
+          await preparePendingComposerMedia(
+            inputPath: input.path,
+            imageProcessor: processor,
+            imageQualityPreference: ImageQualityPreference.compressed,
+            videoQualityPreference: ImageQualityPreference.compressed,
+            useStoredPreferences: stored,
+          );
+        }
+        expect(requested, [100, 85]);
+      },
+    );
+
     test('uses processed bytes for original-quality images', () async {
       final tempDir = Directory.systemTemp.createTempSync(
         'pending_composer_media_original_',

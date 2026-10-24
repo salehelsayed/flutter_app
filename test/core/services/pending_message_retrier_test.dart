@@ -51,6 +51,126 @@ void main() {
   });
 
   group('PendingMessageRetrier', () {
+    test('relay reconnect re-drives profile recovery after a failed pass', () {
+      fakeAsync((async) {
+        var attempts = 0;
+        retrier = PendingMessageRetrier(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          retryDebounce: const Duration(milliseconds: 10),
+          retryFailedMessagesOverride: () async => 0,
+          retryUnackedMessagesOverride: () async => 0,
+          retryPendingProfilePictureDownloadsFn: () async {
+            attempts++;
+            if (attempts == 1) throw StateError('err=EOF');
+            return 1;
+          },
+        );
+        retrier.start();
+        const online = NodeState(
+          isStarted: true,
+          peerId: 'own',
+          circuitAddresses: ['/relay'],
+        );
+        p2pService.emitState(online);
+        async.elapse(const Duration(milliseconds: 11));
+        async.flushMicrotasks();
+        expect(attempts, 1);
+        p2pService.emitState(const NodeState(isStarted: false));
+        async.flushMicrotasks();
+        p2pService.emitState(online);
+        async.elapse(const Duration(milliseconds: 11));
+        async.flushMicrotasks();
+        expect(attempts, 2);
+        retrier.dispose();
+      });
+    });
+
+    for (final failFirst in [false, true]) {
+      test(
+        'OS restore defers group downloads until ready and then retries, failure=$failFirst',
+        () {
+          fakeAsync((async) {
+            final restored = StreamController<void>.broadcast();
+            var downloads = 0;
+            var unacked = 0;
+            var rejoins = 0;
+            retrier = PendingMessageRetrier(
+              p2pService: p2pService,
+              messageRepo: messageRepo,
+              identityRepo: identityRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              networkRestoredSignal: restored.stream,
+              networkRestoredDebounce: const Duration(milliseconds: 10),
+              retryUnackedMessagesOverride: () async {
+                unacked++;
+                return 0;
+              },
+              rejoinGroupTopicsFn: () async {
+                rejoins++;
+              },
+              retryIncompleteGroupDownloadsFn: () async {
+                downloads++;
+                if (failFirst && downloads == 1) {
+                  throw StateError('download recovery probe');
+                }
+                return 1;
+              },
+            );
+            retrier.start();
+            restored.add(null);
+            async.flushMicrotasks();
+            async.elapse(const Duration(milliseconds: 11));
+            async.flushMicrotasks();
+            expect(downloads, 0);
+            expect(unacked, 1);
+            p2pService.emitState(
+              const NodeState(
+                isStarted: true,
+                circuitAddresses: ['/p2p-circuit/relay'],
+                relayState: 'online',
+                sendCapabilityReady: true,
+                inboxCapabilityReady: true,
+              ),
+            );
+            restored.add(null);
+            async.flushMicrotasks();
+            expect(downloads, 0);
+            async.elapse(const Duration(milliseconds: 11));
+            async.flushMicrotasks();
+            expect(downloads, 1);
+            expect(
+              unacked,
+              2,
+              reason:
+                  'incoming media cannot prevent the outgoing restored flush',
+            );
+            expect(
+              rejoins,
+              0,
+              reason: 'this callback does not depend on group topic readiness',
+            );
+            restored.add(null);
+            async.flushMicrotasks();
+            async.elapse(const Duration(milliseconds: 11));
+            async.flushMicrotasks();
+            expect(
+              downloads,
+              2,
+              reason: 'a failed pass releases its guard for the next edge',
+            );
+            expect(unacked, 3);
+            retrier.dispose();
+            unawaited(restored.close());
+            async.flushMicrotasks();
+          });
+        },
+      );
+    }
     for (final groupUpload in [false, true]) {
       group(groupUpload ? 'group upload hints' : 'direct upload hints', () {
         test(
@@ -460,24 +580,20 @@ void main() {
       timeout: const Timeout(Duration(seconds: 10)),
     );
 
-    test(
-      'online without circuitAddresses is not considered online',
-      () async {
-        retrier.start();
+    test('online without circuitAddresses is not considered online', () async {
+      retrier.start();
 
-        // isStarted but no circuitAddresses
-        final partialOnline = const NodeState(
-          isStarted: true,
-          peerId: 'my-peer',
-          circuitAddresses: [],
-        );
-        p2pService.emitState(partialOnline);
-        await Future.delayed(const Duration(seconds: 6));
+      // isStarted but no circuitAddresses
+      final partialOnline = const NodeState(
+        isStarted: true,
+        peerId: 'my-peer',
+        circuitAddresses: [],
+      );
+      p2pService.emitState(partialOnline);
+      await Future.delayed(const Duration(seconds: 6));
 
-        expect(identityRepo.loadIdentityCallCount, 0);
-      },
-      timeout: const Timeout(Duration(seconds: 10)),
-    );
+      expect(identityRepo.loadIdentityCallCount, 0);
+    }, timeout: const Timeout(Duration(seconds: 10)));
 
     test('dispose cancels timer and subscription', () {
       retrier.start();
@@ -494,64 +610,48 @@ void main() {
       );
     });
 
-    test(
-      'debounce cancels previous timer on rapid state changes',
-      () async {
-        retrier.start();
+    test('debounce cancels previous timer on rapid state changes', () async {
+      retrier.start();
 
-        // Rapidly go online -> offline -> online
-        p2pService.emitState(
-          const NodeState(
-            isStarted: true,
-            peerId: 'p',
-            circuitAddresses: ['/a'],
-          ),
-        );
-        await Future.delayed(const Duration(seconds: 1));
-        p2pService.emitState(NodeState.stopped);
-        await Future.delayed(const Duration(milliseconds: 500));
-        p2pService.emitState(
-          const NodeState(
-            isStarted: true,
-            peerId: 'p',
-            circuitAddresses: ['/a'],
-          ),
-        );
+      // Rapidly go online -> offline -> online
+      p2pService.emitState(
+        const NodeState(isStarted: true, peerId: 'p', circuitAddresses: ['/a']),
+      );
+      await Future.delayed(const Duration(seconds: 1));
+      p2pService.emitState(NodeState.stopped);
+      await Future.delayed(const Duration(milliseconds: 500));
+      p2pService.emitState(
+        const NodeState(isStarted: true, peerId: 'p', circuitAddresses: ['/a']),
+      );
 
-        // Wait for debounce from last transition
-        await Future.delayed(const Duration(seconds: 6));
+      // Wait for debounce from last transition
+      await Future.delayed(const Duration(seconds: 6));
 
-        // Should only retry once (first timer cancelled)
-        expect(identityRepo.loadIdentityCallCount, 1);
-      },
-      timeout: const Timeout(Duration(seconds: 15)),
-    );
+      // Should only retry once (first timer cancelled)
+      expect(identityRepo.loadIdentityCallCount, 1);
+    }, timeout: const Timeout(Duration(seconds: 15)));
 
-    test(
-      'does not retry concurrently (_isRetrying guard)',
-      () async {
-        retrier.start();
+    test('does not retry concurrently (_isRetrying guard)', () async {
+      retrier.start();
 
-        // Emit online state twice rapidly
-        final onlineState = const NodeState(
-          isStarted: true,
-          peerId: 'p',
-          circuitAddresses: ['/a'],
-        );
+      // Emit online state twice rapidly
+      final onlineState = const NodeState(
+        isStarted: true,
+        peerId: 'p',
+        circuitAddresses: ['/a'],
+      );
 
-        p2pService.emitState(onlineState);
-        await Future.delayed(const Duration(seconds: 5, milliseconds: 100));
+      p2pService.emitState(onlineState);
+      await Future.delayed(const Duration(seconds: 5, milliseconds: 100));
 
-        // Go offline then online again immediately to trigger another retry
-        p2pService.emitState(NodeState.stopped);
-        p2pService.emitState(onlineState);
-        await Future.delayed(const Duration(seconds: 6));
+      // Go offline then online again immediately to trigger another retry
+      p2pService.emitState(NodeState.stopped);
+      p2pService.emitState(onlineState);
+      await Future.delayed(const Duration(seconds: 6));
 
-        // Both retries should have completed (sequentially, not concurrently)
-        expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
-      },
-      timeout: const Timeout(Duration(seconds: 15)),
-    );
+      // Both retries should have completed (sequentially, not concurrently)
+      expect(identityRepo.loadIdentityCallCount, greaterThanOrEqualTo(1));
+    }, timeout: const Timeout(Duration(seconds: 15)));
 
     test(
       'skips online sweeps while external recovery is in progress',
@@ -1464,6 +1564,9 @@ void main() {
           var drainCalled = false;
           var retryFailedGroupMessagesCalled = false;
           var retryFailedMessagesCalled = false;
+          var incomingDownloads = 0;
+          var outgoingPasses = 0;
+          final restored = StreamController<void>.broadcast();
 
           retrier = PendingMessageRetrier(
             p2pService: p2pService,
@@ -1471,6 +1574,8 @@ void main() {
             identityRepo: identityRepo,
             contactRepo: contactRepo,
             bridge: bridge,
+            networkRestoredSignal: restored.stream,
+            networkRestoredDebounce: Duration.zero,
             retryDebounce: Duration.zero,
             rejoinGroupTopicsFn: () async {
               rejoinCalled = true;
@@ -1486,7 +1591,14 @@ void main() {
               retryFailedMessagesCalled = true;
               return 0;
             },
-            retryUnackedMessagesOverride: () async => 0,
+            retryUnackedMessagesOverride: () async {
+              outgoingPasses++;
+              return 0;
+            },
+            retryIncompleteGroupDownloadsFn: () async {
+              incomingDownloads++;
+              return 0;
+            },
           );
           retrier.start();
 
@@ -1508,6 +1620,16 @@ void main() {
           expect(drainCalled, isFalse);
           expect(retryFailedGroupMessagesCalled, isFalse);
           expect(retryFailedMessagesCalled, isTrue);
+          expect(outgoingPasses, 1);
+          restored.add(null);
+          async.flushMicrotasks();
+          async.elapse(Duration.zero);
+          async.flushMicrotasks();
+          expect(incomingDownloads, 0);
+          expect(outgoingPasses, 2);
+          retrier.dispose();
+          unawaited(restored.close());
+          async.flushMicrotasks();
         });
       },
     );
@@ -1851,6 +1973,74 @@ void main() {
   // its own shorter debounce; the node online edge remains the backstop.
   // ---------------------------------------------------------------------------
   group('PendingMessageRetrier network-restored send trigger (195)', () {
+    test(
+      'a second OS restore flushes queued text while group receive is unsettled',
+      () {
+        fakeAsync((clock) {
+          final restored = StreamController<void>.broadcast();
+          final heldDownload = Completer<int>();
+          var outgoingPasses = 0;
+          var incomingPasses = 0;
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            bridge: bridge,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            networkRestoredSignal: restored.stream,
+            networkRestoredDebounce: const Duration(milliseconds: 10),
+            retryUnackedMessagesOverride: () async {
+              outgoingPasses++;
+              return 0;
+            },
+            retryIncompleteGroupDownloadsFn: () {
+              incomingPasses++;
+              return heldDownload.future;
+            },
+          );
+          try {
+            p2pService.emitState(
+              const NodeState(
+                isStarted: true,
+                circuitAddresses: ['/p2p-circuit/relay'],
+                relayState: 'online',
+                sendCapabilityReady: true,
+                inboxCapabilityReady: true,
+              ),
+            );
+            retrier.start();
+            restored.add(null);
+            clock.flushMicrotasks();
+            clock.elapse(const Duration(milliseconds: 11));
+            clock.flushMicrotasks();
+            expect(outgoingPasses, 1);
+            expect(incomingPasses, 1);
+            // A fresh reconnect must flush text even while the previous
+            // incoming transfer is unsettled and the node has gone offline.
+            p2pService.emitState(NodeState.stopped);
+            restored.add(null);
+            clock.flushMicrotasks();
+            clock.elapse(const Duration(milliseconds: 11));
+            clock.flushMicrotasks();
+            expect(
+              outgoingPasses,
+              2,
+              reason:
+                  'an incoming group transfer must not swallow a later '
+                  'OS-restored outgoing flush',
+            );
+            expect(incomingPasses, 1);
+          } finally {
+            heldDownload.complete(0);
+            clock.flushMicrotasks();
+            retrier.dispose();
+            unawaited(restored.close());
+            clock.flushMicrotasks();
+          }
+        });
+      },
+    );
+
     test(
       'TC-195-01 an OS restored edge runs the zero-gate retry pass even while '
       'the node still reports offline',

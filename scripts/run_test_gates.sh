@@ -104,6 +104,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/debug/android_production_audio_call_e2e_test.dart"
   "test/integration/android_production_audio_call_campaign_test.dart"
   "test/integration/android_production_audio_call_evidence_test.dart"
+  "test/integration/production_call_in_app_identity_test.dart"
   "test/integration/production_audio_call_local_fixture_test.dart"
   # VC2-05: iOS CallKit journal adoption/audio activation plus typed PushKit
   # token publication, rotation and refresh-epoch-scoped invalidation.
@@ -184,6 +185,12 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/download_media_use_case_test.dart"
   "test/features/conversation/application/upload_media_use_case_test.dart"
   "test/features/conversation/integration/one_to_one_media_encryption_round_trip_test.dart"
+  "test/features/conversation/integration/camera_caption_relay_delivery_test.dart"
+  "test/core/utils/transient_transport_error_test.dart"
+  "test/core/media/media_download_recovery_contract_test.dart"
+  "test/core/media/media_download_transport_budget_test.dart"
+  "test/features/conversation/application/media_transport_error_classification_test.dart"
+  "test/shared/widgets/media/received_media_status_wording_test.dart"
   "test/core/bridge/go_bridge_client_test.dart"
   "test/core/bridge/bridge_blob_decrypt_test.dart"
   "test/core/bridge/p2p_bridge_client_test.dart"
@@ -637,6 +644,11 @@ readonly GROUP_TESTS=(
   # v3 envelope/parser/publish/receive boundary remains protected.
   "test/features/groups/domain/models/group_message_payload_removal_contract_test.dart"
   "test/features/conversation/integration/media_eviction_redownload_test.dart"
+  "test/core/utils/transient_transport_error_test.dart"
+  "test/core/media/media_download_recovery_contract_test.dart"
+  "test/core/media/media_download_transport_budget_test.dart"
+  "test/features/conversation/application/media_transport_error_classification_test.dart"
+  "test/shared/widgets/media/received_media_status_wording_test.dart"
   "test/features/groups/integration/group_admin_metadata_convergence_test.dart"
   "test/features/groups/integration/group_resume_recovery_test.dart"
   "test/features/groups/integration/group_edge_cases_smoke_test.dart"
@@ -1616,9 +1628,9 @@ classify_path() {
     return 0
   fi
 
-  # Existing app-root call regression is selected by affected-calls.
-  if [[ "$path" == "test/app/call_back_feedback_test.dart" ]]; then
-    printf 'app call feedback direct suite'
+  # App composition tests are included in the existing host-all discovery.
+  if [[ "$path" =~ ^test/app/.*_test\.dart$ ]]; then
+    printf 'app composition host suite'
     return 0
   fi
 

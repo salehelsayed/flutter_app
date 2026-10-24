@@ -61,8 +61,8 @@ void main() {
     'offline_banner_body':
         "Messages and media will send when you're back online.",
     'media_sending_automatically': 'Sending automatically…',
-    'media_uploading_percent': 'Uploading photo · {percent}%',
-    'media_uploading': 'Uploading photo…',
+    'media_uploading_percent': 'Uploading · {percent}%',
+    'media_uploading': 'Uploading…',
     'media_view_once_not_viewed': 'Not viewed yet.',
     'media_missing_terminal_title_photo': 'Photo is no longer on this phone',
     'media_missing_terminal_title_video': 'Video is no longer on this phone',

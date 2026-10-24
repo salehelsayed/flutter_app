@@ -2794,40 +2794,174 @@ void main() {
       },
     );
 
-    test('restores active authority when the transfer is cancelled', () async {
-      final receiver = _RecordingBundleReceiver(onSegment: (_) {});
-      final (output, _) = await startNewPhone(receiver);
-      final bundle = _preparedBundle(
-        sessionId: output.payload.sessionId,
-        segmentCount: 1,
-      );
-      var cancelled = false;
-      final oldRuntime = AccountMigrationLocalTransferRuntime(
-        discovery: oldPhoneDiscovery,
-        wsServer: oldPhoneServer,
-        pairingSessionRepository: pairingRepo,
-        bundleSource: (_) async {
-          cancelled = true;
-          return bundle;
-        },
-        oldPhoneCutoverCoordinator: coordinator(),
-        oldPhoneLeaseCleanup: _noopLeaseCleanup(),
-      );
+    test(
+      'cancelled transfer removes export artifacts before restoring active authority',
+      () async {
+        final receiver = _RecordingBundleReceiver(onSegment: (_) {});
+        final (output, _) = await startNewPhone(receiver);
+        final prepared = _preparedBundle(
+          sessionId: output.payload.sessionId,
+          segmentCount: 1,
+        );
+        final directory = await Directory.systemTemp.createTemp(
+          'cancelled-export-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final snapshot = File('${directory.path}/session.identity.snapshot.db');
+        final metadata = File('${directory.path}/session.metadata.json');
+        await snapshot.writeAsString('fixture encrypted database');
+        await metadata.writeAsString('fixture-only secret metadata');
+        var cleanupRan = false;
+        final bundle = AccountMigrationLocalTransferBundle(
+          manifest: prepared.manifest,
+          plaintextSegments: prepared.plaintextSegments,
+          encryptedSegments: prepared.encryptedSegments,
+          cleanupExportArtifacts: () async {
+            expect(
+              (await oldAuthority.loadAuthority())?.state,
+              AccountMigrationAuthorityState.migrationExportingNetworkPaused,
+            );
+            await snapshot.delete();
+            await metadata.delete();
+            cleanupRan = true;
+          },
+        );
+        var cancelled = false;
+        final oldRuntime = AccountMigrationLocalTransferRuntime(
+          discovery: oldPhoneDiscovery,
+          wsServer: oldPhoneServer,
+          pairingSessionRepository: pairingRepo,
+          bundleSource: (_) async {
+            cancelled = true;
+            return bundle;
+          },
+          oldPhoneCutoverCoordinator: coordinator(),
+          oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+        );
 
-      final result = await oldRuntime.runOldPhoneTransfer(
-        request: AccountMigrationTransferRequest(
-          transcript: _transcript(output.payload),
-        ),
-        onProgress: (_) {},
-        isCancelled: () => cancelled,
-      );
+        final result = await oldRuntime.runOldPhoneTransfer(
+          request: AccountMigrationTransferRequest(
+            transcript: _transcript(output.payload),
+          ),
+          onProgress: (_) {},
+          isCancelled: () => cancelled,
+        );
 
-      expect(result.failureCode, AccountMigrationTransferFailureCode.cancelled);
-      expect(
-        oldAuthority.saved?.state,
-        AccountMigrationAuthorityState.migrationFailedActiveRestored,
-      );
-    });
+        expect(
+          result.failureCode,
+          AccountMigrationTransferFailureCode.cancelled,
+        );
+        expect(await snapshot.exists(), isFalse);
+        expect(await metadata.exists(), isFalse);
+        expect(cleanupRan, isTrue);
+        expect(
+          oldAuthority.saved?.state,
+          AccountMigrationAuthorityState.migrationFailedActiveRestored,
+        );
+      },
+    );
+
+    for (final end in [
+      'rejection',
+      'timeout',
+      'disconnect',
+      'exception',
+      'cleanup-error',
+    ]) {
+      test('export artifacts settle before $end is reported', () async {
+        final AccountMigrationLocalBundleReceiver receiver = switch (end) {
+          'rejection' => _RejectingSegmentReceiver(rejectFromIndex: 0),
+          'timeout' => _DelayingBundleReceiver(
+            manifestDelay: downstreamCommandDelay,
+          ),
+          _ => _RecordingBundleReceiver(onSegment: (_) {}),
+        };
+        final (output, _) = await startNewPhone(receiver);
+        final directory = await Directory.systemTemp.createTemp(
+          'ended-export-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final snapshot = File('${directory.path}/session.identity.snapshot.db');
+        final metadata = File('${directory.path}/session.metadata.json');
+        var sourceEntered = false;
+        var cleanupCount = 0;
+        final oldRuntime = AccountMigrationLocalTransferRuntime(
+          discovery: oldPhoneDiscovery,
+          wsServer: oldPhoneServer,
+          pairingSessionRepository: pairingRepo,
+          bundleSource: (_) async {
+            sourceEntered = true;
+            await snapshot.writeAsString('fixture encrypted database');
+            await metadata.writeAsString('fixture-only secret metadata');
+            if (end == 'disconnect') await newPhoneServer.stop();
+            final prepared = _preparedBundle(
+              sessionId: output.payload.sessionId,
+              segmentCount: 1,
+            );
+            return AccountMigrationLocalTransferBundle(
+              manifest: prepared.manifest,
+              encryptedSegments: prepared.encryptedSegments,
+              cleanupExportArtifacts: () async {
+                cleanupCount++;
+                if (end == 'cleanup-error') {
+                  throw StateError('fixture cleanup failure');
+                }
+                await snapshot.delete();
+                await metadata.delete();
+              },
+            );
+          },
+          oldPhoneCutoverCoordinator: coordinator(),
+          oldPhoneLeaseCleanup: _noopLeaseCleanup(),
+          httpTimeout: downstreamCommandTimeout,
+        );
+        final transfer = oldRuntime.runOldPhoneTransfer(
+          request: AccountMigrationTransferRequest(
+            transcript: _transcript(output.payload),
+          ),
+          onProgress: (stage) {
+            if (end == 'exception' &&
+                stage == AccountMigrationTransferStep.transferringDatabase) {
+              throw StateError('fixture transfer failure');
+            }
+          },
+          isCancelled: () => end == 'cleanup-error' && sourceEntered,
+        );
+        if (end == 'exception' || end == 'cleanup-error') {
+          await expectLater(transfer, throwsStateError);
+        } else {
+          final result = await transfer;
+          expect(result.isSuccess, isFalse);
+          expect(
+            result.failureCode,
+            end == 'rejection'
+                ? AccountMigrationTransferFailureCode.transferRejected
+                : AccountMigrationTransferFailureCode.localTransferTimedOut,
+          );
+        }
+        expect(sourceEntered, isTrue);
+        expect(cleanupCount, 1);
+        expect(await snapshot.exists(), end == 'cleanup-error');
+        expect(await metadata.exists(), end == 'cleanup-error');
+        expect(
+          oldAuthority.saved?.state,
+          AccountMigrationAuthorityState.migrationFailedActiveRestored,
+        );
+        if (end == 'cleanup-error') {
+          expect(
+            eventsNamed('ACCOUNT_MIGRATION_EXPORT_ARTIFACTS_CLEANED'),
+            isEmpty,
+          );
+          expect(
+            eventsNamed('ACCOUNT_MIGRATION_EXPORT_ARTIFACTS_CLEANUP_FAILED'),
+            hasLength(1),
+          );
+        }
+        if (end == 'timeout') {
+          await Future<void>.delayed(downstreamCommandDelay);
+        }
+      });
+    }
 
     test(
       'abandoned run does not un-pause an overlapping retried export',

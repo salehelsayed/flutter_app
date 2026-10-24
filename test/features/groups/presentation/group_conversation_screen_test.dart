@@ -1767,7 +1767,14 @@ void main() {
     expect(find.byType(VideoThumbnailOverlay), findsOneWidget);
     expect(find.text('0:12'), findsOneWidget);
     expect(find.byType(AudioPlayerWidget), findsOneWidget);
-    expect(find.text('--:--'), findsOneWidget);
+    // Pending voice shows loading until playable bytes are available.
+    expect(
+      find.descendant(
+        of: find.byType(AudioPlayerWidget),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
     expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1960,7 +1967,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Sending automatically…'), findsOneWidget);
-    expect(find.text('Uploading photo · 50%'), findsOneWidget);
+    expect(find.text('Uploading · 50%'), findsOneWidget);
   });
 
   testWidgets('shows loading shell while initial group page is still loading', (
@@ -2771,8 +2778,8 @@ void main() {
       );
       await tester.pump(const Duration(milliseconds: 300));
 
-      // Tamper gets the distinct honest label and is terminal — no retry.
-      expect(find.text("Couldn't verify this media"), findsOneWidget);
+      // Integrity failure uses the shared receiver copy and stays terminal.
+      expect(find.text("Couldn't open this file"), findsOneWidget);
       expect(
         find.byKey(
           const ValueKey(

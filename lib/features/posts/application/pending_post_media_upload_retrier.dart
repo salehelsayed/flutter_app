@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
+import 'package:flutter_app/features/posts/application/download_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
@@ -258,6 +260,43 @@ Future<int> retryPendingPostMediaUploads({
       bridge: bridge,
       nowProvider: nowProvider,
     ).execute(prepared);
+  }
+
+  // Reuse this already gated startup/relay-ready/resume owner for durable
+  // incoming media too. loadFeed is unpaginated; attachments are loaded
+  // separately because production feed rows do not hydrate media.
+  if (bridge != null && mediaFileManager != null) {
+    for (final post in await postRepo.loadFeed()) {
+      if (!post.isIncoming) continue;
+      final sender = await contactRepo.getContact(
+        post.passedByPeerId ?? post.senderPeerId,
+      );
+      if (sender == null || sender.isBlocked) continue;
+      for (final attachment in await postRepo.loadPostMediaAttachments(
+        post.id,
+      )) {
+        if (attachment.localPath != null ||
+            !const {
+              kMediaDownloadStatusPending,
+              kMediaDownloadStatusDownloading,
+              kMediaDownloadStatusRetryWaiting,
+            }.contains(attachment.downloadStatus)) {
+          continue;
+        }
+        retriedCount++;
+        try {
+          await downloadPostMedia(
+            bridge: bridge,
+            postRepo: postRepo,
+            mediaFileManager: mediaFileManager,
+            attachment: attachment,
+          );
+        } catch (_) {
+          // The normal download path persisted its terminal failure; one
+          // corrupt or absent blob must not strand the rest of the feed.
+        }
+      }
+    }
   }
 
   return retriedCount;

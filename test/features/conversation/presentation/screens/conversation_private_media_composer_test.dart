@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
-import 'package:flutter_app/l10n/app_localizations_en.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -12,11 +11,12 @@ class _TestAppLocalizationsDelegate
   const _TestAppLocalizationsDelegate();
 
   @override
-  bool isSupported(Locale locale) => locale.languageCode == 'en';
+  bool isSupported(Locale locale) =>
+      AppLocalizations.supportedLocales.contains(locale);
 
   @override
   Future<AppLocalizations> load(Locale locale) =>
-      SynchronousFuture<AppLocalizations>(AppLocalizationsEn());
+      SynchronousFuture<AppLocalizations>(lookupAppLocalizations(locale));
 
   @override
   bool shouldReload(covariant LocalizationsDelegate<AppLocalizations> old) =>
@@ -61,16 +61,17 @@ void main() {
     String recipientName = 'Lina',
     TargetPlatform targetPlatform = TargetPlatform.android,
     bool senderReopenEnabled = false,
+    Locale locale = const Locale('en'),
   }) {
     return MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
         _TestAppLocalizationsDelegate(),
         GlobalMaterialLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
       ],
-      supportedLocales: const [Locale('en')],
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Align(
           alignment: Alignment.bottomCenter,
@@ -88,6 +89,52 @@ void main() {
       ),
     );
   }
+
+  testWidgets('ordinary pending summary distinguishes photos and videos', (
+    tester,
+  ) async {
+    const copy = {
+      'en': (
+        'Normal photo · can be saved or shared',
+        'Normal video · can be saved or shared',
+      ),
+      'de': (
+        'Normales Foto · kann gespeichert oder geteilt werden',
+        'Normales Video · kann gespeichert oder geteilt werden',
+      ),
+      'ar': (
+        'صورة عادية · يمكن حفظها أو مشاركتها',
+        'فيديو عادي · يمكن حفظه أو مشاركته',
+      ),
+    };
+    for (final entry in copy.entries) {
+      for (final kind in [
+        PrivateMediaAttachmentKind.image,
+        PrivateMediaAttachmentKind.video,
+      ]) {
+        await tester.pumpWidget(
+          buildComposer(
+            locale: Locale(entry.key),
+            eligibility: PrivateMediaEligibility(
+              attachmentCount: 1,
+              attachmentKind: kind,
+            ),
+            onPolicyChanged: (_) {},
+          ),
+        );
+        await tester.pump();
+        final video = kind == PrivateMediaAttachmentKind.video;
+        expect(
+          find.text(video ? entry.value.$2 : entry.value.$1),
+          findsOneWidget,
+        );
+        expect(
+          find.text(video ? entry.value.$1 : entry.value.$2),
+          findsNothing,
+        );
+      }
+    }
+  });
 
   testWidgets(_selectorEligibilityTestName, (tester) async {
     for (final kind in const [

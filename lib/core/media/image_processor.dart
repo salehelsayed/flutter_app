@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image/image.dart' as img;
 import 'package:video_compress/video_compress.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/media/jpeg_metadata.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 
 /// Function signature for image compression.
@@ -75,6 +78,11 @@ const kProtectedPhotoInlineThumbnailJpegQuality = 60;
 ///
 /// Injectable [CompressFileFn] and [CompressVideoFn] allow faking in tests.
 class ImageProcessor {
+  // Both native encoders clamp their resize scale to avoid upscaling. The
+  // largest signed native int disables downscaling without decoding the full
+  // source in Dart just to discover its dimensions (including HEIC inputs).
+  static const _originalMinDimension = 0x7fffffff;
+
   // video_compress uses one native worker and one process-wide Dart busy flag.
   // A timed-out MethodChannel call can remain blocked in eglSwapBuffers. Do not
   // submit another job until that exact native call has actually settled.
@@ -83,6 +91,8 @@ class ImageProcessor {
   bool get canProcessVideo =>
       _compressVideo != null || _unsettledDefaultVideoCompression == null;
 
+  final Future<ImageQualityPreference> Function()? _loadImageQualityPreference;
+  final Future<ImageQualityPreference> Function()? _loadVideoQualityPreference;
   final CompressFileFn _compressFile;
   final CompressVideoFn? _compressVideo;
   final CancelVideoCompressionFn _cancelVideoCompression;
@@ -92,27 +102,53 @@ class ImageProcessor {
   void Function()? _cancelActiveVideoProgress;
 
   ImageProcessor({
+    Future<ImageQualityPreference> Function()? loadImageQualityPreference,
+    Future<ImageQualityPreference> Function()? loadVideoQualityPreference,
     CompressFileFn? compressFile,
     CompressVideoFn? compressVideo,
     CancelVideoCompressionFn? cancelVideoCompression,
     this.videoStallTimeout = const Duration(minutes: 5),
     this.videoMaxDuration = const Duration(hours: 1),
     this.videoCancelTimeout = const Duration(seconds: 5),
-  }) : _compressFile = compressFile ?? _defaultCompress,
+  }) : _loadImageQualityPreference = loadImageQualityPreference,
+       _loadVideoQualityPreference = loadVideoQualityPreference,
+       _compressFile = compressFile ?? _defaultCompress,
        _compressVideo = compressVideo,
        _cancelVideoCompression =
            cancelVideoCompression ?? _cancelDefaultVideoCompression;
 
-  /// Process image for sending: strip EXIF, apply quality.
+  /// Process image for sending: strip metadata; Original preserves JPEG coding.
+  /// Other formats and unsupported JPEG variants use the native encoder at
+  /// source resolution. Only display orientation and ICC colour data survive
+  /// the JPEG metadata path. A failed encoder never exposes an unprocessed photo.
   ///
+  /// A configured stored preference is read for each preparation. [quality]
+  /// remains the fallback for standalone processors. Set [useStoredPreference]
+  /// to false only for an explicit quality override, such as overflow compression.
   /// Non-image files (videos, PDFs) pass through unchanged.
   /// Returns the path to the processed file.
   Future<String> processImage({
     required String inputPath,
     required ImageQualityPreference quality,
+    bool useStoredPreference = true,
   }) async {
     if (!isProcessableImage(inputPath)) return inputPath;
 
+    if (useStoredPreference && _loadImageQualityPreference != null) {
+      try {
+        quality = await _loadImageQualityPreference();
+      } catch (_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_QUALITY_PREFERENCE_READ_FAILED',
+          details: {'mediaType': 'image'},
+        );
+      }
+    }
+    if (quality == ImageQualityPreference.original) {
+      final strippedPath = await _tryStripOriginalJpeg(inputPath);
+      if (strippedPath != null) return strippedPath;
+    }
     final compressionQuality = quality == ImageQualityPreference.original
         ? 100
         : 85;
@@ -121,9 +157,18 @@ class ImageProcessor {
       path: inputPath,
       quality: compressionQuality,
       keepExif: false,
+      minWidth: quality == ImageQualityPreference.original
+          ? _originalMinDimension
+          : 1920,
+      minHeight: quality == ImageQualityPreference.original
+          ? _originalMinDimension
+          : 1080,
     );
 
-    return result?.path ?? inputPath;
+    if (result == null) {
+      throw StateError('Photo processing failed');
+    }
+    return result.path;
   }
 
   /// Process avatar: compress to a ≥512px jpeg (quality 80, EXIF stripped), then
@@ -158,6 +203,7 @@ class ImageProcessor {
   Future<VideoProcessResult> processVideo({
     required String inputPath,
     required ImageQualityPreference quality,
+    bool useStoredPreference = true,
     void Function(double progress)? onProgress,
   }) async {
     if (!isProcessableVideo(inputPath)) {
@@ -165,6 +211,17 @@ class ImageProcessor {
     }
     if (_compressVideo == null && _unsettledDefaultVideoCompression != null) {
       throw const VideoProcessingUnavailableException();
+    }
+    if (useStoredPreference && _loadVideoQualityPreference != null) {
+      try {
+        quality = await _loadVideoQualityPreference();
+      } catch (_) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_QUALITY_PREFERENCE_READ_FAILED',
+          details: {'mediaType': 'video'},
+        );
+      }
     }
 
     Timer? stallTimer;
@@ -280,32 +337,41 @@ class ImageProcessor {
 
   /// Generates the bounded protected-photo inline thumbnail (plan 301).
   ///
-  /// Pure Dart via package:image — exact longest-side bound, no platform
-  /// channel, no hang risk. Returns null on any read/decode failure or when
-  /// the encoded result exceeds [kProtectedPhotoInlineThumbnailMaxRawBytes];
-  /// callers treat null as "omit the field" (best-effort, never fails a send).
+  /// Decode at thumbnail size before JPEG encoding, so a full-resolution send
+  /// does not also allocate a full-size Dart raster for this preview. Returns
+  /// null on read/decode failure or oversized output (best-effort, never fails
+  /// a send). The native codec may still use transient decode working memory.
   static Future<Uint8List?> generateInlineThumbnailBytes({
     required String inputPath,
   }) async {
+    ui.ImmutableBuffer? buffer;
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.Image? image;
     try {
-      final file = File(inputPath);
-      if (!await file.exists()) return null;
-      final decoded = img.decodeImage(await file.readAsBytes());
-      if (decoded == null) return null;
-      final longestSide = decoded.width > decoded.height
-          ? decoded.width
-          : decoded.height;
-      final resized = longestSide <= kProtectedPhotoInlineThumbnailMaxSidePx
-          ? decoded
-          : (decoded.width >= decoded.height
-                ? img.copyResize(
-                    decoded,
-                    width: kProtectedPhotoInlineThumbnailMaxSidePx,
-                  )
-                : img.copyResize(
-                    decoded,
-                    height: kProtectedPhotoInlineThumbnailMaxSidePx,
-                  ));
+      buffer = await ui.ImmutableBuffer.fromFilePath(inputPath);
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final longestSide = descriptor.width > descriptor.height
+          ? descriptor.width
+          : descriptor.height;
+      final scale = longestSide > kProtectedPhotoInlineThumbnailMaxSidePx
+          ? kProtectedPhotoInlineThumbnailMaxSidePx / longestSide
+          : 1.0;
+      codec = await descriptor.instantiateCodec(
+        targetWidth: (descriptor.width * scale).round().clamp(
+          1,
+          kProtectedPhotoInlineThumbnailMaxSidePx,
+        ),
+        targetHeight: (descriptor.height * scale).round().clamp(
+          1,
+          kProtectedPhotoInlineThumbnailMaxSidePx,
+        ),
+      );
+      image = (await codec.getNextFrame()).image;
+      final pixels = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (pixels == null) return null;
+      final resized = img.decodePng(pixels.buffer.asUint8List());
+      if (resized == null) return null;
       final encoded = Uint8List.fromList(
         img.encodeJpg(
           resized,
@@ -319,13 +385,44 @@ class ImageProcessor {
       return encoded;
     } catch (_) {
       return null;
+    } finally {
+      image?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer?.dispose();
     }
   }
 
   /// Returns true for image extensions that can be processed.
   bool isProcessableImage(String path) {
     final ext = path.split('.').last.toLowerCase();
-    return const {'jpg', 'jpeg', 'png', 'webp', 'heic'}.contains(ext);
+    if (const {'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'}.contains(ext)) {
+      return true;
+    }
+    // Shared/temporary files can omit an extension. Recognize only the existing
+    // formats, from a bounded header; this does not add another codec or MIME.
+    try {
+      final handle = File(path).openSync();
+      final Uint8List header;
+      try {
+        header = handle.readSync(32);
+      } finally {
+        handle.closeSync();
+      }
+      final bytes = String.fromCharCodes(header);
+      if (bytes.startsWith('\xff\xd8') ||
+          bytes.startsWith('\x89PNG\r\n\x1a\n')) {
+        return true;
+      }
+      if (bytes.length < 12) return false;
+      if (bytes.startsWith('RIFF') && bytes.substring(8, 12) == 'WEBP') {
+        return true;
+      }
+      return bytes.substring(4, 8) == 'ftyp' &&
+          const {'heic', 'heix', 'mif1'}.contains(bytes.substring(8, 12));
+    } on FileSystemException {
+      return false;
+    }
   }
 
   /// Returns true for video extensions that can be processed.
@@ -374,6 +471,32 @@ Future<String> _squareCropAvatar(String compressedPath) async {
     return squaredPath;
   } catch (_) {
     return compressedPath;
+  }
+}
+
+Future<String?> _tryStripOriginalJpeg(String path) async {
+  try {
+    final input = File(path);
+    final handle = await input.open();
+    final Uint8List signature;
+    try {
+      signature = await handle.read(2);
+    } finally {
+      await handle.close();
+    }
+    // Avoid loading PNG/HEIC/WebP data before their existing native decode.
+    if (signature.length != 2 || signature[0] != 0xff || signature[1] != 0xd8) {
+      return null;
+    }
+    final stripped = stripJpegMetadata(await input.readAsBytes());
+    if (stripped == null) return null;
+    final target = File('${path}_compressed.jpg');
+    await target.writeAsBytes(stripped);
+    return target.path;
+  } on FileSystemException {
+    // The native encoder remains the fallback for inaccessible/unsupported
+    // sources or an output write failure; its failure must not expose raw input.
+    return null;
   }
 }
 

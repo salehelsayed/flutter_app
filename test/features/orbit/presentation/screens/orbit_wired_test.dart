@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
@@ -10,6 +11,12 @@ import 'package:flutter_app/l10n/app_localizations_ar.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -447,6 +454,77 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
   }
+
+  testWidgets(
+    'live Settings quality changes the next Orbit photo preparation without restart',
+    (tester) async {
+      setLargeTestSurface(tester);
+      suppressOverflowErrors();
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final shell = AppShellController(initialTab: AppShellTab.orbit);
+      addTearDown(shell.dispose);
+      final requested = <int>[];
+      imageProcessor = ImageProcessor(
+        loadImageQualityPreference: () =>
+            loadImageQualityPreference(secureKeyStore: secureKeyStore),
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async {
+              requested.add(quality);
+              return XFile(path);
+            },
+      );
+      await tester.pumpWidget(buildOrbitWired(appShellController: shell));
+      await pumpOrbitFrames(tester, count: 6);
+      final orbitState = tester.state(find.byType(OrbitWired));
+
+      for (final choice in [
+        ImageQualityPreference.original,
+        ImageQualityPreference.compressed,
+      ]) {
+        tester.widget<OrbitScreen>(find.byType(OrbitScreen)).onOpenSettings!();
+        await pumpOrbitFrames(tester, count: 8);
+        tester
+            .widget<SettingsScreen>(find.byType(SettingsScreen))
+            .onOpenPhotoQualitySheet!();
+        await pumpOrbitFrames(tester, count: 4);
+        tester
+            .widget<ImageQualityToggle>(find.byType(ImageQualityToggle))
+            .onChanged(choice);
+        await pumpOrbitFrames(tester, count: 5);
+        expect(
+          await secureKeyStore.read(ImageQualityPreference.storageKey),
+          choice.toStorageString(),
+        );
+        Navigator.of(tester.element(find.byType(SettingsWired))).pop();
+        await pumpOrbitFrames(tester, count: 5);
+        expect(tester.state(find.byType(OrbitWired)), same(orbitState));
+        tester
+            .widget<OrbitScreen>(find.byType(OrbitScreen))
+            .onFriendTap(OrbitFriend(contact: testContact, messageCount: 0));
+        await pumpOrbitFrames(tester, count: 6);
+        final route = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        await tester.runAsync(
+          () => route.imageProcessor!.processImage(
+            inputPath: '/tmp/next-photo.png',
+            quality: route.qualityPreference,
+          ),
+        );
+        Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+        await pumpOrbitFrames(tester, count: 5);
+      }
+      expect(requested, [100, 85]);
+    },
+  );
 
   Future<void> switchToAllChats(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));

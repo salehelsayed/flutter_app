@@ -7,6 +7,8 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -168,9 +170,11 @@ void main() {
                             child: MediaGrid(
                               media: List.generate(
                                 2,
-                                (i) => _makeMedia(
-                                  i,
-                                ).copyWith(downloadStatus: 'failed'),
+                                (i) => _makeMedia(i).copyWith(
+                                  ownerLane: MediaOwnerLane.direct,
+                                  downloadStatus:
+                                      kMediaDownloadStatusRetryWaiting,
+                                ),
                               ),
                               onTap: opened.add,
                               onRetryUnavailableMedia: (item) =>
@@ -188,7 +192,7 @@ void main() {
                 )!;
                 expect(find.text(l10n.btn_retry), findsNWidgets(2));
                 expect(
-                  find.semantics.byLabel(l10n.media_retry_unavailable),
+                  find.semantics.byLabel(l10n.btn_retry),
                   findsNWidgets(2),
                 );
                 expect(
@@ -253,7 +257,7 @@ void main() {
                     }
                   }
                   final node = tester.getSemantics(button);
-                  expect(node.label, l10n.media_retry_unavailable);
+                  expect(node.label, l10n.btn_retry);
                   expect(
                     node.getSemanticsData().hasAction(SemanticsAction.tap),
                     isTrue,
@@ -272,7 +276,7 @@ void main() {
                     buttonRect.centerLeft + const Offset(4, 0),
                   );
                   tester.semantics.tap(
-                    find.semantics.byLabel(l10n.media_retry_unavailable).at(i),
+                    find.semantics.byLabel(l10n.btn_retry).at(i),
                   );
                   expect(
                     retried,

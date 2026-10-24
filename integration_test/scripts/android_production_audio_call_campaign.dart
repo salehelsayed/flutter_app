@@ -16,6 +16,7 @@ import 'package:flutter_app/debug/production_journeys/sims_runtime_protocol.dart
 import '../support/android_app_state_guard.dart';
 import '../support/android_production_audio_call_evidence.dart';
 import '../support/production_android_journey.dart';
+import '../support/production_call_in_app_identity.dart';
 import '../support/production_journey_peer.dart';
 import '../support/production_call_notification_evidence.dart';
 import '_android_app_package.dart';
@@ -1873,6 +1874,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     final nativeAnswer = label == 'Answer';
     if (nativeAnswer) await _revealNativeAnswerSurface(deviceId);
     final deadline = DateTime.now().add(const Duration(seconds: 45));
+    var hierarchyRead = false;
     while (DateTime.now().isBefore(deadline)) {
       final String xml;
       try {
@@ -1881,6 +1883,7 @@ final class SystemAndroidProductionAudioCallCampaignDriver
         await Future<void>.delayed(const Duration(milliseconds: 250));
         continue;
       }
+      hierarchyRead = true;
       final matches = _exactSemanticNodes(
         xml,
         label: label,
@@ -1896,6 +1899,14 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       }
       if (matches.length == 1) return;
       await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
+    // Another UiAutomation client (for example an Appium UiAutomator2
+    // session) blocks every dump, which otherwise looks like a missing node.
+    if (!hierarchyRead) {
+      throw TimeoutException(
+        'UI hierarchy unavailable on $deviceId while waiting for "$label"; '
+        'close any other UiAutomation client on the device.',
+      );
     }
     throw TimeoutException('Semantic node "$label" did not appear.');
   }

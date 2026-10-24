@@ -563,6 +563,34 @@ void main() {
   );
 
   test(
+    'a blocked UI hierarchy fails with its own reason, not a missing node',
+    () async {
+      final driver = SystemAndroidProductionAudioCallCampaignDriver(
+        physicalDeviceId: 'pixel',
+        emulatorDeviceId: 'emulator-5554',
+        artifact: File('${Directory.systemTemp.path}/plan399-unused.apk'),
+        artifactSha256: _apkSha,
+        packageName: androidProductionAudioCallAppPackage,
+        relayHost: '192.168.0.60',
+        relayPort: 44001,
+        proofDirectory: Directory.systemTemp,
+        runner: _BlockedHierarchyRunner(),
+      );
+      await expectLater(
+        driver.waitForSemantic('pixel', 'Start voice call'),
+        throwsA(
+          isA<TimeoutException>().having(
+            (e) => e.message,
+            'message',
+            contains('UI hierarchy unavailable on pixel'),
+          ),
+        ),
+      );
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
+
+  test(
     'native Answer reopens shade after an incoming window replaces it',
     () async {
       final runner = _NotificationShadeAnswerRunner(interruptFirstDump: true);
@@ -2969,6 +2997,19 @@ a=candidate:1 1 UDP 1 192.168.0.44 52705 typ host
 ''', '');
     }
     return ProcessResult(1, 2, '', 'unexpected adb arguments');
+  }
+}
+
+final class _BlockedHierarchyRunner implements AndroidHostProcessRunner {
+  @override
+  Future<ProcessResult> run(String executable, List<String> args) async {
+    if (args.contains('uiautomator')) {
+      return ProcessResult(1, 1, '', 'ERROR: could not get idle state.');
+    }
+    if (args.contains('exec-out') && args.contains('cat')) {
+      return ProcessResult(1, 0, 'cat: No such file or directory', '');
+    }
+    return ProcessResult(1, 0, '', '');
   }
 }
 

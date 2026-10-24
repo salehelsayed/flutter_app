@@ -263,11 +263,13 @@ Future<void> verifyDirectMediaBlobCustodyAndroidTopologyAndReachability({
   required List<String> devices,
   required String host,
   required int port,
+  bool emulatorPair = false,
 }) => _verifyAndroidTopologyAndReachability(
   adbExecutable: adbExecutable,
   devices: devices,
   host: host,
   port: port,
+  emulatorPair: emulatorPair,
 );
 
 Future<int> _runCentralSims({
@@ -313,7 +315,7 @@ final class _FixtureSession {
   }) async {
     final process = await Process.start(
       goExecutable,
-      const <String>[
+      <String>[
         'test',
         '-tags',
         'integration',
@@ -322,7 +324,7 @@ final class _FixtureSession {
         r'^TestDirectMediaBlobCustodyDeviceFixtureContract$',
         '-count=1',
         '-v',
-        '-timeout=45m',
+        '-timeout=${fixtureGoTestTimeout(environment)}',
       ],
       workingDirectory: 'go-relay-server',
       environment: <String, String>{
@@ -506,6 +508,16 @@ final class _FixtureSession {
       client.close(force: true);
     }
   }
+}
+
+/// The fixture runs inside `go test`, whose timeout ends the relay. Sims
+/// campaigns keep the 45 minute default. A longer hand-driven device run (H2)
+/// may raise it through PLAN347_FIXTURE_GO_TIMEOUT, bounded to 4 hours.
+String fixtureGoTestTimeout(Map<String, String> environment) {
+  final requested = environment['PLAN347_FIXTURE_GO_TIMEOUT']?.trim() ?? '';
+  final match = RegExp(r'^([1-9][0-9]{0,2})m$').firstMatch(requested);
+  if (match == null || int.parse(match.group(1)!) > 240) return '45m';
+  return requested;
 }
 
 /// Public lease over the one Plan-347 disposable relay fixture owner.

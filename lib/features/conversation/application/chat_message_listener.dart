@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
@@ -100,6 +101,13 @@ class ChatMessageListener {
   final Future<List<String>> Function()? getOwnMlKemSecretKeyRing;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
+  final Future<List<String>> Function({String? afterMessageId, int limit})?
+  loadRetryableMediaMessageIds;
+  String? _mediaRecoveryAfterMessageId;
+  bool _recoveringMedia = false;
+  bool _mediaRecoveryRequested = false;
+  final Set<String> _mediaRecoveryAfterActive = {};
+  final Set<String> _mediaDownloadsInFlight = {};
   final NotificationService? notificationService;
   final AppVisibilitySuppressionReader? appVisibility;
   // 118 Phase 4: shared per-conversation tone debounce (direct + group keys are
@@ -157,6 +165,7 @@ class ChatMessageListener {
     this.getOwnMlKemSecretKeyRing,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
+    this.loadRetryableMediaMessageIds,
     this.notificationService,
     this.appVisibility,
     this.notificationToneTracker,
@@ -262,8 +271,103 @@ class ChatMessageListener {
     _contactUpdatedController.close();
   }
 
+  /// One bounded recovery pass, shared by app resume and connectivity regain.
+  /// Reuses the incoming download policy and UI stream even without a chat route.
+  Future<int> retryIncompleteMediaDownloads() async {
+    final load = loadRetryableMediaMessageIds;
+    if (load == null ||
+        bridge == null ||
+        mediaAttachmentRepo == null ||
+        mediaFileManager == null ||
+        _messageController.isClosed) {
+      return 0;
+    }
+    if (_recoveringMedia) {
+      _mediaRecoveryRequested = true;
+      return 0;
+    }
+    _recoveringMedia = true;
+    try {
+      var completed = 0;
+      var inspected = 0;
+      final budget = Stopwatch()..start();
+      while (!_messageController.isClosed &&
+          inspected < 100 &&
+          budget.elapsed < const Duration(seconds: 30)) {
+        final page = await load(
+          afterMessageId: _mediaRecoveryAfterMessageId,
+          limit: 25,
+        );
+        if (page.isEmpty) {
+          _mediaRecoveryAfterMessageId = null;
+          break;
+        }
+        for (final id in page) {
+          if (_messageController.isClosed ||
+              inspected >= 100 ||
+              budget.elapsed >= const Duration(seconds: 30)) {
+            break;
+          }
+          _mediaRecoveryAfterMessageId = id;
+          inspected++;
+          final parent = await messageRepo.getMessage(id);
+          if (parent == null ||
+              !parent.isIncoming ||
+              parent.mustClearTransientMedia ||
+              !parent.privateMediaPolicy.allowsAutomaticDownload) {
+            continue;
+          }
+          if (_mediaDownloadsInFlight.contains(id)) {
+            _mediaRecoveryAfterActive.add(id);
+            continue;
+          }
+          await _autoDownloadMedia(parent);
+          final attachments = await mediaAttachmentRepo!
+              .getAttachmentsForMessage(id, owner: MediaOwnerLane.direct);
+          if (attachments.isNotEmpty &&
+              attachments.every((a) => a.downloadStatus == 'done')) {
+            completed++;
+          }
+          // Never interrupt a transfer/commit; stop starting new parents when
+          // the pass budget expires. The stable cursor continues next trigger.
+          if (budget.elapsed >= const Duration(seconds: 30)) break;
+        }
+        if (page.length < 25 && _mediaRecoveryAfterMessageId == page.last) {
+          _mediaRecoveryAfterMessageId = null;
+          break;
+        }
+      }
+      return completed;
+    } finally {
+      _recoveringMedia = false;
+      if (_mediaRecoveryRequested) {
+        _mediaRecoveryRequested = false;
+        _requestMediaRecoveryPass();
+      }
+    }
+  }
+
+  void _requestMediaRecoveryPass() {
+    if (_messageController.isClosed) return;
+    _mediaRecoveryAfterMessageId = null;
+    unawaited(
+      retryIncompleteMediaDownloads().catchError((Object error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_LISTENER_MEDIA_RECOVERY_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+        return 0;
+      }),
+    );
+  }
+
   Future<void> _autoDownloadMedia(ConversationMessage message) async {
-    if (!message.privateMediaPolicy.allowsAutomaticDownload) return;
+    if (_messageController.isClosed ||
+        !message.privateMediaPolicy.allowsAutomaticDownload) {
+      return;
+    }
+    if (!_mediaDownloadsInFlight.add(message.id)) return;
     try {
       final attachments = await mediaAttachmentRepo!.getAttachmentsForMessage(
         message.id,
@@ -273,7 +377,15 @@ class ChatMessageListener {
 
       final downloadedMedia = <MediaAttachment>[];
       for (final attachment in attachments) {
-        if (attachment.downloadStatus != 'pending') {
+        if (_messageController.isClosed) break;
+        if (!{
+              kMediaDownloadStatusPending,
+              kMediaDownloadStatusDownloading,
+            }.contains(attachment.downloadStatus) &&
+            !GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(
+              attachment,
+            ) &&
+            !GroupMediaIntegrityPolicy.isRetryableDownloadFailure(attachment)) {
           downloadedMedia.add(attachment);
           continue;
         }
@@ -292,6 +404,20 @@ class ChatMessageListener {
             downloadedMedia.add(attachment);
             continue;
           }
+          // Replace a deferred prompt while its automatic retry is active.
+          if (!_messageController.isClosed) {
+            _messageController.add(
+              message.copyWith(
+                media: [
+                  ...downloadedMedia,
+                  attachment.copyWith(
+                    downloadStatus: kMediaDownloadStatusDownloading,
+                  ),
+                  ...attachments.skip(downloadedMedia.length + 1),
+                ],
+              ),
+            );
+          }
           final result = await downloadMedia(
             bridge: bridge!,
             mediaAttachmentRepo: mediaAttachmentRepo!,
@@ -304,9 +430,8 @@ class ChatMessageListener {
           if (result != null) {
             downloadedMedia.add(result);
           } else {
-            // Re-read the authoritative persisted status so a terminal
-            // download_failed (relay not-found / budget exhausted) isn't shown
-            // as a retryable `failed` (INV-DL-1).
+            // Re-read the authoritative state so deferred retries, confirmed
+            // absence and exhausted nontransport budgets stay distinct.
             final persisted = await mediaAttachmentRepo!
                 .getAttachmentsForMessage(
                   message.id,
@@ -336,7 +461,9 @@ class ChatMessageListener {
 
       // Re-emit with media hydrated — ConversationWired._upsertMessageById
       // replaces by ID so the UI updates seamlessly.
-      _messageController.add(message.copyWith(media: downloadedMedia));
+      if (!_messageController.isClosed) {
+        _messageController.add(message.copyWith(media: downloadedMedia));
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -348,6 +475,11 @@ class ChatMessageListener {
           'error': e.toString(),
         },
       );
+    } finally {
+      _mediaDownloadsInFlight.remove(message.id);
+      if (_mediaRecoveryAfterActive.remove(message.id)) {
+        _requestMediaRecoveryPass();
+      }
     }
   }
 

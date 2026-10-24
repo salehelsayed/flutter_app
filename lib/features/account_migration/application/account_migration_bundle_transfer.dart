@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:synchronized/synchronized.dart';
 import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -68,7 +69,10 @@ class AccountMigrationProductionBundleSource {
   final String sourceAppVersion;
   final String sourceBuildNumber;
 
-  const AccountMigrationProductionBundleSource({
+  final _exportArtifactsLock = Lock();
+  final _activeExportSessions = <String>{};
+
+  AccountMigrationProductionBundleSource({
     required this.sourceDb,
     required this.primaryStore,
     this.sharedStore,
@@ -81,9 +85,84 @@ class AccountMigrationProductionBundleSource {
     this.sourceBuildNumber = MigrationDatabaseManifest.unknownBuildNumber,
   });
 
+  /// Run before exposing the transfer runtime on startup. A live bundle keeps
+  /// its session registered until its terminal cleanup has finished.
+  Future<void> sweepStaleExports() =>
+      _exportArtifactsLock.synchronized(() => _removeExportArtifacts());
+
+  /// Startup maintenance must not prevent the application runtime from wiring.
+  /// A new export still performs its own strict sweep before producing files.
+  Future<void> sweepStaleExportsOnStartup() async {
+    try {
+      await sweepStaleExports();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_STARTUP_EXPORT_SWEEP_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  // All callers hold the artifact lock: a new run cannot acquire a path while
+  // a sweep is deleting its previous contents.
+  Future<void> _removeExportArtifacts({String? sessionId}) async {
+    final type = await FileSystemEntity.type(
+      exportDirectoryPath,
+      followLinks: false,
+    );
+    if (type == FileSystemEntityType.notFound) return;
+    if (type != FileSystemEntityType.directory) {
+      throw FileSystemException(
+        'Export directory was replaced',
+        exportDirectoryPath,
+      );
+    }
+    await for (final entity in Directory(
+      exportDirectoryPath,
+    ).list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (sessionId != null) {
+        if (!name.startsWith('${Uri.encodeComponent(sessionId)}.')) continue;
+      } else if (_activeExportSessions.any(
+        (active) => name.startsWith('${Uri.encodeComponent(active)}.'),
+      )) {
+        continue;
+      }
+      await entity.delete(recursive: true);
+      if (await FileSystemEntity.type(entity.path, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        throw FileSystemException(
+          'Export artifact erasure incomplete',
+          entity.path,
+        );
+      }
+    }
+  }
+
   Future<AccountMigrationLocalTransferBundle> call(
     AccountMigrationTransferRequest request,
   ) async {
+    await _exportArtifactsLock.synchronized(() async {
+      if (_activeExportSessions.contains(request.sessionId)) {
+        throw const AccountMigrationBundleAssemblyException(
+          'Export session is already active',
+        );
+      }
+      await _removeExportArtifacts();
+      _activeExportSessions.add(request.sessionId);
+    });
+    var artifactsReleased = false;
+    Future<void> cleanupExportArtifacts() =>
+        _exportArtifactsLock.synchronized(() async {
+          if (artifactsReleased) return;
+          try {
+            await _removeExportArtifacts(sessionId: request.sessionId);
+          } finally {
+            _activeExportSessions.remove(request.sessionId);
+            artifactsReleased = true;
+          }
+        });
     var phase = 'validateConfiguration';
     void enterPhase(String next) {
       phase = next;
@@ -111,19 +190,6 @@ class AccountMigrationProductionBundleSource {
         exportDirectoryPath,
         '${Uri.encodeComponent(request.sessionId)}.identity.snapshot.db',
       );
-      // A retried attempt re-exports over the previous attempt's snapshot;
-      // SQLCipher/VACUUM INTO refuses to overwrite an existing target.
-      for (final stale in [
-        snapshotPath,
-        '$snapshotPath-wal',
-        '$snapshotPath-shm',
-        '$snapshotPath-journal',
-      ]) {
-        final staleFile = File(stale);
-        if (await staleFile.exists()) {
-          await staleFile.delete();
-        }
-      }
       enterPhase('readDatabaseKey');
       final dbKey = await primaryStore.read(
         MigrationSecureStorageRegistry.dbEncryptionKey,
@@ -275,14 +341,7 @@ class AccountMigrationProductionBundleSource {
             sessionId: request.sessionId,
             bundleId: bundleId,
             entries: entryInputs,
-            cleanupAfterSuccess: () async {
-              for (final path in [snapshot.destinationPath, metadataPath]) {
-                final file = File(path);
-                if (await file.exists()) {
-                  await file.delete();
-                }
-              }
-            },
+            cleanupExportArtifacts: cleanupExportArtifacts,
           );
       emitFlowEvent(
         layer: 'FL',
@@ -303,6 +362,7 @@ class AccountMigrationProductionBundleSource {
       );
       return bundle;
     } catch (error) {
+      await cleanupExportArtifacts();
       emitFlowEvent(
         layer: 'FL',
         event: 'ACCOUNT_MIGRATION_BUNDLE_SOURCE_FAILED',

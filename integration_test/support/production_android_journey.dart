@@ -266,6 +266,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
     Map<String, String>? environment,
     AndroidHostProcessRunner? runner,
     ProductionAndroidGuardCapture? captureGuard,
+    this.prepareContactMesh = true,
   }) : runner = runner ?? const SystemAndroidHostProcessRunner(),
        captureGuard = captureGuard ?? _captureProductionAndroidGuard {
     final values = environment ?? Platform.environment;
@@ -411,6 +412,8 @@ final class ProductionAndroidJourney implements ProductionJourney {
   @override
   final AndroidHostProcessRunner runner;
   final ProductionAndroidGuardCapture captureGuard;
+  // Introduction journeys explicitly prepare only A-B/A-C; other fixtures keep the full mesh.
+  final bool prepareContactMesh;
   final _random = Random.secure();
   final invocations = <Map<String, Object?>>[];
   final flowReceipts = <String>[];
@@ -537,7 +540,7 @@ final class ProductionAndroidJourney implements ProductionJourney {
     for (final p in actors) {
       await p.awaitReady();
     }
-    if (actors.length == 1) return;
+    if (actors.length == 1 || !prepareContactMesh) return;
     final identities = <String, Map<String, Object?>>{};
     for (final actor in actors) {
       identities[actor.invocation.role] = await actor.command('identity');

@@ -45,6 +45,10 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
   Widget build(BuildContext context) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
+    final displayUsername = widget.request.username.replaceAll(
+      RegExp(r'[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]'),
+      '',
+    );
 
     return AlertDialog(
       backgroundColor: readableColors.surfaceBase,
@@ -65,8 +69,10 @@ class _ContactRequestDialogState extends State<ContactRequestDialog> {
           const SizedBox(height: 16),
           // Username
           Text(
-            widget.request.username,
-            textDirection: detectTextDirection(widget.request.username),
+            displayUsername,
+            textDirection: detectTextDirection(displayUsername),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: readableColors.textPrimary,
               fontSize: 20,

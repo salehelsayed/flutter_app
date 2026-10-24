@@ -1,7 +1,9 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -13,8 +15,8 @@ import 'package:flutter_app/features/settings/application/download_profile_pictu
 /// original sender receives our ML-KEM public key (Part 2 of bidirectional
 /// key exchange).
 ///
-/// Delegates the local DB state transition to [acceptContactRequest], then
-/// fire-and-forgets [sendContactRequest] on success.
+/// Establishes durable retry ownership before marking the request accepted, then
+/// starts [sendContactRequest] without delaying local acceptance on transport.
 ///
 /// [onProfileDownloaded] is called when the fire-and-forget profile picture
 /// download succeeds. Callers can use this to trigger a UI refresh.
@@ -25,6 +27,7 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
   required P2PService p2pService,
   required IdentityRepository identityRepo,
   required Bridge bridge,
+  SecureKeyStore? secureKeyStore,
   DownloadProfilePictureFn downloadProfilePictureFn = downloadProfilePicture,
   void Function(ContactModel)? onProfileDownloaded,
   // FDC-09 §12 / CV-14: read-only wake-token resolver threaded into the
@@ -38,6 +41,9 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
     requestRepo: requestRepo,
     contactRepo: contactRepo,
     peerId: peerId,
+    beforeMarkAccepted: secureKeyStore == null
+        ? null
+        : () => queueMlKemReannouncePeer(secureKeyStore, peerId),
   );
 
   // 2. On success, fire-and-forget reciprocal request
@@ -78,27 +84,37 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
 
     // Load the now-accepted contact to get their public key for v2 encryption
     final contact = await contactRepo.getContact(peerId);
-    final recipientPublicKey = contact?.publicKey;
+    if (contact == null || contact.isBlocked) return result;
+    final recipientPublicKey = contact.publicKey;
 
     sendContactRequest(
-      p2pService: p2pService,
-      identityRepo: identityRepo,
-      bridge: bridge,
-      targetPeerId: peerId,
-      recipientPublicKey: recipientPublicKey,
-      resolveWakeToken: resolveWakeToken,
-      resolveCallWakeHandle: resolveCallWakeHandle,
-      onCallWakeHandleDistributed: onCallWakeHandleDistributed,
-    ).then((sendResult) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'RECIPROCAL_CONTACT_REQUEST_RESULT',
-        details: {
-          'peerId': peerId.length > 10 ? peerId.substring(0, 10) : peerId,
-          'result': sendResult.name,
-        },
-      );
-    });
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          targetPeerId: peerId,
+          recipientPublicKey: recipientPublicKey,
+          resolveWakeToken: resolveWakeToken,
+          resolveCallWakeHandle: resolveCallWakeHandle,
+          onCallWakeHandleDistributed: onCallWakeHandleDistributed,
+        )
+        .then<void>((sendResult) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RECIPROCAL_CONTACT_REQUEST_RESULT',
+            details: {
+              'peerId': peerId.length > 10 ? peerId.substring(0, 10) : peerId,
+              'result': sendResult.name,
+            },
+          );
+        })
+        .catchError((Object error, StackTrace stackTrace) {
+          // The durable marker remains owned by reconnect/resume recovery.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RECIPROCAL_CONTACT_REQUEST_ERROR',
+            details: {'error': error.toString()},
+          );
+        });
   }
 
   return result;

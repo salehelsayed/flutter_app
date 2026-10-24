@@ -160,7 +160,11 @@ class PostMediaAttachmentModel {
       height: height,
       durationMs: durationMs,
       localPath: localPath,
-      downloadStatus: downloadStatus,
+      // The post retrier owns this durable backoff. Shared tiles should keep
+      // showing normal loading rather than offer a receiver retry prompt.
+      downloadStatus: downloadStatus == 'retry_waiting'
+          ? 'downloading'
+          : downloadStatus,
       createdAt: createdAt,
       waveform: waveform,
     );

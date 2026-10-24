@@ -3714,9 +3714,7 @@ void main() {
           tester,
           groupRepo: groupRepo,
           mediaPicker: mediaPicker,
-          imageProcessor: _testAvatarImageProcessor(
-            Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]),
-          ),
+          imageProcessor: _testAvatarImageProcessor(),
           uploadGroupAvatarFn: uploadAndStartRecovery,
         );
         await _openGroupDetailsEditor(tester);

@@ -52,6 +52,7 @@ Future<ContactModel?> _settledAvatar({
   required ContactRepository contactRepo,
   required String ownerPeerId,
   required String avatarVersion,
+  bool retryPendingRequest = false,
 }) async =>
     await contactRepo.getContact(ownerPeerId) ??
     ContactModel(
@@ -253,69 +254,63 @@ MediaAttachmentRepositoryImpl _buildMediaAttachmentRepo(
   secureKeyStore: keyStore,
 );
 
-ReactionRepositoryImpl _buildReactionRepo(Database db) =>
-    ReactionRepositoryImpl(
-      dbInsertReaction: (row) => dbInsertReaction(db, row),
-      dbApplyIncomingAdd: (row) async {
-        final result = await dbApplyIncomingReactionMutation(
-          db,
-          row,
-          mutation: DbIncomingReactionMutation.add,
-        );
-        return switch (result) {
-          DbIncomingReactionApplyResult.inserted =>
-            ReactionAddApplyResult.inserted,
-          DbIncomingReactionApplyResult.updated =>
-            ReactionAddApplyResult.updated,
-          DbIncomingReactionApplyResult.exactReplay =>
-            ReactionAddApplyResult.exactReplay,
-          DbIncomingReactionApplyResult.stale => ReactionAddApplyResult.stale,
-          DbIncomingReactionApplyResult.removed => throw StateError(
-            'ADD returned REMOVE',
-          ),
-        };
-      },
-      dbApplyIncomingRemove: (row) async {
-        final result = await dbApplyIncomingReactionMutation(
-          db,
-          row,
-          mutation: DbIncomingReactionMutation.remove,
-        );
-        return switch (result) {
-          DbIncomingReactionApplyResult.removed =>
-            ReactionRemoveApplyResult.applied,
-          DbIncomingReactionApplyResult.exactReplay =>
-            ReactionRemoveApplyResult.exactReplay,
-          DbIncomingReactionApplyResult.stale =>
-            ReactionRemoveApplyResult.stale,
-          DbIncomingReactionApplyResult.inserted ||
-          DbIncomingReactionApplyResult.updated => throw StateError(
-            'REMOVE returned ADD',
-          ),
-        };
-      },
-      dbLoadReactionsForMessage: (messageId) =>
-          dbLoadReactionsForMessage(db, messageId),
-      dbLoadReactionsForMessages: (messageIds) =>
-          dbLoadReactionsForMessages(db, messageIds),
-      dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) =>
-          dbLoadActiveOrTombstonedReactionForSender(
-            db,
-            messageId,
-            senderPeerId,
-          ),
-      dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) =>
-          dbDeleteReaction(
-            db,
-            messageId,
-            senderPeerId,
-            removedAtTimestamp: removedAtTimestamp,
-          ),
-      dbDeleteReactionsForMessage: (messageId) =>
-          dbDeleteReactionsForMessage(db, messageId),
-      dbDeleteReactionsForContact: (peerId) =>
-          dbDeleteReactionsForContact(db, peerId),
+ReactionRepositoryImpl _buildReactionRepo(
+  Database db,
+) => ReactionRepositoryImpl(
+  dbInsertReaction: (row) => dbInsertReaction(db, row),
+  dbApplyIncomingAdd: (row) async {
+    final result = await dbApplyIncomingReactionMutation(
+      db,
+      row,
+      mutation: DbIncomingReactionMutation.add,
     );
+    return switch (result) {
+      DbIncomingReactionApplyResult.inserted => ReactionAddApplyResult.inserted,
+      DbIncomingReactionApplyResult.updated => ReactionAddApplyResult.updated,
+      DbIncomingReactionApplyResult.exactReplay =>
+        ReactionAddApplyResult.exactReplay,
+      DbIncomingReactionApplyResult.stale => ReactionAddApplyResult.stale,
+      DbIncomingReactionApplyResult.removed => throw StateError(
+        'ADD returned REMOVE',
+      ),
+    };
+  },
+  dbApplyIncomingRemove: (row) async {
+    final result = await dbApplyIncomingReactionMutation(
+      db,
+      row,
+      mutation: DbIncomingReactionMutation.remove,
+    );
+    return switch (result) {
+      DbIncomingReactionApplyResult.removed =>
+        ReactionRemoveApplyResult.applied,
+      DbIncomingReactionApplyResult.exactReplay =>
+        ReactionRemoveApplyResult.exactReplay,
+      DbIncomingReactionApplyResult.stale => ReactionRemoveApplyResult.stale,
+      DbIncomingReactionApplyResult.inserted ||
+      DbIncomingReactionApplyResult.updated => throw StateError(
+        'REMOVE returned ADD',
+      ),
+    };
+  },
+  dbLoadReactionsForMessage: (messageId) =>
+      dbLoadReactionsForMessage(db, messageId),
+  dbLoadReactionsForMessages: (messageIds) =>
+      dbLoadReactionsForMessages(db, messageIds),
+  dbLoadActiveOrTombstonedReactionForSender: (messageId, senderPeerId) =>
+      dbLoadActiveOrTombstonedReactionForSender(db, messageId, senderPeerId),
+  dbDeleteReaction: (messageId, senderPeerId, {removedAtTimestamp}) =>
+      dbDeleteReaction(
+        db,
+        messageId,
+        senderPeerId,
+        removedAtTimestamp: removedAtTimestamp,
+      ),
+  dbDeleteReactionsForMessage: (messageId) =>
+      dbDeleteReactionsForMessage(db, messageId),
+  dbDeleteReactionsForContact: (peerId) =>
+      dbDeleteReactionsForContact(db, peerId),
+);
 
 IntroductionRepositoryImpl _buildIntroRepo(Database db) =>
     IntroductionRepositoryImpl(
@@ -564,11 +559,12 @@ void main() {
           bridge: aliceBridge,
           secureKeyStore: aliceKeyStore,
           mediaFileManager: MediaFileManager(),
-          sendDeliveryReceipt: ({
-            required contactPeerId,
-            required messageIds,
-            mutationEventIds,
-          }) async {},
+          sendDeliveryReceipt:
+              ({
+                required contactPeerId,
+                required messageIds,
+                mutationEventIds,
+              }) async {},
           notificationOwner: () => null,
           reactionNotificationDependencies: () => null,
           publishPersistedReactionChange: () => null,

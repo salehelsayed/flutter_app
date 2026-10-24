@@ -1310,10 +1310,101 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(backend.deleteCount, 1)
   }
 
+  func testFreshStartupRetiresAbsentAdoptedRingingAndConnectedJournals() throws {
+    for connected in [false, true] {
+      for direction in [PendingNativeCallDirection.incoming, .outgoing] {
+        let backend = MemoryPendingCallBackend()
+        let store = PendingNativeCallStore(backend: backend, nowMs: { self.now })
+        if direction == .incoming { _ = store.create(payload(callA)) }
+        else { _ = store.createOutgoing(payload(callA)) }
+        _ = store.append(nativeCallId: callA, type: .presented)
+        XCTAssertTrue(store.acknowledge(nativeCallId: callA, highestConsumedSequence: 1,
+                                       acknowledgement: .adopted))
+        if connected { XCTAssertTrue(store.markConnected(nativeCallId: callA)) }
+        let restored = makeRig(backend: backend, nowMs: now + 60_000)
+        XCTAssertNil(restored.controller.attach())
+        XCTAssertTrue(restored.controller.setCapabilityEnabled(true))
+        XCTAssertEqual(restored.store.resolveCallHandle(callA.uuidString.lowercased()), callA)
+        XCTAssertTrue(restored.controller.acknowledge(callA, through: 2, disposition: .terminal))
+        XCTAssertFalse(restored.controller.acknowledge(callA, through: 3, disposition: .terminal))
+        XCTAssertTrue(restored.provider.endReports.isEmpty)
+      }
+    }
+  }
+
+  func testFreshStartupPreservesCallKitLiveAdoptedJournal() throws {
+    for connected in [false, true] {
+      let backend = MemoryPendingCallBackend()
+      let store = PendingNativeCallStore(backend: backend, nowMs: { self.now })
+      _ = store.create(payload(callA))
+      _ = store.append(nativeCallId: callA, type: .presented)
+      XCTAssertTrue(store.acknowledge(nativeCallId: callA, highestConsumedSequence: 1,
+                                     acknowledgement: .adopted))
+      if connected { XCTAssertTrue(store.markConnected(nativeCallId: callA)) }
+      let restored = makeRig(backend: backend,
+        nowMs: connected ? now + 60_000 : now,
+        liveCallIds: { [self.callA] })
+      let descriptor = try XCTUnwrap(restored.controller.attach())
+      XCTAssertEqual(descriptor.phase, .journal)
+      XCTAssertNil(descriptor.terminalEvent)
+      XCTAssertTrue(restored.provider.endReports.isEmpty)
+      XCTAssertEqual(backend.deleteCount, 0)
+    }
+  }
+
+  func testOrphanReconciliationWaitsForDurableTerminalAndReceipt() {
+    let backend = MemoryPendingCallBackend()
+    let store = PendingNativeCallStore(backend: backend, nowMs: { self.now })
+    _ = store.create(payload(callA))
+    _ = store.append(nativeCallId: callA, type: .presented)
+    XCTAssertTrue(store.acknowledge(nativeCallId: callA, highestConsumedSequence: 1,
+                                   acknowledgement: .adopted))
+    backend.failWrites = true
+    let restored = makeRig(backend: backend)
+    XCTAssertFalse(restored.controller.isCapabilityEnabled())
+    XCTAssertFalse(restored.controller.setCapabilityEnabled(true))
+    XCTAssertEqual(restored.store.snapshot()?.nativeCallId, callA)
+    XCTAssertNil(restored.store.snapshot()?.terminalEvent)
+    XCTAssertEqual(backend.deleteCount, 0)
+    backend.failWrites = false
+    XCTAssertTrue(restored.controller.setCapabilityEnabled(true))
+    XCTAssertNil(restored.store.snapshot())
+    XCTAssertTrue(restored.provider.endReports.isEmpty)
+  }
+
+  func testOrphanReceiptKeepsSuccessorAudioAndLiveUUIDCannotBeAcknowledged() throws {
+    let backend = MemoryPendingCallBackend()
+    let store = PendingNativeCallStore(backend: backend, nowMs: { self.now })
+    _ = store.create(payload(callA))
+    _ = store.append(nativeCallId: callA, type: .presented)
+    XCTAssertTrue(store.acknowledge(nativeCallId: callA, highestConsumedSequence: 1,
+                                   acknowledgement: .adopted))
+    _ = store.append(nativeCallId: callA, type: .orphaned)
+    let live = makeRig(backend: backend, liveCallIds: { [self.callA] })
+    XCTAssertFalse(live.controller.acknowledge(callA, through: 2, disposition: .terminal))
+    XCTAssertEqual(live.store.snapshot()?.nativeCallId, callA)
+    XCTAssertTrue(live.provider.endReports.isEmpty)
+
+    let restored = makeRig(backend: backend)
+    XCTAssertNil(restored.store.snapshot())
+    XCTAssertEqual(present(restored, payload(callB)), .presented)
+    XCTAssertTrue(restored.controller.handleAnswer(callB))
+    let through = try XCTUnwrap(restored.store.snapshot()).highestSequence
+    XCTAssertTrue(restored.controller.acknowledge(callB, through: through, disposition: .adopted))
+    XCTAssertTrue(restored.controller.recordAudioActivatedForTests(callB))
+    XCTAssertTrue(restored.controller.activateAudio(callB))
+    let releases = restored.audio.releaseCount
+    XCTAssertTrue(restored.controller.acknowledge(callA, through: 2, disposition: .terminal))
+    XCTAssertEqual(restored.audio.releaseCount, releases)
+    XCTAssertEqual(restored.controller.audioState(callB)?.active, true)
+    XCTAssertEqual(restored.store.snapshot()?.nativeCallId, callB)
+  }
+
   private func makeRig(
     backend: MemoryPendingCallBackend = MemoryPendingCallBackend(),
     nowMs: Int64? = nil,
-    nowMsProvider: (() -> Int64)? = nil
+    nowMsProvider: (() -> Int64)? = nil,
+    liveCallIds: @escaping () -> Set<UUID> = { [] }
   ) -> CallKitRig {
     let observedNow = nowMs ?? now
     let clock = nowMsProvider ?? { observedNow }
@@ -1339,7 +1430,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
       nowMs: clock,
       notificationCenter: notificationCenter,
       ringback: ringback,
-      webRTCAudioSession: webRTCAudioSession
+      webRTCAudioSession: webRTCAudioSession,
+      isCallKitCallLive: { liveCallIds().contains($0) }
     )
     return CallKitRig(
       controller: controller,

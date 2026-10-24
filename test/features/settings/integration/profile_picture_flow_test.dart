@@ -30,6 +30,10 @@ import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 
+Uint8List _validNormalizedAvatarBytes() => base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGNhAAMWCAUAAGIACcSrH9MAAAAASUVORK5CYII=',
+);
+
 class _FakePathProvider extends Fake
     with MockPlatformInterfaceMixin
     implements PathProviderPlatform {
@@ -37,7 +41,8 @@ class _FakePathProvider extends Fake
   _FakePathProvider(this.docsPath);
 
   @override
-  Future<String?> getApplicationDocumentsPath() async => docsPath;
+  Future<String?> getApplicationDocumentsPath() async =>
+      Zone.current[#profileDocumentsRoot] as String? ?? docsPath;
 }
 
 class _MockBridge extends Bridge {
@@ -364,7 +369,7 @@ void main() {
         bridge.profileDownloadBytes = Uint8List.fromList(
           List<int>.generate(96, (index) => index % 256),
         );
-        final processedBytes = Uint8List.fromList([0xCA, 0xFE, 0xBA, 0xBE]);
+        final processedBytes = _validNormalizedAvatarBytes();
         final avatarNormalizer = _makeAvatarNormalizer(processedBytes);
 
         final listener = ProfileUpdateListener(
@@ -377,12 +382,14 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) {
                 return downloadProfilePicture(
                   bridge: bridge,
                   contactRepo: contactRepo,
                   ownerPeerId: ownerPeerId,
                   avatarVersion: avatarVersion,
+                  retryPendingRequest: retryPendingRequest,
                   avatarNormalizer: avatarNormalizer,
                 );
               },
@@ -520,9 +527,7 @@ void main() {
         final uploadedAvatarBytes = Uint8List.fromList(
           List<int>.generate(128, (index) => (index * 7) % 256),
         );
-        final normalizedAvatarBytes = Uint8List.fromList(
-          List<int>.generate(16, (index) => index + 1),
-        );
+        final normalizedAvatarBytes = _validNormalizedAvatarBytes();
         final avatarNormalizer = _makeAvatarNormalizer(normalizedAvatarBytes);
 
         final userABridge = _MockBridge()
@@ -545,17 +550,22 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 userADownloadAttempts++;
-                if (userADownloadAttempts == 1) {
-                  return null;
-                }
-                return downloadProfilePicture(
-                  bridge: bridge,
-                  contactRepo: contactRepo,
-                  ownerPeerId: ownerPeerId,
-                  avatarVersion: avatarVersion,
-                  avatarNormalizer: avatarNormalizer,
+                userABridge.nextResponse = userADownloadAttempts == 1
+                    ? {'ok': false, 'errorMessage': 'err=EOF'}
+                    : {'ok': true};
+                return runZoned(
+                  () => downloadProfilePicture(
+                    bridge: bridge,
+                    contactRepo: contactRepo,
+                    ownerPeerId: ownerPeerId,
+                    avatarVersion: avatarVersion,
+                    retryPendingRequest: retryPendingRequest,
+                    avatarNormalizer: avatarNormalizer,
+                  ),
+                  zoneValues: {#profileDocumentsRoot: '${tempDir.path}/user-a'},
                 );
               },
         );
@@ -570,14 +580,19 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 userCDownloadAttempts++;
-                return downloadProfilePicture(
-                  bridge: bridge,
-                  contactRepo: contactRepo,
-                  ownerPeerId: ownerPeerId,
-                  avatarVersion: avatarVersion,
-                  avatarNormalizer: avatarNormalizer,
+                return runZoned(
+                  () => downloadProfilePicture(
+                    bridge: bridge,
+                    contactRepo: contactRepo,
+                    ownerPeerId: ownerPeerId,
+                    avatarVersion: avatarVersion,
+                    retryPendingRequest: retryPendingRequest,
+                    avatarNormalizer: avatarNormalizer,
+                  ),
+                  zoneValues: {#profileDocumentsRoot: '${tempDir.path}/user-c'},
                 );
               },
         );
@@ -633,14 +648,16 @@ void main() {
         expect(userCContact.introducedBy, 'User-A');
         expect(userCContact.introducedByPeerId, userAPeerId);
 
-        final avatarFile = File(
-          '${tempDir.path}/media/avatars/$userBPeerId.jpg',
-        );
-        expect(await avatarFile.exists(), isTrue);
-        expect(
-          await avatarFile.readAsBytes(),
-          orderedEquals(normalizedAvatarBytes),
-        );
+        for (final recipient in ['user-a', 'user-c']) {
+          final avatarFile = File(
+            '${tempDir.path}/$recipient/media/avatars/$userBPeerId.jpg',
+          );
+          expect(await avatarFile.exists(), isTrue);
+          expect(
+            await avatarFile.readAsBytes(),
+            orderedEquals(normalizedAvatarBytes),
+          );
+        }
 
         await userASub.cancel();
         await userCSub.cancel();

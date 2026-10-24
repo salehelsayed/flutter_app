@@ -6,7 +6,9 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/presentation/screens/posts_wired.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
@@ -93,6 +95,30 @@ void main() {
     expect(find.text('Create your first post'), findsOneWidget);
   });
 
+  testWidgets(
+    'real Posts picker classifies HEIF as image media for processing',
+    (tester) async {
+      final previous = ImagePickerPlatform.instance;
+      ImagePickerPlatform.instance = _HeifPicker();
+      addTearDown(() => ImagePickerPlatform.instance = previous);
+      await tester.pumpWidget(buildWidget());
+      await tester.pump();
+      await tester.tap(find.text('Share something with your friends'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final composer = tester.widget<ComposePostSheet>(
+        find.byType(ComposePostSheet),
+      );
+      final drafts = await composer.onAttachMedia!();
+      expect(drafts.map((draft) => draft.localFilePath), [
+        '/fixture/camera.HEIF',
+        '/fixture/camera.heic',
+      ]);
+      expect(drafts.map((draft) => draft.mime), ['image/heic', 'image/heic']);
+      expect(drafts.map((draft) => draft.kind), ['image', 'image']);
+    },
+  );
+
   testWidgets('pick-people only lists active unblocked contacts', (
     tester,
   ) async {
@@ -145,6 +171,14 @@ void main() {
       expect(pendingTargetStore.target?.postId, 'missing-post');
     },
   );
+}
+
+class _HeifPicker extends ImagePickerPlatform {
+  @override
+  Future<List<XFile>> getMedia({required MediaOptions options}) async => [
+    XFile('/fixture/camera.HEIF'),
+    XFile('/fixture/camera.heic'),
+  ];
 }
 
 PostModel _post({required String id, required String text}) {

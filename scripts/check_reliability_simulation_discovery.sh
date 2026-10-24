@@ -446,6 +446,21 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned production message latency: original A/R/GP send sequences on production services; original benchmarks retained"
       return
       ;;
+    integration_test/scripts/run_production_direct_ordered_replay.dart|\
+    integration_test/scripts/run_production_group_ordered_recovery.dart|\
+    integration_test/scripts/run_production_direct_send_cut.dart|\
+    integration_test/scripts/run_production_direct_actions.dart|\
+    integration_test/scripts/run_production_direct_sender_offline.dart|\
+    integration_test/scripts/run_production_introduction_mutual.dart|\
+    integration_test/scripts/run_production_introduction_offline.dart|\
+    integration_test/scripts/run_production_group_local_media_delete.dart)
+      record "support" "$path" "support" "manifest-owned Catalog P0 production journey; existing observation runtime, exact logical-identity oracle, no additional executable census entry"
+      return
+      ;;
+    integration_test/scripts/run_direct_text_send_cut_sims.dart)
+      record "support" "$path" "support" "external existing ephemeral Redis fixture wrapper around the manifest-owned Catalog P0 direct-text cut"
+      return
+      ;;
     integration_test/scripts/run_production_routing.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return
@@ -713,6 +728,11 @@ classify_path() {
     integration_test/support/android_direct_media_blob_custody_campaign_contract.dart|\
     integration_test/support/android_direct_media_blob_custody_evidence.dart)
       record "support" "$path" "support" "347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract"
+      return
+      ;;
+    integration_test/scripts/run_media_fault_fixture.dart|\
+    integration_test/support/direct_media_fixture_fault_client.dart)
+      record "support" "$path" "support" "H2 hand-driven device companion: owned Plan 347 relay fixture with run-scoped blob fault controls"
       return
       ;;
     integration_test/scripts/run_voice_message_sims.dart|\

@@ -18,6 +18,7 @@ import 'package:flutter_app/features/update_check/domain/update_check_models.dar
 import 'package:flutter_app/features/update_check/presentation/update_copy.dart';
 import 'package:flutter_app/features/update_check/presentation/update_required_back_guard.dart';
 import 'package:flutter_app/features/update_check/presentation/update_required_gate.dart';
+import 'package:flutter_app/features/update_check/presentation/update_store_launcher.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +30,7 @@ const _hard = UpdateDecisionHard(
   reasonCode: UpdateReasonCode.security,
 );
 const _overlay = ValueKey('update-required-overlay');
+const _close = ValueKey('update-required-close');
 const _homeLabel = 'Home private content';
 
 void main() {
@@ -58,50 +60,55 @@ void main() {
     await calls.dispose();
   });
 
-  Widget app({Locale locale = const Locale('en'), String? initialRoute}) =>
-      MaterialApp(
-        navigatorKey: navigatorKey,
-        locale: locale,
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        theme: ThemeData(
-          extensions: const <ThemeExtension<dynamic>>[
-            BackgroundReadableColors.dark,
-          ],
-        ),
-        // Same layering as MyApp: the gate wraps the app content inside the
-        // call overlay.
-        builder: (context, child) => ForegroundCallOverlay(
-          capability: calls,
-          loadContactDisplayName: (_) async => 'Local contact',
-          child: UpdateRequiredGate(
-            controller: controller,
-            callCapability: calls,
-            backGuard: guard,
-            launchStore: (url) async {
+  Widget app({
+    Locale locale = const Locale('en'),
+    String? initialRoute,
+    UpdateStoreLauncher? storeLauncher,
+  }) => MaterialApp(
+    navigatorKey: navigatorKey,
+    locale: locale,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    theme: ThemeData(
+      extensions: const <ThemeExtension<dynamic>>[
+        BackgroundReadableColors.dark,
+      ],
+    ),
+    // Same layering as MyApp: the gate wraps the app content inside the
+    // call overlay.
+    builder: (context, child) => ForegroundCallOverlay(
+      capability: calls,
+      loadContactDisplayName: (_) async => 'Local contact',
+      child: UpdateRequiredGate(
+        controller: controller,
+        callCapability: calls,
+        backGuard: guard,
+        launchStore:
+            storeLauncher ??
+            (url) async {
               launches.add(url);
               return true;
             },
-            child: child!,
+        child: child!,
+      ),
+    ),
+    initialRoute: initialRoute,
+    onGenerateRoute: (settings) => MaterialPageRoute<void>(
+      settings: settings,
+      builder: (_) => switch (settings.name) {
+        '/' => Scaffold(
+          body: Column(
+            children: <Widget>[
+              Semantics(label: _homeLabel, child: const Text('home')),
+              TextField(focusNode: homeFocus),
+            ],
           ),
         ),
-        initialRoute: initialRoute,
-        onGenerateRoute: (settings) => MaterialPageRoute<void>(
-          settings: settings,
-          builder: (_) => switch (settings.name) {
-            '/' => Scaffold(
-              body: Column(
-                children: <Widget>[
-                  Semantics(label: _homeLabel, child: const Text('home')),
-                  TextField(focusNode: homeFocus),
-                ],
-              ),
-            ),
-            final name? => Scaffold(body: Text('route $name')),
-            null => const SizedBox.shrink(),
-          },
-        ),
-      );
+        final name? => Scaffold(body: Text('route $name')),
+        null => const SizedBox.shrink(),
+      },
+    ),
+  );
 
   /// Starts without an overlay; the first due resume returns hard.
   void hardOnResume() {
@@ -131,13 +138,162 @@ void main() {
     WidgetTester tester, {
     Locale locale = const Locale('en'),
     String? initialRoute,
+    UpdateStoreLauncher? storeLauncher,
   }) async {
-    await tester.pumpWidget(app(locale: locale, initialRoute: initialRoute));
+    await tester.pumpWidget(
+      app(
+        locale: locale,
+        initialRoute: initialRoute,
+        storeLauncher: storeLauncher,
+      ),
+    );
     // The first check runs after the first frame.
     await tester.pumpAndSettle();
   }
 
-  group('AC10 covers every route; no close; Back blocked; store link', () {
+  group('UPDATE-009 store handoff cannot clear the required root gate', () {
+    testWidgets(
+      'successful retry clears feedback and return without installing '
+      'keeps the gate without a false error',
+      (tester) async {
+        var attempts = 0;
+        await pumpApp(
+          tester,
+          storeLauncher: (target) async {
+            launches.add(target);
+            return ++attempts > 1;
+          },
+        );
+        final l10n = AppLocalizations.of(tester.element(find.byKey(_overlay)))!;
+        final recovery = find.text(l10n.update_required_store_failed);
+        expect(recovery, findsNothing);
+
+        await tester.tap(find.text('Update now'));
+        await tester.pumpAndSettle();
+        expect(recovery, findsOneWidget);
+        expect(find.byKey(_close).hitTestable(), findsOneWidget);
+        expect(guard.blocking, isTrue);
+
+        await tester.tap(find.text('Update now'));
+        await tester.pumpAndSettle();
+        expect(attempts, 2);
+        expect(launches, [
+          Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+          Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+        ]);
+        expect(recovery, findsNothing);
+
+        // Opening the store is not an installation. A resume that still returns
+        // the same hard decision must neither dismiss the gate nor invent a
+        // launcher failure after the successful handoff.
+        await resume(tester);
+        expect(service.checks, 2);
+        expect(controller.installedBuildNumber, '118');
+        expect(controller.value, _hard);
+        expect(find.byKey(_overlay), findsOneWidget);
+        expect(recovery, findsNothing);
+        expect(find.text('Update now').hitTestable(), findsOneWidget);
+        expect(guard.blocking, isTrue);
+        expect(await tester.binding.handlePopRoute(), isTrue);
+
+        // Build 126's session escape remains usable after failed and successful
+        // handoffs; it does not change the required decision or soft dismissal.
+        await tester.tap(find.byKey(_close));
+        await tester.pumpAndSettle();
+        expect(find.byKey(_overlay), findsNothing);
+        expect(guard.blocking, isFalse);
+        expect(find.text('home').hitTestable(), findsOneWidget);
+        expect(controller.value, _hard);
+        expect(service.dismissed, isEmpty);
+      },
+    );
+
+    for (final copy in const [
+      (Locale('en'), 'Please update Mknoon', 'Update now'),
+      (Locale('de'), 'Bitte aktualisiere Mknoon', 'Jetzt aktualisieren'),
+      (Locale('ar'), 'يلزم تحديث مكنون', 'حدّث الآن'),
+    ]) {
+      for (final outcome in ['false', 'throw', 'cancel']) {
+        group('Store launcher recovery', () {
+          testWidgets(
+            '${copy.$1.languageCode} $outcome keeps blocking and retries',
+            (tester) async {
+              final semantics = tester.ensureSemantics();
+              try {
+                var attempts = 0;
+                final targets = <Uri>[];
+                await pumpApp(
+                  tester,
+                  locale: copy.$1,
+                  storeLauncher: (target) async {
+                    targets.add(target);
+                    attempts++;
+                    if (attempts == 1) {
+                      if (outcome == 'throw') {
+                        throw PlatformException(code: 'STORE_HANDOFF_REJECTED');
+                      }
+                      return outcome == 'cancel';
+                    }
+                    return true;
+                  },
+                );
+                expect(find.text(copy.$2), findsOneWidget);
+                await tester.tap(find.text(copy.$3));
+                await tester.pumpAndSettle();
+
+                // A platform refusal/exception or return without an install must
+                // leave truthful localized recovery and all root blocking intact.
+                expect(tester.takeException(), isNull);
+                expect(attempts, 1);
+                if (outcome != 'cancel') {
+                  final l10n = AppLocalizations.of(
+                    tester.element(find.byKey(_overlay)),
+                  )!;
+                  expect(
+                    find.text(l10n.update_required_store_failed),
+                    findsOneWidget,
+                  );
+                }
+                expect(find.text(copy.$2), findsOneWidget);
+                expect(find.text(copy.$3).hitTestable(), findsOneWidget);
+                expect(guard.blocking, isTrue);
+                expect(controller.value, isA<UpdateDecisionHard>());
+                expect(controller.installedBuildNumber, '118');
+                expect(await tester.binding.handlePopRoute(), isTrue);
+                expect(
+                  tester.semantics
+                      .simulatedAccessibilityTraversal()
+                      .map((n) => n.label)
+                      .where((label) => label.contains(_homeLabel)),
+                  isEmpty,
+                );
+
+                // The user returned from the external store without installing.
+                await resume(tester);
+                expect(service.checks, 2);
+                expect(find.byKey(_overlay), findsOneWidget);
+                expect(find.text(copy.$2), findsOneWidget);
+                await tester.tap(find.text(copy.$3));
+                await tester.pumpAndSettle();
+                expect(attempts, 2);
+                expect(targets, [
+                  Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+                  Uri.parse('https://testflight.apple.com/join/nUVjrEYS'),
+                ]);
+                expect(guard.blocking, isTrue);
+                expect(find.byKey(_overlay), findsOneWidget);
+                expect(find.byKey(_close), findsOneWidget);
+              } finally {
+                semantics.dispose();
+              }
+            },
+          );
+        });
+      }
+    }
+  });
+
+  group('AC10 covers every route; session close; Back blocked; store link', () {
     testWidgets('home', (tester) async {
       await pumpApp(tester);
 
@@ -146,14 +302,14 @@ void main() {
       expect(find.text('Please update Mknoon'), findsOneWidget);
       expect(find.text('Your version: 118'), findsOneWidget);
       expect(find.text('Needed: 120 or newer'), findsOneWidget);
-      expect(find.byType(CloseButton), findsNothing);
+      expect(find.byKey(_close), findsOneWidget);
       expect(find.byType(BackButton), findsNothing);
       expect(
         find.descendant(
           of: find.byKey(_overlay),
           matching: find.byType(IconButton),
         ),
-        findsNothing,
+        findsOneWidget,
       );
       expect(
         find.descendant(
@@ -240,6 +396,152 @@ void main() {
     });
   });
 
+  group('session dismissal', () {
+    for (final copy in const [
+      (Locale('en'), 'Close'),
+      (Locale('de'), 'Schließen'),
+      (Locale('ar'), 'إغلاق'),
+    ]) {
+      testWidgets('${copy.$1.languageCode} X is labelled and at the end', (
+        tester,
+      ) async {
+        final semantics = tester.ensureSemantics();
+        try {
+          await pumpApp(tester, locale: copy.$1);
+          final close = find.byKey(_close);
+          expect(close.hitTestable(), findsOneWidget);
+          expect(find.byTooltip(copy.$2), findsOneWidget);
+          expect(
+            find.descendant(of: close, matching: find.byIcon(Icons.close)),
+            findsOneWidget,
+          );
+          expect(find.semantics.byLabel(copy.$2), findsOneWidget);
+          final rect = tester.getRect(close);
+          final overlay = tester.getRect(find.byKey(_overlay));
+          expect(rect.top, overlay.top);
+          if (copy.$1.languageCode == 'ar') {
+            expect(rect.left, overlay.left);
+          } else {
+            expect(rect.right, overlay.right);
+          }
+        } finally {
+          semantics.dispose();
+        }
+      });
+    }
+
+    testWidgets('X reveals the app and restores focus, semantics and Back', (
+      tester,
+    ) async {
+      final semantics = tester.ensureSemantics();
+      try {
+        hardOnResume();
+        await pumpApp(tester);
+        unawaited(navigatorKey.currentState!.pushNamed('/settings'));
+        await tester.pumpAndSettle();
+        await resume(tester);
+        expect(guard.blocking, isTrue);
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        expect(navigatorKey.currentState!.canPop(), isTrue);
+
+        await tester.tap(find.byKey(_close));
+        await tester.pumpAndSettle();
+        expect(find.byKey(_overlay), findsNothing);
+        expect(guard.blocking, isFalse);
+        expect(find.text('route /settings').hitTestable(), findsOneWidget);
+        expect(controller.value, _hard);
+        expect(service.dismissed, isEmpty);
+        expect(launches, isEmpty);
+
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        await tester.pumpAndSettle();
+        expect(navigatorKey.currentState!.canPop(), isFalse);
+        expect(find.text('route /settings'), findsNothing);
+        expect(find.text('home').hitTestable(), findsOneWidget);
+        homeFocus.requestFocus();
+        await tester.pump();
+        expect(homeFocus.hasFocus, isTrue);
+        expect(
+          tester.semantics.simulatedAccessibilityTraversal().map(
+            (node) => node.label,
+          ),
+          contains(contains(_homeLabel)),
+        );
+      } finally {
+        semantics.dispose();
+      }
+    });
+
+    testWidgets(
+      'dismissal survives resume and decisions until a higher minBuild',
+      (tester) async {
+        await pumpApp(tester);
+        await tester.tap(find.byKey(_close));
+        await tester.pumpAndSettle();
+        await resume(tester);
+        expect(service.checks, 2);
+        expect(find.byKey(_overlay), findsNothing);
+        service.due = true;
+        for (final decision in const <UpdateDecision>[
+          UpdateDecisionHard(
+            minBuild: 120,
+            reasonCode: UpdateReasonCode.general,
+          ),
+          UpdateDecisionNone(),
+          UpdateDecisionHard(
+            minBuild: 119,
+            reasonCode: UpdateReasonCode.criticalFix,
+          ),
+          _hard,
+        ]) {
+          service.queue(decision);
+          await controller.onResumed();
+          await tester.pumpAndSettle();
+          expect(find.byKey(_overlay), findsNothing);
+          expect(guard.blocking, isFalse);
+        }
+        service.queue(
+          const UpdateDecisionHard(
+            minBuild: 121,
+            reasonCode: UpdateReasonCode.security,
+          ),
+        );
+        await controller.onResumed();
+        await tester.pumpAndSettle();
+        expect(find.byKey(_overlay), findsOneWidget);
+        expect(find.text('Needed: 121 or newer'), findsOneWidget);
+        expect(guard.blocking, isTrue);
+        expect(await tester.binding.handlePopRoute(), isTrue);
+        homeFocus.requestFocus();
+        await tester.pump();
+        expect(homeFocus.hasFocus, isFalse);
+        await tester.tap(find.byKey(_close));
+        await tester.pumpAndSettle();
+        await resume(tester);
+        expect(find.byKey(_overlay), findsNothing);
+        expect(service.dismissed, isEmpty);
+      },
+    );
+
+    testWidgets('a fresh gate shows the same requirement after dismissal', (
+      tester,
+    ) async {
+      await pumpApp(tester);
+      await tester.tap(find.byKey(_close));
+      await tester.pumpAndSettle();
+      expect(find.byKey(_overlay), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(guard.blocking, isFalse);
+      controller.dispose();
+      controller = UpdateCheckController(service: service);
+      await pumpApp(tester);
+      expect(service.checks, 2);
+      expect(find.byKey(_overlay), findsOneWidget);
+      expect(guard.blocking, isTrue);
+      expect(service.dismissed, isEmpty);
+    });
+  });
+
   testWidgets('AC11 nothing behind the overlay is in the semantics tree or '
       'reachable by Tab', (tester) async {
     final semantics = tester.ensureSemantics();
@@ -268,7 +570,7 @@ void main() {
     expect(homeFocus.hasFocus, isFalse);
 
     // Tab never reaches anything behind the overlay; it does reach the
-    // overlay's one button.
+    // overlay's Update button as well as its close action.
     final behind = find.byType(Navigator);
     var reachedButton = false;
     for (var i = 0; i < 6; i++) {

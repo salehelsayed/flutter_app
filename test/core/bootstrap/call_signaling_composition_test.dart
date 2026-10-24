@@ -107,6 +107,7 @@ final class _Graph
   final bool throwOnStart;
   final bool throwOnAdvertise;
   Future<bool> Function()? onAdvertise;
+  Future<void> Function()? onMailboxDrain;
   final StreamController<void> callabilityInvalidationsController =
       StreamController<void>.broadcast(sync: true);
 
@@ -240,6 +241,7 @@ final class _Graph
   @override
   Future<void> drainCallMailbox() async {
     events.add('call_mailbox_drain');
+    await onMailboxDrain?.call();
   }
 
   @override
@@ -439,6 +441,19 @@ ForegroundCallProjection _projection({
   ),
   audio: CallAudioControlState.idle,
 );
+
+// Stream cancellation can return a future created outside the binding's fake
+// clock. Let those real-zone microtasks retire before advancing the next timer.
+Future<void> _pumpCallLifecycle(
+  WidgetTester tester, [
+  Duration elapsed = Duration.zero,
+]) async {
+  await tester.pump(elapsed);
+  for (var turn = 0; turn < 8; turn++) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pump();
+  }
+}
 
 void main() {
   test('production graph feeds path epochs to the active call and lets the '
@@ -1400,6 +1415,420 @@ void main() {
       );
     },
   );
+
+  for (final platform in CallEndpointPlatform.values) {
+    test(
+      'foreground idle mailbox polling respects ${platform.name} lifecycle',
+      () {
+        fakeAsync((time) {
+          final events = <String>[];
+          var foreground = true;
+          final graph = _Graph(events);
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: platform,
+            isForeground: () => foreground,
+            awaitReadiness: () async {},
+            buildGraph: () async => graph,
+          );
+          unawaited(composition.start());
+          time.flushMicrotasks();
+          expect(composition.isStarted, isTrue);
+          expect(composition.current, isNull);
+          events.clear();
+          time.elapse(const Duration(seconds: 3));
+          expect(events, isEmpty);
+          time.elapse(const Duration(seconds: 1));
+          expect(events, ['call_mailbox_drain']);
+
+          foreground = false;
+          unawaited(composition.onBackgrounded());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 12));
+          expect(events, isEmpty);
+          expect(time.periodicTimerCount, 0);
+
+          foreground = true;
+          unawaited(composition.onResume());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 4));
+          expect(events, ['call_mailbox_drain']);
+          expect(time.periodicTimerCount, 1);
+          unawaited(composition.shutdown());
+          time.flushMicrotasks();
+          events.clear();
+          time.elapse(const Duration(seconds: 20));
+          expect(events, isEmpty);
+          expect(time.periodicTimerCount, 0);
+        });
+      },
+    );
+  }
+
+  for (final platform in CallEndpointPlatform.values) {
+    for (final failOnResume in [false, true]) {
+      testWidgets(
+        'foreground start retry restores ${platform.name} idle polling '
+        'after unavailable ${failOnResume ? 'resume' : 'startup'}',
+        (tester) async {
+          final events = <String>[];
+          final unavailable = _Graph(
+            events,
+            advertisementResults: [true, false],
+          );
+          if (!failOnResume) {
+            unavailable.onAdvertise = () async =>
+                throw const CallAuthorityException(
+                  CallAuthorityErrorCode.bridgeFailure,
+                  relayErrorCode: 'CALL_CONTROL_UNAVAILABLE',
+                );
+          }
+          final recovered = _Graph(events);
+          var builds = 0;
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: platform,
+            isForeground: () => true,
+            awaitReadiness: () async {},
+            buildGraph: () async => builds++ == 0 ? unavailable : recovered,
+          );
+          unawaited(composition.start());
+          await _pumpCallLifecycle(tester);
+          if (failOnResume) {
+            expect(composition.isStarted, isTrue);
+            unawaited(composition.onResume());
+            await _pumpCallLifecycle(tester);
+          }
+          expect(composition.isStarted, isFalse);
+          expect(events.where((e) => e == 'call_shutdown'), hasLength(1));
+          await _pumpCallLifecycle(tester, const Duration(milliseconds: 4999));
+          expect(builds, 1);
+          await _pumpCallLifecycle(tester, const Duration(milliseconds: 1));
+          expect(builds, 2);
+          expect(composition.isStarted, isTrue);
+          events.clear();
+          await _pumpCallLifecycle(tester, const Duration(seconds: 25));
+          expect(events, List.filled(6, 'call_mailbox_drain'));
+          expect(builds, 2);
+          unawaited(composition.shutdown());
+          await _pumpCallLifecycle(tester);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'foreground start retry backs off at 5, 15, 30 and then 60 seconds',
+    (tester) async {
+      final attempts = <Duration>[];
+      final began = tester.binding.clock.now();
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        isForeground: () => true,
+        awaitReadiness: () async {},
+        buildGraph: () async {
+          attempts.add(tester.binding.clock.now().difference(began));
+          return _Graph([], advertisementResults: [false]);
+        },
+      );
+      unawaited(composition.start());
+      await _pumpCallLifecycle(tester);
+      for (final delay in [5, 15, 30, 60, 60]) {
+        final before = attempts.length;
+        await _pumpCallLifecycle(
+          tester,
+          Duration(milliseconds: delay * 1000 - 1),
+        );
+        expect(attempts, hasLength(before));
+        await _pumpCallLifecycle(tester, const Duration(milliseconds: 1));
+        expect(attempts, hasLength(before + 1));
+      }
+      expect(
+        attempts,
+        [0, 5, 20, 50, 110, 170].map((s) => Duration(seconds: s)),
+      );
+      unawaited(composition.shutdown());
+      await _pumpCallLifecycle(tester);
+      await _pumpCallLifecycle(tester, const Duration(minutes: 5));
+      expect(attempts, hasLength(6));
+    },
+  );
+
+  testWidgets(
+    'foreground start retry shares an in-flight start with call wakes',
+    (tester) async {
+      final startGate = Completer<void>();
+      final events = <String>[];
+      final recovered = _Graph(events, onStart: () => startGate.future);
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        isForeground: () => true,
+        awaitReadiness: () async {},
+        buildGraph: () async => builds++ == 0
+            ? _Graph([], advertisementResults: [false])
+            : recovered,
+      );
+      unawaited(composition.start());
+      await _pumpCallLifecycle(tester);
+      await _pumpCallLifecycle(tester, const Duration(seconds: 5));
+      expect(builds, 2);
+      unawaited(composition.onCallWake());
+      unawaited(composition.onCallWake());
+      await _pumpCallLifecycle(tester, const Duration(minutes: 2));
+      expect(builds, 2);
+      startGate.complete();
+      await _pumpCallLifecycle(tester);
+      expect(composition.isStarted, isTrue);
+      events.clear();
+      await _pumpCallLifecycle(tester, const Duration(seconds: 4));
+      expect(events, ['call_mailbox_drain']);
+      expect(builds, 2);
+      unawaited(composition.shutdown());
+      await _pumpCallLifecycle(tester);
+    },
+  );
+
+  testWidgets(
+    'foreground start retry cancels on background and resumes fresh',
+    (tester) async {
+      var foreground = true;
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        isForeground: () => foreground,
+        awaitReadiness: () async {},
+        buildGraph: () async {
+          builds++;
+          return _Graph([], advertisementResults: [false]);
+        },
+      );
+      unawaited(composition.start());
+      await _pumpCallLifecycle(tester);
+      await _pumpCallLifecycle(tester, const Duration(seconds: 5));
+      expect(builds, 2);
+      foreground = false;
+      unawaited(composition.onBackgrounded());
+      await _pumpCallLifecycle(tester);
+      await _pumpCallLifecycle(tester, const Duration(minutes: 2));
+      expect(builds, 2);
+      foreground = true;
+      unawaited(composition.onResume());
+      await _pumpCallLifecycle(tester);
+      expect(builds, 3);
+      await _pumpCallLifecycle(tester, const Duration(seconds: 5));
+      expect(builds, 4);
+      unawaited(composition.shutdown());
+      await _pumpCallLifecycle(tester);
+    },
+  );
+
+  testWidgets(
+    'foreground start retry lets a call wake recover before the deadline',
+    (tester) async {
+      var builds = 0;
+      final composition = CallSignalingComposition(
+        featureFlags: _enabledFlags(),
+        platform: CallEndpointPlatform.android,
+        isForeground: () => true,
+        awaitReadiness: () async {},
+        buildGraph: () async => builds++ == 0
+            ? _Graph([], advertisementResults: [false])
+            : _Graph([]),
+      );
+      unawaited(composition.start());
+      await _pumpCallLifecycle(tester);
+      await _pumpCallLifecycle(tester, const Duration(seconds: 2));
+      unawaited(composition.onCallWake());
+      await _pumpCallLifecycle(tester);
+      expect(composition.isStarted, isTrue);
+      expect(builds, 2);
+      await _pumpCallLifecycle(tester, const Duration(minutes: 2));
+      expect(builds, 2);
+      unawaited(composition.shutdown());
+      await _pumpCallLifecycle(tester);
+    },
+  );
+
+  testWidgets('foreground start retry never bypasses failed graph cleanup', (
+    tester,
+  ) async {
+    var builds = 0;
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.android,
+      isForeground: () => true,
+      awaitReadiness: () async {},
+      buildGraph: () async {
+        builds++;
+        return _Graph(
+          [],
+          advertisementResults: [false],
+          onShutdown: (_) {
+            throw StateError('native release unproven');
+          },
+        );
+      },
+    );
+    unawaited(composition.start());
+    await _pumpCallLifecycle(tester);
+    await _pumpCallLifecycle(tester, const Duration(minutes: 5));
+    expect(composition.isStarted, isFalse);
+    expect(builds, 1);
+    unawaited(composition.shutdown());
+    await _pumpCallLifecycle(tester);
+  });
+
+  testWidgets('foreground start retry stops after callability invalidation '
+      'during an advertisement', (tester) async {
+    final advertisement = Completer<bool>();
+    final invalidated = _Graph([])..onAdvertise = () => advertisement.future;
+    var builds = 0;
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.ios,
+      isForeground: () => true,
+      awaitReadiness: () async {},
+      buildGraph: () async => switch (builds++) {
+        0 => _Graph([], advertisementResults: [false]),
+        1 => invalidated,
+        _ => _Graph([]),
+      },
+    );
+    unawaited(composition.start());
+    await _pumpCallLifecycle(tester);
+    await _pumpCallLifecycle(tester, const Duration(seconds: 2));
+    unawaited(composition.onCallWake());
+    await _pumpCallLifecycle(tester);
+    expect(builds, 2);
+    invalidated.callabilityInvalidationsController.add(null);
+    await _pumpCallLifecycle(tester);
+    advertisement.complete(false);
+    await _pumpCallLifecycle(tester);
+    await _pumpCallLifecycle(tester, const Duration(minutes: 2));
+    expect(builds, 2);
+    expect(composition.isStarted, isFalse);
+    // The existing explicit resume may still build a fresh native owner.
+    unawaited(composition.onResume());
+    await _pumpCallLifecycle(tester);
+    expect(builds, 3);
+    expect(composition.isStarted, isTrue);
+    unawaited(composition.shutdown());
+    await _pumpCallLifecycle(tester);
+  });
+
+  for (final returnsFromBackground in [false, true]) {
+    test('terminal idle mailbox probe continues after '
+        '${returnsFromBackground ? 'resume' : 'foreground terminal'}', () {
+      fakeAsync((time) {
+        final events = <String>[];
+        var foreground = true;
+        final graph = _Graph(events);
+        final composition = CallSignalingComposition(
+          featureFlags: _enabledFlags(),
+          platform: CallEndpointPlatform.android,
+          isForeground: () => foreground,
+          awaitReadiness: () async {},
+          buildGraph: () async => graph,
+        );
+        unawaited(composition.start());
+        time.flushMicrotasks();
+        expect(composition.isStarted, isTrue);
+        graph.emitForeground(
+          _projection(
+            direction: CallDirection.incoming,
+            incomingValidated: true,
+          ),
+        );
+        events.clear();
+        time.elapse(const Duration(seconds: 2));
+        expect(events, ['call_mailbox_drain']);
+        if (returnsFromBackground) {
+          foreground = false;
+          unawaited(composition.onBackgrounded());
+          time.flushMicrotasks();
+        }
+        graph.emitForeground(
+          ForegroundCallProjection(
+            session:
+                _projection(
+                  direction: CallDirection.incoming,
+                  incomingValidated: true,
+                ).session.copyWith(
+                  state: CallState.ended,
+                  endedAt: _callNow,
+                  endReason: returnsFromBackground
+                      ? CallEndReason.expired
+                      : CallEndReason.callerCancelled,
+                ),
+            audio: CallAudioControlState.idle,
+          ),
+        );
+        // Production publishes terminal once while its current value is null.
+        graph.foregroundCurrent = null;
+        if (returnsFromBackground) {
+          events.clear();
+          time.elapse(const Duration(seconds: 25));
+          expect(events, isEmpty);
+          expect(time.periodicTimerCount, 0);
+          foreground = true;
+          unawaited(composition.onResume());
+          time.flushMicrotasks();
+          expect(composition.isStarted, isTrue);
+        }
+        events.clear();
+        time.elapse(const Duration(seconds: 25));
+        expect(events, List.filled(6, 'call_mailbox_drain'));
+        expect(time.periodicTimerCount, 1);
+        graph.emitForeground(null);
+        events.clear();
+        time.elapse(const Duration(seconds: 25));
+        expect(events, List.filled(6, 'call_mailbox_drain'));
+        expect(time.periodicTimerCount, 1);
+        unawaited(composition.shutdown());
+        time.flushMicrotasks();
+        expect(time.periodicTimerCount, 0);
+      });
+    });
+  }
+
+  test('foreground idle mailbox polling follows graph replacement', () async {
+    final oldEvents = <String>[];
+    final newEvents = <String>[];
+    final oldGraph = _Graph(oldEvents, advertisementResults: [true, false]);
+    final newGraph = _Graph(newEvents);
+    final drained = Completer<void>();
+    newGraph.onMailboxDrain = () async {
+      if (!drained.isCompleted) drained.complete();
+    };
+    var builds = 0;
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.android,
+      isForeground: () => true,
+      awaitReadiness: () async {},
+      buildGraph: () async => builds++ == 0 ? oldGraph : newGraph,
+    );
+    addTearDown(composition.shutdown);
+    await composition.start();
+    await composition.onContactEligibilityChanged();
+    expect(composition.isStarted, isFalse);
+    expect(oldEvents, contains('call_shutdown'));
+    await composition.start();
+    expect(composition.isStarted, isTrue);
+    expect(builds, 2);
+    oldEvents.clear();
+    newEvents.clear();
+    oldGraph.emitForeground(_projection(state: CallState.connected));
+    await drained.future.timeout(const Duration(seconds: 8));
+    expect(oldEvents, isEmpty);
+    expect(newEvents, ['call_mailbox_drain']);
+  });
 
   test(
     'mailbox polling follows native calls through hidden and background states',

@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +23,304 @@ final _callId = CallId.parse('22222222-2222-4222-8222-222222222222');
 final _now = DateTime.fromMillisecondsSinceEpoch(_nowMs, isUtc: true);
 
 void main() {
+  for (final terminal in [false, true]) {
+    test('cold expired incoming snapshot requires native terminal proof '
+        '(terminal=$terminal)', () async {
+      const previous = '44444444-4444-4444-8444-444444444444';
+      final retained = _batch([
+        _event(1, 'presented'),
+        if (terminal) _event(2, 'expired'),
+      ]);
+      final descriptor = retained['descriptor']! as Map<String, Object?>;
+      descriptor['callHandle'] = previous;
+      descriptor['expiresAtMs'] = _nowMs - 1;
+      retained['nativeCallId'] = previous;
+      for (final event in retained['events']! as List<Map<String, Object?>>) {
+        event['callHandle'] = previous;
+      }
+      final native = _LifecycleNative()..attachResult = retained;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      if (!terminal) {
+        await expectLater(
+          adapter.start(),
+          throwsA(isA<IosCallLifecycleException>()),
+        );
+        expect(native.callsOf('failClosed'), hasLength(1));
+        expect(native.callsOf('acknowledge'), isEmpty);
+        return;
+      }
+      await adapter.start();
+      expect(native.callsOf('failClosed'), isEmpty);
+      expect(native.callsOf('acknowledge'), isEmpty);
+      await _prepareIncoming(coordinator);
+      native.events.add(_batch([_event(1, 'presented')]));
+      await _until(
+        () =>
+            native.callsOf('acknowledge').isNotEmpty ||
+            native.callsOf('failClosed').isNotEmpty,
+      );
+      expect(await adapter.present(_presentation()), isTrue);
+      expect(native.callsOf('acknowledge').first.arguments, {
+        'version': 1,
+        'callHandle': previous,
+        'throughSequence': 2,
+        'disposition': 'TERMINAL',
+      });
+      expect(native.callsOf('failClosed'), isEmpty);
+    });
+  }
+
+  for (final malformed in [false, true]) {
+    test('native lifecycle snapshots classify journal fences without payload '
+        '(malformed=$malformed)', () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      final native = _LifecycleNative()
+        ..attachResult = _batch([
+          _event(2, 'remoteCancelled'),
+        ], phase: 'journal');
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      await adapter.start();
+      expect(native.callsOf('acknowledge'), isEmpty);
+      final replacement = _batch([_event(1, 'presented')]);
+      if (malformed) {
+        replacement['untrusted'] = 'secret journal payload';
+      } else {
+        const handle = '44444444-4444-4444-8444-444444444444';
+        (replacement['descriptor']! as Map<String, Object?>)['callHandle'] =
+            handle;
+        replacement['nativeCallId'] = handle;
+        (replacement['events']! as List<Map<String, Object?>>)
+                .single['callHandle'] =
+            handle;
+      }
+      native.events.add(replacement);
+      await _until(() => native.callsOf('failClosed').isNotEmpty);
+      final events = await diagnostics.eventsForTesting();
+      final observed = events.where(
+        (e) =>
+            e['stage'] == 'runtime' &&
+            e['action'] == 'snapshot' &&
+            e['reason'] ==
+                (malformed ? 'malformed_response' : 'authority_invalid'),
+      );
+      expect(observed, isNotEmpty);
+      expect(observed.last['values'], {
+        'found': true,
+        'accepted': true,
+        'terminal': true,
+      });
+      expect(events.toString(), isNot(contains('secret journal payload')));
+      expect(native.callsOf('acknowledge'), isEmpty);
+    });
+  }
+
+  test(
+    'native lifecycle snapshots distinguish refusal and expiry without invalidation',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      final native = _LifecycleNative()
+        ..attachResult = _emptyBatch()
+        ..presentationResult = false;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      await adapter.start();
+      await _prepareIncoming(coordinator);
+      expect(await adapter.present(_presentation()), isFalse);
+      expect(
+        await adapter.present(
+          IncomingCallPresentation(
+            callId: _callId,
+            callerAccountPeerId: 'remote-account',
+            expiresAt: _now.subtract(const Duration(seconds: 1)),
+          ),
+        ),
+        isFalse,
+      );
+      final events = await diagnostics.eventsForTesting();
+      final reasons = events
+          .where((e) => e['stage'] == 'runtime' && e['action'] == 'snapshot')
+          .map((e) => e['reason']);
+      expect(reasons, containsAll(['unavailable', 'expired']));
+      expect(native.callsOf('failClosed'), isEmpty);
+    },
+  );
+
+  for (final connected in [false, true]) {
+    for (final direction in ['incoming', 'outgoing']) {
+      for (final admittedFirst in [false, true]) {
+        test(
+          'startup orphan journal retires before successor '
+          '(connected=$connected, direction=$direction, admitted=$admittedFirst)',
+          () async {
+            const previous = '44444444-4444-4444-8444-444444444444';
+            final through = connected ? 7 : 2;
+            final orphan = _orphanBatch(
+              previous,
+              through,
+              direction: direction,
+              expiresAtMs: connected ? _nowMs - 60_000 : _expiresAtMs,
+            );
+            final native = _LifecycleNative()..attachResult = orphan;
+            final coordinator = _coordinator();
+            final adapter = _adapter(native, coordinator);
+            addTearDown(() async {
+              await adapter.close();
+              await coordinator.dispose();
+              await native.events.close();
+            });
+            if (admittedFirst) await _prepareIncoming(coordinator);
+            await adapter.start();
+            expect(native.callsOf('acknowledge').single.arguments, {
+              'version': 1,
+              'callHandle': previous,
+              'throughSequence': through,
+              'disposition': 'TERMINAL',
+            });
+            expect(
+              coordinator.activeSession?.callId,
+              admittedFirst ? _callId : null,
+            );
+            if (admittedFirst) {
+              expect(
+                coordinator.activeSession?.state,
+                CallState.incomingValidating,
+              );
+              expect(coordinator.activeSession?.incomingValidated, isTrue);
+            }
+            final successor = _batch([_event(1, 'presented')]);
+            native.attachResult = successor;
+
+            native.events.add(successor);
+            await Future<void>.delayed(Duration.zero);
+            if (!admittedFirst) await _prepareIncoming(coordinator);
+            expect(await adapter.present(_presentation()), isTrue);
+            expect(adapter.isBoundTo(_callId), isTrue);
+            // A late exact replay must not replace or release the successor.
+            native.events.add(orphan);
+            await Future<void>.delayed(Duration.zero);
+            expect(adapter.isBoundTo(_callId), isTrue);
+            expect(native.callsOf('failClosed'), isEmpty);
+          },
+        );
+      }
+    }
+  }
+
+  test(
+    'startup orphan journal waits for ACK while successor events queue',
+    () async {
+      const previous = '44444444-4444-4444-8444-444444444444';
+      final acknowledgement = Completer<Object?>();
+      final native = _LifecycleNative()
+        ..attachResult = _orphanBatch(previous, 7)
+        ..terminalAcknowledgementResult = acknowledgement.future;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        if (!acknowledgement.isCompleted) acknowledgement.complete(false);
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      var started = false;
+      final startup = adapter.start();
+      unawaited(
+        startup.then((_) {
+          started = true;
+        }, onError: (Object _) {}),
+      );
+      await _until(() => native.callsOf('acknowledge').isNotEmpty);
+      await _prepareIncoming(coordinator);
+      final successor = _batch([_event(1, 'presented')]);
+      native.attachResult = successor;
+      native.events.add(successor);
+      await Future<void>.delayed(Duration.zero);
+      expect(started, isFalse);
+      expect(native.callsOf('adopt'), isEmpty);
+      acknowledgement.complete(true);
+      await startup;
+      expect(await adapter.present(_presentation()), isTrue);
+      expect(adapter.isBoundTo(_callId), isTrue);
+      expect(
+        native.callsOf('acknowledge').first.arguments['callHandle'],
+        previous,
+      );
+      expect(native.callsOf('failClosed'), isEmpty);
+    },
+  );
+
+  for (final receipt in <Object?>[false, null, 'true']) {
+    test(
+      'startup orphan journal requires exact terminal ACK ($receipt)',
+      () async {
+        final native = _LifecycleNative()
+          ..attachResult = _orphanBatch(_callHandle, 7)
+          ..terminalAcknowledgementResult = receipt;
+        final coordinator = _coordinator();
+        final adapter = _adapter(native, coordinator);
+        addTearDown(() async {
+          await adapter.close();
+          await coordinator.dispose();
+          await native.events.close();
+        });
+        await expectLater(
+          adapter.start(),
+          throwsA(isA<IosCallLifecycleException>()),
+        );
+        expect(
+          native.callsOf('acknowledge').single.arguments['throughSequence'],
+          7,
+        );
+        expect(native.callsOf('failClosed'), hasLength(1));
+        expect(native.callsOf('adopt'), isEmpty);
+        expect(coordinator.activeSession, isNull);
+      },
+    );
+  }
+
+  test(
+    'startup orphan journal proof cannot claim a pre-start descriptor',
+    () async {
+      final batch = _orphanBatch(_callHandle, 2);
+      (batch['descriptor']! as Map<String, Object?>)['phase'] = 'preStart';
+      final native = _LifecycleNative()..attachResult = batch;
+      final coordinator = _coordinator();
+      final adapter = _adapter(native, coordinator);
+      addTearDown(() async {
+        await adapter.close();
+        await coordinator.dispose();
+        await native.events.close();
+      });
+      await expectLater(
+        adapter.start(),
+        throwsA(isA<IosCallLifecycleException>()),
+      );
+      expect(native.callsOf('acknowledge'), isEmpty);
+      expect(native.callsOf('failClosed'), hasLength(1));
+    },
+  );
+
   test(
     'authenticated incoming can retire an unbound cancelled predecessor before its native event',
     () async {
@@ -1190,6 +1489,23 @@ CallCoordinator _coordinator({
   idSource: () => _callId,
 );
 
+Map<String, Object?> _orphanBatch(
+  String handle,
+  int through, {
+  String direction = 'incoming',
+  int expiresAtMs = _expiresAtMs,
+}) {
+  final batch = _batch([_event(through, 'orphaned')], phase: 'journal');
+  final descriptor = batch['descriptor']! as Map<String, Object?>;
+  descriptor['callHandle'] = handle;
+  descriptor['direction'] = direction;
+  descriptor['expiresAtMs'] = expiresAtMs;
+  batch['nativeCallId'] = handle;
+  (batch['events']! as List<Map<String, Object?>>).single['callHandle'] =
+      handle;
+  return batch;
+}
+
 Map<String, Object?> _emptyBatch() => <String, Object?>{
   'version': 1,
   'descriptor': null,
@@ -1263,6 +1579,7 @@ final class _LifecycleNative {
   Object? disableCapabilityResult = true;
   Object? disableCapabilityError;
   Object? terminalAcknowledgementResult = true;
+  Object? presentationResult = true;
   final List<Object?> activationResults = <Object?>[];
 
   void emit(String type) {
@@ -1311,6 +1628,7 @@ final class _LifecycleNative {
             ? terminalAcknowledgementResult
             : true;
       case 'presentAuthenticated':
+        return presentationResult;
       case 'registerOutgoingAuthenticated':
       case 'adopt':
       case 'deactivateAudio':

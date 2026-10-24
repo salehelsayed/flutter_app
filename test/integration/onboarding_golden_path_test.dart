@@ -164,6 +164,7 @@ void main() {
               required contactRepo,
               required ownerPeerId,
               required avatarVersion,
+              bool retryPendingRequest = false,
             }) async {
               return contactRepo.getContact(ownerPeerId);
             },

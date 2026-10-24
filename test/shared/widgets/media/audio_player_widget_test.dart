@@ -1,8 +1,11 @@
 // ignore_for_file: depend_on_referenced_packages
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:audio_session/audio_session.dart';
@@ -504,6 +507,96 @@ void main() {
       JustAudioPlatform.instance = originalPlatform;
     });
 
+    for (final initialLoadFailure in [false, true]) {
+      testWidgets('open sender voice follows durable commit after '
+          '${initialLoadFailure ? 'a source load failure' : 'queued upload'}', (
+        tester,
+      ) async {
+        final root = Directory.systemTemp.createTempSync('voice-commit-');
+        final previousRoot = MediaFileManager.cachedDocumentsDir;
+        MediaFileManager.cacheDocumentsDir(root.path);
+        addTearDown(() {
+          MediaFileManager.debugResetDocumentsDirCache();
+          if (previousRoot != null) {
+            MediaFileManager.cacheDocumentsDir(previousRoot);
+          }
+          root.deleteSync(recursive: true);
+        });
+        final pending = File('${root.path}/pending_uploads/msg/voice.m4a');
+        pending.parent.createSync(recursive: true);
+        pending.writeAsBytesSync([1, 2, 3, 4]);
+        const storedPath = 'media/peer/voice.m4a';
+        final committed = File('${root.path}/$storedPath');
+        fakePlatform.loadUriValidator = (uri) {
+          if (!File(Uri.parse(uri).toFilePath()).existsSync()) {
+            throw PlatformException(code: '0', message: 'Source not found');
+          }
+        };
+        if (initialLoadFailure) {
+          fakePlatform.enqueueLoadFailure(
+            PlatformException(code: '0', message: 'Source error'),
+          );
+        }
+        final initial =
+            availableAttachment(
+              id: 'sender-commit',
+              localPath: pending.path,
+              durationMs: 27000,
+            ).copyWith(
+              ownerLane: MediaOwnerLane.direct,
+              downloadStatus: initialLoadFailure ? 'done' : 'upload_pending',
+            );
+        try {
+          await tester.pumpWidget(buildApp(initial));
+          await settleCompletedLoad(tester);
+          final mountedPlayer = tester.state(find.byType(AudioPlayerWidget));
+          if (initialLoadFailure) {
+            expect(find.text("Couldn't open this file"), findsOneWidget);
+          } else {
+            expect(find.text('Media pending upload'), findsOneWidget);
+            expect(fakePlatform.loadedUris, isEmpty);
+          }
+
+          // The existing upload owner commits bytes and persists a relative
+          // path. Keep this same sender bubble mounted across the update.
+          committed.parent.createSync(recursive: true);
+          pending.copySync(committed.path);
+          pending.deleteSync();
+          await tester.pumpWidget(
+            buildApp(
+              initial.copyWith(localPath: storedPath, downloadStatus: 'done'),
+            ),
+          );
+          await settleCompletedLoad(tester);
+
+          expect(committed.readAsBytesSync(), [1, 2, 3, 4]);
+          expect(
+            tester.state(find.byType(AudioPlayerWidget)),
+            same(mountedPlayer),
+          );
+          expect(
+            find.text("Couldn't open this file"),
+            findsNothing,
+            reason: 'the committed source exists without reopening chat',
+          );
+          expect(
+            Uri.parse(fakePlatform.loadedUris.last).toFilePath(),
+            committed.path,
+          );
+          expect(find.text('0:27'), findsOneWidget);
+          await tester.tap(find.byIcon(Icons.play_arrow_rounded));
+          for (var i = 0; i < 5 && fakePlatform.playCallCount == 0; i++) {
+            await flushAsyncPlayerTasks(tester);
+          }
+          expect(fakePlatform.playCallCount, 1);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await flushAsyncPlayerTasks(tester);
+        }
+      });
+    }
+
     // Regression: a sender's own voice message got a relative stored path the
     // platform player could not open, and the load failure was swallowed, so
     // the play button silently did nothing with no trace in the logs.
@@ -967,7 +1060,7 @@ void main() {
 
         // Tamper gets the distinct honest label and is NOT retryable — retrying
         // the same descriptor would just re-fail.
-        expect(find.text("Couldn't verify this media"), findsOneWidget);
+        expect(find.text("Couldn't open this file"), findsOneWidget);
         expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
         expect(find.byType(WaveformSeekBar), findsNothing);
         expect(find.byType(Slider), findsNothing);
@@ -976,33 +1069,30 @@ void main() {
     );
 
     testWidgets(
-      'transient failed audio under the ceiling still exposes a retry affordance',
+      'retryable failed audio stays silent while automatic retry is possible',
       (tester) async {
         var retried = false;
         final failed = baseAttachment.copyWith(
           localPath: '/tmp/failed.m4a',
           downloadStatus: kMediaDownloadStatusFailed,
           downloadRetryCount: 1,
+          ownerLane: MediaOwnerLane.direct,
         );
 
         await tester.pumpWidget(
           buildApp(failed, onRetryUnavailableMedia: () => retried = true),
         );
 
-        expect(find.text('Media unavailable'), findsOneWidget);
-        expect(
-          find.bySemanticsLabel('Retry unavailable media'),
-          findsOneWidget,
-        );
-
-        await tester.tap(find.byIcon(Icons.refresh_rounded));
-        await tester.pump();
-        expect(retried, isTrue);
+        expect(find.text('Media unavailable'), findsNothing);
+        expect(find.text("Couldn't load yet. Tap to try again."), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsOneWidget);
+        expect(find.bySemanticsLabel('Retry'), findsNothing);
+        expect(retried, isFalse);
       },
     );
 
     testWidgets(
-      'terminal download_failed audio shows the unavailable label and NO retry',
+      'ambiguous legacy download_failed offers an honest explicit retry',
       (tester) async {
         var retried = false;
         final terminal = baseAttachment.copyWith(
@@ -1015,10 +1105,14 @@ void main() {
           buildApp(terminal, onRetryUnavailableMedia: () => retried = true),
         );
 
-        expect(find.text('Media unavailable'), findsOneWidget);
-        expect(find.bySemanticsLabel('Retry unavailable media'), findsNothing);
+        expect(
+          find.text("Couldn't load yet. Tap to try again."),
+          findsOneWidget,
+        );
+        expect(find.bySemanticsLabel('Retry'), findsOneWidget);
         expect(find.byType(WaveformSeekBar), findsNothing);
-        expect(retried, isFalse);
+        await tester.tap(find.byIcon(Icons.refresh_rounded));
+        expect(retried, isTrue);
       },
     );
 

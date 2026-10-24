@@ -1253,6 +1253,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_recovery_copied => 'تم النسخ!';
 
   @override
+  String get settings_copy_failed => 'تعذّر النسخ. يُرجى المحاولة مجددًا.';
+
+  @override
   String get settings_recovery_copy => 'نسخ إلى الحافظة';
 
   @override
@@ -1323,6 +1326,15 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get media_attachments_too_large_note =>
       'المرفقات كبيرة جدًا — أزل بعضها للإرسال.';
+
+  @override
+  String get media_retry_later => 'لم يتم التحميل بعد. اضغط للمحاولة مرة أخرى.';
+
+  @override
+  String get media_no_longer_available => 'لم تعد متاحة';
+
+  @override
+  String get media_open_failed => 'تعذر فتح هذا الملف';
 
   @override
   String get media_unavailable => 'الوسائط غير متاحة';
@@ -3377,6 +3389,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم محو بيانات الحساب المحلية';
 
   @override
+  String get account_migration_erased_reopen_message =>
+      'أغلق التطبيق وافتحه من جديد لإعداده مرة أخرى.';
+
+  @override
   String account_migration_erase_failed(String error) {
     return 'تعذّر محو بيانات الحساب المحلية: $error';
   }
@@ -3580,6 +3596,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'صورة عادية · يمكن حفظها أو مشاركتها';
 
   @override
+  String get private_media_summary_ordinary_video_detail =>
+      'فيديو عادي · يمكن حفظه أو مشاركته';
+
+  @override
   String get private_media_summary_protected_detail =>
       'يمكن عرضها مجددًا · بلا حفظ أو مشاركة';
 
@@ -3678,11 +3698,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String media_uploading_percent(int percent) {
-    return 'جارٍ رفع الصورة · $percent%';
+    return 'جارٍ الرفع · $percent%';
   }
 
   @override
-  String get media_uploading => 'جارٍ رفع الصورة…';
+  String get media_uploading => 'جارٍ الرفع…';
 
   @override
   String get media_view_once_not_viewed => 'لم تُعرض بعد.';
@@ -4344,6 +4364,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get media_download => 'تنزيل';
+
+  @override
+  String get update_required_store_failed =>
+      'تعذّر فتح المتجر. حاول التحديث مجددًا.';
 
   @override
   String get update_required_title => 'يلزم تحديث مكنون';

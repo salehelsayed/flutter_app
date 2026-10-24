@@ -197,6 +197,58 @@ void main() {
 
     expect(rig.scheduler.cancelled, 1);
   });
+
+  test('foreground idle uses four seconds without snapshot starvation', () {
+    final rig = build();
+    rig.poller.onSession(null, foreground: true);
+    expect(rig.scheduler.interval, const Duration(seconds: 4));
+    rig.poller.onSession(
+      CallSessionSnapshot.idle(now: DateTime.utc(2026)),
+      foreground: true,
+    );
+    rig.poller.onSession(snapshot(state: CallState.ended), foreground: true);
+    expect(rig.scheduler.started, 1);
+    expect(rig.scheduler.cancelled, 0);
+
+    rig.poller.onSession(snapshot(), foreground: true);
+    expect(rig.scheduler.interval, const Duration(seconds: 2));
+    expect(rig.scheduler.started, 2);
+    rig.poller.onSession(null, foreground: true);
+    expect(rig.scheduler.interval, const Duration(seconds: 4));
+    expect(rig.scheduler.started, 3);
+    rig.poller.onSession(null);
+    expect(rig.scheduler.cancelled, 3);
+    rig.poller.dispose();
+    rig.poller.onSession(null, foreground: true);
+    expect(rig.scheduler.started, 3, reason: 'dispose cannot re-arm polling');
+  });
+
+  test(
+    'slow idle drain stays single across live and background changes',
+    () async {
+      final gate = Completer<void>();
+      final rig = build(gate: gate);
+      rig.poller.onSession(null, foreground: true);
+      rig.scheduler.tick();
+      await Future<void>.delayed(Duration.zero);
+      expect(rig.drains, [1]);
+      rig.poller.onSession(snapshot());
+      rig.scheduler.tick();
+      await Future<void>.delayed(Duration.zero);
+      expect(rig.drains, [1]);
+      rig.poller.onSession(null);
+      rig.poller.onSession(null, foreground: true);
+      rig.scheduler.tick();
+      await Future<void>.delayed(Duration.zero);
+      expect(rig.drains, [1], reason: 'the old drain still owns its operation');
+      gate.complete();
+      await Future<void>.delayed(Duration.zero);
+      rig.scheduler.tick();
+      await Future<void>.delayed(Duration.zero);
+      expect(rig.drains, [1, 2]);
+      rig.poller.dispose();
+    },
+  );
 }
 
 class _FakeScheduler {

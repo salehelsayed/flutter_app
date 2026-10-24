@@ -104,7 +104,7 @@ void main() {
   );
 
   test(
-    'prepareCreatedLocalPostMedia marks the post failed without dropping the local skeleton when upload fails',
+    'prepareCreatedLocalPostMedia retains pending recovery without dropping the local skeleton when upload fails',
     () async {
       final (_, created) = await createLocalPost(
         postRepo: posts,
@@ -144,13 +144,13 @@ void main() {
       expect(prepared, isNotNull);
       final preparedPost = prepared!;
       expect(preparedPost.post.id, createdPost.post.id);
-      expect(prepared.post.deliveryStatus, 'failed');
+      expect(prepared.post.deliveryStatus, 'sending');
       expect(prepared.post.mediaKind, 'image');
       expect(prepared.post.media, isEmpty);
 
       final storedPost = await posts.getPost(createdPost.post.id);
       expect(storedPost, isNotNull);
-      expect(storedPost!.deliveryStatus, 'failed');
+      expect(storedPost!.deliveryStatus, 'sending');
       expect(storedPost.mediaKind, 'image');
       expect(storedPost.media, isEmpty);
       final recovery = await posts.loadPostMediaUploadRecoveryItems(
@@ -219,13 +219,13 @@ void main() {
 
       expect(result, SendPostResult.sendFailed);
       expect(prepared, isNotNull);
-      expect(prepared!.post.deliveryStatus, 'failed');
+      expect(prepared!.post.deliveryStatus, 'sending');
       expect(prepared.post.mediaKind, 'image_carousel');
       expect(prepared.post.media, isEmpty);
 
       final storedPost = await posts.getPost(createdPost.post.id);
       expect(storedPost, isNotNull);
-      expect(storedPost!.deliveryStatus, 'failed');
+      expect(storedPost!.deliveryStatus, 'sending');
       expect(storedPost.mediaKind, 'image_carousel');
       expect(storedPost.media, isEmpty);
       expect(

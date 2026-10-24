@@ -744,9 +744,6 @@ class GroupConversationScreen extends StatelessWidget {
         // Finding 05 Phase 4: a terminal send_failed row offers the same manual
         // retry affordance as a failed row — the retry re-arms it with a fresh
         // attempt budget; the background retrier no longer auto-retries it.
-        final isFailedSend =
-            message.status == 'failed' ||
-            message.status == GroupMessage.statusSendFailed;
         // 144 finding: a terminal send_failed row persisted by the keep-bubble
         // path before any retry payload existed can NEVER be retried (the retry
         // use case skips it with missing_retry_payload). Only offer Retry for a
@@ -759,6 +756,24 @@ class GroupConversationScreen extends StatelessWidget {
         final hasRetryPayload =
             (message.wireEnvelope?.isNotEmpty ?? false) ||
             (message.inboxRetryPayload?.isNotEmpty ?? false);
+        // Completed ordinary media with a retained envelope is still owned by
+        // retryFailedGroupMessages. Its transient send error is not terminal.
+        final isAutomaticMediaSendPending =
+            canWrite &&
+            isSent &&
+            message.status == 'failed' &&
+            !message.privateMediaPolicy.requiresRedaction &&
+            hasRetryPayload &&
+            loadedMessageMedia.isNotEmpty &&
+            loadedMessageMedia.every(
+              (attachment) =>
+                  attachment.downloadStatus == 'done' &&
+                  attachment.groupMediaBlobCustodyFingerprint == null,
+            );
+        final isFailedSend =
+            !isAutomaticMediaSendPending &&
+            (message.status == 'failed' ||
+                message.status == GroupMessage.statusSendFailed);
         final showFailedMediaActions =
             canWrite && isSent && isFailedSend && loadedMessageMedia.isNotEmpty;
         final hasUnfinishedFailedMedia = loadedMessageMedia.any(
@@ -896,7 +911,9 @@ class GroupConversationScreen extends StatelessWidget {
           // so the run shares one left edge; the avatar paints on the first
           // balloon only (showRunAvatar).
           avatarOutsideBubble: !isSent && !isSystemRow,
-          status: isSent ? message.status : null,
+          status: isSent
+              ? (isAutomaticMediaSendPending ? 'sending' : message.status)
+              : null,
           quotedText: quotedText,
           isQuoteUnavailable: isQuoteUnavailable,
           media: loadedMessageMedia,

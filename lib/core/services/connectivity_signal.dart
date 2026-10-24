@@ -6,14 +6,11 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 ///
 /// Maps the platform connectivity stream (iOS `NWPathMonitor` / Android
 /// `ConnectivityManager`, surfaced by `connectivity_plus`) to a `Stream<void>`
-/// that emits ONCE on each **network-restored** edge — a transition from "no
-/// connectivity" into having at least one usable interface. Wiring this into
-/// `P2PServiceImpl` makes a foreground connectivity restore immediately drain
-/// the relay's stored offline inbox (and re-warm the active peer) instead of
-/// waiting for the next ~30s health-check poll or an app resume.
+/// that emits on connectivity restoration or a change of usable interfaces.
+/// Wiring this into `P2PServiceImpl` reconnects the relay, drains its stored
+/// inbox and re-warms the active peer without waiting for foreground polling.
 ///
-/// Only restored edges are surfaced: a connectivity LOSS (`-> none`) and
-/// idempotent repeats (still-connected `->` still-connected) are dropped, so the
+/// A connectivity LOSS (`-> none`) and idempotent interface repeats are dropped, so the
 /// downstream drain/re-warm is not triggered on going offline or on no-op churn.
 /// The downstream `onNetworkChanged` handler additionally debounces (a 5s flap
 /// floor) and coalesces drains, so an occasional spurious restored edge — or the
@@ -21,8 +18,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 Stream<void> connectivityRestoredSignal({Connectivity? connectivity}) =>
     restoredEdges((connectivity ?? Connectivity()).onConnectivityChanged);
 
-/// Pure, host-testable edge detector: emits `void` on each transition INTO a
-/// connected state from a disconnected (or initial-unknown) state.
+/// Pure, host-testable detector of restoration and connected interface changes.
 ///
 /// `connectivity_plus` >=5 emits `List<ConnectivityResult>`; the list is treated
 /// as connected when it contains any result other than
@@ -31,18 +27,21 @@ Stream<void> connectivityRestoredSignal({Connectivity? connectivity}) =>
 /// restored edge at subscription (harmless — the startup path already drains and
 /// the downstream coalesces).
 Stream<void> restoredEdges(Stream<List<ConnectivityResult>> source) {
-  var wasConnected = false;
+  var previousInterfaces = <ConnectivityResult>{};
   StreamSubscription<List<ConnectivityResult>>? sub;
-  final controller = StreamController<void>(
-    onCancel: () => sub?.cancel(),
-  );
+  final controller = StreamController<void>(onCancel: () => sub?.cancel());
   sub = source.listen(
     (results) {
-      final isConnected = results.any((r) => r != ConnectivityResult.none);
-      if (isConnected && !wasConnected) {
+      final interfaces = results
+          .where((result) => result != ConnectivityResult.none)
+          .toSet();
+      final changed =
+          interfaces.length != previousInterfaces.length ||
+          !interfaces.containsAll(previousInterfaces);
+      if (interfaces.isNotEmpty && changed) {
         controller.add(null);
       }
-      wasConnected = isConnected;
+      previousInterfaces = interfaces;
     },
     onError: (_) {
       // A connectivity-source error must never crash the app; treat it as no

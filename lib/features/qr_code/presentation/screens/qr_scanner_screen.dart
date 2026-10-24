@@ -73,11 +73,21 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
     final List<Barcode> barcodes = capture.barcodes;
     for (final barcode in barcodes) {
       if (barcode.rawValue != null && barcode.rawValue!.isNotEmpty) {
-        _hasScanned = true;
-        widget.onScanned(barcode.rawValue!);
-        Navigator.of(context).pop();
+        _completeScan(barcode.rawValue!);
         return;
       }
+    }
+  }
+
+  void _completeScan(String qrData) {
+    if (_hasScanned) return;
+    _hasScanned = true;
+    final navigator = Navigator.of(context);
+    final scannerRoute = ModalRoute.of(context);
+    widget.onScanned(qrData);
+    // A handler may synchronously replace the scanner with its destination.
+    if (mounted && scannerRoute?.isCurrent == true) {
+      navigator.pop();
     }
   }
 
@@ -245,11 +255,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               final text = controller.text.trim();
               if (text.isNotEmpty) {
                 Navigator.pop(ctx);
-                if (!_hasScanned) {
-                  _hasScanned = true;
-                  widget.onScanned(text);
-                  Navigator.of(context).pop();
-                }
+                _completeScan(text);
               }
             },
             style: ElevatedButton.styleFrom(

@@ -179,6 +179,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadCalls++;
                 if (downloadCalls == 1) {
@@ -232,6 +233,7 @@ void main() {
                 required contactRepo,
                 required ownerPeerId,
                 required avatarVersion,
+                bool retryPendingRequest = false,
               }) async {
                 downloadCalls++;
                 final existing = await contactRepo.getContact(ownerPeerId);

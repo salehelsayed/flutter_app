@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -16,8 +17,11 @@ class ProfileUpdateListener {
   final Bridge bridge;
   final DownloadProfilePictureFn downloadProfilePictureFn;
   final Duration retryDelay;
+  final AccountMigrationNetworkGate accountMigrationNetworkGate;
 
   StreamSubscription<ChatMessage>? _subscription;
+  Future<int>? _recoveryPass;
+  bool _recoveryRequested = false;
   final _contactUpdatedController = StreamController<ContactModel>.broadcast();
 
   ProfileUpdateListener({
@@ -25,6 +29,7 @@ class ProfileUpdateListener {
     required this.contactRepo,
     required this.bridge,
     this.retryDelay = const Duration(seconds: 5),
+    this.accountMigrationNetworkGate = allowAccountMigrationNetworkSideEffects,
     DownloadProfilePictureFn? downloadProfilePictureFn,
   }) : downloadProfilePictureFn =
            downloadProfilePictureFn ?? downloadProfilePicture;
@@ -60,6 +65,54 @@ class ProfileUpdateListener {
         );
       },
     );
+    unawaited(retryNow());
+  }
+
+  /// Startup, resume and relay readiness reuse this listener's recovery owner.
+  Future<int> retryNow() {
+    if (_subscription == null) return Future.value(0);
+    if (_recoveryPass != null) {
+      _recoveryRequested = true;
+      return _recoveryPass!;
+    }
+    final pass = _recoverPendingDownloads();
+    _recoveryPass = pass;
+    return pass;
+  }
+
+  Future<int> _recoverPendingDownloads() async {
+    var recoveredCount = 0;
+    try {
+      do {
+        _recoveryRequested = false;
+        if (!await accountMigrationNetworkGate(
+          operation: 'pending_profile_picture_download_retry',
+        )) {
+          return recoveredCount;
+        }
+        if (_subscription == null) break;
+        final updated = await retryPendingProfilePictureDownloads(
+          bridge: bridge,
+          contactRepo: contactRepo,
+          downloadProfilePictureFn: downloadProfilePictureFn,
+        );
+        if (_subscription == null) break;
+        for (final contact in updated) {
+          _contactUpdatedController.add(contact);
+          recoveredCount++;
+        }
+      } while (_recoveryRequested && _subscription != null);
+      return recoveredCount;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PROFILE_UPDATE_LISTENER_RECOVERY_ERROR',
+        details: {'error': error.toString()},
+      );
+      return recoveredCount;
+    } finally {
+      _recoveryPass = null;
+    }
   }
 
   /// Stops listening.
@@ -72,6 +125,7 @@ class ProfileUpdateListener {
 
     _subscription?.cancel();
     _subscription = null;
+    _recoveryRequested = false;
   }
 
   /// Disposes of the listener and closes streams.
@@ -150,6 +204,7 @@ class ProfileUpdateListener {
         contactRepo: contactRepo,
         ownerPeerId: peerId,
         avatarVersion: avatarVersion,
+        retryPendingRequest: attempt > 1,
       );
       if (updated != null) {
         return updated;

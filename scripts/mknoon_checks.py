@@ -35,7 +35,8 @@ RULES = Path('tool/testing/selection.json')
 SIMS = Path('tool/sims/critical_features.json')
 EXIT = {'PASS': 0, 'FAIL': 1, 'BLOCKED': 2, 'NOT RUN': 3}
 _LAUNCH_CONTEXT = threading.local()
-CAPTURE_STREAM_BYTES = 16 * 1024 * 1024
+# The largest affected Flutter lanes print about 12-14 MiB of --machine output.
+CAPTURE_STREAM_BYTES = 64 * 1024 * 1024
 CAPTURE_RUN_BYTES = 256 * 1024 * 1024
 
 
@@ -1047,6 +1048,20 @@ def check_resources(check):
     return resources
 
 
+HOST_ONLY_COMMANDS = (['flutter', 'test'], ['flutter', 'analyze'], ['dart', 'test'], ['dart', 'analyze'])
+
+
+def host_only_check(check):
+    """Mac-only Flutter/Dart tests or analyze: these share a host-test slot, not the native lease."""
+    command = check.get('command', [])
+    resources = check.get('resources') or []
+    return (not is_campaign(check) and check['kind'] in ('flutter', 'command')
+            and command[:2] in HOST_ONLY_COMMANDS
+            and not any(arg in ('-d', '--device-id') or arg.startswith(('--device-id=', 'integration_test'))
+                        for arg in command)
+            and not any(r.startswith(('device:', 'device-control:', 'build:', 'artifact:')) for r in resources))
+
+
 def resources_compatible(left, right):
     a, b = check_resources(left), check_resources(right)
     return not ({'unknown', 'performance.global'} & (a | b) or a & b)
@@ -1232,7 +1247,10 @@ def execute_plan(args, root, rules, plan, files, device_config, matrix, director
                     try:
                         with ExitStack() as owners:
                             if 'shared-native-build' in check_resources(c):
-                                owners.enter_context(device_preflight.device_leases(['mknoon.shared-native-build']))
+                                if host_only_check(c):
+                                    owners.enter_context(device_preflight.host_test_slot())
+                                else:
+                                    owners.enter_context(device_preflight.device_leases(['mknoon.shared-native-build']))
                             env = os.environ.copy()
                             env['MKNOON_TEST_RUN_ID'] = directory.name + '-' + ('flutter' if c['kind'] == 'flutter' else c['id'])
                             env['MKNOON_HOST_FLUTTER_WORKERS'] = str(getattr(args, 'flutter_workers', 1))

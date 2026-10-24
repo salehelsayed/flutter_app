@@ -2094,6 +2094,43 @@ void main() {
       expect(deletedId, 'failed-media');
     });
 
+    for (final language in ['en', 'de', 'ar']) {
+      testWidgets(
+        '$language persisted retry-owned text stays pending across reopen',
+        (tester) async {
+          final failed =
+              makeMessage(
+                id: 'custody-retry',
+                isIncoming: false,
+                status: 'failed',
+              ).copyWith(
+                wireEnvelope:
+                    '{"type":"chat_message","version":"2","encrypted":{}}',
+              );
+          for (final status in ['failed', 'delivered']) {
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pumpWidget(
+              buildTestWidget(
+                locale: Locale(language),
+                messages: [failed.copyWith(status: status)],
+                initialLoadDone: true,
+                onRetryFailedMessage: (_) =>
+                    fail('automatic retry must stay silent'),
+              ),
+            );
+            await pumpFrames(tester);
+            final card = tester.widget<LetterCard>(find.byType(LetterCard));
+            expect(card.status, status == 'failed' ? 'sending' : 'delivered');
+            expect(
+              find.byKey(const ValueKey('failed-message-retry-custody-retry')),
+              findsNothing,
+            );
+            expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+          }
+        },
+      );
+    }
+
     testWidgets(
       'incoming and failed text-only rows do not show failed-media controls',
       (tester) async {

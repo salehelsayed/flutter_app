@@ -1028,7 +1028,7 @@ void main() {
   });
 
   testWidgets(
-    'old-phone cancellation is not overwritten by runner completion',
+    'old-phone cancellation waits for runner cleanup before reporting completion',
     (tester) async {
       final qrPayload = payload(sessionId: 'migration-session');
       final transcript = AuthenticatedMigrationChannelTranscript(
@@ -1083,11 +1083,15 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.text('Move cancelled'), findsOneWidget);
-
-      allowFinish.complete();
-      await tester.pump();
-      await tester.pump();
+      try {
+        expect(find.text('Move cancelled'), findsNothing);
+        expect(find.text('Connecting phones'), findsOneWidget);
+      } finally {
+        // The runner returns only after its export cleanup has settled.
+        allowFinish.complete();
+        await tester.pump();
+        await tester.pump();
+      }
 
       expect(find.text('Move cancelled'), findsOneWidget);
       expect(find.text('Transfer complete'), findsNothing);

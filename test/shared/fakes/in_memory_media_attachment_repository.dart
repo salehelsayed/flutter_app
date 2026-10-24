@@ -344,11 +344,13 @@ class InMemoryMediaAttachmentRepository
         attachment.messageId != messageId ||
         attachment.downloadStatus != expectedDownloadStatus ||
         attachment.localPath != expectedLocalPath ||
-        (attachment.downloadRetryCount ?? 0) >= kMaxDownloadRetries ||
+        (!GroupMediaIntegrityPolicy.isPendingRelayNotFoundRetry(attachment) &&
+            (attachment.downloadRetryCount ?? 0) >= kMaxDownloadRetries) ||
         !const {
           kMediaDownloadStatusPending,
           kMediaDownloadStatusDownloading,
           kMediaDownloadStatusFailed,
+          ...kMediaDownloadNotFoundRetryStatuses,
         }.contains(attachment.downloadStatus)) {
       return false;
     }

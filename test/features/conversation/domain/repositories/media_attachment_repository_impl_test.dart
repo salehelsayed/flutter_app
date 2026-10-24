@@ -7184,6 +7184,133 @@ void main() {
     });
 
     test(
+      'bounded relay absence stages remain group-recoverable without changing generic retries',
+      () async {
+        const groupId = 'group-notfound-stages';
+        const parentId = 'msg-notfound-stages';
+        const attachmentId = 'att-notfound-stages';
+        await fixture.seedGroupParent(parentId, groupId: groupId);
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: attachmentId,
+            messageId: parentId,
+            downloadStatus: kMediaDownloadStatusDownloading,
+            downloadRetryCount: kMaxDownloadRetries,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        for (final status in kMediaDownloadNotFoundRetryStatuses) {
+          expect(
+            await fixture.repo.recordOrdinaryGroupMediaDownloadFailure(
+              attachmentId,
+              groupId: groupId,
+              messageId: parentId,
+              incrementRetryCount: false,
+              failureStatus: status,
+              expectedDownloadStatus: kMediaDownloadStatusDownloading,
+              expectedLocalPath: null,
+              clearLocalPath: false,
+            ),
+            isTrue,
+          );
+          final row = (await rawRow(attachmentId))!;
+          expect(row['download_status'], status);
+          expect(row['download_retry_count'], kMaxDownloadRetries);
+          await fixture.repo.saveAttachment(
+            makeAttachment(
+              id: attachmentId,
+              messageId: parentId,
+              downloadRetryCount: 0,
+            ),
+            owner: MediaOwnerLane.group,
+          );
+          expect(
+            (await rawRow(attachmentId))!['download_status'],
+            status,
+            reason: 'wire replay cannot restart the absence budget',
+          );
+          expect(
+            (await rawRow(attachmentId))!['download_retry_count'],
+            kMaxDownloadRetries,
+          );
+          final page = await fixture.repo.loadRecoverableGroupDownloadPage(
+            limit: 25,
+          );
+          expect(
+            page.map((candidate) => candidate.attachment.id),
+            contains(attachmentId),
+          );
+          expect(
+            await fixture.repo.beginOrdinaryGroupAutomaticMediaDownload(
+              attachmentId,
+              groupId: groupId,
+              messageId: parentId,
+              expectedDownloadStatus: status,
+              expectedLocalPath: null,
+            ),
+            isTrue,
+          );
+        }
+        expect(
+          await fixture.repo.recordOrdinaryGroupMediaDownloadFailure(
+            attachmentId,
+            groupId: groupId,
+            messageId: parentId,
+            incrementRetryCount: false,
+            failureStatus: kMediaDownloadStatusUnavailable,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          isTrue,
+        );
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: attachmentId,
+            messageId: parentId,
+            downloadRetryCount: 0,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+        expect(
+          (await rawRow(attachmentId))!['download_status'],
+          kMediaDownloadStatusUnavailable,
+        );
+        expect(
+          await fixture.repo.loadRecoverableGroupDownloadPage(limit: 25),
+          isEmpty,
+        );
+        expect(
+          await fixture.repo.beginOrdinaryGroupAutomaticMediaDownload(
+            attachmentId,
+            groupId: groupId,
+            messageId: parentId,
+            expectedDownloadStatus: kMediaDownloadStatusUnavailable,
+            expectedLocalPath: null,
+          ),
+          isFalse,
+        );
+        expect(
+          (await rawRow(attachmentId))!['download_retry_count'],
+          kMaxDownloadRetries,
+        );
+        await expectLater(
+          fixture.repo.recordOrdinaryGroupMediaDownloadFailure(
+            attachmentId,
+            groupId: groupId,
+            messageId: parentId,
+            incrementRetryCount: true,
+            failureStatus: kMediaDownloadStatusNotFoundRetry1,
+            expectedDownloadStatus: kMediaDownloadStatusDownloading,
+            expectedLocalPath: null,
+            clearLocalPath: false,
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
+
+    test(
       'P269 group download failure CAS is atomic and deletion journal cannot resurrect media',
       () async {
         const groupId = 'group-p269-failure';
