@@ -2678,8 +2678,10 @@ The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release
 replays durable pending rows, both retained screens share one presentation queue,
-and distinct burst requests wait for their own explicit answer. The queue starts
-eagerly; releasing it on the last stream-subscriber cancellation is necessary
+and distinct burst requests wait for their own explicit answer. The notification
+integration fixture wires `presentationGateChanges` as production does: releasing
+a missed notification open replays the still-pending request without another
+network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
 All ten shell cases pass, including remount, blocked-peer filtering, duplicate
