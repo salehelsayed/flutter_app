@@ -7,6 +7,7 @@ import 'package:flutter_app/features/posts/application/post_follow_on_delivery.d
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../../shared/fakes/in_memory_post_repository.dart';
 
 void main() {
   late FakeP2PNetwork network;
@@ -72,6 +73,43 @@ void main() {
     expect(service.sendStartOrder, ['peer-bob']);
     expect(service.inboxAttempts, isEmpty);
   });
+
+  test(
+    'settled retract result is returned before its outbox rows retire',
+    () async {
+      final repository = InMemoryPostRepository();
+      addTearDown(repository.dispose);
+      final service = _ControlledP2PService(
+        peerId: 'peer-alice',
+        network: network,
+        policies: const {
+          'peer-bob': _PeerPolicy(sendResult: true, acked: true),
+        },
+      );
+      addTearDown(service.dispose);
+
+      final result = await queueAndSendPostFollowOn(
+        postRepo: repository,
+        p2pService: service,
+        eventId: 'evt-retract',
+        eventType: 'post_retract',
+        postId: 'thought-1',
+        senderPeerId: 'peer-alice',
+        envelope: '{"type":"post_retract"}',
+        createdAt: '2026-03-15T12:00:00.000Z',
+        recipientPeerIds: ['peer-bob'],
+      );
+
+      expect(result.settlement, PostFollowOnSettlement.fullySettled);
+      expect(result.recipientResults.single.deliveryStatus, 'delivered');
+      expect(service.inboxAttempts, isEmpty);
+      expect(await repository.getFollowOnOutboxEvent('evt-retract'), isNull);
+      expect(
+        await repository.loadFollowOnOutboxRecipientDeliveries('evt-retract'),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'fanoutPostFollowOnEnvelope never exceeds the configured concurrency limit',

@@ -81,6 +81,7 @@ class PostRepositoryImpl implements PostRepository {
   dbUpsertFollowOnOutboxEvent;
   final Future<Map<String, Object?>?> Function(String eventId)?
   dbLoadFollowOnOutboxEvent;
+  final Future<void> Function(String eventId)? dbDeleteFollowOnOutboxEvent;
   final Future<List<Map<String, Object?>>> Function()?
   dbLoadRetryableFollowOnOutboxEvents;
   final Future<void> Function(Map<String, Object?> row)?
@@ -176,6 +177,7 @@ class PostRepositoryImpl implements PostRepository {
     this.dbDeletePendingChildEvent,
     this.dbUpsertFollowOnOutboxEvent,
     this.dbLoadFollowOnOutboxEvent,
+    this.dbDeleteFollowOnOutboxEvent,
     this.dbLoadRetryableFollowOnOutboxEvents,
     this.dbUpsertFollowOnOutboxRecipientDelivery,
     this.dbLoadFollowOnOutboxRecipientDeliveries,
@@ -580,6 +582,15 @@ class PostRepositoryImpl implements PostRepository {
     );
     final row = await dbLoad(eventId);
     return row == null ? null : PostFollowOnOutboxEvent.fromMap(row);
+  }
+
+  @override
+  Future<void> deleteFollowOnOutboxEvent(String eventId) async {
+    final dbDelete = _require(
+      dbDeleteFollowOnOutboxEvent,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    await dbDelete(eventId);
   }
 
   @override

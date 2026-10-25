@@ -144,14 +144,7 @@ Future<int> retryPendingPostFollowOns({
     if (retraction == null ||
         ThoughtLifetime.isExpired(retraction.postCreatedAt, now)) {
       // Every copy of the thought has expired on its own by now.
-      for (final delivery in job.recipientDeliveries) {
-        await postRepo.saveFollowOnOutboxRecipientDelivery(
-          delivery.copyWith(
-            deliveryStatus: 'expired',
-            updatedAt: now.toIso8601String(),
-          ),
-        );
-      }
+      await postRepo.deleteFollowOnOutboxEvent(job.event.eventId);
       continue;
     }
     retractions.add(job);

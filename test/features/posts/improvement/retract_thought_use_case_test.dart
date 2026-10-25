@@ -153,7 +153,8 @@ void main() {
     expect(network.inboxCount('bob'), 0);
     expect(await posts.loadRetryableFollowOnOutboxJobs(), isEmpty);
     final rows = await posts.loadFollowOnOutboxRecipientDeliveries(eventId);
-    expect(rows.map((row) => row.deliveryStatus), ['expired']);
+    expect(rows, isEmpty);
+    expect(await posts.getFollowOnOutboxEvent(eventId), isNull);
   });
 
   test('a thought nobody received is deleted without queuing anything', () async {

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const Duration interactivePostFollowOnBudget = Duration(seconds: 4);
@@ -444,8 +445,15 @@ Future<PostFollowOnDeliveryResult> _loadPersistedPostFollowOnResult(
         ),
       )
       .toList(growable: false);
-  return PostFollowOnDeliveryResult(
+  final result = PostFollowOnDeliveryResult(
     recipientResults: recipientResults,
     settlement: _aggregatePostFollowOnResult(recipientResults),
   );
+  if (result.settlement == PostFollowOnSettlement.fullySettled) {
+    final event = await postRepo.getFollowOnOutboxEvent(eventId);
+    if (event?.eventType == PostRetractEnvelope.type) {
+      await postRepo.deleteFollowOnOutboxEvent(eventId);
+    }
+  }
+  return result;
 }

@@ -83,6 +83,8 @@ void main() {
           dbUpsertPostFollowOnOutboxEvent(db, row),
       dbLoadFollowOnOutboxEvent: (eventId) =>
           dbLoadPostFollowOnOutboxEvent(db, eventId),
+      dbDeleteFollowOnOutboxEvent: (eventId) =>
+          dbDeletePostFollowOnOutboxEvent(db, eventId),
       dbLoadRetryableFollowOnOutboxEvents: () =>
           dbLoadRetryablePostFollowOnOutboxEvents(db),
       dbUpsertFollowOnOutboxRecipientDelivery: (row) =>
@@ -223,9 +225,11 @@ void main() {
           eventId,
         );
         expect(
-          rows.single.deliveryStatus,
-          expireBeforeRetry ? 'expired' : 'inbox',
+          rows,
+          isEmpty,
+          reason: 'terminal retraction recipients must be retired',
         );
+        expect(await repository.getFollowOnOutboxEvent(eventId), isNull);
         expect(await repository.loadRetryableFollowOnOutboxJobs(), isEmpty);
         expect(
           await retryPendingPostFollowOns(
@@ -237,6 +241,23 @@ void main() {
         );
         expect(service.directAttempts, expireBeforeRetry ? 1 : 2);
         expect(network.storeInInboxCallCount, expireBeforeRetry ? 1 : 2);
+
+        // An earlier delivery may finish after retry or expiry retires the job.
+        await repository.saveFollowOnOutboxRecipientDelivery(
+          jobs.single.recipientDeliveries.single.copyWith(
+            deliveryStatus: 'delivered',
+            deliveryPath: 'direct',
+          ),
+        );
+        repository.dispose();
+        await db.close();
+        db = await openDatabase('${tempDir.path}/posts.db');
+        repository = buildRepository();
+        expect(await db.query('post_follow_on_outbox_events'), isEmpty);
+        expect(
+          await db.query('post_follow_on_outbox_recipient_deliveries'),
+          isEmpty,
+        );
       },
     );
   }

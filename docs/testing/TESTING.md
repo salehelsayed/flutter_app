@@ -3425,11 +3425,20 @@ inbox outcomes and the acknowledged-send control without an inbox duplicate.
 `post_follow_on_outbox_repository_test.dart` uses the real repository, SQLite
 cascade, media-file deletion and database close/reopen: the thought, media and
 legacy follow-ons disappear while the retraction event and failed recipients
-survive. Inbox recovery settles that retained job; the original thought's
-24-hour deadline expires it without another network attempt. The original
-four causal failures on `03467e0de` and focused passing evidence are retained
-under `.codex-test-logs/thought-retract-delivery-20261026/`. These host contracts
-do not establish installed-device retract latency.
+survive. Once all recipients settle or the original thought's 24-hour deadline
+expires, the existing delivery/retry owner removes the event and all recipient
+rows in one transaction. The delivery result is computed before retirement;
+recipient writes require their event to still exist in the same transaction,
+so late delivery outcomes cannot recreate orphan rows. Another database
+close/reopen proves physical removal. Merely hiding terminal
+rows from retry selection does not establish cleanup. The original four causal
+failures on `03467e0de` remain under
+`.codex-test-logs/thought-retract-delivery-20261026/`; the two terminal-row REDs
+on `87c713129` and focused cleanup evidence are under
+`.codex-test-logs/thought-retract-retirement-20261026/`. Its two-line repository
+callback binding re-pins only the two bootstrap digests, with the historical
+notification callback and other pins byte-identical. These host contracts do
+not establish installed-device retract latency.
 
 On 2026-10-22 the owner accepted Thoughts completion with the three pre-existing
 skip-only host gaps documented. The original Step 1 affected selection remains

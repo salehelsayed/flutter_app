@@ -2245,6 +2245,8 @@ final class ProductionApplicationBootstrap
           dbUpsertPostFollowOnOutboxEvent(db, row),
       dbLoadFollowOnOutboxEvent: (eventId) =>
           dbLoadPostFollowOnOutboxEvent(db, eventId),
+      dbDeleteFollowOnOutboxEvent: (eventId) =>
+          dbDeletePostFollowOnOutboxEvent(db, eventId),
       dbLoadRetryableFollowOnOutboxEvents: () =>
           dbLoadRetryablePostFollowOnOutboxEvents(db),
       dbUpsertFollowOnOutboxRecipientDelivery: (row) =>

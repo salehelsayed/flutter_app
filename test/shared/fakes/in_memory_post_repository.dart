@@ -503,9 +503,16 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> deleteFollowOnOutboxEvent(String eventId) async {
+    _followOnOutboxEventsById.remove(eventId);
+    _followOnOutboxDeliveriesByEventId.remove(eventId);
+  }
+
+  @override
   Future<void> saveFollowOnOutboxRecipientDelivery(
     PostFollowOnOutboxRecipientDelivery delivery,
   ) async {
+    if (!_followOnOutboxEventsById.containsKey(delivery.eventId)) return;
     final deliveries = _followOnOutboxDeliveriesByEventId.putIfAbsent(
       delivery.eventId,
       () => <PostFollowOnOutboxRecipientDelivery>[],
