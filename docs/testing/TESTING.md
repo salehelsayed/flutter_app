@@ -2377,8 +2377,24 @@ The controlled Conversation composer also coalesces sends for one frame:
 deferring its clear without that guard let two immediate taps dispatch twice.
 The existing rapid-tap tests and the full focused UI preservation run verify
 that correction without holding the composer through network completion.
-Voice reuses its existing attachment and parent saves before publication;
-its gated attachment test observes the repository stream as well as the bubble.
+Voice saves its parent before the attachment because real pending-attachment
+preparation requires that parent. The Conversation screen withholds voice
+row-change events while those saves are pending and publishes its bubble only
+after both complete; a parent-insert failure creates no attachment row. The
+initial attachment-first order in f414 was **refuted** by a real-repository
+voice regression and superseded by this parent-first order. The gated attachment
+test checks the repository stream as well as the bubble.
+
+A live text send can lose custody staging to concurrent recovery after both
+independently encrypt. An intent-bearing losing caller must not transition
+that recovery-owned `sending` row to `failed`, including Feed's exception path.
+The race test pauses live encryption, commits recovery parent/custody in real
+SQLite, verifies token consumption, then resumes the losing stage and observes
+the actual row after the live handler ends. This is distinct from the reopen
+case, which prepares only once on the new process. Sanitization is idempotent:
+it only removes a fixed set of characters, so recovery cannot change the saved
+intent text on a second pass.
+
 Fresh-install and real v122-to-v123 migration cases retain an unrelated contact.
 
 The production-schema SQLite fixture supplies only optional boundary hooks;
@@ -2401,15 +2417,21 @@ fixture startup failure remains in `003-initial-red.log`. New implementation
 verification and its initial fixture compile/timing failures are retained under
 `.codex-test-logs/direct-text-intent-20261025/`; use its final completion report
 for executed checks and omissions. On the merged v122 base plus this v123
-change, final host verification records 276 focused UI passes, 18 curated
+change, initial host verification records 276 focused UI passes, 18 curated
 recovery passes with no skip, 22 curated bootstrap passes and 309 workflow
 passes. The full storage lane executes 1,447 passes and zero failures but stays
 **BLOCKED** for its one existing `MigrationDatabaseSnapshotExporter SQLCipher
 export capability` skip (plugin coverage belongs to the separate integration
 test). Both fresh v123 and v122-to-v123 cases execute; the analyzer reports no
 issues across the 70 original changed Dart items and 16 later integration/test
-adapters. The shared integration bindings forward the new optional token and
-intent callbacks, preserving their existing UI paths. These host results do not
+adapters. A follow-up regression run records 385 passing UI/Feed/sanitizer
+cases, including the real recovery race, real voice preparation and parent
+insert failure controls; its focused four-case probe also passes and its three
+changed Dart files analyze clean. Causal RED and GREEN evidence are retained in
+`review-red-voice-23.log`, `review-green-24.log` and
+`review-preservation-25.log` under the same evidence directory. The shared
+integration bindings forward the new optional token and intent callbacks,
+preserving their existing UI paths. These host results do not
 complete omitted broad, device, native-plugin or signed-candidate checks.
 Changes to the nested direct-media target owner also require reviewed source
 hash updates in `tool/testing/legacy_target_contracts.json`; its four route

@@ -2478,7 +2478,7 @@ class _FeedWiredState extends State<FeedWired>
         return true;
       }
       // Persist the failure so the optimistic bubble survives a rebuild.
-      if (message == null) {
+      if (message == null && intent == null) {
         await widget.messageRepository.conditionalTransitionStatus(
           optimisticMessage.id,
           fromStatus: 'sending',
@@ -2509,7 +2509,7 @@ class _FeedWiredState extends State<FeedWired>
           acquired: false,
         );
       }
-      if (optimisticMessage != null) {
+      if (optimisticMessage != null && intent == null) {
         try {
           await widget.messageRepository.conditionalTransitionStatus(
             optimisticMessage.id,

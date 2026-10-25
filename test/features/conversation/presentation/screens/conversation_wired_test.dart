@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'dart:io';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
@@ -756,6 +757,33 @@ class _HeldTextBeginBridge extends FakeBridge {
       beginCalled = true;
       await begin.future;
       return '99';
+    }
+    return super.send(message);
+  }
+}
+
+class _RaceContactRepository extends FakeContactRepository {
+  _RaceContactRepository(this.contact);
+  final ContactModel contact;
+  @override
+  Future<ContactModel?> getContact(String peerId) async =>
+      peerId == contact.peerId ? contact : null;
+}
+
+class _RecoveryRaceBridge extends FakeBridge {
+  final firstEncrypt = Completer<void>();
+  final releaseFirst = Completer<void>();
+  final liveEnded = Completer<void>();
+  int encryptions = 0;
+  @override
+  Future<String> send(String message) async {
+    if (message.contains('"bg:begin"')) return '99';
+    if (message.contains('"bg:end"') && !liveEnded.isCompleted) {
+      liveEnded.complete();
+    }
+    if (message.contains('"message.encrypt"') && ++encryptions == 1) {
+      firstEncrypt.complete();
+      await releaseFirst.future;
     }
     return super.send(message);
   }
@@ -6081,6 +6109,228 @@ void main() {
       final textField = tester.widget<TextField>(find.byType(TextField));
       expect(textField.controller?.text, 'Shared hello');
     });
+
+    testWidgets(
+      'recovery custody winner stays sending when live encryption loses',
+      (tester) async {
+        final recoveryCommitted = Completer<void>();
+        final releaseRecovery = Completer<void>();
+        var staged = 0;
+        final fixture = (await tester.runAsync(
+          () => MediaRepositoryRealDbFixture.create(
+            afterDirectTextCustodyStage: () async {
+              if (++staged == 1) {
+                recoveryCommitted.complete();
+                await releaseRecovery.future;
+              }
+            },
+          ),
+        ))!;
+        addTearDown(fixture.dispose);
+        await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
+        final contact = makeContact().copyWith(
+          mlKemPublicKey: 'contact-ml-kem-public-key',
+        );
+        final contacts = _RaceContactRepository(contact);
+        final identity = FakeIdentityRepository(makeIdentity());
+        final transport = FakeP2PService();
+        final bridge = _RecoveryRaceBridge();
+        Future<int>? recovery;
+        try {
+          await pumpScreen(
+            tester,
+            identityRepo: identity,
+            messageRepo: fixture.messageRepo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: fixture.messageRepo,
+              contactRepo: contacts,
+            ),
+            sendFn: sendChatMessage,
+            bridge: bridge,
+            contactRepo: contacts,
+            p2pService: transport,
+          );
+          await tester.enterText(
+            find.byType(TextField),
+            'recovery wins custody',
+          );
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpUntilAsyncIo(tester, () => bridge.firstEncrypt.isCompleted);
+          expect(
+            await tester.runAsync(
+              fixture.messageRepo.loadAuthoredDirectTextIntents,
+            ),
+            hasLength(1),
+          );
+          await tester.runAsync(() async {
+            recovery = retryFailedMessages(
+              messageRepo: fixture.messageRepo,
+              identityRepo: identity,
+              contactRepo: contacts,
+              p2pService: transport,
+              bridge: bridge,
+            );
+          });
+          await pumpUntilAsyncIo(tester, () => recoveryCommitted.isCompleted);
+          final winner = (await tester.runAsync(
+            () => fixture.messageRepo.getMessagesForContact(contact.peerId),
+          ))!.single;
+          expect(winner.status, 'sending');
+          expect(
+            await tester.runAsync(
+              fixture.messageRepo.loadAuthoredDirectTextIntents,
+            ),
+            isEmpty,
+          );
+          expect(
+            await tester.runAsync(
+              () => fixture.db.query('direct_inbox_custody_outbox'),
+            ),
+            hasLength(1),
+          );
+          bridge.releaseFirst.complete();
+          await pumpUntilAsyncIo(tester, () => bridge.liveEnded.isCompleted);
+          expect(staged, 2);
+          expect(bridge.encryptions, 2);
+          final afterLoser = await tester.runAsync(
+            () => fixture.messageRepo.getMessage(winner.id),
+          );
+          expect(
+            afterLoser?.status,
+            'sending',
+            reason:
+                'the losing live stage cannot fail the committed recovery owner',
+          );
+          expect(
+            tester
+                .widget<ConversationScreen>(find.byType(ConversationScreen))
+                .messages
+                .single
+                .status,
+            'sending',
+          );
+        } finally {
+          if (!bridge.releaseFirst.isCompleted) bridge.releaseFirst.complete();
+          if (!releaseRecovery.isCompleted) releaseRecovery.complete();
+          if (recovery != null) {
+            await tester.runAsync(
+              () => recovery!.timeout(const Duration(seconds: 10)),
+            );
+          }
+          await tester.pump(const Duration(milliseconds: 500));
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+      },
+    );
+
+    for (final failParent in [true, false]) {
+      testWidgets(
+        failParent
+            ? 'voice parent insert failure creates no pending attachment'
+            : 'voice preparation with real repositories persists parent before attachment',
+        (tester) async {
+          installPrivateMediaProtectionEventChannelStub(tester);
+          final fixture = (await tester.runAsync(
+            MediaRepositoryRealDbFixture.create,
+          ))!;
+          addTearDown(fixture.dispose);
+          await tester.runAsync(() async {
+            await seedPersistedIncumbentContact(fixture);
+            if (failParent) {
+              await fixture.db.execute(
+                "CREATE TRIGGER reject_voice_parent BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'injected voice parent failure'); END",
+              );
+            }
+          });
+          final temp = Directory.systemTemp.createTempSync(
+            'voice-parent-order-',
+          );
+          addTearDown(() => temp.deleteSync(recursive: true));
+          final file = File('${temp.path}/voice.m4a')
+            ..writeAsBytesSync(List.filled(2048, 9));
+          final recorder = FakeAudioRecorderService()
+            ..fakeDurationMs = 1200
+            ..fakeSizeBytes = 2048
+            ..fakeOutputPath = file.path;
+          var delegated = false;
+          Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoice({
+            required P2PService p2pService,
+            required MessageRepository messageRepo,
+            required String targetPeerId,
+            required String senderPeerId,
+            required String senderUsername,
+            required AudioRecording recording,
+            required Bridge bridge,
+            String? recipientMlKemPublicKey,
+            MediaAttachmentRepository? mediaAttachmentRepo,
+            MediaFileManager? mediaFileManager,
+            String? text,
+            String? quotedMessageId,
+            List<double>? waveform,
+            String? messageId,
+            String? timestamp,
+            String? blobId,
+            EncryptedMediaArtifact? preparedArtifact,
+            mediaAdmission,
+          }) async {
+            expect(await fixture.db.query('messages'), hasLength(1));
+            expect(await fixture.db.query('media_attachments'), hasLength(1));
+            delegated = true;
+            return (
+              SendVoiceMessageResult.success,
+              await messageRepo.getMessage(messageId!),
+            );
+          }
+
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: fixture.messageRepo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: fixture.messageRepo,
+              contactRepo: FakeContactRepository(),
+            ),
+            sendFn: _instantSuccessSendFn,
+            bridge: FakeBridge(),
+            audioRecorderService: recorder,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: FakeMediaFileManager(),
+            sendVoiceMessageFn: sendVoice,
+          );
+          ConversationScreen screen() => tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          await (screen().onRecordStart! as Future<void> Function())();
+          await tester.pump(const Duration(milliseconds: 100));
+          var completed = false;
+          final stopped = (screen().onRecordStop! as Future<void> Function())()
+              .whenComplete(() => completed = true);
+          await pumpUntilAsyncIo(tester, () => completed);
+          await stopped;
+          expect(
+            delegated,
+            !failParent,
+            reason:
+                'real pending attachment preparation needs its durable parent',
+          );
+          expect(
+            await tester.runAsync(() => fixture.db.query('messages')),
+            failParent ? isEmpty : hasLength(1),
+          );
+          expect(
+            await tester.runAsync(() => fixture.db.query('media_attachments')),
+            failParent ? isEmpty : hasLength(1),
+          );
+          await tester.pump(const Duration(milliseconds: 500));
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        },
+      );
+    }
 
     for (final scenario in [0, 1, 2]) {
       final admitted = scenario != 0;

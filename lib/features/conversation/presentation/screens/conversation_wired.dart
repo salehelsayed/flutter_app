@@ -655,6 +655,7 @@ class _ConversationWiredState extends State<ConversationWired>
     with WidgetsBindingObserver {
   static const _uuid = Uuid();
   static const _pageSize = 50;
+  final Set<String> _preparingVoiceMessageIds = {};
   static final MediaPicker _defaultMediaPicker = SystemMediaPicker();
 
   late AppLifecycleState _appLifecycleState;
@@ -2658,6 +2659,7 @@ class _ConversationWiredState extends State<ConversationWired>
         .where(
           (message) =>
               message.contactPeerId == _contact.peerId &&
+              !_preparingVoiceMessageIds.contains(message.id) &&
               // 131: also accept INCOMING inserts. saveMessage emits every save
               // (incoming included) on this durable stream, so a message
               // persisted by the relay drain while the screen is open surfaces
@@ -5115,12 +5117,11 @@ class _ConversationWiredState extends State<ConversationWired>
           }
           _scrollToBottom();
         } else {
-          // A null result carries no durable envelope/transport authority. Keep
-          // the exact optimistic sending -> failed edge and then paint only the
-          // authoritative row that won that CAS.
-          final authoritativeMessage = await _transitionSendingMessageToFailed(
-            optimisticMessage.id,
-          );
+          // An intent-backed send may have lost staging to recovery. Only a
+          // send without that intent may fail the current sending row.
+          final authoritativeMessage = authoredTextIntentToken == null
+              ? await _transitionSendingMessageToFailed(optimisticMessage.id)
+              : null;
           final resolvedMedia = displayMedia ?? uploadedAttachments;
           if (authoritativeMessage != null &&
               resolvedMedia != null &&
@@ -6227,12 +6228,13 @@ class _ConversationWiredState extends State<ConversationWired>
       media: [persistedVoiceAttachment.copyWith(localPath: uploadVoicePath)],
     );
 
+    _preparingVoiceMessageIds.add(voiceMessageId);
     try {
+      await widget.messageRepo.saveMessage(optimisticMessage);
       await mediaAttachmentRepo?.saveAttachment(
         persistedVoiceAttachment,
         owner: MediaOwnerLane.direct,
       );
-      await widget.messageRepo.saveMessage(optimisticMessage);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -6260,6 +6262,8 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       mediaUploadInFlightTracker.release(voiceUploadLease);
       return;
+    } finally {
+      _preparingVoiceMessageIds.remove(voiceMessageId);
     }
 
     if (mounted) {
