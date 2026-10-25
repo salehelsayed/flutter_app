@@ -196,6 +196,7 @@ void main() {
         final openedConversations = <ContactModel>[];
         final errors = <String>[];
         final materializer = ContactRequestNotificationMaterializer(
+          contactRequestListener: aliceListener,
           requestRepository: aliceRequests,
           contactRepository: aliceContacts,
           identityRepository: aliceIdentities,

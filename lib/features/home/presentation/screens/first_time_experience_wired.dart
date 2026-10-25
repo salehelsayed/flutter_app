@@ -231,15 +231,20 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       },
     );
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => ContactRequestDialog(
-        request: request,
-        onAccept: () => _acceptRequest(ctx, request),
-        onDecline: () => _declineRequest(ctx, request),
-      ),
-    );
+    widget.contactRequestListener.presentRequest(request, () async {
+      if (!mounted) return;
+      Future<void>? decision;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => ContactRequestDialog(
+          request: request,
+          onAccept: () => decision = _acceptRequest(ctx, request),
+          onDecline: () => decision = _declineRequest(ctx, request),
+        ),
+      );
+      await decision;
+    });
   }
 
   Future<void> _acceptRequest(

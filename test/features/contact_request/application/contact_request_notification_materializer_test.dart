@@ -33,8 +33,21 @@ void main() {
     navigatorKey = GlobalKey<NavigatorState>();
   });
 
-  ContactRequestNotificationMaterializer buildMaterializer() {
+  ContactRequestNotificationMaterializer buildMaterializer({
+    ContactRequestListener? listener,
+  }) {
+    final requestListener =
+        listener ??
+        ContactRequestListener(
+          contactRequestStream: const Stream<ChatMessage>.empty(),
+          requestRepo: requestRepository,
+          contactRepo: contactRepository,
+          bridge: bridge,
+          getOwnPeerId: () => 'peer-self',
+        );
+    if (listener == null) addTearDown(requestListener.dispose);
     return ContactRequestNotificationMaterializer(
+      contactRequestListener: requestListener,
       requestRepository: requestRepository,
       contactRepository: contactRepository,
       identityRepository: identityRepository,
@@ -145,7 +158,7 @@ void main() {
       var completed = false;
       final routed = (() async {
         try {
-          await buildMaterializer().handleRoute(
+          await buildMaterializer(listener: listener).handleRoute(
             navigator: navigatorKey.currentState!,
             peerId: request.peerId,
           );

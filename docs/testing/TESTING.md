@@ -2684,7 +2684,7 @@ a missed notification open replays the still-pending request without another
 network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All ten shell cases pass, including remount, blocked-peer filtering, duplicate
+All fourteen shell cases pass, including remount, blocked-peer filtering, duplicate
 input/restart and reciprocal acceptance with both Feed and Orbit retained, and
 repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
@@ -2703,13 +2703,18 @@ one to two to three contacts without avatars. This is host UI/stream/SQL proof,
 not device/native delivery. Evidence:
 `.codex-test-logs/contact-accept-refresh-20261024/`.
 
-Consent ownership must include the decision Future after the dialog route pops.
-Otherwise an observable gate release can read a still-pending row and present it
-again before Accept/Decline persists. The root and shell presenters await the
-captured decision. The notification materializer's delayed-write test causally
-proves persistence precedes replay; its companion source guard checks the root
-callback wiring. This host fixture uses an in-memory delayed repository/presenter,
-so it is not an OS notification or complete application-root journey.
+Consent ownership includes the decision Future after the dialog route pops.
+Otherwise gate release can present a still-pending row before Accept/Decline
+persists. Notification materialization and FTE share the listener queue with Feed
+and Orbit; notification opens join an already-active or queued peer's completion.
+Only the explicit notification path may present through its own suppression gate.
+The four collision shell cases use signed input, production SQL, real Feed/Orbit
+or FTE, and the production materializer with an injected dialog callback. They
+causally reproduce two dialogs before the fix and require one until the decision
+persists. Evidence: `.codex-test-logs/contact-dedup-missed-20261025/`.
+The materializer's delayed-write test also proves persistence precedes replay;
+its companion source guard checks root callback ownership. These host fixtures
+do not certify OS notification delivery or a complete application-root journey.
 Evidence: `test/features/contact_request/presentation/screens/pending_request_shell_test.dart`,
 `test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart`,
 `test/features/contact_request/application/contact_request_notification_materializer_test.dart`

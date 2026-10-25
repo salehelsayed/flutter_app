@@ -9,6 +9,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
+import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -194,6 +196,133 @@ void main() {
       timeout: const Timeout(Duration(seconds: 45)),
     );
   });
+
+  for (final firstTime in [false, true]) {
+    testWidgets(
+      'CR-005 notification open joins the live ${firstTime ? 'FTE' : 'Feed/Orbit'} dialog until consent completes',
+      (tester) async {
+        final h = await _open(tester);
+        if (firstTime) {
+          await _mountFirstTime(tester, h);
+        } else {
+          await h.mount(tester, withOrbit: true);
+        }
+        final wire = await h.makeWire(tester, 0x52, 'Bob');
+        await h.live(tester, wire);
+        expect(_dialogs, findsOneWidget);
+        h.gate.suppress(wire.from);
+        var routeCompleted = false;
+        late Future<void> routed;
+        await tester.runAsync(() async {
+          routed = _notificationMaterializer(h)
+              .handleRoute(
+                navigator: tester.state<NavigatorState>(
+                  find.byType(Navigator).first,
+                ),
+                peerId: wire.from,
+              )
+              .whenComplete(() {
+                h.gate.release(wire.from);
+                routeCompleted = true;
+              });
+          // Join a later read on the same SQL connection after route resolution.
+          await h.requests.getRequest(wire.from);
+        });
+        await _frames(tester);
+        expect(routeCompleted, isFalse);
+        expect(_dialogs, findsOneWidget);
+        expect(
+          await tester.runAsync(h.requests.getPendingRequests),
+          hasLength(1),
+        );
+        expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+        await tester.tap(find.text('Decline'));
+        await tester.runAsync(() => routed);
+        await _frames(tester);
+        expect(routeCompleted, isTrue);
+        expect(_dialogs, findsNothing);
+        expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+        expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+      },
+      timeout: const Timeout(Duration(seconds: 45)),
+    );
+  }
+
+  testWidgets(
+    'CR-005 notification for a queued peer waits for both consent decisions',
+    (tester) async {
+      final h = await _open(tester);
+      await h.mount(tester, withOrbit: true);
+      final bob = await h.makeWire(tester, 0x52, 'Bob');
+      final carol = await h.makeWire(tester, 0x53, 'Carol');
+      await h.live(tester, bob);
+      await h.live(tester, carol);
+      h.gate.suppress(carol.from);
+      var routeCompleted = false;
+      late Future<void> routed;
+      await tester.runAsync(() async {
+        routed = _notificationMaterializer(h)
+            .handleRoute(
+              navigator: tester.state<NavigatorState>(
+                find.byType(Navigator).first,
+              ),
+              peerId: carol.from,
+            )
+            .whenComplete(() {
+              h.gate.release(carol.from);
+              routeCompleted = true;
+            });
+        await h.requests.getRequest(carol.from);
+      });
+      await _frames(tester);
+      expect(_dialogs, findsOneWidget);
+      expect(
+        tester.widget<ContactRequestDialog>(_dialogs).request.username,
+        'Bob',
+      );
+      await tester.tap(find.text('Decline'));
+      await tester.runAsync(h.requests.getPendingRequests);
+      await _frames(tester);
+      expect(_dialogs, findsOneWidget);
+      expect(
+        tester.widget<ContactRequestDialog>(_dialogs).request.username,
+        'Carol',
+      );
+      expect(routeCompleted, isFalse);
+      await tester.tap(find.text('Decline'));
+      await tester.runAsync(() => routed);
+      await _frames(tester);
+      expect(routeCompleted, isTrue);
+      expect(_dialogs, findsNothing);
+      expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+      expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+    },
+    timeout: const Timeout(Duration(seconds: 45)),
+  );
+
+  testWidgets('CR-005 FTE pending replay joins its existing consent dialog', (
+    tester,
+  ) async {
+    final h = await _open(tester);
+    await _mountFirstTime(tester, h);
+    final wire = await h.makeWire(tester, 0x52, 'Bob');
+    await h.live(tester, wire);
+    expect(_dialogs, findsOneWidget);
+    h.gate.suppress(wire.from);
+    final replayed = h.listener.requestStream.firstWhere(
+      (request) => request.peerId == wire.from,
+    );
+    h.gate.release(wire.from);
+    await tester.runAsync(() => replayed);
+    await _frames(tester);
+    expect(_dialogs, findsOneWidget);
+    expect(await tester.runAsync(h.requests.getPendingRequests), hasLength(1));
+    expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
+    await tester.tap(find.text('Decline'));
+    expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+    await _frames(tester);
+    expect(_dialogs, findsNothing);
+  }, timeout: const Timeout(Duration(seconds: 45)));
 
   testWidgets(
     'CR-014 burst preserves each distinct pending row without granting consent',
@@ -490,6 +619,71 @@ void main() {
     },
     timeout: const Timeout(Duration(seconds: 45)),
   );
+}
+
+ContactRequestNotificationMaterializer _notificationMaterializer(_Shell h) {
+  return ContactRequestNotificationMaterializer(
+    contactRequestListener: h.listener,
+    requestRepository: h.requests,
+    contactRepository: h.contacts,
+    identityRepository: h.identities,
+    p2pService: h.network,
+    bridge: h.bridge,
+    secureKeyStore: h.keys,
+    presentPendingRequest:
+        ({
+          required navigator,
+          required request,
+          required onAccept,
+          required onDecline,
+        }) async {
+          Future<void>? decision;
+          await showDialog<void>(
+            context: navigator.context,
+            barrierDismissible: false,
+            builder: (ctx) => ContactRequestDialog(
+              request: request,
+              onAccept: () {
+                Navigator.of(ctx).pop();
+                decision = onAccept();
+              },
+              onDecline: () {
+                Navigator.of(ctx).pop();
+                decision = onDecline();
+              },
+            ),
+          );
+          await decision;
+        },
+    openConversation: ({required navigator, required contact}) async {
+      fail('declining must not open a conversation');
+    },
+  );
+}
+
+Future<void> _mountFirstTime(WidgetTester tester, _Shell h) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: FirstTimeExperienceWired(
+        repository: h.identities,
+        contactRepository: h.contacts,
+        contactRequestRepository: h.requests,
+        contactRequestListener: h.listener,
+        messageRepository: h.messages,
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        chatMessageListener: h.chat,
+        bridge: h.bridge,
+        p2pService: h.network,
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: ImageProcessor(),
+        secureKeyStore: h.keys,
+      ),
+    ),
+  );
+  await _frames(tester);
 }
 
 Future<void> _frames(WidgetTester tester) async {

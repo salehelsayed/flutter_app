@@ -975,6 +975,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     );
     _contactRequestNotificationMaterializer =
         ContactRequestNotificationMaterializer(
+          contactRequestListener: widget.contactRequestListener,
           requestRepository: widget.contactRequestRepository,
           contactRepository: widget.contactRepository,
           identityRepository: widget.repository,

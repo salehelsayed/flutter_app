@@ -142,7 +142,8 @@ class ContactRequestListener {
   final _contactKeyUpdatedController =
       StreamController<ContactModel>.broadcast();
   final _autoAddedController = StreamController<ContactModel>.broadcast();
-  final Set<String> _presentingPeerIds = <String>{};
+  final _presentations =
+      <String, ({Completer<void> completion, bool allowSuppressed})>{};
   final _presentationQueue =
       Queue<({String peerId, Future<void> Function() present})>();
   bool _presenting = false;
@@ -197,13 +198,30 @@ class ContactRequestListener {
       shouldSuppressPresentationForPeerId?.call(peerId) ?? false;
 
   /// Feed and Orbit share one dialog queue, with one entry per pending peer.
-  void presentRequest(
+  Future<void> presentRequest(
     ContactRequestModel request,
-    Future<void> Function() present,
-  ) {
-    if (_disposed || !_presentingPeerIds.add(request.peerId)) return;
+    Future<void> Function() present, {
+    bool allowSuppressed = false,
+  }) {
+    if (_disposed) return Future<void>.value();
+    final existing = _presentations[request.peerId];
+    if (existing != null) {
+      if (allowSuppressed && !existing.allowSuppressed) {
+        _presentations[request.peerId] = (
+          completion: existing.completion,
+          allowSuppressed: true,
+        );
+      }
+      return existing.completion.future;
+    }
+    final completion = Completer<void>();
+    _presentations[request.peerId] = (
+      completion: completion,
+      allowSuppressed: allowSuppressed,
+    );
     _presentationQueue.add((peerId: request.peerId, present: present));
     if (!_presenting) unawaited(_drainPresentations());
+    return completion.future;
   }
 
   Future<void> _drainPresentations() async {
@@ -215,7 +233,10 @@ class ContactRequestListener {
           _presentationQueue.isNotEmpty) {
         final next = _presentationQueue.removeFirst();
         try {
-          if (!_isPresentationSuppressed(next.peerId)) await next.present();
+          if (_presentations[next.peerId]?.allowSuppressed == true ||
+              !_isPresentationSuppressed(next.peerId)) {
+            await next.present();
+          }
         } catch (error) {
           emitFlowEvent(
             layer: 'FL',
@@ -224,7 +245,7 @@ class ContactRequestListener {
           );
         } finally {
           if (generation == _presentationGeneration) {
-            _presentingPeerIds.remove(next.peerId);
+            _presentations.remove(next.peerId)?.completion.complete();
           }
         }
       }
@@ -238,7 +259,10 @@ class ContactRequestListener {
     // attached shell replay durable pending rows without retaining that lease.
     _presentationGeneration++;
     _presentationQueue.clear();
-    _presentingPeerIds.clear();
+    for (final presentation in _presentations.values) {
+      presentation.completion.complete();
+    }
+    _presentations.clear();
     _presenting = false;
   }
 
