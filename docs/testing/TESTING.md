@@ -2682,8 +2682,9 @@ and distinct burst requests wait for their own explicit answer. The queue starts
 eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All nine shell cases pass, including remount, blocked-peer filtering, duplicate
-input/restart, reciprocal acceptance and repair overflow/retry. The scanner's
+All ten shell cases pass, including remount, blocked-peer filtering, duplicate
+input/restart and reciprocal acceptance with both Feed and Orbit retained, and
+repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.

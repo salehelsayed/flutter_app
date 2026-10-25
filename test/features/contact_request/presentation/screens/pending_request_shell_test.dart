@@ -147,7 +147,7 @@ void main() {
     'CR-005 live plus inbox duplicate and listener restart retain one consent dialog',
     (tester) async {
       final h = await _open(tester);
-      await h.mount(tester);
+      await h.mount(tester, withOrbit: true);
       final wire = await h.makeWire(tester, 0x52, 'Bob');
       await h.live(tester, wire);
       expect(_dialogs, findsOneWidget);
@@ -161,7 +161,7 @@ void main() {
       expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() async => h.restartListener());
-      await h.mount(tester);
+      await h.mount(tester, withOrbit: true);
       await tester.runAsync(() => h.listener.processIncomingMessage(wire));
       await _frames(tester);
       expect(_dialogs, findsOneWidget);
@@ -326,7 +326,7 @@ void main() {
     'CR-005 accepting once converges one contact each and no reciprocal loop',
     (tester) async {
       final h = await _open(tester);
-      await h.mount(tester);
+      await h.mount(tester, withOrbit: true);
       final wire = await h.makeWire(tester, 0x52, 'Bob');
       final sender = h.senders.single;
       // The requester already consented by scanning Alice: seed that leg through the real repository.
