@@ -2867,6 +2867,19 @@ after a real database/repository reopen. Evidence is retained under
 native SQLCipher, OS process termination and signed-candidate behavior remain
 separate.
 
+CR-016 has a separate QR-storage KNOWN GAP. The real signed scanner cases in
+`qr_timestamp_admission_test.dart` accept Arabic-first and English-first mixed
+names containing bidi overrides, verify the original Ed25519 signature, persist
+one contact and queue one outbound request, then require the SQL name to omit
+overrides while preserving Arabic and emoji. Both active cases fail on the
+stored name: `ContactModel.fromQRPayload` copies the signed `un` field without
+sanitization after verification. They remain explicitly skipped with that
+reason; the active RED source and first failures are retained under
+`.codex-test-logs/astra-contact-catalog/group2/002-cr016-red*`. Existing request
+model/dialog sanitization and text-direction cases cover that separate display
+boundary. These host cases do not prove contact-screen rendering, native
+camera/crypto or signed-device behavior. No production fix is included.
+
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses
 the reciprocal key for exact Unicode/multiline text in both directions. Its QR
