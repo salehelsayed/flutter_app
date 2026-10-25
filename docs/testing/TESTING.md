@@ -7470,6 +7470,10 @@ visible and cannot become an ordinary first-attempt PASS.
   unblock, a fresh text reaches the notification sink and a fresh reaction is
   persisted and admitted. These are host ingress/notification-policy proofs,
   not real blob transfer, OS notification delivery, or device interaction.
+  The fixture owns the chat-input subscription and drains its production
+  handler futures before clearing the notification gate and deleting its
+  temporary directory. The fake's shown count precedes the final dedup-marker
+  write; synchronous listener disposal alone does not wait for that IO.
 - **TURN availability and frozen call policy:** normal (`all`) setup and restart
   may attempt direct media after a five-second credential timeout or a typed
   transient service failure. Preserve the approved STUN entries supplied by the
