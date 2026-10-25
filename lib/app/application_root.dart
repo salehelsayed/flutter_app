@@ -2879,6 +2879,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         ),
         drainDirectInboxCustodyOutboxFn: widget.drainDirectInboxCustodyOutbox,
         retryFailedMessagesFn: () => retryFailedMessages(
+          directEventFanout: _directRouteAuthority.resolvedDirectEventFanout,
           messageRepo: widget.messageRepository,
           identityRepo: widget.repository,
           contactRepo: widget.contactRepository,

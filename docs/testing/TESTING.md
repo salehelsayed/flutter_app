@@ -2359,26 +2359,58 @@ and exactly 100 SQL rows per peer after both peers reopen and after production
 protected-inbox replay of already-delivered envelopes. DC-004 pauses the real
 send path before custody, after custody, after committed live delivery before
 local settlement, and after relay acceptance before local custody completion.
-The last three checkpoints recover the original envelope/incarnation, settle
-one sender row through actual receipt handling, and retain one receiver row.
-The existing production-schema SQLite fixture supplies only optional boundary
-hooks; restarted repositories omit those hooks. Old Dart continuations are
-abandoned and their timers cancelled. These are real file close/reopen and
-listener/staging/recovery proofs with fake transport/crypto, not OS process-kill,
-native SQLCipher, linked-device fanout, live relay or signed-candidate evidence.
+All four checkpoints recover one logical message. Before custody, the UI first
+commits a six-field authored-text intent (v123), and recovery prepares that
+same ID/content once. After custody, recovery preserves the exact original
+envelope/incarnation without re-encryption. The sending projection merges
+pending intents by ID without exposing them as canonical message authority.
+Scalar and linked fanout custody transactions consume the exact intent token
+with the parent and all custody rows; failed staging or transaction rollback
+retains the intent. Contact/conversation/message deletion cancels pending
+intents, and Delete for me accepts the pre-custody projection. Ordinary awaited
+non-UI send callers and Share keep their existing authoring behavior.
 
-DC-004 before-custody remains a **KNOWN GAP**: fresh ordinary text has no
-durable parent before atomic custody staging, although the conversation screen
-already schedules an optimistic sending bubble. The unskipped no-loss assertion
-finds zero receiver rows after restart. Reproduce with
-`--dart-define=MKNOON_RUN_KNOWN_GAPS=true --name '^DC-004 beforeCustody:'`;
-the default skip does not close DC-004. Evidence in
-`.codex-test-logs/astra-direct-restart/008-known-gap-red.log` retains that RED;
-`010-burst-focused-final.log` records 22 focused/preservation passes and one
-skip. The curated wrapper's `013-curated/` records 16 passes, zero failures and
-one skip, classified **BLOCKED** by its completeness gate. Do not relabel that
-lane as passing or waive the skip. The original invalid test-key fixture
-startup failure remains in `003-initial-red.log`.
+Conversation and Feed hold the editable draft and withhold the bubble until
+the intent commit. The UI tests positively hold that write, exercise refusal,
+preserve text typed during the write, then hold `bg:begin` after admission.
+The controlled Conversation composer also coalesces sends for one frame:
+deferring its clear without that guard let two immediate taps dispatch twice.
+The existing rapid-tap tests and the full focused UI preservation run verify
+that correction without holding the composer through network completion.
+Voice reuses its existing attachment and parent saves before publication;
+its gated attachment test observes the repository stream as well as the bubble.
+Fresh-install and real v122-to-v123 migration cases retain an unrelated contact.
+
+The production-schema SQLite fixture supplies only optional boundary hooks;
+restarted repositories omit those hooks. Old Dart continuations are abandoned
+and their timers cancelled. These are real file close/reopen and
+listener/staging/recovery proofs with fake transport/crypto, not OS process-kill,
+native SQLCipher, live relay or signed-candidate evidence. The custody helper
+suite separately proves linked fanout token consumption and all-sibling
+rollback; the restart suite does not certify a live linked-device topology.
+
+The former DC-004 before-custody **KNOWN GAP** is now an unconditional no-loss
+regression. Its original opt-in RED remains in
+`.codex-test-logs/astra-direct-restart/008-known-gap-red.log`; a second causal
+RED on the merged v122 production source is retained in
+`.codex-test-logs/direct-text-intent-20261025/before-custody-red.log` (receiver
+rows expected one, actual zero). The earlier Astra `010-burst-focused-final.log`
+(22 passes/one skip) and `013-curated/` (16 passes/one skip, **BLOCKED**) describe
+the pre-fix source and remain historical evidence. The original invalid test-key
+fixture startup failure remains in `003-initial-red.log`. New implementation
+verification and its initial fixture compile/timing failures are retained under
+`.codex-test-logs/direct-text-intent-20261025/`; use its final completion report
+for executed checks and omissions. On the merged v122 base plus this v123
+change, final host verification records 276 focused UI passes, 18 curated
+recovery passes with no skip, 22 curated bootstrap passes and 309 workflow
+passes. The full storage lane executes 1,447 passes and zero failures but stays
+**BLOCKED** for its one existing `MigrationDatabaseSnapshotExporter SQLCipher
+export capability` skip (plugin coverage belongs to the separate integration
+test). Both fresh v123 and v122-to-v123 cases execute; the analyzer reports no
+issues across the 70 original changed Dart items and 16 later integration/test
+adapters. The shared integration bindings forward the new optional token and
+intent callbacks, preserving their existing UI paths. These host results do not
+complete omitted broad, device, native-plugin or signed-candidate checks.
 Changes to the nested direct-media target owner also require reviewed source
 hash updates in `tool/testing/legacy_target_contracts.json`; its four route
 commands, roles and environments remain fixed. The bounded host checkpoint

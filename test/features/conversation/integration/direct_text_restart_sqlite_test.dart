@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/conversation/domain/models/authored_direct_text_intent.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -28,8 +30,6 @@ import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 enum _Checkpoint { beforeCustody, afterCustody, afterTransmit, afterRelayAck }
-
-const _runKnownGaps = bool.fromEnvironment('MKNOON_RUN_KNOWN_GAPS');
 
 // Abandon the old send graph at an awaited boundary. Its continuations never
 // resume, and its timers are cancelled before the same SQL file is reopened.
@@ -213,6 +213,16 @@ class _SqlPeer {
       beforeDirectInboxCustodyCompletion:
           cut?.checkpoint == _Checkpoint.afterRelayAck ? cut!.pause : null,
     );
+    if ((await sql.db.query('identity', columns: ['peer_id'])).isEmpty) {
+      await sql.db.insert('identity', {
+        'id': 1,
+        'peer_id': id,
+        'public_key': '$id-public',
+        'username': 'Fixture',
+        'created_at': '2026-10-25T00:00:00.000Z',
+        'updated_at': '2026-10-25T00:00:00.000Z',
+      });
+    }
     transport = _CutTransport(peerId: id, network: network, cut: cut);
     bridge = _InboxBridge(id, network);
     contacts = InMemoryContactRepository();
@@ -343,26 +353,50 @@ class _SqlPeer {
     await open();
   }
 
-  Future<(SendChatMessageResult, ConversationMessage?)> send(int index) =>
-      sendChatMessage(
-        p2pService: transport,
-        messageRepo: sql.messageRepo,
-        targetPeerId: otherId,
-        text: 'Restart fixture item $index',
-        senderPeerId: id,
-        senderUsername: 'Fixture',
-        messageId: 'direct-restart-$index',
-        preassignedMessageIdIsFresh: true,
-        timestamp: DateTime.utc(
-          2026,
-          10,
-          24,
-        ).add(Duration(milliseconds: index)).toIso8601String(),
-        bridge: bridge,
-        recipientMlKemPublicKey: '$otherId-mlkem',
-        storeInAckCustodyInboxDetailed:
-            transport.storeInAckCustodyInboxDetailed,
+  Future<(SendChatMessageResult, ConversationMessage?)> send(
+    int index, {
+    bool authored = false,
+  }) async {
+    final timestamp = DateTime.utc(
+      2026,
+      10,
+      24,
+    ).add(Duration(milliseconds: index)).toIso8601String();
+    final intent = authored
+        ? AuthoredDirectTextIntent(
+            id: 'direct-restart-$index',
+            contactPeerId: otherId,
+            text: 'Restart fixture item $index',
+            timestamp: timestamp,
+            token: 'intent-token-$index',
+          )
+        : null;
+    if (intent != null) {
+      expect(
+        await sql.messageRepo.saveAuthoredDirectTextIntent(intent),
+        isTrue,
       );
+    }
+    return sendChatMessage(
+      p2pService: transport,
+      messageRepo: sql.messageRepo,
+      targetPeerId: otherId,
+      text: 'Restart fixture item $index',
+      senderPeerId: id,
+      senderUsername: 'Fixture',
+      messageId: 'direct-restart-$index',
+      authoredTextIntentToken: intent?.token,
+      preassignedMessageIdIsFresh: true,
+      timestamp: DateTime.utc(
+        2026,
+        10,
+        24,
+      ).add(Duration(milliseconds: index)).toIso8601String(),
+      bridge: bridge,
+      recipientMlKemPublicKey: '$otherId-mlkem',
+      storeInAckCustodyInboxDetailed: transport.storeInAckCustodyInboxDetailed,
+    );
+  }
 
   Future<List<ConversationMessage>> rows() =>
       sql.messageRepo.getMessagesForContact(otherId);
@@ -415,6 +449,39 @@ void main() {
     });
     return (sender, receiver);
   }
+
+  test(
+    'authored intent projection can be deleted for me before custody',
+    () async {
+      final (sender, receiver) = await pair();
+      final intent = AuthoredDirectTextIntent(
+        id: 'cancel-before-custody',
+        contactPeerId: sender.otherId,
+        text: 'cancelled authored text',
+        timestamp: '2026-10-25T00:00:00.000Z',
+        token: 'cancel-token',
+      );
+      expect(
+        await sender.sql.messageRepo.saveAuthoredDirectTextIntent(intent),
+        isTrue,
+      );
+      final projection = (await sender.rows()).single;
+      expect(await sender.sql.messageRepo.getMessage(intent.id), isNull);
+      expect(
+        await deleteMessageForMe(
+          message: projection,
+          messageRepo: sender.sql.messageRepo,
+        ),
+        1,
+      );
+      expect(await sender.rows(), isEmpty);
+      await sender.restart();
+      await sender.recover();
+      expect(await sender.rows(), isEmpty);
+      expect(await receiver.rows(), isEmpty);
+      expect(sender.bridge.commandLog, isNot(contains('message.encrypt')));
+    },
+  );
 
   test('DC-002 exact 100 direct messages retain order and identity across '
       'both-peer SQLite restarts and already-delivered inbox replay', () async {
@@ -480,83 +547,80 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   for (final checkpoint in _Checkpoint.values) {
-    test(
-      'DC-004 ${checkpoint.name}: abandoned sender resumes the same message '
-      'exactly once after SQLite reopen',
-      () async {
-        final cut = _SendCut(checkpoint);
-        final (sender, receiver) = await pair(cut: cut);
-        if (checkpoint == _Checkpoint.afterRelayAck) {
-          sender.transport.discoverAlwaysFails = true;
-          sender.transport.dialAlwaysFails = true;
-          sender.network.deliveryFails = true;
-        }
-        cut.start(() async {
-          await sender.send(0);
-        });
-        await cut.reached.future.timeout(const Duration(seconds: 10));
-        final before = await sender.rows();
-        final custodyBefore = await sender.sql.messageRepo
-            .loadDirectInboxCustodyOwnerForMessageId(
-              messageId: 'direct-restart-0',
-            );
-        expect(
-          before,
-          checkpoint == _Checkpoint.beforeCustody ? isEmpty : hasLength(1),
-        );
-        if (before.isNotEmpty) expect(before.single.status, 'sending');
-        expect(
-          custodyBefore,
-          checkpoint == _Checkpoint.beforeCustody ? isNull : isNotNull,
-        );
-        expect(
-          await receiver.rows(),
-          checkpoint == _Checkpoint.afterTransmit ? hasLength(1) : isEmpty,
-        );
-        if (checkpoint == _Checkpoint.afterRelayAck) {
-          expect(sender.network.inboxCount(receiver.id), greaterThan(0));
-        } else if (checkpoint != _Checkpoint.afterTransmit) {
-          expect(sender.network.deliverCallCount, 0);
-          expect(sender.network.storeInInboxCallCount, 0);
-        }
-        await sender.restart();
-        final custodyAfter = await sender.sql.messageRepo
-            .loadDirectInboxCustodyOwnerForMessageId(
-              messageId: 'direct-restart-0',
-            );
-        expect(custodyAfter?.wireEnvelope, custodyBefore?.wireEnvelope);
-        expect(custodyAfter?.incarnationId, custodyBefore?.incarnationId);
-        sender.network.deliveryFails = false;
-        await sender.recover();
-        await receiver.drain();
-        await sender.recover();
-        await receiver.drain();
-        final incoming = await receiver.rows();
-        final outgoing = await sender.rows();
-        expect(incoming, hasLength(1));
-        expect(incoming.single.dedupKey, 'direct-restart-0');
-        expect(outgoing, hasLength(1));
-        expect(outgoing.single.id, 'direct-restart-0');
-        expect(outgoing.single.status, 'delivered');
-        expect(await sender.sql.db.query('messages'), hasLength(1));
-        expect(await receiver.sql.db.query('messages'), hasLength(1));
-        expect(
-          sender.bridge.commandLog.where((cmd) => cmd == 'message.encrypt'),
-          isEmpty,
-          reason: 'recovery replays persisted custody instead of re-encrypting',
-        );
-        expect(await sender.sql.messageRepo.loadDirectInboxCustody(), isEmpty);
-        await sender.restart();
-        await receiver.restart();
-        expect((await receiver.rows()).single.id, incoming.single.id);
-        expect((await sender.rows()).single.status, 'delivered');
-      },
-      timeout: const Timeout(Duration(seconds: 30)),
-      skip: checkpoint == _Checkpoint.beforeCustody && !_runKnownGaps
-          ? 'KNOWN GAP DC-004: a fresh text has no durable row before custody staging; '
-                'restart loses the optimistic send. Run with '
-                '--dart-define=MKNOON_RUN_KNOWN_GAPS=true to reproduce.'
-          : false,
-    );
+    test('DC-004 ${checkpoint.name}: abandoned sender resumes the same message '
+        'exactly once after SQLite reopen', () async {
+      final cut = _SendCut(checkpoint);
+      final (sender, receiver) = await pair(cut: cut);
+      if (checkpoint == _Checkpoint.afterRelayAck) {
+        sender.transport.discoverAlwaysFails = true;
+        sender.transport.dialAlwaysFails = true;
+        sender.network.deliveryFails = true;
+      }
+      cut.start(() async {
+        await sender.send(0, authored: true);
+      });
+      await cut.reached.future.timeout(const Duration(seconds: 10));
+      final before = await sender.rows();
+      final custodyBefore = await sender.sql.messageRepo
+          .loadDirectInboxCustodyOwnerForMessageId(
+            messageId: 'direct-restart-0',
+          );
+      expect(before, hasLength(1));
+      if (before.isNotEmpty) expect(before.single.status, 'sending');
+      expect(
+        await sender.sql.db.query('authored_direct_text_intents'),
+        checkpoint == _Checkpoint.beforeCustody ? hasLength(1) : isEmpty,
+      );
+      expect(
+        await sender.sql.db.query('messages'),
+        checkpoint == _Checkpoint.beforeCustody ? isEmpty : hasLength(1),
+      );
+      expect(
+        custodyBefore,
+        checkpoint == _Checkpoint.beforeCustody ? isNull : isNotNull,
+      );
+      expect(
+        await receiver.rows(),
+        checkpoint == _Checkpoint.afterTransmit ? hasLength(1) : isEmpty,
+      );
+      if (checkpoint == _Checkpoint.afterRelayAck) {
+        expect(sender.network.inboxCount(receiver.id), greaterThan(0));
+      } else if (checkpoint != _Checkpoint.afterTransmit) {
+        expect(sender.network.deliverCallCount, 0);
+        expect(sender.network.storeInInboxCallCount, 0);
+      }
+      await sender.restart();
+      final custodyAfter = await sender.sql.messageRepo
+          .loadDirectInboxCustodyOwnerForMessageId(
+            messageId: 'direct-restart-0',
+          );
+      expect(custodyAfter?.wireEnvelope, custodyBefore?.wireEnvelope);
+      expect(custodyAfter?.incarnationId, custodyBefore?.incarnationId);
+      sender.network.deliveryFails = false;
+      await sender.recover();
+      await receiver.drain();
+      await sender.recover();
+      await receiver.drain();
+      final incoming = await receiver.rows();
+      final outgoing = await sender.rows();
+      expect(incoming, hasLength(1));
+      expect(incoming.single.dedupKey, 'direct-restart-0');
+      expect(outgoing, hasLength(1));
+      expect(outgoing.single.id, 'direct-restart-0');
+      expect(outgoing.single.status, 'delivered');
+      expect(await sender.sql.db.query('messages'), hasLength(1));
+      expect(await receiver.sql.db.query('messages'), hasLength(1));
+      expect(
+        sender.bridge.commandLog.where((cmd) => cmd == 'message.encrypt'),
+        checkpoint == _Checkpoint.beforeCustody ? hasLength(1) : isEmpty,
+        reason:
+            'prepare one pre-custody intent, otherwise replay exact ciphertext',
+      );
+      expect(await sender.sql.messageRepo.loadDirectInboxCustody(), isEmpty);
+      await sender.restart();
+      await receiver.restart();
+      expect((await receiver.rows()).single.id, incoming.single.id);
+      expect((await sender.rows()).single.status, 'delivered');
+    }, timeout: const Timeout(Duration(seconds: 30)));
   }
 }

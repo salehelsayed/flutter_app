@@ -12,6 +12,8 @@ import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
@@ -65,6 +67,220 @@ void main() {
     if (await tempDirectory.exists()) {
       await tempDirectory.delete(recursive: true);
     }
+  });
+
+  group('authored direct text intent', () {
+    Map<String, Object?> intentFor(Map<String, Object?> row) => {
+      for (final key in [
+        'id',
+        'contact_peer_id',
+        'text',
+        'quoted_message_id',
+        'timestamp',
+      ])
+        key: row[key],
+      'token': 'authored-token',
+    };
+
+    Future<OutgoingOrdinaryMutationOutcome> stageIntent(
+      ConversationMessage message, {
+      String token = 'authored-token',
+    }) => dbStageOutgoingDirectTextInboxCustody(
+      db,
+      expectedRow: null,
+      stagedRow: message.toMap(),
+      kind: OutgoingOrdinaryAttemptKind.fresh,
+      recipientPeerId: _peer,
+      messageId: message.id,
+      incarnationId: _incarnationA,
+      wireEnvelope: message.wireEnvelope!,
+      authoredTextIntentToken: token,
+    );
+
+    test('commit is bounded by existing contact and blocked state', () async {
+      final row = intentFor(
+        _message('admit', envelope: _envelope('admit', 'cipher')).toMap(),
+      );
+      expect(await dbSaveAuthoredDirectTextIntent(db, row), isFalse);
+      await db.insert('contacts', _fanoutContactRow(peerId: _peer));
+      await db.update(
+        'contacts',
+        {'is_blocked': 1},
+        where: 'peer_id = ?',
+        whereArgs: [_peer],
+      );
+      expect(await dbSaveAuthoredDirectTextIntent(db, row), isFalse);
+      await db.update(
+        'contacts',
+        {'is_blocked': 0},
+        where: 'peer_id = ?',
+        whereArgs: [_peer],
+      );
+      expect(await dbSaveAuthoredDirectTextIntent(db, row), isTrue);
+      expect(await dbSaveAuthoredDirectTextIntent(db, row), isTrue);
+      expect(
+        await dbSaveAuthoredDirectTextIntent(db, {...row, 'token': 'other'}),
+        isFalse,
+      );
+      expect(await db.query('messages'), isEmpty);
+    });
+
+    test(
+      'scalar consumes exact token/content only with parent and custody',
+      () async {
+        await db.insert('contacts', _fanoutContactRow(peerId: _peer));
+        final message = _message(
+          'scalar-intent',
+          envelope: _envelope('scalar-intent', 'cipher'),
+        );
+        expect(
+          await dbSaveAuthoredDirectTextIntent(db, intentFor(message.toMap())),
+          isTrue,
+        );
+        expect(
+          await stageIntent(message, token: 'stale'),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(
+          await stageIntent(message.copyWith(text: 'changed')),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(
+          await stageIntent(message.copyWith(quotedMessageId: 'different')),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(await db.query('messages'), isEmpty);
+        expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+        expect(await dbLoadAuthoredDirectTextIntents(db), hasLength(1));
+        expect(
+          await stageIntent(message),
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        expect(await dbLoadAuthoredDirectTextIntents(db), isEmpty);
+        expect(await db.query('messages'), hasLength(1));
+        expect(await db.query('direct_inbox_custody_outbox'), hasLength(1));
+      },
+    );
+
+    test('custody insert rollback keeps intent and no parent', () async {
+      await db.insert('contacts', _fanoutContactRow(peerId: _peer));
+      final message = _message(
+        'rollback-intent',
+        envelope: _envelope('rollback-intent', 'cipher'),
+      );
+      expect(
+        await dbSaveAuthoredDirectTextIntent(db, intentFor(message.toMap())),
+        isTrue,
+      );
+      await db.execute(
+        "CREATE TRIGGER fail_intent_custody BEFORE INSERT ON direct_inbox_custody_outbox BEGIN SELECT RAISE(ABORT, 'injected'); END",
+      );
+      await expectLater(
+        stageIntent(message),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(await dbLoadAuthoredDirectTextIntents(db), hasLength(1));
+      expect(await db.query('messages'), isEmpty);
+      expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+    });
+
+    for (final deletion in ['message', 'conversation', 'contact']) {
+      test('$deletion removal/re-add refuses late preparation', () async {
+        await db.insert('contacts', _fanoutContactRow(peerId: _peer));
+        final message = _message(
+          'delete-intent',
+          envelope: _envelope('delete-intent', 'cipher'),
+        );
+        expect(
+          await dbSaveAuthoredDirectTextIntent(db, intentFor(message.toMap())),
+          isTrue,
+        );
+        if (deletion == 'message') {
+          expect(await dbDeleteMessage(db, message.id), 1);
+        } else if (deletion == 'conversation') {
+          expect(await dbDeleteMessagesForContact(db, _peer), 1);
+        } else {
+          await dbDeleteContact(db, _peer);
+          await db.insert('contacts', _fanoutContactRow(peerId: _peer));
+        }
+        expect(await dbLoadAuthoredDirectTextIntents(db), isEmpty);
+        expect(
+          await stageIntent(message),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(await db.query('messages'), isEmpty);
+        expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+      });
+    }
+
+    test(
+      'fanout rolls back all siblings with intent, then consumes it once',
+      () async {
+        await db.insert('contacts', _fanoutContactRow());
+        await db.insert(
+          'direct_contact_device_roster_metadata',
+          _fanoutRosterMetadataRow(legacyRevoked: false),
+        );
+        await db.insert(
+          'direct_contact_device_bindings',
+          _fanoutBindingRow('device-a', _deviceTransportA, 'mlkem-a'),
+        );
+        final snapshot = (await dbReadDirectContactFanoutSnapshot(
+          db,
+          contactAccountPeerId: _contactAccount,
+        ))!;
+        const id = 'fanout-intent';
+        final candidates = [
+          for (final target in snapshot.targets)
+            DirectEventFanoutTargetCandidate(
+              recipientPeerId: target.peerId,
+              wireEnvelope: _envelope(id, 'cipher-${target.peerId}'),
+            ),
+        ];
+        final row = _fanoutStagedRow(
+          id,
+          witnessEnvelope: candidates.first.wireEnvelope,
+        );
+        expect(
+          await dbSaveAuthoredDirectTextIntent(db, intentFor(row)),
+          isTrue,
+        );
+        Future<DbDirectEventFanoutStageResult> stage({
+          String token = 'authored-token',
+          Future<void> Function()? beforeInsert,
+        }) => dbStageOutgoingDirectTextFanoutInboxCustody(
+          db,
+          stagedRow: row,
+          messageId: id,
+          contactAccountPeerId: _contactAccount,
+          senderTransportPeerId: 'peer-self',
+          expectedSnapshot: snapshot,
+          candidates: candidates,
+          authoredTextIntentToken: token,
+          beforeSiblingInsertForTest: beforeInsert,
+        );
+        expect(
+          (await stage(token: 'wrong')).outcome,
+          DirectEventFanoutStageOutcome.refused,
+        );
+        var inserts = 0;
+        await expectLater(
+          stage(
+            beforeInsert: () async {
+              if (++inserts == 2) throw StateError('injected');
+            },
+          ),
+          throwsStateError,
+        );
+        expect(await db.query('messages'), isEmpty);
+        expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
+        expect(await dbLoadAuthoredDirectTextIntents(db), hasLength(1));
+        expect((await stage()).outcome, DirectEventFanoutStageOutcome.applied);
+        expect(await dbLoadAuthoredDirectTextIntents(db), isEmpty);
+        expect(await db.query('messages'), hasLength(1));
+        expect(await db.query('direct_inbox_custody_outbox'), hasLength(2));
+      },
+    );
   });
 
   String diagnosticEnvelope(
@@ -972,11 +1188,10 @@ void main() {
       );
       final fair = await repository.loadDirectInboxCustody(limit: 500);
       expect(fair, hasLength(2));
-      expect(
-        fair.map((entry) => entry.messageId).toList(),
-        <String>[preassigned.id, first.id],
-        reason: 'never-attempted work must lead a retained poison row',
-      );
+      expect(fair.map((entry) => entry.messageId).toList(), <String>[
+        preassigned.id,
+        first.id,
+      ], reason: 'never-attempted work must lead a retained poison row');
       expect(fair.last.retryCount, 1);
       expect(fair.last.lastErrorCode, DirectInboxCustodyErrorCode.storeFailed);
 
@@ -2074,11 +2289,9 @@ void main() {
           whereArgs: <Object?>[seeded.messageId],
         )).single;
         await completeBound(seeded);
-        expect(
-          await lineageOf(seeded.messageId),
-          <String, Object?>{for (final id in seeded.attachmentIds) id: null},
-          reason: '${entry.key} must never receive lineage authorship',
-        );
+        expect(await lineageOf(seeded.messageId), <String, Object?>{
+          for (final id in seeded.attachmentIds) id: null,
+        }, reason: '${entry.key} must never receive lineage authorship');
         expect(
           (await db.query(
             'messages',
@@ -2204,11 +2417,9 @@ void main() {
           DirectInboxCustodyCompletionOutcome.messageAdvanced,
           reason: mode,
         );
-        expect(
-          await lineageOf(control.messageId),
-          <String, Object?>{for (final id in control.attachmentIds) id: null},
-          reason: '$mode keeps its no-v110 owner and gains no fingerprint',
-        );
+        expect(await lineageOf(control.messageId), <String, Object?>{
+          for (final id in control.attachmentIds) id: null,
+        }, reason: '$mode keeps its no-v110 owner and gains no fingerprint');
         expect(
           await db.query(
             'direct_inbox_custody_outbox',
@@ -2288,11 +2499,9 @@ void main() {
         );
         await entry.value(seeded.messageId);
         await completeBound(seeded);
-        expect(
-          await lineageOf(seeded.messageId),
-          <String, Object?>{for (final id in seeded.attachmentIds) id: null},
-          reason: '${entry.key} must never receive lineage authorship',
-        );
+        expect(await lineageOf(seeded.messageId), <String, Object?>{
+          for (final id in seeded.attachmentIds) id: null,
+        }, reason: '${entry.key} must never receive lineage authorship');
       }
     });
   });
@@ -3438,6 +3647,7 @@ MessageRepositoryImpl _buildRepository(
     dbStageOutgoingDirectTextInboxCustody: omitCustodyDelegate == 'stage'
         ? null
         : ({
+            String? authoredTextIntentToken,
             required expectedRow,
             required stagedRow,
             required kind,

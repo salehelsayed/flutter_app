@@ -153,6 +153,7 @@ typedef SendChatMessageFn =
       required String senderUsername,
       String? messageId,
       required bool preassignedMessageIdIsFresh,
+      String? authoredTextIntentToken,
       String? timestamp,
       Bridge? bridge,
       String? recipientMlKemPublicKey,
@@ -3917,9 +3918,6 @@ class _ConversationWiredState extends State<ConversationWired>
         ),
         privateMediaPolicy: privateMediaPolicy,
       );
-      if (_activeQuoteMessageId != null && mounted) {
-        setState(() => _activeQuoteMessageId = null);
-      }
 
       // `mediaToUpload` was captured above the 362 admission boundary.
       List<MediaAttachment>? optimisticMedia;
@@ -3970,13 +3968,6 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
 
-      _draftText = '';
-      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
-      _updateComposerState(
-        pendingAttachments: const [],
-        isUploading: mediaToUpload.isNotEmpty,
-      );
-
       final now = DateTime.now().toUtc().toIso8601String();
       final optimisticMessageId =
           _privateMediaOutboxE2ENextMessageId ?? _uuid.v4();
@@ -4024,6 +4015,45 @@ class _ConversationWiredState extends State<ConversationWired>
           !hasAttachments &&
           privateMediaPolicy.mode == PrivateMediaMode.ordinary;
 
+      String? authoredTextIntentToken;
+      if (stagesFreshDirectTextCustody &&
+          widget.messageRepo is AuthoredDirectTextIntentRepository) {
+        final intents =
+            widget.messageRepo as AuthoredDirectTextIntentRepository;
+        final intent = AuthoredDirectTextIntent(
+          id: optimisticMessage.id,
+          contactPeerId: optimisticMessage.contactPeerId,
+          text: sanitizedText,
+          quotedMessageId: quotedMessageId,
+          timestamp: now,
+          token: _uuid.v4(),
+        );
+        try {
+          if (!await intents.saveAuthoredDirectTextIntent(intent)) {
+            throw StateError('authored text admission refused');
+          }
+          authoredTextIntentToken = intent.token;
+        } catch (_) {
+          if (mounted) {
+            messenger?.showSnackBar(
+              const SnackBar(content: Text('Failed to send message.')),
+            );
+          }
+          return;
+        }
+      }
+      if (_activeQuoteMessageId == quotedMessageId &&
+          quotedMessageId != null &&
+          mounted) {
+        setState(() => _activeQuoteMessageId = null);
+      }
+      if (sanitizeMessageText(_draftText) == sanitizedText) _draftText = '';
+      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
+      _updateComposerState(
+        pendingAttachments: const [],
+        isUploading: mediaToUpload.isNotEmpty,
+      );
+
       if (mounted) {
         setState(() {
           _upsertMessageById(optimisticMessage);
@@ -4032,11 +4062,9 @@ class _ConversationWiredState extends State<ConversationWired>
       }
 
       try {
-        // Fresh ordinary text must reach sendChatMessage with no durable
-        // predecessor: its production repository owns the first message row
-        // and immutable custody row in one transaction. The bubble above stays
-        // optimistic in memory. Media/private flows retain their established
-        // pre-save and attachment-lifecycle authority.
+        // Text's authored intent is durable; the encrypted custody transaction
+        // still owns its first canonical message row. Media/private flows keep
+        // their existing parent and attachment lifecycle authority.
         if (!stagesFreshDirectTextCustody) {
           if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
             final mediaRuntime = widget.mediaAttachmentRepo;
@@ -4931,6 +4959,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 senderUsername: identity.username,
                 messageId: optimisticMessage.id,
                 preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
+                authoredTextIntentToken: authoredTextIntentToken,
                 timestamp: optimisticMessage.timestamp,
                 bridge: widget.bridge,
                 recipientMlKemPublicKey: _contact.mlKemPublicKey,
@@ -5049,6 +5078,7 @@ class _ConversationWiredState extends State<ConversationWired>
                 result == SendChatMessageResult.sendFailed) &&
             message != null;
         final automaticallyQueued =
+            authoredTextIntentToken != null ||
             keepRetriable ||
             (result == SendChatMessageResult.nodeNotRunning &&
                 message != null &&
@@ -5104,7 +5134,7 @@ class _ConversationWiredState extends State<ConversationWired>
             });
           } else if (authoritativeMessage != null) {
             await _refreshMessageWithHydratedMedia(optimisticMessage.id);
-          } else {
+          } else if (authoredTextIntentToken == null) {
             _removeLocalMessage(optimisticMessage.id);
           }
         }
@@ -5208,7 +5238,7 @@ class _ConversationWiredState extends State<ConversationWired>
           event: 'CONV_FL_SEND_ERROR',
           details: {'error': e.toString()},
         );
-        if (!mounted) return;
+        if (!mounted || authoredTextIntentToken != null) return;
         await _restoreComposerSnapshot(
           composerSnapshot,
           optimisticMessageId: optimisticMessage.id,
@@ -6197,20 +6227,12 @@ class _ConversationWiredState extends State<ConversationWired>
       media: [persistedVoiceAttachment.copyWith(localPath: uploadVoicePath)],
     );
 
-    if (mounted) {
-      setState(() {
-        _upsertMessageById(optimisticMessage);
-      });
-      _updateComposerState(isUploading: true);
-      _scrollToBottom();
-    }
-
     try {
-      await widget.messageRepo.saveMessage(optimisticMessage);
       await mediaAttachmentRepo?.saveAttachment(
         persistedVoiceAttachment,
         owner: MediaOwnerLane.direct,
       );
+      await widget.messageRepo.saveMessage(optimisticMessage);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -6238,6 +6260,14 @@ class _ConversationWiredState extends State<ConversationWired>
       }
       mediaUploadInFlightTracker.release(voiceUploadLease);
       return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _upsertMessageById(optimisticMessage);
+      });
+      _updateComposerState(isUploading: true);
+      _scrollToBottom();
     }
 
     final stagedRecording = AudioRecording(

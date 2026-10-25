@@ -61,7 +61,7 @@ void main() {
     await db.close();
 
     db = await _openCurrent(upgradePath);
-    expect(currentIdentityDatabaseVersion, 122);
+    expect(currentIdentityDatabaseVersion, 123);
     expect(await _userVersion(db), currentIdentityDatabaseVersion);
     expect(
       await _tableExists(db, kNotificationCompletedOutcomeOutboxTable),

@@ -85,4 +85,5 @@
 // the per-request reply reservation/outbox, per-peer pacing and the persisted
 // effective clock. Historical deletions are not reconstructed.
 // 407: DB v122 removes all legacy Posts data before Thoughts starts.
-const int currentIdentityDatabaseVersion = 122;
+// v123 retains authored direct text until the atomic encrypted custody commit.
+const int currentIdentityDatabaseVersion = 123;

@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
 import 'package:sqflite_common/sqlite_api.dart';
 
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
@@ -12,7 +13,23 @@ final class DirectInboxCustodyDbBindings {
 
   final Database db;
 
+  Future<bool> saveAuthored(Map<String, Object?> row) =>
+      dbSaveAuthoredDirectTextIntent(db, row);
+  Future<bool> cancelAuthored(Map<String, Object?> row) =>
+      dbCancelAuthoredDirectTextIntent(db, row);
+  Future<List<Map<String, Object?>>> loadAuthored() =>
+      dbLoadAuthoredDirectTextIntents(db);
+  Future<String> loadSenderPeerId() async {
+    final rows = await db.query(
+      'identity',
+      columns: ['peer_id'],
+      where: 'id = 1',
+    );
+    return rows.isEmpty ? '' : rows.single['peer_id'] as String;
+  }
+
   Future<OutgoingOrdinaryMutationOutcome> stage({
+    String? authoredTextIntentToken,
     required Map<String, Object?>? expectedRow,
     required Map<String, Object?> stagedRow,
     required OutgoingOrdinaryAttemptKind kind,
@@ -22,6 +39,7 @@ final class DirectInboxCustodyDbBindings {
     required String wireEnvelope,
   }) => dbStageOutgoingDirectTextInboxCustody(
     db,
+    authoredTextIntentToken: authoredTextIntentToken,
     expectedRow: expectedRow,
     stagedRow: stagedRow,
     kind: kind,

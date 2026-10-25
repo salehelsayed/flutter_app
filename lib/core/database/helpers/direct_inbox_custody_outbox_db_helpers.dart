@@ -16,6 +16,7 @@ import 'direct_contact_device_bindings_db_helpers.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
 import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
+import 'authored_direct_text_intents_db_helpers.dart';
 
 const String _table = 'direct_inbox_custody_outbox';
 final _legacyDiagnosticTraceId = RegExp(
@@ -81,6 +82,7 @@ Future<bool> dbShouldSuppressDeliveredDirectInboxNotification(
 /// a small fixture. Production callers use the default constant.
 Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
   Database db, {
+  String? authoredTextIntentToken,
   required Map<String, Object?>? expectedRow,
   required Map<String, Object?> stagedRow,
   required OutgoingOrdinaryAttemptKind kind,
@@ -162,6 +164,15 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
           : OutgoingOrdinaryMutationOutcome.refused;
     }
 
+    if (authoredTextIntentToken != null &&
+        !await dbMatchesAuthoredDirectTextIntent(
+          txn,
+          stagedRow,
+          authoredTextIntentToken,
+        )) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+
     final countRows = await txn.rawQuery(
       'SELECT COUNT(*) AS count FROM $_table',
     );
@@ -190,6 +201,9 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
       'created_at': createdAt,
       'updated_at': createdAt,
     }, conflictAlgorithm: ConflictAlgorithm.abort);
+    if (authoredTextIntentToken != null) {
+      await dbDeleteAuthoredDirectTextIntents(txn, messageId: messageId);
+    }
     return OutgoingOrdinaryMutationOutcome.applied;
   });
 }
@@ -1207,6 +1221,7 @@ bool directEventFanoutCandidatesMatchSnapshot(
 Future<DbDirectEventFanoutStageResult>
 dbStageOutgoingDirectTextFanoutInboxCustody(
   Database db, {
+  String? authoredTextIntentToken,
   required Map<String, Object?> stagedRow,
   required String messageId,
   required String contactAccountPeerId,
@@ -1300,6 +1315,15 @@ dbStageOutgoingDirectTextFanoutInboxCustody(
           : const DbDirectEventFanoutStageResult.refused();
     }
 
+    if (authoredTextIntentToken != null &&
+        !await dbMatchesAuthoredDirectTextIntent(
+          txn,
+          stagedRow,
+          authoredTextIntentToken,
+        )) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
     // Re-read the persisted contact + complete v112 facts inside this
     // transaction; a removed contact or ANY drift from the caller's snapshot
     // fails the whole batch all-zero.
@@ -1374,6 +1398,9 @@ dbStageOutgoingDirectTextFanoutInboxCustody(
         conflictAlgorithm: ConflictAlgorithm.abort,
       );
       stagedRows.add(siblingRow);
+    }
+    if (authoredTextIntentToken != null) {
+      await dbDeleteAuthoredDirectTextIntents(txn, messageId: messageId);
     }
     return DbDirectEventFanoutStageResult(
       outcome: DirectEventFanoutStageOutcome.applied,

@@ -23,6 +23,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_screen.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
@@ -53,6 +55,7 @@ import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 class _OrderRecordingBridge implements Bridge {
   final List<String> callLog = [];
   final List<String> operationLog;
+  Completer<void>? bgBeginGate;
   final String bgBeginResponse;
 
   _OrderRecordingBridge({
@@ -66,6 +69,7 @@ class _OrderRecordingBridge implements Bridge {
     final cmd = decoded['cmd'] as String;
     callLog.add(cmd);
     operationLog.add('bridge:$cmd');
+    if (cmd == 'bg:begin') await bgBeginGate?.future;
     if (cmd == 'bg:begin') return bgBeginResponse;
     if (cmd == 'bg:end') return '';
     if (cmd == 'message.encrypt') {
@@ -191,9 +195,8 @@ class _FakeP2PService implements P2PService {
   final RelayProbeResult probeRelayResultValue = RelayProbeResult.error;
   final List<String> operationLog;
 
-  _FakeP2PService({
-    List<String>? operationLog,
-  }) : operationLog = operationLog ?? <String>[];
+  _FakeP2PService({List<String>? operationLog})
+    : operationLog = operationLog ?? <String>[];
 
   @override
   NodeState get currentState =>
@@ -278,8 +281,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -345,6 +347,32 @@ void _expectOrdered(List<String> operationLog, String earlier, String later) {
     lessThan(_logIndex(operationLog, later)),
     reason: 'Expected "$earlier" before "$later" in $operationLog',
   );
+}
+
+class _IntentFeedRepository extends InMemoryMessageRepository
+    implements AuthoredDirectTextIntentRepository {
+  final Completer<bool> admission = Completer<bool>();
+  AuthoredDirectTextIntent? requested;
+  final List<AuthoredDirectTextIntent> intents = [];
+  @override
+  bool get supportsAuthoredDirectTextIntents => true;
+  @override
+  Future<bool> saveAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    requested = intent;
+    if (!await admission.future) return false;
+    intents.add(intent);
+    return true;
+  }
+
+  @override
+  Future<bool> cancelAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async => intents.remove(intent);
+  @override
+  Future<List<AuthoredDirectTextIntent>>
+  loadAuthoredDirectTextIntents() async => intents;
 }
 
 void main() {
@@ -498,6 +526,79 @@ void main() {
   }
 
   group('FeedWired _onInlineSend — background task ordering', () {
+    for (final scenario in [0, 1, 2]) {
+      final admitted = scenario != 0;
+      final edited = scenario == 2;
+      testWidgets(
+        'authored Feed text ${edited ? 'keeps new typing' : ''} ${admitted ? 'commits before input release and bubble' : 'write refusal preserves input'}',
+        (tester) async {
+          addTearDown(() {
+            tester.view.resetPhysicalSize();
+            tester.view.resetDevicePixelRatio();
+          });
+          final originalOnError = FlutterError.onError;
+          addTearDown(() => FlutterError.onError = originalOnError);
+          final repository = _IntentFeedRepository();
+          messageRepo = repository;
+          final bridge = _OrderRecordingBridge()
+            ..bgBeginGate = Completer<void>();
+          await pumpAndSeedFeed(tester, bridge);
+          await tester.tap(find.textContaining('Bob').first);
+          for (var i = 0; i < 6; i++) {
+            await tester.pump(const Duration(milliseconds: 100));
+          }
+          final input = find.byKey(const ValueKey('feed-composer-field'));
+          await tester.enterText(input, 'durable Feed text');
+          await tester.pump();
+          await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+          await tester.pump();
+          expect(repository.requested?.text, 'durable Feed text');
+          expect(repository.intents, isEmpty);
+          expect(bridge.callLog, isNot(contains('bg:begin')));
+          expect(
+            tester.widget<TextField>(input).controller!.text,
+            'durable Feed text',
+          );
+          expect(
+            tester
+                .widget<FeedScreen>(find.byType(FeedScreen))
+                .sessionReplies
+                .values
+                .expand((x) => x),
+            isEmpty,
+          );
+          if (edited) {
+            await tester.enterText(input, 'new draft');
+            await tester.pump();
+          }
+          repository.admission.complete(admitted);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          expect(repository.intents, admitted ? hasLength(1) : isEmpty);
+          expect(
+            tester.widget<TextField>(input).controller!.text,
+            edited
+                ? 'new draft'
+                : admitted
+                ? ''
+                : 'durable Feed text',
+          );
+          expect(
+            tester
+                .widget<FeedScreen>(find.byType(FeedScreen))
+                .sessionReplies
+                .values
+                .expand((x) => x),
+            admitted ? hasLength(1) : isEmpty,
+          );
+          expect(bridge.callLog.contains('bg:begin'), admitted);
+          bridge.bgBeginGate!.complete();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+        },
+      );
+    }
+
     testWidgets(
       'bg:begin happens before inline send transport and bg:end happens after success',
       (tester) async {

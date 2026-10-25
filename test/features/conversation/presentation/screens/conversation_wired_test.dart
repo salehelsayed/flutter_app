@@ -721,6 +721,46 @@ class InFlightAtFirstSaveMediaRepository extends FakeMediaAttachmentRepository {
   }
 }
 
+class _IntentMessageRepository extends FakeMessageRepository
+    implements AuthoredDirectTextIntentRepository {
+  final Completer<bool> admission = Completer<bool>();
+  AuthoredDirectTextIntent? requested;
+  final List<AuthoredDirectTextIntent> intents = [];
+  @override
+  bool get supportsAuthoredDirectTextIntents => true;
+  @override
+  Future<bool> saveAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    requested = intent;
+    if (!await admission.future) return false;
+    intents.add(intent);
+    return true;
+  }
+
+  @override
+  Future<bool> cancelAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async => intents.remove(intent);
+  @override
+  Future<List<AuthoredDirectTextIntent>>
+  loadAuthoredDirectTextIntents() async => intents;
+}
+
+class _HeldTextBeginBridge extends FakeBridge {
+  final begin = Completer<void>();
+  bool beginCalled = false;
+  @override
+  Future<String> send(String message) async {
+    if (message.contains('"bg:begin"')) {
+      beginCalled = true;
+      await begin.future;
+      return '99';
+    }
+    return super.send(message);
+  }
+}
+
 class FakeMessageRepository
     implements
         MessageRepository,
@@ -3751,6 +3791,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -3974,6 +4015,7 @@ void main() {
         loadTextSiblings: (_) async => neverCalled(),
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,
@@ -4030,6 +4072,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -4332,6 +4375,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4358,6 +4402,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4559,6 +4604,7 @@ void main() {
         loadTextSiblings: (_) async => unreachable(),
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,
@@ -4917,6 +4963,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required bool preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
                 timestamp,
                 bridge,
                 recipientMlKemPublicKey,
@@ -5352,6 +5399,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -5542,6 +5590,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -5777,6 +5826,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -5929,6 +5979,7 @@ void main() {
               required senderUsername,
               messageId,
               required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -6031,6 +6082,77 @@ void main() {
       expect(textField.controller?.text, 'Shared hello');
     });
 
+    for (final scenario in [0, 1, 2]) {
+      final admitted = scenario != 0;
+      final edited = scenario == 2;
+      testWidgets(
+        'authored text ${edited ? 'keeps new typing' : ''} ${admitted ? 'commits before draft release and bg:begin' : 'write refusal retains draft without bubble'}',
+        (tester) async {
+          final repository = _IntentMessageRepository();
+          final bridge = _HeldTextBeginBridge();
+          final listener = ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: repository,
+            contactRepo: FakeContactRepository(),
+          );
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: repository,
+            chatListener: listener,
+            sendFn: _instantSuccessSendFn,
+            bridge: bridge,
+          );
+          await tester.enterText(
+            find.byType(TextField),
+            'durable authored text',
+          );
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await tester.pump();
+          expect(repository.requested?.text, 'durable authored text');
+          expect(repository.intents, isEmpty);
+          expect(bridge.beginCalled, isFalse);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'durable authored text',
+          );
+          expect(
+            tester
+                .widget<ConversationScreen>(find.byType(ConversationScreen))
+                .messages,
+            isEmpty,
+          );
+          if (edited) {
+            await tester.enterText(find.byType(TextField), 'new draft');
+            await tester.pump();
+          }
+          repository.admission.complete(admitted);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 50));
+          expect(bridge.beginCalled, admitted);
+          expect(repository.intents, admitted ? hasLength(1) : isEmpty);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            edited
+                ? 'new draft'
+                : admitted
+                ? ''
+                : 'durable authored text',
+          );
+          expect(
+            tester
+                .widget<ConversationScreen>(find.byType(ConversationScreen))
+                .messages,
+            admitted ? hasLength(1) : isEmpty,
+          );
+          bridge.begin.complete();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+        },
+      );
+    }
+
     testWidgets(
       'TC-342-03e canonical fresh text stays memory-optimistic and enters send as fresh',
       (tester) async {
@@ -6055,6 +6177,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6270,6 +6393,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -6353,6 +6477,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6434,6 +6559,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6546,6 +6672,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6651,6 +6778,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -7021,6 +7149,7 @@ void main() {
             required String senderUsername,
             String? messageId,
             required bool preassignedMessageIdIsFresh,
+            String? authoredTextIntentToken,
             String? timestamp,
             Bridge? bridge,
             String? recipientMlKemPublicKey,
@@ -7135,6 +7264,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -7712,6 +7842,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -7938,6 +8069,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8061,6 +8193,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8177,6 +8310,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8304,6 +8438,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8430,6 +8565,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8579,6 +8715,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -8658,6 +8795,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -10250,6 +10388,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
                 timestamp,
                 bridge,
                 recipientMlKemPublicKey,
@@ -10596,6 +10735,7 @@ void main() {
                   required senderUsername,
                   messageId,
                   required preassignedMessageIdIsFresh,
+                  String? authoredTextIntentToken,
                   timestamp,
                   bridge,
                   recipientMlKemPublicKey,
@@ -10682,48 +10822,45 @@ void main() {
       );
     }
 
-    group(
-      'ASTRA-D-1: camera permission failure feedback',
-      () {
-        testWidgets('MEDIA-010 denied camera exposes visible failure feedback', (
+    group('ASTRA-D-1: camera permission failure feedback', () {
+      testWidgets('MEDIA-010 denied camera exposes visible failure feedback', (
+        tester,
+      ) async {
+        final repo = FakeMessageRepository();
+        await pumpScreen(
           tester,
-        ) async {
-          final repo = FakeMessageRepository();
-          await pumpScreen(
-            tester,
-            identityRepo: FakeIdentityRepository(makeIdentity()),
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: repo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
             messageRepo: repo,
-            chatListener: ChatMessageListener(
-              chatMessageStream: const Stream.empty(),
-              messageRepo: repo,
-              contactRepo: FakeContactRepository(),
-            ),
-            sendFn: _instantSuccessSendFn,
-            initialText: 'Unsent camera draft',
-            mediaPicker: _PermissionMediaPicker(),
-          );
-          await tester.tap(find.byIcon(Icons.add_rounded));
-          await tester.pump(const Duration(milliseconds: 500));
-          tester
-              .widget<ListTile>(find.widgetWithText(ListTile, 'Take Photo'))
-              .onTap!();
-          await tester.pump(const Duration(milliseconds: 500));
-          expect(
-            tester.widget<TextField>(find.byType(TextField)).controller!.text,
-            'Unsent camera draft',
-          );
-          final l10n = AppLocalizations.of(
-            tester.element(find.byType(ConversationWired)),
-          )!;
-          expect(
-            find.text(l10n.media_unavailable),
-            findsOneWidget,
-            reason:
-                'camera permission denial must be visible, as gallery failure is',
-          );
-        });
-      },
-    );
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          initialText: 'Unsent camera draft',
+          mediaPicker: _PermissionMediaPicker(),
+        );
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Take Photo'))
+            .onTap!();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'Unsent camera draft',
+        );
+        final l10n = AppLocalizations.of(
+          tester.element(find.byType(ConversationWired)),
+        )!;
+        expect(
+          find.text(l10n.media_unavailable),
+          findsOneWidget,
+          reason:
+              'camera permission denial must be visible, as gallery failure is',
+        );
+      });
+    });
 
     testWidgets('does not show AttachmentPreviewStrip initially', (
       tester,
@@ -11603,6 +11740,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -11674,6 +11812,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -11738,6 +11877,7 @@ void main() {
         required String senderUsername,
         String? messageId,
         required bool preassignedMessageIdIsFresh,
+        String? authoredTextIntentToken,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -11830,6 +11970,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -11923,6 +12064,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -15229,6 +15371,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -15388,6 +15531,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -16029,6 +16173,7 @@ void main() {
           required String senderUsername,
           String? messageId,
           required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -17822,6 +17967,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -17928,6 +18074,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,

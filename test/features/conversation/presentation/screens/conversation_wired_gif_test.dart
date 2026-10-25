@@ -47,6 +47,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _unusedSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,

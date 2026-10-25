@@ -1,4 +1,5 @@
 import 'dart:ui' as ui;
+import 'dart:async';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import 'package:flutter/material.dart';
@@ -32,7 +33,7 @@ class FeedComposer extends StatefulWidget {
 
   /// Invoked with the trimmed body when the user presses send. Must NOT clear
   /// the host's focus — the composer keeps the keyboard up itself.
-  final ValueChanged<String> onSend;
+  final FutureOr<void> Function(String) onSend;
 
   /// Invoked on every keystroke with the raw (untrimmed) text.
   final ValueChanged<String>? onDraftChanged;
@@ -102,18 +103,24 @@ class _FeedComposerState extends State<FeedComposer> {
     widget.onDraftChanged?.call(_controller.text);
   }
 
-  void _onSendPressed() {
-    final text = _controller.text.trim();
-    if (text.isEmpty) return;
-    _controller.clear();
-    widget.onDraftChanged?.call('');
-    // Intentionally NOT unfocusing — keep the keyboard up (append-stay, 134 §8).
-    if (!_hasSentThisSession) {
+  bool _admitting = false;
+
+  Future<void> _onSendPressed() async {
+    final original = _controller.text;
+    final text = original.trim();
+    if (text.isEmpty || _admitting) return;
+    _admitting = true;
+    try {
+      await widget.onSend(text);
+      if (!mounted) return;
+      if (_controller.text == original) _controller.clear();
       setState(() => _hasSentThisSession = true);
+      _focusNode.requestFocus();
+    } catch (_) {
+      // The host has not admitted this send; preserve the editable draft.
+    } finally {
+      _admitting = false;
     }
-    widget.onSend(text);
-    // Re-assert focus in case the send path rebuilt anything.
-    _focusNode.requestFocus();
   }
 
   @override

@@ -1090,6 +1090,7 @@ void main() {
           ),
       stageTextFanout:
           ({
+            String? authoredTextIntentToken,
             required stagedRow,
             required messageId,
             required contactAccountPeerId,

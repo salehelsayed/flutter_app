@@ -967,6 +967,7 @@ class _ConversationScreenState extends State<ConversationScreen>
         ComposeArea(
           compact: compact,
           onSend: widget.onSend,
+          clearOnSend: widget.onDraftChanged == null,
           onAttach: widget.onAttach,
           hasAttachments: composerState.pendingAttachments.isNotEmpty,
           hasInvalidAttachment: composerState.hasInvalidAttachment,

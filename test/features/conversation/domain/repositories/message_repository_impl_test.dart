@@ -1639,6 +1639,7 @@ void main() {
           (_, {required fromStatus, required toStatus}) async => 0,
       dbStageOutgoingDirectTextInboxCustody:
           ({
+            String? authoredTextIntentToken,
             required expectedRow,
             required stagedRow,
             required kind,
@@ -1709,6 +1710,7 @@ void main() {
           ({required eventId}) async => const [],
       dbStageOutgoingDirectTextFanoutInboxCustody:
           ({
+            String? authoredTextIntentToken,
             required stagedRow,
             required messageId,
             required contactAccountPeerId,

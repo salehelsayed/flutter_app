@@ -62,6 +62,7 @@ import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
@@ -1427,6 +1428,20 @@ final class ProductionApplicationBootstrap
     // Create message repository
     late final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
     final messageRepository = MessageRepositoryImpl(
+      dbCancelAuthoredDirectTextIntent: (row) =>
+          dbCancelAuthoredDirectTextIntent(db, row),
+      dbSaveAuthoredDirectTextIntent: (row) =>
+          dbSaveAuthoredDirectTextIntent(db, row),
+      dbLoadAuthoredDirectTextIntents: () =>
+          dbLoadAuthoredDirectTextIntents(db),
+      loadAuthoredTextSenderPeerId: () async {
+        final rows = await db.query(
+          'identity',
+          columns: ['peer_id'],
+          where: 'id = 1',
+        );
+        return rows.isEmpty ? '' : rows.single['peer_id'] as String;
+      },
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (contactPeerId) =>
           dbLoadMessagesForContact(db, contactPeerId),
@@ -1500,6 +1515,7 @@ final class ProductionApplicationBootstrap
               ),
       dbStageOutgoingDirectTextInboxCustody:
           ({
+            String? authoredTextIntentToken,
             required expectedRow,
             required stagedRow,
             required kind,
@@ -1509,6 +1525,7 @@ final class ProductionApplicationBootstrap
             required wireEnvelope,
           }) => dbStageOutgoingDirectTextInboxCustody(
             db,
+            authoredTextIntentToken: authoredTextIntentToken,
             expectedRow: expectedRow,
             stagedRow: stagedRow,
             kind: kind,
@@ -1536,6 +1553,7 @@ final class ProductionApplicationBootstrap
               ),
       dbStageOutgoingDirectTextFanoutInboxCustody:
           ({
+            String? authoredTextIntentToken,
             required stagedRow,
             required messageId,
             required contactAccountPeerId,
@@ -1544,6 +1562,7 @@ final class ProductionApplicationBootstrap
             required candidates,
           }) => dbStageOutgoingDirectTextFanoutInboxCustody(
             db,
+            authoredTextIntentToken: authoredTextIntentToken,
             stagedRow: stagedRow,
             messageId: messageId,
             contactAccountPeerId: contactAccountPeerId,
@@ -9052,7 +9071,41 @@ final class ProductionApplicationBootstrap
 
     // Create pending message retrier
     final groupInboxRetryFairnessCursor = GroupInboxRetryFairnessCursor();
+    late final RoleAwareDeferredRuntimeStart roleAwareDeferredRuntimeStart;
+    DirectEventFanoutAuthoring? resolveDirectEventFanout() {
+      final linkedTransport =
+          roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId;
+      final senderTransport = linkedTransport ?? lastKnownAccountPeerId;
+      if (senderTransport == null || senderTransport.isEmpty) return null;
+      return DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector(),
+        linkedOrigin: linkedTransport != null,
+        senderTransportPeerId: senderTransport,
+        readSnapshot: messageRepository.readDirectContactFanoutSnapshot,
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              final result = await callEncryptMessage(
+                bridge: bridge,
+                recipientMlKemPublicKey: recipientMlKemPublicKey,
+                plaintext: plaintext,
+              );
+              if (result['ok'] != true) return null;
+              return (
+                kem: result['kem'] as String,
+                ciphertext: result['ciphertext'] as String,
+                nonce: result['nonce'] as String,
+              );
+            },
+        loadTextSiblings: messageRepository.loadDirectTextFanoutSiblings,
+        stageTextFanout: messageRepository.stageDirectTextFanout,
+        loadEventSiblings: messageRepository.loadDirectEventFanoutSiblings,
+        stageMutationFanout: messageRepository.stageDirectTextMutationFanout,
+        stageReactionFanout: reactionRepository.stageDirectReactionFanout,
+      );
+    }
+
     final pendingMessageRetrier = PendingMessageRetrier(
+      directEventFanoutResolver: resolveDirectEventFanout,
       p2pService: p2pService,
       messageRepo: messageRepository,
       identityRepo: repository,
@@ -9764,7 +9817,7 @@ final class ProductionApplicationBootstrap
     // recovery, message retry and inbox drain — runs ZERO times in linked
     // mode, because every one of those owners assumes a single primary
     // installation on one account mailbox. Plan 361 makes them device-aware.
-    final roleAwareDeferredRuntimeStart = RoleAwareDeferredRuntimeStart(
+    roleAwareDeferredRuntimeStart = RoleAwareDeferredRuntimeStart(
       hasIdentity: () async => await repository.loadIdentity() != null,
       // 360: bind the load to the CURRENT account peer. Without the expected
       // peer, a credential bound to a different logical account resolves as a
@@ -10088,38 +10141,7 @@ final class ProductionApplicationBootstrap
         // seams. The resolver builds the authoring owner at route-push time so
         // role facts and the local transport identity are current; a
         // pre-identity call yields null (incumbent senders).
-        directEventFanoutResolver: () {
-          final linkedTransport =
-              roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId;
-          final senderTransport = linkedTransport ?? lastKnownAccountPeerId;
-          if (senderTransport == null || senderTransport.isEmpty) return null;
-          return DirectEventFanoutAuthoring(
-            selector: const DirectLinkedEventFanoutSelector(),
-            linkedOrigin: linkedTransport != null,
-            senderTransportPeerId: senderTransport,
-            readSnapshot: messageRepository.readDirectContactFanoutSnapshot,
-            encrypt:
-                ({required recipientMlKemPublicKey, required plaintext}) async {
-                  final result = await callEncryptMessage(
-                    bridge: bridge,
-                    recipientMlKemPublicKey: recipientMlKemPublicKey,
-                    plaintext: plaintext,
-                  );
-                  if (result['ok'] != true) return null;
-                  return (
-                    kem: result['kem'] as String,
-                    ciphertext: result['ciphertext'] as String,
-                    nonce: result['nonce'] as String,
-                  );
-                },
-            loadTextSiblings: messageRepository.loadDirectTextFanoutSiblings,
-            stageTextFanout: messageRepository.stageDirectTextFanout,
-            loadEventSiblings: messageRepository.loadDirectEventFanoutSiblings,
-            stageMutationFanout:
-                messageRepository.stageDirectTextMutationFanout,
-            stageReactionFanout: reactionRepository.stageDirectReactionFanout,
-          );
-        },
+        directEventFanoutResolver: resolveDirectEventFanout,
         isLinkedBlobFreeRuntime: () =>
             roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId != null,
         drainDirectBlobFreeLinkedOutboxes: drainDirectBlobFreeLinkedOutboxes,

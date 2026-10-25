@@ -571,6 +571,10 @@ void _runAlice() {
                 ),
         dbUpdateWireEnvelope: (id, we) =>
             dbUpdateWireEnvelope(stack.db, id, we),
+        dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+        dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+        dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+        loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
         dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
         dbLoadDirectInboxCustodyOutbox: custodyDb.load,
         dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
@@ -1222,6 +1226,10 @@ void _runBob() {
                 ),
         dbUpdateWireEnvelope: (id, we) =>
             dbUpdateWireEnvelope(stack.db, id, we),
+        dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+        dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+        dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+        loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
         dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
         dbLoadDirectInboxCustodyOutbox: custodyDb.load,
         dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,

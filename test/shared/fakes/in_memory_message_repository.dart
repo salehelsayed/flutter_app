@@ -914,6 +914,7 @@ class InMemoryMessageRepository
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    String? authoredTextIntentToken,
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,

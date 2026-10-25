@@ -106,6 +106,10 @@ const _expectedSendChatMessageCallers =
         _ExpectedSendChatMessageCaller(
           kind: _SendChatMessageCallerKind.excludedRetry,
         ),
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.preassignedIdFresh,
+          freshIntent: 'true',
+        ),
       ],
       'lib/features/conversation/application/'
           'retry_incomplete_uploads_use_case.dart': [
@@ -1006,6 +1010,28 @@ void main() {
           }
         }
         expect(matches, isEmpty);
+      }
+
+      for (final entry in <String, String>{
+        'lib/features/conversation/application/retry_failed_messages_use_case.dart':
+            'intent.token',
+        'lib/features/conversation/presentation/screens/conversation_wired.dart':
+            'authoredTextIntentToken',
+        'lib/features/feed/presentation/screens/feed_wired.dart':
+            'intent?.token',
+      }.entries) {
+        final authored = callers
+            .where(
+              (caller) =>
+                  caller.path == entry.key &&
+                  caller.namedArguments.containsKey('authoredTextIntentToken'),
+            )
+            .toList();
+        expect(authored, hasLength(1));
+        expect(
+          authored.single.namedArguments['authoredTextIntentToken'],
+          entry.value,
+        );
       }
 
       final preassignedWithoutFreshIntent = callers
@@ -3089,9 +3115,20 @@ void main() {
 
     // The route-push seams reach MyApp exactly once each.
     expect(
-      'directEventFanoutResolver: () {'.allMatches(production),
+      'DirectEventFanoutAuthoring? resolveDirectEventFanout() {'.allMatches(
+        production,
+      ),
       hasLength(1),
-      reason: 'fanout authoring is resolved at route-push time',
+      reason:
+          'one factory reads current role and transport facts on each invocation',
+    );
+    expect(
+      'directEventFanoutResolver: resolveDirectEventFanout,'.allMatches(
+        production,
+      ),
+      hasLength(2),
+      reason:
+          'route pushes and authored-text recovery share the current factory',
     );
     expect(
       'isLinkedBlobFreeRuntime: () =>'.allMatches(production),

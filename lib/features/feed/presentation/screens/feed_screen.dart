@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -65,7 +66,7 @@ class FeedScreen extends StatefulWidget {
   final String? focusedId;
   final void Function(String threadId)? onFocusCard;
   final VoidCallback? onClearFocus;
-  final void Function(String threadId, String text)? onComposerSend;
+  final FutureOr<void> Function(String threadId, String text)? onComposerSend;
   final void Function(String threadId, String text)? onComposerDraftChanged;
 
   /// The host retains this draft when the focused composer is unmounted.

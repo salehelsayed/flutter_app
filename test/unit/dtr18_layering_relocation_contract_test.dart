@@ -245,7 +245,7 @@ const _privacySha256 =
 // Contact notification dialogs join the existing listener's consent queue.
 // Application and resume ownership stay in place.
 const _applicationRootNormalizedSha256 =
-    '2d05c241e3c98d665f45cb4156d91bc740a6f5ec04d1fc64cc656f6e463cf62a';
+    'c35055b1705b9c83838ec486dcd146d37c3b0ac05066ea2c096738dd34767734';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -427,7 +427,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    '1988ad6d367a7c50551c1be55701ad5c7fd5298277ff608f343d9e20f4ad3fab';
+    '0ab315df896eda302720fb1c803a056070434de37c4e45db26fbd6aeb05dc327';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -461,7 +461,7 @@ const _productionBootstrapNormalizedSha256 =
 // Combined main erasure/recovery and Thoughts wiring retain the historical callback.
 // The same contact-request requireFresh argument changes only the reviewed remainder.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'bd00c236d816fe0fff7aa75dedc923c9676e2ae1318e26ec02f4863553542ffa';
+    '6f8870a2e1f7d87fd2b744b94669cb33970fd64a6232d26194b9bb89997a23f1';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -1261,6 +1261,7 @@ void main() {
                 required senderUsername,
                 messageId,
                 required bool preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
                 timestamp,
                 bridge,
                 recipientMlKemPublicKey,

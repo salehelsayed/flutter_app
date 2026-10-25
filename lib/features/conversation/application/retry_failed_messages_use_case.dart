@@ -33,6 +33,7 @@ import 'package:flutter_app/features/conversation/application/outgoing_direct_pr
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -205,23 +206,68 @@ Future<int> retryFailedMessages({
   DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
   PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
   bool retryDirectInboxCustody = true,
-}) {
-  return _retryFailedMessagesInternal(
-    messageRepo: messageRepo,
-    identityRepo: identityRepo,
-    contactRepo: contactRepo,
-    p2pService: p2pService,
-    bridge: bridge,
-    mediaAttachmentRepo: mediaAttachmentRepo,
-    uploadMediaFn: uploadMediaFn,
-    mediaFileManager: mediaFileManager,
-    directMediaBlobArtifactStore: directMediaBlobArtifactStore,
-    directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
-    uploadRetryProjectionRepo: null,
-    manualRetry: false,
-    retryDirectInboxCustody: retryDirectInboxCustody,
-    loadFailedMessages: messageRepo.getFailedOutgoingMessages,
-  );
+  DirectEventFanoutAuthoring? directEventFanout,
+}) async {
+  var authoredSucceeded = 0;
+  if (messageRepo is AuthoredDirectTextIntentRepository) {
+    final intents = messageRepo as AuthoredDirectTextIntentRepository;
+    final pending = await intents.loadAuthoredDirectTextIntents();
+    if (pending.isNotEmpty) {
+      final identity = await identityRepo.loadIdentity();
+      if (identity != null) {
+        for (final intent in pending) {
+          try {
+            final contact = await contactRepo.getContact(intent.contactPeerId);
+            if (contact == null || contact.isBlocked) continue;
+            final result = await runWithAutomaticRecoveryNotificationPolicy(
+              originalTimestamp: intent.timestamp,
+              manualRetry: false,
+              action: () => sendChatMessage(
+                p2pService: p2pService,
+                messageRepo: messageRepo,
+                targetPeerId: intent.contactPeerId,
+                text: intent.text,
+                senderPeerId: identity.peerId,
+                senderUsername: identity.username,
+                messageId: intent.id,
+                preassignedMessageIdIsFresh: true,
+                authoredTextIntentToken: intent.token,
+                timestamp: intent.timestamp,
+                quotedMessageId: intent.quotedMessageId,
+                bridge: bridge,
+                recipientMlKemPublicKey: contact.mlKemPublicKey,
+                directEventFanout: directEventFanout,
+              ),
+            );
+            if (result.$1 == SendChatMessageResult.success) authoredSucceeded++;
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'AUTHORED_DIRECT_TEXT_RETRY_ERROR',
+              details: {'errorType': error.runtimeType.toString()},
+            );
+          }
+        }
+      }
+    }
+  }
+  return authoredSucceeded +
+      await _retryFailedMessagesInternal(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        uploadMediaFn: uploadMediaFn,
+        mediaFileManager: mediaFileManager,
+        directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+        directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
+        uploadRetryProjectionRepo: null,
+        manualRetry: false,
+        retryDirectInboxCustody: retryDirectInboxCustody,
+        loadFailedMessages: messageRepo.getFailedOutgoingMessages,
+      );
 }
 
 /// Retries one failed outgoing message in place.

@@ -328,6 +328,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  String? authoredTextIntentToken,
   String? quotedMessageId,
   String? timestamp,
   Bridge? bridge,

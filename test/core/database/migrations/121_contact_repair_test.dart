@@ -44,8 +44,8 @@ Future<Database> _openAt(int version) =>
 void main() {
   sqfliteFfiInit();
 
-  test('current schema version is 122', () {
-    expect(currentIdentityDatabaseVersion, 122);
+  test('current schema version is 123', () {
+    expect(currentIdentityDatabaseVersion, 123);
   });
 
   group('consent triggers', () {

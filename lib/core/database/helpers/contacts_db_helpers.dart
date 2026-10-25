@@ -4,6 +4,7 @@ import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
 import '../migrations/117_call_history.dart';
 import 'direct_contact_device_bindings_db_helpers.dart';
+import 'authored_direct_text_intents_db_helpers.dart';
 
 /// Loads all contacts from the database.
 Future<List<Map<String, Object?>>> dbLoadAllContacts(Database db) async {
@@ -156,6 +157,7 @@ Future<void> dbDeleteContactWithinTransaction(
   DatabaseExecutor txn,
   String peerId,
 ) async {
+  await dbDeleteAuthoredDirectTextIntents(txn, contactPeerId: peerId);
   await dbDeleteDirectContactDeviceRoster(txn, peerId);
   await txn.delete(
     kCallHistoryTable,
@@ -246,6 +248,7 @@ dbPurgeDirectContactConversationAndContact(
             ],
           );
         }
+        await dbDeleteAuthoredDirectTextIntents(txn, contactPeerId: normalized);
         var textCustodyRows = 0;
         if (await tableExists('direct_inbox_custody_outbox')) {
           textCustodyRows = await txn.rawDelete(

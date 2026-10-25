@@ -226,6 +226,7 @@ DirectEventFanoutAuthoring _lifecycleDeletionFanoutAuthoring({
   loadTextSiblings: (_) async => const [],
   stageTextFanout:
       ({
+        String? authoredTextIntentToken,
         required stagedRow,
         required messageId,
         required contactAccountPeerId,
@@ -541,6 +542,7 @@ void main() {
       loadTextSiblings: (_) async => const [],
       stageTextFanout:
           ({
+            String? authoredTextIntentToken,
             required stagedRow,
             required messageId,
             required contactAccountPeerId,

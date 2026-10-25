@@ -3785,6 +3785,7 @@ void main() {
         loadTextSiblings: (_) async => unreachable(),
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,

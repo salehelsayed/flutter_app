@@ -335,6 +335,7 @@ DirectEventFanoutAuthoring _fanoutSentinel(String senderTransportPeerId) {
     loadTextSiblings: (_) async => unreachable(),
     stageTextFanout:
         ({
+          String? authoredTextIntentToken,
           required stagedRow,
           required messageId,
           required contactAccountPeerId,

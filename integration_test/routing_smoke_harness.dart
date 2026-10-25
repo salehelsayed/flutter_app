@@ -385,6 +385,10 @@ void _runAlice() {
             transport: transport,
             createdAt: createdAt,
           ),
+      dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+      dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+      dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+      loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
@@ -630,7 +634,6 @@ void _runAlice() {
     final started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('P2P node failed to start');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-
 
     // ── Identity exchange ──
     // Write identity first, then signal ready so orchestrator can launch Bob.
@@ -1380,6 +1383,10 @@ void _runBob() {
             transport: transport,
             createdAt: createdAt,
           ),
+      dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+      dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+      dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+      loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
@@ -1520,7 +1527,6 @@ void _runBob() {
     var started = await p2pService.startNode(ownPrivateKey, ownPeerId);
     if (!started) throw StateError('P2P node failed to start');
     await waitForOnline(p2pService, timeout: const Duration(seconds: 60));
-
 
     // ── Identity exchange ──
     _signals.writeJson('bob_identity.json', {

@@ -1,4 +1,6 @@
 import '../models/conversation_message.dart';
+import '../models/authored_direct_text_intent.dart';
+export '../models/authored_direct_text_intent.dart';
 import '../models/direct_inbox_custody_outbox_entry.dart';
 import '../models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../models/media_attachment.dart';
@@ -7,6 +9,13 @@ import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+
+abstract interface class AuthoredDirectTextIntentRepository {
+  bool get supportsAuthoredDirectTextIntents;
+  Future<bool> saveAuthoredDirectTextIntent(AuthoredDirectTextIntent intent);
+  Future<bool> cancelAuthoredDirectTextIntent(AuthoredDirectTextIntent intent);
+  Future<List<AuthoredDirectTextIntent>> loadAuthoredDirectTextIntents();
+}
 
 /// Narrow receiver annotation; never rewrites message content or read state.
 abstract interface class IncomingQuietRecoveryRepository {
@@ -247,6 +256,7 @@ abstract interface class OutgoingDirectTextInboxCustodyRepository {
   /// SQLCipher transaction. Only [OutgoingOrdinaryAttemptKind.fresh] with a
   /// null [expected] predecessor may mint custody.
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    String? authoredTextIntentToken,
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,
@@ -420,6 +430,7 @@ abstract interface class OutgoingDirectEventFanoutRepository {
   );
 
   Future<DbDirectEventFanoutStageResult> stageDirectTextFanout({
+    String? authoredTextIntentToken,
     required Map<String, Object?> stagedRow,
     required String messageId,
     required String contactAccountPeerId,

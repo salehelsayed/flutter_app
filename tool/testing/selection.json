@@ -143,7 +143,7 @@
         "test/features/conversation/integration/direct_text_restart_sqlite_test.dart"
       ],
       "boundary": "Concurrent inbox custody, exact 100-message ordering, both-peer SQLite reopen, sender interruption checkpoints, protected inbox replay and canonical deduplication",
-      "limitations": "Includes real production-schema SQLite repositories/listener/staging with fake transport and crypto; pre-custody loss remains a KNOWN GAP skip. Abandoned Dart continuations model restart; OS process death, native SQLCipher, live disconnection/relay restart and signed artifacts remain separate",
+      "limitations": "Includes real production-schema SQLite repositories/listener/staging and durable authored-text recovery with fake transport and crypto; all four custody checkpoints execute without a known-gap skip. Abandoned Dart continuations model restart; OS process death, native SQLCipher, live linked topology/disconnection/relay restart and signed artifacts remain separate",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [

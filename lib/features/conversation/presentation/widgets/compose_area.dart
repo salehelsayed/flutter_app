@@ -29,6 +29,7 @@ extension VoiceRecordingStateX on VoiceRecordingState {
 /// When text is empty and no attachments: shows mic button for voice recording.
 class ComposeArea extends StatefulWidget {
   final ValueChanged<String> onSend;
+  final bool clearOnSend;
   final VoidCallback? onAttach;
   final bool hasAttachments;
 
@@ -64,6 +65,7 @@ class ComposeArea extends StatefulWidget {
   const ComposeArea({
     super.key,
     required this.onSend,
+    this.clearOnSend = true,
     this.onAttach,
     this.hasAttachments = false,
     this.hasInvalidAttachment = false,
@@ -207,10 +209,15 @@ class _ComposeAreaState extends State<ComposeArea>
     setState(() => _hasFocus = _focusNode.hasFocus);
   }
 
+  bool _sentThisFrame = false;
+
   void _onSendPressed() {
+    if (_sentThisFrame) return;
     final text = _controller.text.trim();
     if (text.isEmpty && !widget.hasAttachments) return;
-    _controller.clear();
+    _sentThisFrame = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _sentThisFrame = false);
+    if (widget.clearOnSend) _controller.clear();
     widget.onSend(text);
   }
 

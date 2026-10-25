@@ -57,6 +57,7 @@ import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 class _OrderRecordingBridge implements Bridge {
   final List<String> callLog = [];
   final List<String> operationLog;
+  Completer<void>? bgBeginGate;
   final String bgBeginResponse;
   final Set<String> throwOnCommands;
   final Map<String, String> responseOverrides;
@@ -83,7 +84,10 @@ class _OrderRecordingBridge implements Bridge {
     if (overrideResponse != null) {
       return overrideResponse;
     }
-    if (cmd == 'bg:begin') return bgBeginResponse;
+    if (cmd == 'bg:begin') {
+      await bgBeginGate?.future;
+      return bgBeginResponse;
+    }
     if (cmd == 'bg:end') return '';
     if (cmd == 'blob:keygen') {
       return jsonEncode({'ok': true, 'keyBase64': 'AAAA'});
@@ -156,7 +160,10 @@ class _FakeMessageRepository
   @override
   Stream<ConversationMessage> get messageChanges => _ctrl.stream;
   @override
-  Future<void> saveMessage(ConversationMessage m) async {}
+  Future<void> saveMessage(ConversationMessage m) async {
+    _ctrl.add(m);
+  }
+
   @override
   Future<List<ConversationMessage>> getMessagesForContact(String pid) async =>
       [];
@@ -400,11 +407,17 @@ class _FakeP2PService implements P2PService {
 }
 
 class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+  Completer<void>? saveGate;
+  bool saveStarted = false;
   @override
   Future<void> saveAttachment(
     MediaAttachment a, {
     required MediaOwnerLane owner,
-  }) async {}
+  }) async {
+    saveStarted = true;
+    await saveGate?.future;
+  }
+
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
     String mid, {
@@ -472,6 +485,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   required String senderUsername,
   String? messageId,
   required bool preassignedMessageIdIsFresh,
+  String? authoredTextIntentToken,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -526,6 +540,7 @@ Future<void> _pumpConversationWired(
   P2PService? p2pService,
   List<File>? initialAttachments,
   FakeAudioRecorderService? audioRecorderService,
+  _FakeMediaAttachmentRepository? mediaAttachmentRepository,
 }) async {
   final identityRepo = _FakeIdentityRepository(_makeIdentity());
   final messageRepo = _FakeMessageRepository();
@@ -550,7 +565,8 @@ Future<void> _pumpConversationWired(
         sendVoiceMessageFn: sendVoiceFn ?? sendVoiceMessage,
         uploadMediaFn: uploadMediaFn ?? uploadMedia,
         prepareEncryptedMediaArtifactFn: _syncPrepareEncryptedArtifactStub,
-        mediaAttachmentRepo: _FakeMediaAttachmentRepository(),
+        mediaAttachmentRepo:
+            mediaAttachmentRepository ?? _FakeMediaAttachmentRepository(),
         initialAttachments: initialAttachments,
         audioRecorderService: audioRecorderService,
         micPermissionGateway: FakeMicPermissionGateway(),
@@ -674,6 +690,7 @@ void main() {
                 required String senderUsername,
                 String? messageId,
                 required bool preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
                 String? timestamp,
                 Bridge? bridge,
                 String? recipientMlKemPublicKey,
@@ -797,6 +814,7 @@ void main() {
                 required String senderUsername,
                 String? messageId,
                 required bool preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
                 String? timestamp,
                 Bridge? bridge,
                 String? recipientMlKemPublicKey,
@@ -841,6 +859,82 @@ void main() {
   });
 
   group('ConversationWired _onRecordStop — background task ordering', () {
+    testWidgets(
+      'voice persists attachment and parent before publication or background work',
+      (tester) async {
+        final repository = _FakeMediaAttachmentRepository()
+          ..saveGate = Completer<void>();
+        final bridge = _OrderRecordingBridge()..bgBeginGate = Completer<void>();
+        final recorder = FakeAudioRecorderService()
+          ..fakeOutputPath = '/tmp/voice_durable_order.m4a';
+        final file = File(recorder.fakeOutputPath!)..writeAsStringSync('voice');
+        addTearDown(() {
+          if (file.existsSync()) file.deleteSync();
+        });
+        await _pumpConversationWired(
+          tester,
+          bridge: bridge,
+          audioRecorderService: recorder,
+          mediaAttachmentRepository: repository,
+          sendVoiceFn:
+              ({
+                required p2pService,
+                required messageRepo,
+                required targetPeerId,
+                required senderPeerId,
+                required senderUsername,
+                required recording,
+                required bridge,
+                recipientMlKemPublicKey,
+                mediaAttachmentRepo,
+                mediaFileManager,
+                text,
+                quotedMessageId,
+                waveform,
+                messageId,
+                timestamp,
+                blobId,
+                preparedArtifact,
+                mediaAdmission,
+              }) async => (SendVoiceMessageResult.success, null),
+        );
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 100));
+        final refreshed = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        final recording =
+            (refreshed.onRecordStop! as Future<void> Function())();
+        for (var i = 0; i < 10 && !repository.saveStarted; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(repository.saveStarted, isTrue);
+        expect(bridge.callLog, isNot(contains('bg:begin')));
+        expect(
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages,
+          isEmpty,
+        );
+        repository.saveGate!.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(bridge.callLog, contains('bg:begin'));
+        expect(
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .messages,
+          hasLength(1),
+        );
+        bridge.bgBeginGate!.complete();
+        await recording;
+        await tester.pump();
+      },
+    );
+
     testWidgets(
       'local WiFi voice send starts bg task before local transfer and ends after delegated send',
       (tester) async {

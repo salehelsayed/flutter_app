@@ -50,6 +50,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/protected_group_reaction_target_db_helpers.dart';
@@ -981,8 +982,22 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               stagedRow: stagedRow,
               kind: kind,
             ),
+    dbSaveAuthoredDirectTextIntent: (row) =>
+        dbSaveAuthoredDirectTextIntent(db, row),
+    dbCancelAuthoredDirectTextIntent: (row) =>
+        dbCancelAuthoredDirectTextIntent(db, row),
+    dbLoadAuthoredDirectTextIntents: () => dbLoadAuthoredDirectTextIntents(db),
+    loadAuthoredTextSenderPeerId: () async {
+      final rows = await db.query(
+        'identity',
+        columns: ['peer_id'],
+        where: 'id = 1',
+      );
+      return rows.isEmpty ? '' : rows.single['peer_id'] as String;
+    },
     dbStageOutgoingDirectTextInboxCustody:
         ({
+          String? authoredTextIntentToken,
           required expectedRow,
           required stagedRow,
           required kind,
@@ -992,6 +1007,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           required wireEnvelope,
         }) => dbStageOutgoingDirectTextInboxCustody(
           db,
+          authoredTextIntentToken: authoredTextIntentToken,
           expectedRow: expectedRow,
           stagedRow: stagedRow,
           kind: kind,
@@ -1018,6 +1034,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
             ),
     dbStageOutgoingDirectTextFanoutInboxCustody:
         ({
+          String? authoredTextIntentToken,
           required stagedRow,
           required messageId,
           required contactAccountPeerId,
@@ -1026,6 +1043,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           required candidates,
         }) => dbStageOutgoingDirectTextFanoutInboxCustody(
           db,
+          authoredTextIntentToken: authoredTextIntentToken,
           stagedRow: stagedRow,
           messageId: messageId,
           contactAccountPeerId: contactAccountPeerId,
@@ -7581,6 +7599,7 @@ Future<void> _runDirectLinkedDeviceEventBlobFanoutLinkedSide() async {
       loadTextSiblings: stack.messageRepo.loadDirectTextFanoutSiblings,
       stageTextFanout:
           ({
+            String? authoredTextIntentToken,
             required stagedRow,
             required messageId,
             required contactAccountPeerId,
@@ -7592,6 +7611,7 @@ Future<void> _runDirectLinkedDeviceEventBlobFanoutLinkedSide() async {
               ..clear()
               ..addAll(candidates);
             return stack.messageRepo.stageDirectTextFanout(
+              authoredTextIntentToken: authoredTextIntentToken,
               stagedRow: stagedRow,
               messageId: messageId,
               contactAccountPeerId: contactAccountPeerId,

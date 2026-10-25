@@ -31,6 +31,7 @@ import '../../domain/repositories/message_repository.dart';
 class MessageRepositoryImpl
     implements
         MessageRepository,
+        AuthoredDirectTextIntentRepository,
         IncomingQuietRecoveryRepository,
         DirectPrivateMediaLifecycleRepository,
         DirectPrivateMediaExactOpeningLeaseRepository,
@@ -105,6 +106,13 @@ class MessageRepositoryImpl
   dbLoadConversationThreadSummaries;
   final Future<int> Function({required DateTime olderThan, int limit})
   dbRecoverStuckSendingMessages;
+  final Future<bool> Function(Map<String, Object?> intent)?
+  dbSaveAuthoredDirectTextIntent;
+  final Future<List<Map<String, Object?>>> Function()?
+  dbLoadAuthoredDirectTextIntents;
+  final Future<bool> Function(Map<String, Object?> intent)?
+  dbCancelAuthoredDirectTextIntent;
+  final Future<String> Function()? loadAuthoredTextSenderPeerId;
   final Future<void> Function(String id, String wireEnvelope)?
   dbUpdateWireEnvelope;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
@@ -114,6 +122,7 @@ class MessageRepositoryImpl
   })?
   dbStageOutgoingOrdinaryAttempt;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
+    String? authoredTextIntentToken,
     required Map<String, Object?>? expectedRow,
     required Map<String, Object?> stagedRow,
     required OutgoingOrdinaryAttemptKind kind,
@@ -144,6 +153,7 @@ class MessageRepositoryImpl
   final Future<List<Map<String, Object?>>> Function({required String eventId})?
   dbLoadDirectReactionInboxCustodyOutboxRowsForEventId;
   final Future<DbDirectEventFanoutStageResult> Function({
+    String? authoredTextIntentToken,
     required Map<String, Object?> stagedRow,
     required String messageId,
     required String contactAccountPeerId,
@@ -488,6 +498,10 @@ class MessageRepositoryImpl
     required this.dbRecoverStuckSendingMessages,
     this.dbUpdateWireEnvelope,
     this.dbStageOutgoingOrdinaryAttempt,
+    this.dbSaveAuthoredDirectTextIntent,
+    this.dbLoadAuthoredDirectTextIntents,
+    this.dbCancelAuthoredDirectTextIntent,
+    this.loadAuthoredTextSenderPeerId,
     this.dbStageOutgoingDirectTextInboxCustody,
     this.dbReadDirectContactFanoutSnapshot,
     this.dbLoadDirectInboxCustodyOutboxRowsForMessageId,
@@ -610,6 +624,7 @@ class MessageRepositoryImpl
 
   @override
   Future<DbDirectEventFanoutStageResult> stageDirectTextFanout({
+    String? authoredTextIntentToken,
     required Map<String, Object?> stagedRow,
     required String messageId,
     required String contactAccountPeerId,
@@ -622,6 +637,7 @@ class MessageRepositoryImpl
       throw StateError('direct event fanout capability is unavailable');
     }
     return delegate(
+      authoredTextIntentToken: authoredTextIntentToken,
       stagedRow: stagedRow,
       messageId: messageId,
       contactAccountPeerId: contactAccountPeerId,
@@ -786,12 +802,87 @@ class MessageRepositoryImpl
   }
 
   @override
+  bool get supportsAuthoredDirectTextIntents =>
+      dbSaveAuthoredDirectTextIntent != null &&
+      dbLoadAuthoredDirectTextIntents != null &&
+      dbCancelAuthoredDirectTextIntent != null &&
+      loadAuthoredTextSenderPeerId != null;
+
+  @override
+  Future<bool> saveAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    final save = dbSaveAuthoredDirectTextIntent;
+    if (!supportsAuthoredDirectTextIntents || save == null) return false;
+    final sender = await loadAuthoredTextSenderPeerId!();
+    if (!await save(intent.toMap())) return false;
+    if (!_messageChangeController.isClosed) {
+      _messageChangeController.add(_rememberMessage(intent.toMessage(sender)));
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> cancelAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    if (!await dbCancelAuthoredDirectTextIntent!(intent.toMap())) return false;
+    _messageSnapshots.remove(intent.id);
+    _messageRemovalController.add(
+      DirectMessageRemoval(
+        contactPeerId: intent.contactPeerId,
+        messageId: intent.id,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<List<AuthoredDirectTextIntent>>
+  loadAuthoredDirectTextIntents() async =>
+      (await dbLoadAuthoredDirectTextIntents?.call() ??
+              const <Map<String, Object?>>[])
+          .map(AuthoredDirectTextIntent.fromMap)
+          .toList(growable: false);
+
+  Future<List<ConversationMessage>> _withAuthoredTextIntents(
+    Iterable<ConversationMessage> messages,
+    String contactPeerId, {
+    String? beforeTimestamp,
+    int? limit,
+  }) async {
+    final byId = {for (final message in messages) message.id: message};
+    final intents = await loadAuthoredDirectTextIntents();
+    if (intents.isNotEmpty) {
+      final sender = await loadAuthoredTextSenderPeerId!();
+      for (final intent in intents) {
+        if (intent.contactPeerId == contactPeerId &&
+            (beforeTimestamp == null ||
+                intent.timestamp.compareTo(beforeTimestamp) < 0)) {
+          byId.putIfAbsent(intent.id, () => intent.toMessage(sender));
+        }
+      }
+    }
+    final sorted = byId.values.toList()
+      ..sort((a, b) {
+        final order = a.timestamp.compareTo(b.timestamp);
+        return order == 0 ? a.id.compareTo(b.id) : order;
+      });
+    return _rememberMessages(
+      limit != null && sorted.length > limit
+          ? sorted.sublist(sorted.length - limit)
+          : sorted,
+    );
+  }
+
+  @override
   Future<List<ConversationMessage>> getMessagesForContact(
     String contactPeerId,
   ) async {
     final rows = await dbLoadMessagesForContact(contactPeerId);
-    return _rememberMessages(
+    return _withAuthoredTextIntents(
       rows.map((row) => ConversationMessage.fromMap(row)),
+      contactPeerId,
     );
   }
 
@@ -800,8 +891,12 @@ class MessageRepositoryImpl
     String contactPeerId,
   ) async {
     final row = await dbLoadLatestMessageForContact(contactPeerId);
-    if (row == null) return null;
-    return _rememberMessage(ConversationMessage.fromMap(row));
+    final projected = await _withAuthoredTextIntents(
+      row == null ? const [] : [ConversationMessage.fromMap(row)],
+      contactPeerId,
+      limit: 1,
+    );
+    return projected.isEmpty ? null : projected.single;
   }
 
   @override
@@ -861,6 +956,7 @@ class MessageRepositoryImpl
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    String? authoredTextIntentToken,
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,
@@ -887,6 +983,7 @@ class MessageRepositoryImpl
     final outcome = stage == null
         ? OutgoingOrdinaryMutationOutcome.refused
         : await stage(
+            authoredTextIntentToken: authoredTextIntentToken,
             expectedRow: expected?.toMap(),
             stagedRow: staged.toMap(),
             kind: kind,
@@ -2006,8 +2103,11 @@ class MessageRepositoryImpl
       limit: limit,
       beforeTimestamp: beforeTimestamp,
     );
-    return _rememberMessages(
+    return _withAuthoredTextIntents(
       rows.map((row) => ConversationMessage.fromMap(row)),
+      contactPeerId,
+      beforeTimestamp: beforeTimestamp,
+      limit: limit,
     );
   }
 
@@ -2309,6 +2409,34 @@ class MessageRepositoryImpl
         contactPeerId,
         () => ConversationThreadSummary(contactPeerId: contactPeerId),
       );
+    }
+    final pending = await loadAuthoredDirectTextIntents();
+    if (pending.isNotEmpty) {
+      final sender = await loadAuthoredTextSenderPeerId!();
+      for (final contactPeerId in ids) {
+        final local = pending
+            .where((intent) => intent.contactPeerId == contactPeerId)
+            .toList();
+        if (local.isEmpty) continue;
+        final old = summaries[contactPeerId]!;
+        final latest = local.last.toMessage(sender);
+        final newer =
+            old.latestMessage == null ||
+            latest.timestamp.compareTo(old.latestMessage!.timestamp) > 0;
+        final at = DateTime.tryParse(latest.timestamp);
+        summaries[contactPeerId] = ConversationThreadSummary(
+          contactPeerId: contactPeerId,
+          messageCount: old.messageCount + local.length,
+          unreadCount: old.unreadCount,
+          lastOutgoingAt:
+              at != null &&
+                  (old.lastOutgoingAt == null ||
+                      at.isAfter(old.lastOutgoingAt!))
+              ? at
+              : old.lastOutgoingAt,
+          latestMessage: newer ? latest : old.latestMessage,
+        );
+      }
     }
     return summaries;
   }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import 'authored_direct_text_intents_db_helpers.dart';
 import '../direct_event_fanout_contract.dart';
 import '../direct_media_blob_custody.dart';
 import '../incoming_ordinary_text_mutation.dart';
@@ -1394,11 +1395,18 @@ Future<int> dbDeleteMessagesForContact(
   );
 
   try {
-    final count = await db.delete(
-      'messages',
-      where: 'contact_peer_id = ?',
-      whereArgs: [contactPeerId],
-    );
+    final count = await dbWriteTransaction(db, (txn) async {
+      final intents = await dbDeleteAuthoredDirectTextIntents(
+        txn,
+        contactPeerId: contactPeerId,
+      );
+      return intents +
+          await txn.delete(
+            'messages',
+            where: 'contact_peer_id = ?',
+            whereArgs: [contactPeerId],
+          );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1434,13 +1442,17 @@ Future<int> dbDeleteMessage(Database db, String id) async {
 
   try {
     final count = await dbWriteTransaction<int>(db, (txn) async {
+      final intents = await dbDeleteAuthoredDirectTextIntents(
+        txn,
+        messageId: id,
+      );
       final rows = await txn.query(
         'messages',
         where: 'id = ?',
         whereArgs: <Object?>[id],
         limit: 1,
       );
-      if (rows.isEmpty) return 0;
+      if (rows.isEmpty) return intents;
       final row = rows.single;
       final generation = row['direct_event_fanout_generation_id'];
       final fanoutMarked =

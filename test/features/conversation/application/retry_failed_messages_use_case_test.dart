@@ -3787,6 +3787,7 @@ class _LifecycleOnlyMutationCustodyRepository
 
   @override
   Future<DbDirectEventFanoutStageResult> stageDirectTextFanout({
+    String? authoredTextIntentToken,
     required Map<String, Object?> stagedRow,
     required String messageId,
     required String contactAccountPeerId,

@@ -184,6 +184,10 @@ void main() {
               ),
       dbUpdateWireEnvelope: (id, wireEnvelope) =>
           dbUpdateWireEnvelope(db, id, wireEnvelope),
+      dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+      dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+      dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+      loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
       dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
       dbLoadDirectInboxCustodyOutbox: custodyDb.load,
       dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,

@@ -65,6 +65,25 @@ Future<int> deleteMessageForMe({
     );
     return 0;
   }
+  if (currentMessage == null &&
+      messageRepo is AuthoredDirectTextIntentRepository) {
+    final intents = messageRepo as AuthoredDirectTextIntentRepository;
+    final intent = (await intents.loadAuthoredDirectTextIntents())
+        .where(
+          (intent) =>
+              intent.id == message.id &&
+              intent.contactPeerId == message.contactPeerId &&
+              intent.text == message.text &&
+              intent.timestamp == message.timestamp &&
+              intent.quotedMessageId == message.quotedMessageId &&
+              !message.isIncoming,
+        )
+        .firstOrNull;
+    if (intent != null) {
+      if (await intents.cancelAuthoredDirectTextIntent(intent)) return 1;
+      currentMessage = await messageRepo.getMessage(message.id);
+    }
+  }
   if (currentMessage == null ||
       currentMessage.id != message.id ||
       currentMessage.contactPeerId != message.contactPeerId ||

@@ -79,6 +79,7 @@ class DirectEventFanoutAuthoring {
   final Future<List<Map<String, Object?>>> Function(String messageId)
   loadTextSiblings;
   final Future<DbDirectEventFanoutStageResult> Function({
+    String? authoredTextIntentToken,
     required Map<String, Object?> stagedRow,
     required String messageId,
     required String contactAccountPeerId,

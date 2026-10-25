@@ -808,6 +808,7 @@ class InMemoryMessageRepository extends shared_fakes.InMemoryMessageRepository {
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    String? authoredTextIntentToken,
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,

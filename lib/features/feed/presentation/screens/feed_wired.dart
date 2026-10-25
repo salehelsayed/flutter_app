@@ -2205,13 +2205,32 @@ class _FeedWiredState extends State<FeedWired>
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     final reply = FeedSessionReply(messageId: _uuid.v4(), text: trimmed);
-    _appendSessionOutgoing(threadId, reply);
+    AuthoredDirectTextIntent? intent;
+    final repository = widget.messageRepository;
+    if (!threadId.startsWith('group:') &&
+        repository is AuthoredDirectTextIntentRepository) {
+      intent = AuthoredDirectTextIntent(
+        id: reply.messageId,
+        contactPeerId: threadId,
+        text: sanitizeMessageText(trimmed),
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+        token: _uuid.v4(),
+      );
+      if (!await (repository as AuthoredDirectTextIntentRepository)
+          .saveAuthoredDirectTextIntent(intent)) {
+        throw StateError('authored text admission refused');
+      }
+    }
+    _appendSessionOutgoing(
+      threadId,
+      intent == null ? reply : reply.copyWith(hadDurableAuthority: true),
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'FEED_SEND_APPEND',
       details: {'threadId': threadId},
     );
-    await _dispatchFeedComposerSend(threadId, reply);
+    unawaited(_dispatchFeedComposerSend(threadId, reply, intent: intent));
   }
 
   void _appendSessionOutgoing(String threadId, FeedSessionReply reply) {
@@ -2296,8 +2315,9 @@ class _FeedWiredState extends State<FeedWired>
 
   Future<void> _dispatchFeedComposerSend(
     String threadId,
-    FeedSessionReply reply,
-  ) async {
+    FeedSessionReply reply, {
+    AuthoredDirectTextIntent? intent,
+  }) async {
     if (threadId.startsWith('group:')) {
       final groupId = threadId.substring('group:'.length);
       final ok = await _sendGroupComposerReply(groupId, reply.text);
@@ -2309,6 +2329,7 @@ class _FeedWiredState extends State<FeedWired>
       threadId,
       reply.text,
       messageId: reply.messageId,
+      intent: intent,
     );
     if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
   }
@@ -2343,6 +2364,7 @@ class _FeedWiredState extends State<FeedWired>
     String contactPeerId,
     String text, {
     required String messageId,
+    AuthoredDirectTextIntent? intent,
   }) async {
     final identity = _identity;
     if (identity == null) {
@@ -2351,7 +2373,7 @@ class _FeedWiredState extends State<FeedWired>
         messageId,
         acquired: false,
       );
-      return false;
+      return intent != null;
     }
     final sanitizedText = sanitizeMessageText(text);
     String? bgTaskId;
@@ -2368,10 +2390,11 @@ class _FeedWiredState extends State<FeedWired>
             acquired: false,
           );
         }
-        return false;
+        return intent != null;
       }
 
-      final timestamp = DateTime.now().toUtc().toIso8601String();
+      final timestamp =
+          intent?.timestamp ?? DateTime.now().toUtc().toIso8601String();
       optimisticMessage = ConversationMessage(
         id: messageId,
         contactPeerId: contactPeerId,
@@ -2394,6 +2417,7 @@ class _FeedWiredState extends State<FeedWired>
         senderUsername: identity.username,
         messageId: optimisticMessage.id,
         preassignedMessageIdIsFresh: true,
+        authoredTextIntentToken: intent?.token,
         timestamp: optimisticMessage.timestamp,
         bridge: widget.bridge,
         recipientMlKemPublicKey: contact.mlKemPublicKey,
@@ -2461,7 +2485,7 @@ class _FeedWiredState extends State<FeedWired>
           toStatus: 'failed',
         );
       }
-      return false;
+      return intent != null;
     } catch (e) {
       final observedCustody = custodyStageCommitted
           ? true
@@ -2502,7 +2526,7 @@ class _FeedWiredState extends State<FeedWired>
         event: 'FEED_FL_COMPOSER_SEND_ERROR',
         details: {'errorType': e.runtimeType.toString()},
       );
-      return false;
+      return intent != null;
     } finally {
       await callBgEnd(widget.bridge, bgTaskId);
     }

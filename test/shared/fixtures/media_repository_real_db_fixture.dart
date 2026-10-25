@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -1180,6 +1181,19 @@ MessageRepositoryImpl _buildMessageRepository(
               incomingRow: incomingRow,
               kind: kind,
             ),
+    dbCancelAuthoredDirectTextIntent: (row) =>
+        dbCancelAuthoredDirectTextIntent(db, row),
+    dbSaveAuthoredDirectTextIntent: (row) =>
+        dbSaveAuthoredDirectTextIntent(db, row),
+    dbLoadAuthoredDirectTextIntents: () => dbLoadAuthoredDirectTextIntents(db),
+    loadAuthoredTextSenderPeerId: () async {
+      final rows = await db.query(
+        'identity',
+        columns: ['peer_id'],
+        where: 'id = 1',
+      );
+      return rows.isEmpty ? '' : rows.single['peer_id'] as String;
+    },
     dbInsertMessage: (row) => dbInsertMessage(db, row),
     dbLoadMessagesForContact: (contactPeerId) =>
         dbLoadMessagesForContact(db, contactPeerId),
@@ -1236,6 +1250,7 @@ MessageRepositoryImpl _buildMessageRepository(
             ),
     dbStageOutgoingDirectTextInboxCustody:
         ({
+          String? authoredTextIntentToken,
           required expectedRow,
           required stagedRow,
           required kind,
@@ -1247,6 +1262,7 @@ MessageRepositoryImpl _buildMessageRepository(
           await beforeDirectTextCustodyStage?.call();
           final result = await dbStageOutgoingDirectTextInboxCustody(
             db,
+            authoredTextIntentToken: authoredTextIntentToken,
             expectedRow: expectedRow,
             stagedRow: stagedRow,
             kind: kind,

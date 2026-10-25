@@ -1175,6 +1175,7 @@ class FakeMessageRepository
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    String? authoredTextIntentToken,
     required ConversationMessage? expected,
     required ConversationMessage staged,
     required OutgoingOrdinaryAttemptKind kind,
@@ -2185,6 +2186,7 @@ void main() {
           loadTextSiblings: (_) async => const [],
           stageTextFanout:
               ({
+                String? authoredTextIntentToken,
                 required stagedRow,
                 required messageId,
                 required contactAccountPeerId,
@@ -2265,6 +2267,7 @@ void main() {
         loadTextSiblings: (_) async => const [],
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,
@@ -2422,6 +2425,7 @@ void main() {
             id == messageId ? [survivorRow] : const [],
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,
@@ -2508,6 +2512,7 @@ void main() {
         loadTextSiblings: (_) async => const [],
         stageTextFanout:
             ({
+              String? authoredTextIntentToken,
               required stagedRow,
               required messageId,
               required contactAccountPeerId,
@@ -12405,6 +12410,7 @@ void main() {
           loadTextSiblings: (_) async => const [],
           stageTextFanout:
               ({
+                String? authoredTextIntentToken,
                 required stagedRow,
                 required messageId,
                 required contactAccountPeerId,

@@ -762,6 +762,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String? editedAt,
   String? messageId,
   bool preassignedMessageIdIsFresh = false,
+  String? authoredTextIntentToken,
   String? timestamp,
   // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
   // below); one explicit Forward action passes its random operation token so
@@ -816,6 +817,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           editedAt: editedAt,
           messageId: messageId,
           preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+          authoredTextIntentToken: authoredTextIntentToken,
           timestamp: timestamp,
           dedupKey: dedupKey,
           isForwarded: isForwarded,
@@ -896,6 +898,7 @@ _sendChatMessageDiagnosed({
   String? editedAt,
   String? messageId,
   bool preassignedMessageIdIsFresh = false,
+  String? authoredTextIntentToken,
   String? timestamp,
   // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
   // below); one explicit Forward action passes its random operation token so
@@ -1876,6 +1879,7 @@ _sendChatMessageDiagnosed({
       return (SendChatMessageResult.sendFailed, null);
     }
     return _authorDirectBlobFreeTextFanout(
+      authoredTextIntentToken: authoredTextIntentToken,
       directEventFanout: directEventFanout!,
       routing: fanoutRouting,
       p2pService: p2pService,
@@ -2445,6 +2449,7 @@ _sendChatMessageDiagnosed({
       if (ownsDirectTextInboxCustody) {
         final staged = await directTextCustodyRepo!
             .stageOutgoingDirectTextInboxCustody(
+              authoredTextIntentToken: authoredTextIntentToken,
               expected: expectedAttempt,
               staged: stagedAttempt,
               kind: attemptKind,
@@ -4633,6 +4638,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
 /// sibling.
 Future<(SendChatMessageResult, ConversationMessage?)>
 _authorDirectBlobFreeTextFanout({
+  String? authoredTextIntentToken,
   required DirectEventFanoutAuthoring directEventFanout,
   required DirectEventFanoutRouting routing,
   required P2PService p2pService,
@@ -4749,6 +4755,7 @@ _authorDirectBlobFreeTextFanout({
     );
   } else {
     staged = await directEventFanout.stageTextFanout(
+      authoredTextIntentToken: authoredTextIntentToken,
       stagedRow: stagedRow,
       messageId: resolvedMessageId,
       contactAccountPeerId: targetPeerId,
