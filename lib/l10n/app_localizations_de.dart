@@ -207,6 +207,22 @@ class AppLocalizationsDe extends AppLocalizations {
       'Füge einen Freund hinzu, um Gedanken zu teilen';
 
   @override
+  String get thought_compose_share_failed =>
+      'Noch nicht geteilt. Dein Gedanke ist noch da.';
+
+  @override
+  String get thought_compose_media_left_out =>
+      'Ein Gedanke kann Fotos oder ein Video haben. Einiges wurde weggelassen.';
+
+  @override
+  String get thought_compose_media_failed =>
+      'Deine Medien konnten nicht hinzugefügt werden. Versuche es erneut.';
+
+  @override
+  String get thought_compose_mic_busy =>
+      'Das Mikrofon wird gerade verwendet. Versuche es gleich erneut.';
+
+  @override
   String get thought_compose_open => 'Gedanken teilen';
 
   @override

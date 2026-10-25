@@ -937,15 +937,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           thoughtsOnly: true,
           eligibleContacts: const [],
           audioRecorderService: widget.audioRecorderService,
-          onAttachMedia: () async {
+          onPickMedia: () async {
             try {
-              return await pickPostMediaDrafts();
+              return await pickPostMedia();
             } catch (error) {
               _reportThoughtFailure(error);
-              if (mounted) {
-                _showSnackBar(AppLocalizations.of(context)!.post_send_failed);
-              }
-              return const [];
+              rethrow;
             }
           },
           onSubmitWithOutcome: (draft) async {
@@ -969,10 +966,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             } catch (error) {
               _reportThoughtFailure(error);
             }
-            if (mounted) {
-              _showSnackBar(AppLocalizations.of(context)!.post_send_failed);
-            }
-            return ComposePostSubmitOutcome.keepSheetOpen;
+            return ComposePostSubmitOutcome.shareFailed;
           },
         ),
       );
@@ -1155,10 +1149,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     try {
       final requested = await repository.getPost(postId);
       if (!mounted || !targetIsCurrent()) return;
-      if (requested == null) {
-        notificationStore?.clear();
-        return;
-      }
+      // Not stored yet: the open coordinator keeps the target until its
+      // expiry so an inbox copy landing later still opens this card.
+      if (requested == null) return;
       final query = _thoughtQuery(repository);
       final isOwn = requested.authorPeerId == identity.peerId;
       Future<PostModel?> loadCurrent() async {

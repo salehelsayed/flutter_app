@@ -200,6 +200,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Add a friend to share your thoughts';
 
   @override
+  String get thought_compose_share_failed =>
+      'Not shared yet. Your thought is still here.';
+
+  @override
+  String get thought_compose_media_left_out =>
+      'A thought can have photos, or one video. Some items were left out.';
+
+  @override
+  String get thought_compose_media_failed =>
+      'Couldn\'t add your media. Try again.';
+
+  @override
+  String get thought_compose_mic_busy =>
+      'The microphone is busy right now. Try again in a moment.';
+
+  @override
   String get thought_compose_open => 'Share a thought';
 
   @override

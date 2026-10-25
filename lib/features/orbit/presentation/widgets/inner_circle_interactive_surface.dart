@@ -169,6 +169,9 @@ class _InnerCircleInteractiveSurfaceState
   bool _findOpen = false;
 
   bool _thoughtsVisible = true;
+  // The notes were put away for the "+N" arcs, not by a pinch; closing the
+  // arcs brings them back.
+  bool _thoughtsAwayForArcs = false;
   bool _thoughtMotionEnabled = true;
   final OrbitThoughtSwim _thoughtSwim = OrbitThoughtSwim();
   late final AnimationController _thoughtReveal = AnimationController(
@@ -247,6 +250,7 @@ class _InnerCircleInteractiveSurfaceState
   }
 
   void _setThoughtsVisible(bool visible) {
+    _thoughtsAwayForArcs = false;
     if (_thoughtsVisible == visible) return;
     setState(() {
       _thoughtsVisible = visible;
@@ -323,7 +327,10 @@ class _InnerCircleInteractiveSurfaceState
     // A first thought can arrive during a size-control session that began
     // with no notes. Preserve that session/geometry and keep notes put away;
     // letting them appear would overlap the still-active sculpt controls.
-    if (_editing && _notesOut) {
+    // Open "+N" arcs likewise keep a first thought's notes off the arc faces
+    // until the arcs close.
+    if ((_editing || _overflowExpanded) && _notesOut) {
+      _thoughtsAwayForArcs = _thoughtsAwayForArcs || _overflowExpanded;
       _thoughtsVisible = false;
       _thoughtReveal.value = 0;
     }
@@ -381,6 +388,13 @@ class _InnerCircleInteractiveSurfaceState
       if (_editing) _setEditing(false);
       _armed = null;
     });
+    _restoreThoughtsAfterArcs();
+  }
+
+  void _restoreThoughtsAfterArcs() {
+    if (_thoughtsAwayForArcs && !_overflowExpanded && !_editing) {
+      _setThoughtsVisible(true);
+    }
   }
 
   void _setEditing(bool value) {
@@ -592,6 +606,7 @@ class _InnerCircleInteractiveSurfaceState
   void _onBadgeTap() {
     if (_notesOut) {
       _setThoughtsVisible(false);
+      _thoughtsAwayForArcs = true;
       return;
     }
     setState(() {
@@ -605,6 +620,7 @@ class _InnerCircleInteractiveSurfaceState
         }
       }
     });
+    _restoreThoughtsAfterArcs();
   }
 
   // ---- knob mutation with write-through ----

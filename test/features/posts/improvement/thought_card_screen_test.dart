@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -598,6 +599,51 @@ void main() {
     );
   }
 
+  testWidgets('a failing seen-write keeps the thought on screen', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    posts.focusError = StateError('database locked');
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-message')), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('media still on its way shows a spinner, not a bare Retry', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await pumpMediaFrames(tester);
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('an Arabic thought reads right to left in an English app', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow).copyWith(text: 'فكرة هادئة');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.text('فكرة هادئة', findRichText: true),
+    );
+    expect(paragraph.textDirection, TextDirection.rtl);
+    await finish(tester);
+  });
+
   testWidgets('expiry closes its owned media viewer and the card together', (
     tester,
   ) async {
@@ -703,9 +749,12 @@ class _CardPostRepository extends InMemoryPostRepository {
     return super.loadFeed();
   }
 
+  Object? focusError;
+
   @override
   Future<void> markFocused(String postId) async {
     focusedIds.add(postId);
+    if (focusError != null) throw focusError!;
     await super.markFocused(postId);
     final post = await getPost(postId);
     if (post != null) await savePost(post.copyWith(isRead: true));

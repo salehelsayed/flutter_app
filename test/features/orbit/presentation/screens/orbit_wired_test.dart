@@ -824,10 +824,7 @@ void main() {
         );
 
         await tester.pumpWidget(
-          buildOrbitWired(
-            postRepository: posts,
-            thoughtNowProvider: () => now,
-          ),
+          buildOrbitWired(postRepository: posts, thoughtNowProvider: () => now),
         );
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(2));
@@ -837,21 +834,17 @@ void main() {
           matching: find.text('My own live thought'),
         );
         expect(ownText, findsOneWidget);
-        expect(
-          tester.widget<Text>(ownText).style!.fontWeight,
-          FontWeight.w400,
-        );
+        expect(tester.widget<Text>(ownText).style!.fontWeight, FontWeight.w400);
         expect(find.text('Older own thought'), findsNothing);
         final selfRect = tester.getRect(
           find.byKey(const ValueKey('orbit-self-node')),
         );
         expect(selfRect.size, const Size(48, 48));
-        expect(
-          tester.getRect(ownNote).bottom,
-          lessThanOrEqualTo(selfRect.top),
-        );
+        expect(tester.getRect(ownNote).bottom, lessThanOrEqualTo(selfRect.top));
 
-        await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-own-new')));
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-thought-tap-own-new')),
+        );
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
         expect(
@@ -890,50 +883,49 @@ void main() {
       },
     );
 
-    testWidgets(
-      'deleting the own thought from its card clears the self note',
-      (tester) async {
-        setLargeTestSurface(tester);
-        identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
-        final posts = _OrbitThoughtPostRepository();
-        addTearDown(posts.dispose);
-        await posts.savePost(
-          thought('own-live', text: 'Delete me').copyWith(
-            senderPeerId: testIdentity.peerId,
-            authorPeerId: testIdentity.peerId,
-            authorUsername: testIdentity.username,
-            isIncoming: false,
-          ),
-        );
+    testWidgets('deleting the own thought from its card clears the self note', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('own-live', text: 'Delete me').copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        ),
+      );
 
-        await tester.pumpWidget(
-          buildOrbitWired(
-            postRepository: posts,
-            thoughtNowProvider: () => thoughtNow,
-          ),
-        );
-        await pumpOrbitFrames(tester, count: 8);
-        final ownNote = find.byKey(const ValueKey('orbit-thought-note-self'));
-        expect(ownNote, findsOneWidget);
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      final ownNote = find.byKey(const ValueKey('orbit-thought-note-self'));
+      expect(ownNote, findsOneWidget);
 
-        await tester.tap(
-          find.byKey(const ValueKey('orbit-thought-tap-own-live')),
-        );
-        await pumpOrbitFrames(tester, count: 8);
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('thought-delete')));
-        await pumpOrbitFrames(tester, count: 8);
-        await tester.tap(find.byKey(const ValueKey('thought-delete-confirm')));
-        await pumpOrbitFrames(tester, count: 12);
+      await tester.tap(
+        find.byKey(const ValueKey('orbit-thought-tap-own-live')),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('thought-delete')));
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('thought-delete-confirm')));
+      await pumpOrbitFrames(tester, count: 12);
 
-        expect(find.byType(ThoughtCardScreen), findsNothing);
-        expect(ownNote, findsNothing);
-        expect(await posts.getPost('own-live'), isNull);
-        expect(mediaFileManager.deletedPostIds, ['own-live']);
-        await finishThoughtCase(tester);
-      },
-    );
+      expect(find.byType(ThoughtCardScreen), findsNothing);
+      expect(ownNote, findsNothing);
+      expect(await posts.getPost('own-live'), isNull);
+      expect(mediaFileManager.deletedPostIds, ['own-live']);
+      await finishThoughtCase(tester);
+    });
 
     testWidgets('a voice-only thought note reads "Voice message"', (
       tester,
@@ -1174,6 +1166,49 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a target tapped before its thought is stored opens the card once the thought lands',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        final pending = PendingPostTargetStore();
+        addTearDown(posts.dispose);
+        addTearDown(pending.dispose);
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            pendingPostTargetStore: pending,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        pending.setTarget(const PostRouteTarget(postId: 'late-thought'));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(
+          pending.target?.postId,
+          'late-thought',
+          reason: 'a missing thought keeps the target for the inbox copy',
+        );
+
+        await posts.savePost(thought('late-thought'));
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(
+          tester
+              .widget<ThoughtCardScreen>(find.byType(ThoughtCardScreen))
+              .initialPost
+              .id,
+          'late-thought',
+        );
+        expect(pending.target, isNull);
+        await finishThoughtCase(tester);
+      },
+    );
+
     for (final deleted in [false, true]) {
       testWidgets(
         '${deleted ? 'deleted' : 'missing'} target leaves Orbit with no card, status or error',
@@ -1202,7 +1237,8 @@ void main() {
           expect(find.byType(OrbitWired), findsOneWidget);
           expect(find.byType(ThoughtCardScreen), findsNothing);
           expect(posts.focusedIds, isEmpty);
-          expect(pending.target, isNull);
+          // The open coordinator's expiry clears the target, not Orbit.
+          expect(pending.target?.postId, 'gone-thought');
           expect(pending.statusMessage, isNull);
           expect(find.textContaining('Finishing catch-up'), findsNothing);
           expect(find.byType(SnackBar), findsNothing);

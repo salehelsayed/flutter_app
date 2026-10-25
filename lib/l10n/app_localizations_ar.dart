@@ -195,6 +195,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_nobody_to_share_with => 'أضف صديقًا لتشارك خواطرك';
 
   @override
+  String get thought_compose_share_failed =>
+      'لم تتم المشاركة بعد. خاطرتك ما زالت هنا.';
+
+  @override
+  String get thought_compose_media_left_out =>
+      'يمكن أن تضم الخاطرة صورًا أو فيديو واحدًا. تُركت بعض العناصر.';
+
+  @override
+  String get thought_compose_media_failed =>
+      'تعذّرت إضافة الوسائط. حاول مرة أخرى.';
+
+  @override
+  String get thought_compose_mic_busy =>
+      'الميكروفون مشغول الآن. حاول بعد قليل.';
+
+  @override
   String get thought_compose_open => 'شارك خاطرة';
 
   @override

@@ -139,6 +139,23 @@ void main() {
     },
   );
 
+  testWidgets('an Arabic note reads right to left in an English app', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        OrbitThoughtNoteBubble(
+          authorName: 'Friend 0',
+          note: note('ar', text: 'فكرة هادئة'),
+        ),
+      ),
+    );
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.text('فكرة هادئة'),
+    );
+    expect(paragraph.textDirection, TextDirection.rtl);
+  });
+
   testWidgets(
     'bubble width/ellipsis and only heavier text distinguish unseen',
     (tester) async {
@@ -753,6 +770,100 @@ void main() {
       await tester.pump();
       expect(viz().geometry.avatarScale, closeTo(1.0, 1e-9));
       expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  Widget arcSurface(Map<String, OrbitThoughtNote> notes) => wrap(
+    InnerCircleInteractiveSurface(
+      userPeerId: 'self',
+      onSelfAvatarTap: () {},
+      items: items,
+      onFriendTap: (_) {},
+      onGroupTap: (_) {},
+      thoughtsByPeerId: notes,
+      nowProvider: () => start,
+    ),
+  );
+
+  Future<void> pinchIn(WidgetTester tester) async {
+    final center = tester.getCenter(
+      find.byKey(const ValueKey('orbit-thought-pinch-surface')),
+    );
+    final a = await tester.startGesture(
+      center - const Offset(50, 0),
+      pointer: 11,
+    );
+    final b = await tester.startGesture(
+      center + const Offset(50, 0),
+      pointer: 12,
+    );
+    await a.moveBy(const Offset(25, 0));
+    await b.moveBy(const Offset(-25, 0));
+    await tester.pump();
+    await a.up();
+    await b.up();
+    await tester.pump();
+  }
+
+  testWidgets('notes put away by the badge come back when the arcs close', (
+    tester,
+  ) async {
+    await tester.pumpWidget(arcSurface({'friend-0': note('live')}));
+    OrbitalVisualization viz() =>
+        tester.widget(find.byType(OrbitalVisualization));
+    for (final expanded in [false, true, false]) {
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(viz().overflowExpanded, expanded);
+    }
+    expect(
+      find.byType(OrbitThoughtNoteBubble),
+      findsOneWidget,
+      reason: 'closing the arcs restores notes the badge put away',
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'notes put away by a pinch stay away for a new thought and the arcs',
+    (tester) async {
+      await tester.pumpWidget(arcSurface({'friend-0': note('live')}));
+      await pinchIn(tester);
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      await tester.pumpWidget(arcSurface({'friend-0': note('newer')}));
+      await tester.pump();
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(find.byType(OrbitThoughtNoteBubble), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'a first thought arriving under open arcs waits for them to close',
+    (tester) async {
+      await tester.pumpWidget(arcSurface(const {}));
+      OrbitalVisualization viz() =>
+          tester.widget(find.byType(OrbitalVisualization));
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(viz().overflowExpanded, isTrue);
+      await tester.pumpWidget(arcSurface({'friend-0': note('first')}));
+      await tester.pump();
+      expect(
+        find.byType(OrbitThoughtNoteBubble),
+        findsNothing,
+        reason: 'notes must not cover the open arc faces',
+      );
+      expect(viz().overflowExpanded, isTrue);
+      await tester.tap(find.byType(OverflowBadge));
+      await tester.pump();
+      expect(viz().overflowExpanded, isFalse);
+      expect(find.byType(OrbitThoughtNoteBubble), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     },
   );

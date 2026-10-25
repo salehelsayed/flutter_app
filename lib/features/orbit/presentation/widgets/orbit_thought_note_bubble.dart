@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -33,8 +34,10 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
 
   /// The inherited app text style (the phone's real font) merged with the
   /// note style, so measuring and painting lay out the same glyphs.
-  static TextStyle _resolvedStyle(BuildContext context, OrbitThoughtNote note) =>
-      DefaultTextStyle.of(context).style.merge(textStyle(isRead: note.isRead));
+  static TextStyle _resolvedStyle(
+    BuildContext context,
+    OrbitThoughtNote note,
+  ) => DefaultTextStyle.of(context).style.merge(textStyle(isRead: note.isRead));
 
   static String _preview(BuildContext context, OrbitThoughtNote note) =>
       orbitMediaPreviewLabel(
@@ -52,7 +55,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
         style: _resolvedStyle(context, note),
       ),
       textAlign: TextAlign.center,
-      textDirection: Directionality.of(context),
+      textDirection: detectTextDirection(_preview(context, note)),
       textScaler: MediaQuery.textScalerOf(context),
       maxLines: 2,
       ellipsis: '…',
@@ -105,6 +108,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
                 ),
                 child: Text(
                   preview,
+                  textDirection: detectTextDirection(preview),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   textAlign: TextAlign.center,

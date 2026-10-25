@@ -454,6 +454,30 @@ abstract class AppLocalizations {
   /// **'Add a friend to share your thoughts'**
   String get thought_compose_nobody_to_share_with;
 
+  /// No description provided for @thought_compose_share_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not shared yet. Your thought is still here.'**
+  String get thought_compose_share_failed;
+
+  /// No description provided for @thought_compose_media_left_out.
+  ///
+  /// In en, this message translates to:
+  /// **'A thought can have photos, or one video. Some items were left out.'**
+  String get thought_compose_media_left_out;
+
+  /// No description provided for @thought_compose_media_failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t add your media. Try again.'**
+  String get thought_compose_media_failed;
+
+  /// No description provided for @thought_compose_mic_busy.
+  ///
+  /// In en, this message translates to:
+  /// **'The microphone is busy right now. Try again in a moment.'**
+  String get thought_compose_mic_busy;
+
   /// No description provided for @thought_compose_open.
   ///
   /// In en, this message translates to:

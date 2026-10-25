@@ -160,7 +160,7 @@ void main() {
   );
 
   testWidgets(
-    'recorder auto-stop resets the recording UI without attaching a draft',
+    'recorder auto-stop at the time limit keeps the voice note attached',
     (tester) async {
       final recorder = FakeAudioRecorderService()
         ..fakeDurationMs = 6400
@@ -193,7 +193,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('Cancel'), findsNothing);
-      expect(find.text('Voice attached'), findsNothing);
+      expect(find.text('Voice attached'), findsOneWidget);
       expect(recorder.isRecording, isFalse);
       expect(recorder.onAutoStopped, isNull);
     },

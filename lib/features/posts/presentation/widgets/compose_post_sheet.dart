@@ -13,6 +13,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
@@ -29,7 +30,21 @@ class ComposePostResult {
   });
 }
 
-enum ComposePostSubmitOutcome { closeSheet, keepSheetOpen, nobodyToShareWith }
+enum ComposePostSubmitOutcome {
+  closeSheet,
+  keepSheetOpen,
+  nobodyToShareWith,
+  shareFailed,
+}
+
+enum _ComposeNotice {
+  nobodyToShareWith,
+  shareFailed,
+  mediaLeftOut,
+  mediaFailed,
+  micOff,
+  micBusy,
+}
 
 class ComposePostSheet extends StatefulWidget {
   /// The live Orbit composer shares only with friends. Dormant Posts callers
@@ -40,6 +55,7 @@ class ComposePostSheet extends StatefulWidget {
   final Future<ComposePostSubmitOutcome> Function(ComposePostResult result)?
   onSubmitWithOutcome;
   final Future<List<PostMediaDraft>> Function()? onAttachMedia;
+  final Future<PostMediaPick> Function()? onPickMedia;
   final Future<PostMediaDraft?> Function()? onAttachVoice;
   final AudioRecorderService? audioRecorderService;
   final NearbyComposeAvailability? nearbyAvailability;
@@ -55,6 +71,7 @@ class ComposePostSheet extends StatefulWidget {
     this.onSubmit,
     this.onSubmitWithOutcome,
     this.onAttachMedia,
+    this.onPickMedia,
     this.onAttachVoice,
     this.audioRecorderService,
     this.nearbyAvailability,
@@ -90,7 +107,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
-  bool _nobodyToShareWith = false;
+  _ComposeNotice? _notice;
   final AmplitudeBuffer _amplitudeBuffer = AmplitudeBuffer(size: 24);
   StreamSubscription<Duration>? _durationSubscription;
   StreamSubscription<double>? _amplitudeSubscription;
@@ -137,7 +154,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
-    setState(() => _isSubmitting = true);
+    setState(() {
+      _isSubmitting = true;
+      _notice = null;
+    });
     try {
       final audience = widget.thoughtsOnly
           ? PostAudience.allFriends()
@@ -157,11 +177,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           mediaDrafts: _mediaDrafts,
         ),
       );
-      if (outcome == ComposePostSubmitOutcome.closeSheet && mounted) {
-        Navigator.of(context).pop();
-      } else if (outcome == ComposePostSubmitOutcome.nobodyToShareWith &&
-          mounted) {
-        setState(() => _nobodyToShareWith = true);
+      if (!mounted) return;
+      switch (outcome) {
+        case ComposePostSubmitOutcome.closeSheet:
+          Navigator.of(context).pop();
+        case ComposePostSubmitOutcome.nobodyToShareWith:
+          setState(() => _notice = _ComposeNotice.nobodyToShareWith);
+        case ComposePostSubmitOutcome.shareFailed:
+          setState(() => _notice = _ComposeNotice.shareFailed);
+        case ComposePostSubmitOutcome.keepSheetOpen:
+          break;
       }
     } finally {
       if (mounted) {
@@ -202,16 +227,32 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   Future<void> _attachMedia() async {
-    if (widget.onAttachMedia == null || _isAttaching) {
+    if ((widget.onAttachMedia == null && widget.onPickMedia == null) ||
+        _isAttaching) {
       return;
     }
-    setState(() => _isAttaching = true);
+    setState(() {
+      _isAttaching = true;
+      _notice = null;
+    });
     try {
-      final drafts = await widget.onAttachMedia!();
-      if (!mounted || drafts.isEmpty) {
+      final PostMediaPick pick;
+      try {
+        pick = widget.onPickMedia != null
+            ? await widget.onPickMedia!()
+            : (drafts: await widget.onAttachMedia!(), leftOut: false);
+      } on Object {
+        if (mounted) setState(() => _notice = _ComposeNotice.mediaFailed);
         return;
       }
-      setState(() => _mediaDrafts = drafts);
+      if (!mounted) return;
+      final combined = combinePostMedia(_mediaDrafts, pick.drafts);
+      setState(() {
+        _mediaDrafts = combined.drafts;
+        if (pick.leftOut || combined.leftOut) {
+          _notice = _ComposeNotice.mediaLeftOut;
+        }
+      });
     } finally {
       if (mounted) {
         setState(() => _isAttaching = false);
@@ -252,11 +293,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     try {
       _microphoneCaptureLease = microphoneCaptureLeasesFor(recorder).acquire();
     } on MicrophoneCaptureLeaseRefused {
+      setState(() => _notice = _ComposeNotice.micBusy);
       return;
     }
 
     _pendingRecordingAbort = false;
     setState(() {
+      _notice = null;
       _recordingState = VoiceRecordingState.arming;
       _recordingDuration = Duration.zero;
       _recordingAmplitudes = const <double>[];
@@ -266,7 +309,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     try {
       hasPermission = await recorder.requestPermission();
     } on Object {
-      if (mounted) setState(_resetRecordingState);
+      if (mounted) setState(() => _resetRecordingState(_ComposeNotice.micBusy));
       _releaseMicrophoneCaptureLease();
       return;
     }
@@ -280,7 +323,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
     if (!hasPermission) {
       if (mounted) {
-        setState(_resetRecordingState);
+        setState(() => _resetRecordingState(_ComposeNotice.micOff));
       }
       _releaseMicrophoneCaptureLease();
       return;
@@ -291,7 +334,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       await recorder.start(outputPath: '');
     } catch (_) {
       if (mounted) {
-        setState(_resetRecordingState);
+        setState(() => _resetRecordingState(_ComposeNotice.micBusy));
       }
       _releaseMicrophoneCaptureLease();
       return;
@@ -366,19 +409,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       return;
     }
 
-    final completedRecording = recording;
-    if (completedRecording == null) {
-      setState(_resetRecordingState);
-      return;
-    }
+    _finishRecording(recording, waveform);
+  }
 
+  void _finishRecording(AudioRecording? recording, List<double> waveform) {
     setState(() {
       _resetRecordingState();
+      if (recording == null) return;
       _mediaDrafts = <PostMediaDraft>[
         PostMediaDraft(
-          localFilePath: completedRecording.filePath,
-          mime: completedRecording.mime,
-          durationMs: completedRecording.durationMs,
+          localFilePath: recording.filePath,
+          mime: recording.mime,
+          durationMs: recording.durationMs,
           waveform: waveform,
         ),
       ];
@@ -423,7 +465,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     }
   }
 
-  void _resetRecordingState() {
+  void _resetRecordingState([_ComposeNotice? notice]) {
+    if (notice != null) _notice = notice;
     _pendingRecordingAbort = false;
     _recordingState = VoiceRecordingState.idle;
     _recordingDuration = Duration.zero;
@@ -433,14 +476,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   void _onRecorderAutoStopped(AudioRecording? recording) {
-    // The recorder stopped itself at the max recording duration without any
-    // user gesture; reset the recording UI. The result is discarded — no
-    // draft is attached.
+    // The recorder stopped itself at the max recording duration; keep what
+    // was recorded as the voice draft, as chat does.
     widget.audioRecorderService?.onAutoStopped = null;
     _releaseMicrophoneCaptureLease();
     _cancelRecorderSubscriptions();
     if (mounted) {
-      setState(_resetRecordingState);
+      _finishRecording(recording, downsampleWaveform(_waveformSamples, 50));
     }
     emitFlowEvent(
       layer: 'FL',
@@ -706,7 +748,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   Row(
                     children: [
                       OutlinedButton.icon(
-                        onPressed: widget.onAttachMedia == null || _isRecording
+                        onPressed:
+                            (widget.onAttachMedia == null &&
+                                    widget.onPickMedia == null) ||
+                                _isRecording
                             ? null
                             : _attachMedia,
                         icon: const Icon(
@@ -878,15 +923,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       AppLocalizations.of(context)!.thought_compose_lifetime,
                       style: const TextStyle(color: Colors.white70),
                     ),
-                    if (_nobodyToShareWith) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        AppLocalizations.of(
-                          context,
-                        )!.thought_compose_nobody_to_share_with,
-                        style: const TextStyle(color: Color(0xFFFFB4A9)),
-                      ),
-                    ],
+                    const SizedBox(height: 12),
+                  ],
+                  if (_notice case final notice?) ...[
+                    Text(
+                      _noticeText(AppLocalizations.of(context)!, notice),
+                      style: const TextStyle(color: Color(0xFFFFB4A9)),
+                    ),
                     const SizedBox(height: 12),
                   ],
                   SizedBox(
@@ -916,6 +959,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     );
   }
 }
+
+String _noticeText(AppLocalizations l10n, _ComposeNotice notice) =>
+    switch (notice) {
+      _ComposeNotice.nobodyToShareWith =>
+        l10n.thought_compose_nobody_to_share_with,
+      _ComposeNotice.shareFailed => l10n.thought_compose_share_failed,
+      _ComposeNotice.mediaLeftOut => l10n.thought_compose_media_left_out,
+      _ComposeNotice.mediaFailed => l10n.thought_compose_media_failed,
+      _ComposeNotice.micOff => l10n.mic_perm_dialog_body,
+      _ComposeNotice.micBusy => l10n.thought_compose_mic_busy,
+    };
 
 class _NearbyComposeAvailabilityCard extends StatelessWidget {
   final NearbyComposeAvailability availability;

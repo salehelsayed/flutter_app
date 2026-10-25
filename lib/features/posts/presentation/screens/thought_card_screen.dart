@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -207,7 +208,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         await widget.postRepo.markFocused(postId);
         _markedIds.add(postId);
       } catch (_) {
-        if (mounted && !_closing) setState(() => _loadFailed = true);
+        // The thought is already on screen; it stays unseen and is marked on
+        // the next open.
       } finally {
         _markPendingIds.remove(postId);
       }
@@ -476,6 +478,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                     const SizedBox(height: 24),
                     LinkableText(
                       text: _post.text,
+                      textDirection: detectTextDirection(_post.text),
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(color: colors.textPrimary),
                     ),
@@ -525,7 +528,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   Widget _buildMedia(AppLocalizations l10n) {
     if (_media.isEmpty) {
-      return _mediaLoading
+      // No attachment rows yet means the media is still on its way (or, for
+      // your own thought, still uploading), not that a download failed.
+      return _mediaLoading || !_mediaLoadFailed
           ? const Center(child: CircularProgressIndicator())
           : TextButton(
               onPressed: () => unawaited(_loadMedia(_post.id)),
