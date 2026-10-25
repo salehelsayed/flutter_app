@@ -5,12 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/post_listener.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../shared/fakes/fake_notification_service.dart';
@@ -88,6 +90,22 @@ ChatMessage _message(
   );
 }
 
+ChatMessage _retract(String senderPeerId, String postId) {
+  final now = DateTime.now().toUtc();
+  return ChatMessage(
+    from: senderPeerId,
+    to: 'peer-self',
+    content: PostRetractEnvelope(
+      eventId: 'evt-retract-$postId',
+      createdAt: now,
+      postId: postId,
+      postCreatedAt: now.subtract(const Duration(minutes: 1)),
+    ).toJson(),
+    timestamp: now.toIso8601String(),
+    isIncoming: true,
+  );
+}
+
 /// A store whose write fails the way a locked or full database does.
 class _FailingPostRepository extends InMemoryPostRepository {
   @override
@@ -112,6 +130,7 @@ class _CancellingNotificationService extends FakeNotificationService
 
 void main() {
   late StreamController<ChatMessage> controller;
+  late StreamController<ChatMessage> retracts;
   late InMemoryContactRepository contacts;
   late InMemoryPostRepository posts;
   late _CancellingNotificationService notifications;
@@ -124,6 +143,7 @@ void main() {
   setUp(() {
     foreground = false;
     controller = StreamController<ChatMessage>.broadcast();
+    retracts = StreamController<ChatMessage>.broadcast();
     contacts = InMemoryContactRepository();
     posts = InMemoryPostRepository();
     notifications = _CancellingNotificationService();
@@ -133,9 +153,12 @@ void main() {
     );
     bridge = RecordingFakeBridge()
       ..whenCommand('message:confirm', (_) => '{"ok":true}');
-    cardsDir = Directory.systemTemp.createTempSync('post-listener-thought-cards-');
+    cardsDir = Directory.systemTemp.createTempSync(
+      'post-listener-thought-cards-',
+    );
     listener = PostListener(
       postCreateStream: controller.stream,
+      postRetractStream: retracts.stream,
       postRepo: posts,
       contactRepo: contacts,
       bridge: bridge,
@@ -150,6 +173,7 @@ void main() {
     listener.dispose();
     posts.dispose();
     await controller.close();
+    await retracts.close();
     await remoteGate.clear();
     if (cardsDir.existsSync()) cardsDir.deleteSync(recursive: true);
   });
@@ -177,16 +201,21 @@ void main() {
     expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
   });
 
-  test('titles the card with the contact name, never the claimed author', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+  test(
+    'titles the card with the contact name, never the claimed author',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
-    controller.add(_message('peer-bob', 'ATTACKER CLAIMED NAME', text: 'x' * 200));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+      controller.add(
+        _message('peer-bob', 'ATTACKER CLAIMED NAME', text: 'x' * 200),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    final shown = notifications.shownThoughts.single;
-    expect(shown.title, 'Bob shared a thought');
-    expect(shown.body, 'x' * 140);
-  });
+      final shown = notifications.shownThoughts.single;
+      expect(shown.title, 'Bob shared a thought');
+      expect(shown.body, 'x' * 140);
+    },
+  );
 
   test('shows post notifications for active direct contacts', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
@@ -200,6 +229,19 @@ void main() {
     expect(shown.body, 'A post from Bob');
     expect(shown.payload, 'post:post-peer-bob');
     expect((await posts.loadFeed()), hasLength(1));
+  });
+
+  test('the card is told when its thought expires', () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    final created = DateTime.now().toUtc().subtract(const Duration(hours: 1));
+
+    controller.add(_message('peer-bob', 'Bob', created: created));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(
+      notifications.shownThoughts.single.expiresAt,
+      ThoughtLifetime.expiresAt(created),
+    );
   });
 
   test('posts no notification while the app is in the foreground', () async {
@@ -234,80 +276,96 @@ void main() {
     ]);
   });
 
-  test('retires the card the background push showed for the same friend', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
-    // The headless isolate showed bob-0 while the app was closed. Its post
-    // never reached the feed, so only the shared registry knows that card.
-    await FriendThoughtCardRegistry(
-      directory: cardsDir,
-    ).claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-0');
+  test(
+    'retires the card the background push showed for the same friend',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      // The headless isolate showed bob-0 while the app was closed. Its post
+      // never reached the feed, so only the shared registry knows that card.
+      await FriendThoughtCardRegistry(
+        directory: cardsDir,
+      ).claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-0');
 
-    final emitted = listener.incomingPostStream.first;
-    controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
-    expect((await emitted).id, 'bob-1');
-
-    expect(notifications.cancelled, ['post:bob-0']);
-    expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-1']);
-  });
-
-  test('draining thoughts the push already announced keeps the newest card', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
-    final background = FriendThoughtCardRegistry(directory: cardsDir);
-    for (final postId in ['bob-1', 'bob-2']) {
-      await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:$postId');
-      await remoteGate.markAnnouncement(
-        payload: 'post:$postId',
-        messageId: 'evt-$postId',
-      );
-    }
-
-    for (final postId in ['bob-1', 'bob-2']) {
       final emitted = listener.incomingPostStream.first;
-      controller.add(_message('peer-bob', 'Bob', postId: postId));
-      expect((await emitted).id, postId);
-    }
+      controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
+      expect((await emitted).id, 'bob-1');
 
-    expect(notifications.cancelled, isEmpty);
-    expect(notifications.shownThoughts, isEmpty);
-    expect(await posts.loadFeed(), hasLength(2));
-  });
+      expect(notifications.cancelled, ['post:bob-0']);
+      expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-1']);
+    },
+  );
 
-  test('draining announced thoughts nobody claimed retires the older banner', () async {
-    // iOS: the notification extension showed both banners and marked the
-    // gate, but it never touches the registry.
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
-    for (final postId in ['bob-1', 'bob-2']) {
-      await remoteGate.markAnnouncement(
-        payload: 'post:$postId',
-        messageId: 'evt-$postId',
-      );
-    }
+  test(
+    'draining thoughts the push already announced keeps the newest card',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final background = FriendThoughtCardRegistry(directory: cardsDir);
+      for (final postId in ['bob-1', 'bob-2']) {
+        await background.claim(
+          senderPeerId: 'peer-bob',
+          cardKey: 'post:$postId',
+        );
+        await remoteGate.markAnnouncement(
+          payload: 'post:$postId',
+          messageId: 'evt-$postId',
+        );
+      }
 
-    for (final postId in ['bob-1', 'bob-2']) {
-      final emitted = listener.incomingPostStream.first;
-      controller.add(_message('peer-bob', 'Bob', postId: postId));
-      expect((await emitted).id, postId);
-    }
+      for (final postId in ['bob-1', 'bob-2']) {
+        final emitted = listener.incomingPostStream.first;
+        controller.add(_message('peer-bob', 'Bob', postId: postId));
+        expect((await emitted).id, postId);
+      }
 
-    expect(notifications.cancelled, ['post:bob-1']);
-    expect(notifications.shownThoughts, isEmpty);
-  });
+      expect(notifications.cancelled, isEmpty);
+      expect(notifications.shownThoughts, isEmpty);
+      // One live thought per friend: the newer one replaced the older one.
+      expect((await posts.loadFeed()).map((p) => p.id), ['bob-2']);
+    },
+  );
 
-  test('a thought behind the friend\'s newer card gets no card of its own', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
-    final background = FriendThoughtCardRegistry(directory: cardsDir);
-    await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-1');
-    await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-2');
+  test(
+    'draining announced thoughts nobody claimed retires the older banner',
+    () async {
+      // iOS: the notification extension showed both banners and marked the
+      // gate, but it never touches the registry.
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      for (final postId in ['bob-1', 'bob-2']) {
+        await remoteGate.markAnnouncement(
+          payload: 'post:$postId',
+          messageId: 'evt-$postId',
+        );
+      }
 
-    for (final postId in ['bob-1', 'bob-2']) {
-      final emitted = listener.incomingPostStream.first;
-      controller.add(_message('peer-bob', 'Bob', postId: postId));
-      expect((await emitted).id, postId);
-    }
+      for (final postId in ['bob-1', 'bob-2']) {
+        final emitted = listener.incomingPostStream.first;
+        controller.add(_message('peer-bob', 'Bob', postId: postId));
+        expect((await emitted).id, postId);
+      }
 
-    expect(notifications.cancelled, isEmpty);
-    expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
-  });
+      expect(notifications.cancelled, ['post:bob-1']);
+      expect(notifications.shownThoughts, isEmpty);
+    },
+  );
+
+  test(
+    'a thought behind the friend\'s newer card gets no card of its own',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final background = FriendThoughtCardRegistry(directory: cardsDir);
+      await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-1');
+      await background.claim(senderPeerId: 'peer-bob', cardKey: 'post:bob-2');
+
+      for (final postId in ['bob-1', 'bob-2']) {
+        final emitted = listener.incomingPostStream.first;
+        controller.add(_message('peer-bob', 'Bob', postId: postId));
+        expect((await emitted).id, postId);
+      }
+
+      expect(notifications.cancelled, isEmpty);
+      expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-2']);
+    },
+  );
 
   test('a media-only thought names its media in the body', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
@@ -326,6 +384,112 @@ void main() {
       'Photo',
     ]);
   });
+
+  test(
+    'shows the card once the thought is stored, before its media downloads',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final download = Completer<PostMediaAttachmentModel>();
+      PostMediaAttachmentModel? requested;
+      final slow = PostListener(
+        postCreateStream: controller.stream,
+        postRepo: posts,
+        contactRepo: contacts,
+        notificationService: notifications,
+        isAppForegroundActive: () async => false,
+        hydratePostMediaFn: ({required attachment, required postId}) {
+          requested = attachment;
+          return download.future;
+        },
+      );
+      listener.dispose();
+      slow.start();
+      addTearDown(slow.dispose);
+      final emitted = slow.incomingPostStream.first;
+
+      controller.add(
+        _message(
+          'peer-bob',
+          'Bob',
+          postId: 'photo',
+          text: '',
+          mediaKind: 'image',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(download.isCompleted, isFalse);
+      expect(notifications.shownThoughts.map((n) => (n.payload, n.body)), [
+        ('post:photo', 'Photo'),
+      ]);
+
+      download.complete(requested!.copyWith(downloadStatus: 'done'));
+      expect((await emitted).media.single.downloadStatus, 'done');
+      expect(notifications.shownThoughts, hasLength(1));
+    },
+  );
+
+  test(
+    'a thought that arrives expired takes the card its push showed with it',
+    () async {
+      contacts.addTestContact(_contact('peer-old', 'Old'));
+
+      controller.add(
+        _message(
+          'peer-old',
+          'Old',
+          postId: 'stale',
+          created: DateTime.now().subtract(const Duration(hours: 25)),
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.loadFeed(), isEmpty);
+      expect(notifications.shownThoughts, isEmpty);
+      expect(notifications.cancelled, ['post:stale']);
+    },
+  );
+
+  test(
+    'a retraction that outruns its thought keeps the deleted thought out',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      retracts.add(_retract('peer-bob', 'bob-gone'));
+      await pumpEventQueue();
+      controller.add(
+        _message(
+          'peer-bob',
+          'Bob',
+          postId: 'bob-gone',
+          confirmNonce: 'nonce-gone',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(await posts.getPost('bob-gone'), isNull);
+      expect(notifications.shownThoughts, isEmpty);
+      expect(notifications.cancelled, ['post:bob-gone']);
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-gone', 'ok': true},
+      ]);
+    },
+  );
+
+  test(
+    "an early retraction from anyone but the author changes nothing",
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+
+      retracts.add(_retract('peer-mallory', 'bob-1'));
+      await pumpEventQueue();
+      controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect((await posts.getPost('bob-1'))?.id, 'bob-1');
+      expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-1']);
+    },
+  );
 
   test(
     'suppresses notifications for archived senders but still persists',
@@ -383,9 +547,9 @@ void main() {
 
         expect(download.isCompleted, isFalse);
         expect(
-          (await posts.loadPostMediaAttachments('photo')).map(
-            (m) => m.downloadStatus,
-          ),
+          (await posts.loadPostMediaAttachments(
+            'photo',
+          )).map((m) => m.downloadStatus),
           ['pending'],
         );
         expect(bridge.payloadsFor('message:confirm'), [
@@ -416,8 +580,12 @@ void main() {
       contacts.addTestContact(_contact('peer-eve', 'Eve', blocked: true));
       contacts.addTestContact(_contact('peer-old', 'Old'));
 
-      controller.add(_message('peer-stranger', 'Stranger', confirmNonce: 'nonce-unknown'));
-      controller.add(_message('peer-eve', 'Eve', confirmNonce: 'nonce-blocked'));
+      controller.add(
+        _message('peer-stranger', 'Stranger', confirmNonce: 'nonce-unknown'),
+      );
+      controller.add(
+        _message('peer-eve', 'Eve', confirmNonce: 'nonce-blocked'),
+      );
       controller.add(
         _message(
           'peer-old',

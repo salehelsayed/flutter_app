@@ -179,6 +179,7 @@ class _RecordingNotificationService implements NotificationService {
     required String postId,
     required String title,
     required String body,
+    required DateTime expiresAt,
   }) async {}
 
   @override
@@ -198,9 +199,11 @@ class _RecordingNotificationService implements NotificationService {
     required String title,
     required String body,
   }) async {
-    missedCallNotifications.add(
-      (contactAccountPeerId: contactAccountPeerId, title: title, body: body),
-    );
+    missedCallNotifications.add((
+      contactAccountPeerId: contactAccountPeerId,
+      title: title,
+      body: body,
+    ));
   }
 
   final missedCallNotifications =
@@ -487,647 +490,621 @@ void main() {
 // ---------------------------------------------------------------------------
 
 void _runAlice() {
-  testWidgets(
-    'Alice(notif-open during other chat) — repro',
-    (tester) async {
-      print('\n${'═' * 60}');
-      print('  ALICE (NOTIF-OPEN DURING OTHER CHAT) — REPRO');
-      print('${'═' * 60}\n');
+  testWidgets('Alice(notif-open during other chat) — repro', (tester) async {
+    print('\n${'═' * 60}');
+    print('  ALICE (NOTIF-OPEN DURING OTHER CHAT) — REPRO');
+    print('${'═' * 60}\n');
 
-      // ── Mount the harness app ─────────────────────────────────────────
-      await tester.pumpWidget(const _AliceHarnessApp());
-      await tester.pump();
+    // ── Mount the harness app ─────────────────────────────────────────
+    await tester.pumpWidget(const _AliceHarnessApp());
+    await tester.pump();
 
-      // ── Stack ─────────────────────────────────────────────────────────
-      final stack = await setupGroupMultiDeviceStack(
-        dbName: _dbName,
-        username: 'AliceNotifOpen',
-        cliPeerFixture: null,
-      );
-      await waitForOnline(
-        stack.p2pService,
-        timeout: const Duration(seconds: 60),
-      );
+    // ── Stack ─────────────────────────────────────────────────────────
+    final stack = await setupGroupMultiDeviceStack(
+      dbName: _dbName,
+      username: 'AliceNotifOpen',
+      cliPeerFixture: null,
+    );
+    await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
-      // 1:1 message repository wired against the stack DB.
-      final custodyDb = DirectInboxCustodyDbBindings(stack.db);
-      final messageRepo = MessageRepositoryImpl(
-        dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
-        dbApplyIncomingOrdinaryTextMutation:
-            ({required incomingRow, required kind}) =>
-                dbApplyIncomingOrdinaryTextMutation(
-                  stack.db,
-                  incomingRow: incomingRow,
-                  kind: kind,
-                ),
-        dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
-        dbLoadLatestMessageForContact: (p) =>
-            dbLoadLatestMessageForContact(stack.db, p),
-        dbUpdateMessageStatus: (id, s) =>
-            dbUpdateMessageStatus(stack.db, id, s),
-        dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
-        dbExistsMessageByContent:
-            (contactPeerId, senderPeerId, text, timestamp) =>
-                dbExistsMessageByContent(
-                  stack.db,
-                  contactPeerId,
-                  senderPeerId,
-                  text,
-                  timestamp,
-                ),
-        dbCountMessagesForContact: (p) =>
-            dbCountMessagesForContact(stack.db, p),
-        dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
-        dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),
-        dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
-        dbCountTotalUnreadExcludingArchived: () =>
-            dbCountTotalUnreadExcludingArchived(stack.db),
-        dbDeleteMessagesForContact: (p) =>
-            dbDeleteMessagesForContact(stack.db, p),
-        dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
-        dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-            dbLoadMessagesPage(
-              stack.db,
-              p,
-              limit: limit,
-              beforeTimestamp: beforeTimestamp,
-            ),
-        dbLoadFailedOutgoingMessages: () =>
-            dbLoadFailedOutgoingMessages(stack.db),
-        dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
-            dbLoadUnackedOutgoingMessages(
-              stack.db,
-              olderThan: olderThan,
-              limit: limit,
-            ),
-        dbLoadConversationThreadSummaries: (ids) =>
-            dbLoadConversationThreadSummaries(stack.db, ids),
-        dbRecoverStuckSendingMessages:
-            ({required DateTime olderThan, int limit = 50}) =>
-                dbRecoverStuckSendingMessages(
-                  stack.db,
-                  olderThan: olderThan,
-                  limit: limit,
-                ),
-        dbUpdateWireEnvelope: (id, we) =>
-            dbUpdateWireEnvelope(stack.db, id, we),
-        dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
-        dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
-        dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
-        loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
-        dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
-        dbLoadDirectInboxCustodyOutbox: custodyDb.load,
-        dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
-        dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
-            custodyDb.loadOwnerForMessageId,
-        dbRecordDirectInboxCustodyFailureIfExact:
-            custodyDb.recordFailureIfExact,
-        dbCompleteAcceptedDirectInboxCustodyIfExact:
-            custodyDb.completeAcceptedIfExact,
-        dbLoadStuckSendingOutgoingMessages:
-            ({required DateTime olderThan, int limit = 50}) =>
-                dbLoadStuckSendingOutgoingMessages(
-                  stack.db,
-                  olderThan: olderThan,
-                  limit: limit,
-                ),
-        dbLoadSendingOutgoingMessages: () =>
-            dbLoadSendingOutgoingMessages(stack.db),
-        dbConditionalTransitionStatus:
-            (id, {required fromStatus, required toStatus}) =>
-                dbConditionalTransitionStatus(
-                  stack.db,
-                  id,
-                  fromStatus: fromStatus,
-                  toStatus: toStatus,
-                ),
-      );
-
-      // ── Recording notification service + tap-binding glue ─────────────
-      final recording = _RecordingNotificationService();
-      await recording.initialize();
-      final NotificationService notificationService = recording;
-
-      final chatConversationTracker = ActiveConversationTracker();
-      AppLifecycleState currentLifecycle = AppLifecycleState.resumed;
-
-      final trace = <String>[];
-
-      // ── Real ChatMessageListener wired to the recording notification svc ──
-      final chatListener = ChatMessageListener(
-        chatMessageStream: stack.p2pService.messageStream,
-        messageRepo: messageRepo,
-        contactRepo: stack.contactRepo,
-        bridge: stack.bridge,
-        getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
-        notificationService: notificationService,
-        appVisibility: TrackerBackedAppVisibility(
-          tracker: chatConversationTracker,
-          lifecycle: () => currentLifecycle,
-        ),
-      );
-      chatListener.start();
-
-      // Bundle the deps the dispatcher and the user-C push both need.
-      final convDeps = _AliceConversationDeps(
-        identityRepo: stack.identityRepo,
-        messageRepo: messageRepo,
-        chatListener: chatListener,
-        p2pService: stack.p2pService,
-        bridge: stack.bridge,
-        contactRepo: stack.contactRepo,
-        conversationTracker: chatConversationTracker,
-      );
-
-      // Mirrors main.dart's `_setupNotificationTapHandler`. When
-      // FlutterLocalNotifications fires a tap, this is invoked with the
-      // payload we set on the notification.
-      notificationService.onNotificationTap = (payload) {
-        print('[ALICE-NO] onNotificationTap payload=$payload');
-        trace.add('local-tap:$payload');
-        // Defer routing to a microtask so the lifecycle state has time to
-        // settle (matches production's resume → tap ordering).
-        Future<void>.microtask(() async {
-          await routeAppRootLocalNotificationTap(
-            payload: payload,
-            onBeforeOpen: notificationService.clearDeliveredNotifications,
-            onBeforeRouteTarget: (rt) => _prepareNotificationRouteTarget(
-              rt,
-              drainOfflineInbox: stack.p2pService.drainOfflineInbox,
-              trace: trace,
-            ),
-            onRouteTarget: (rt) => _handleNotificationRouteTarget(
-              routeTarget: rt,
-              labels: _placeholderLabels,
-              deps: convDeps,
-              trace: trace,
-            ),
-          );
-        });
-      };
-
-      // ── Identity exchange ─────────────────────────────────────────────
-      _signals.writeJson('alice_identity.json', {
-        'peerId': stack.identity.peerId,
-        'publicKey': stack.identity.publicKey,
-        'mlKemPublicKey': stack.identity.mlKemPublicKey,
-      });
-      _signals.writeSignal('alice_ready');
-      print('[ALICE-NO] Ready — waiting for Bob identity...');
-
-      final bobFixture = await _signals.waitForJson(
-        'bob_identity.json',
-        timeout: const Duration(seconds: 300),
-      );
-      final bobPeerId = bobFixture['peerId'] as String;
-      final bobMlKemPk = bobFixture['mlKemPublicKey'] as String?;
-
-      await stack.contactRepo.addContact(
-        ContactModel(
-          peerId: bobPeerId,
-          publicKey: bobFixture['publicKey'] as String,
-          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-          username: 'BobNotifOpen',
-          signature: 'sig-bob-notif-open',
-          scannedAt: DateTime.now().toUtc().toIso8601String(),
-          mlKemPublicKey: bobMlKemPk,
-        ),
-      );
-
-      // ── Pre-seed user-C as a fake contact + one stored message ────────
-      final userCPeerId = '12D3KooWFakeUserC0000000000000000000000000000000';
-      final userCContact = ContactModel(
-        peerId: userCPeerId,
-        publicKey: 'pk-fake-user-c',
-        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-        username: 'UserCSeeded',
-        signature: 'sig-fake-user-c',
-        scannedAt: DateTime.now().toUtc().toIso8601String(),
-        mlKemPublicKey: null,
-      );
-      await stack.contactRepo.addContact(userCContact);
-
-      final userCMessageId = 'seed-user-c-msg-1';
-      await messageRepo.saveMessage(
-        ConversationMessage(
-          id: userCMessageId,
-          contactPeerId: userCPeerId,
-          senderPeerId: userCPeerId,
-          text: 'Old message from user-c',
-          timestamp: DateTime.now()
-              .toUtc()
-              .subtract(const Duration(hours: 1))
-              .toIso8601String(),
-          status: 'read',
-          isIncoming: true,
-          createdAt: DateTime.now()
-              .toUtc()
-              .subtract(const Duration(hours: 1))
-              .toIso8601String(),
-        ),
-      );
-
-      // Publish labels so the dispatch helper can resolve them.
-      _placeholderLabels = _PeerToLabel(
-        userBPeerId: bobPeerId,
-        userCPeerId: userCPeerId,
-      );
-
-      // ── Step 1: Alice opens user-C's conversation from "Orbit" ────────
-      // Uses the production `buildConversationRoute` + real
-      // `ConversationWired` so the harness exercises the same widget tree
-      // the production app builds for an open conversation.
-      print('[ALICE-NO] Alice opens user-C conversation');
-      chatConversationTracker.setActive(userCPeerId);
-      _navigatorKey.currentState!.push(
-        buildConversationRoute<void>(
-          settings: const RouteSettings(name: 'conversation:user-c'),
-          builder: (_) => _LabeledConversationHost(
-            label: 'user-c',
-            contact: userCContact,
-            deps: convDeps,
+    // 1:1 message repository wired against the stack DB.
+    final custodyDb = DirectInboxCustodyDbBindings(stack.db);
+    final messageRepo = MessageRepositoryImpl(
+      dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                stack.db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
+      dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
+      dbLoadLatestMessageForContact: (p) =>
+          dbLoadLatestMessageForContact(stack.db, p),
+      dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(stack.db, id, s),
+      dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                stack.db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
+      dbCountMessagesForContact: (p) => dbCountMessagesForContact(stack.db, p),
+      dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
+      dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),
+      dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(stack.db),
+      dbDeleteMessagesForContact: (p) =>
+          dbDeleteMessagesForContact(stack.db, p),
+      dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+          dbLoadMessagesPage(
+            stack.db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
           ),
-        ),
-      );
-      // Pump enough cycles for the slide-up animation (420ms) plus
-      // ConversationWired's initial load to settle.
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        await tester.pump();
-      }
+      dbLoadFailedOutgoingMessages: () =>
+          dbLoadFailedOutgoingMessages(stack.db),
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+          dbLoadUnackedOutgoingMessages(
+            stack.db,
+            olderThan: olderThan,
+            limit: limit,
+          ),
+      dbLoadConversationThreadSummaries: (ids) =>
+          dbLoadConversationThreadSummaries(stack.db, ids),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+      dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+      dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+      loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
+      dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+      dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+      dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          custodyDb.loadOwnerForMessageId,
+      dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          custodyDb.completeAcceptedIfExact,
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbLoadSendingOutgoingMessages: () =>
+          dbLoadSendingOutgoingMessages(stack.db),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                stack.db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
+    );
 
-      // Sanity check: user-C's chat is visible.
-      expect(
-        find.byKey(const ValueKey('alice-conversation-user-c')),
-        findsOneWidget,
-        reason: 'user-c chat should be visible after explicit push',
-      );
-      _signals.writeSignal('alice_in_user_c_chat');
+    // ── Recording notification service + tap-binding glue ─────────────
+    final recording = _RecordingNotificationService();
+    await recording.initialize();
+    final NotificationService notificationService = recording;
 
-      // ── Step 2: "Background" the app ───────────────────────────────────
-      //
-      // We update the *listener-observable* lifecycle state (the
-      // `currentLifecycle` capture the chat listener reads) but DO NOT
-      // call `WidgetsBinding.handleAppLifecycleStateChanged(paused)` —
-      // doing so deadlocks `tester.pump()` because the binding stops
-      // producing frames in the paused state. Concretely: an earlier run
-      // hung Alice for 5 minutes after the first paused-pump.
-      //
-      // For the routing bug under test, the observable lifecycle is what
-      // the suppress gate reads, so this faithfully covers the
-      // notification path. The real binding state stays `resumed`.
-      print('[ALICE-NO] Backgrounding the app (logical lifecycle only)');
-      Future<void> setLogicalLifecycle(AppLifecycleState state) async {
-        currentLifecycle = state;
-        trace.add('lifecycle:${state.name}');
-        // Let pending streams flush.
-        for (var i = 0; i < 4; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-          await tester.pump();
-        }
-      }
+    final chatConversationTracker = ActiveConversationTracker();
+    AppLifecycleState currentLifecycle = AppLifecycleState.resumed;
 
-      await setLogicalLifecycle(AppLifecycleState.inactive);
-      await setLogicalLifecycle(AppLifecycleState.hidden);
-      await setLogicalLifecycle(AppLifecycleState.paused);
-      _signals.writeSignal('alice_backgrounded');
+    final trace = <String>[];
 
-      // ── Step 3: Wait for Bob's send. The chat listener will fire
-      //           `showMessageNotification` on the recording wrapper as it
-      //           processes Bob's incoming P2P message. We poll the
-      //           recording list with pure Future.delayed (no tester.pump)
-      //           — matching the pattern used by
-      //           notification_sound_smoke_bob_harness — because
-      //           tester.pump in fullyLive mode can starve the platform
-      //           event loop that delivers stream events. ────
-      final preSendShown = recording.shown.length;
-      print(
-        '[ALICE-NO] Awaiting Bob send (notification gate paused, off-conv)',
-      );
-      final deadline = DateTime.now().add(const Duration(minutes: 3));
-      bool received = false;
-      while (DateTime.now().isBefore(deadline)) {
-        if (recording.shown.length > preSendShown) {
-          final last = recording.shown.last;
-          if (last.contactPeerId == bobPeerId) {
-            print(
-              '[ALICE-NO] Notification fired for Bob: payload=${last.payload}',
-            );
-            _signals.writeSignal('alice_notification_received');
-            received = true;
-            break;
-          }
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      }
-      if (!received) {
-        throw TimeoutException(
-          'Alice never received a notification for Bob\'s message',
+    // ── Real ChatMessageListener wired to the recording notification svc ──
+    final chatListener = ChatMessageListener(
+      chatMessageStream: stack.p2pService.messageStream,
+      messageRepo: messageRepo,
+      contactRepo: stack.contactRepo,
+      bridge: stack.bridge,
+      getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
+      notificationService: notificationService,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: chatConversationTracker,
+        lifecycle: () => currentLifecycle,
+      ),
+    );
+    chatListener.start();
+
+    // Bundle the deps the dispatcher and the user-C push both need.
+    final convDeps = _AliceConversationDeps(
+      identityRepo: stack.identityRepo,
+      messageRepo: messageRepo,
+      chatListener: chatListener,
+      p2pService: stack.p2pService,
+      bridge: stack.bridge,
+      contactRepo: stack.contactRepo,
+      conversationTracker: chatConversationTracker,
+    );
+
+    // Mirrors main.dart's `_setupNotificationTapHandler`. When
+    // FlutterLocalNotifications fires a tap, this is invoked with the
+    // payload we set on the notification.
+    notificationService.onNotificationTap = (payload) {
+      print('[ALICE-NO] onNotificationTap payload=$payload');
+      trace.add('local-tap:$payload');
+      // Defer routing to a microtask so the lifecycle state has time to
+      // settle (matches production's resume → tap ordering).
+      Future<void>.microtask(() async {
+        await routeAppRootLocalNotificationTap(
+          payload: payload,
+          onBeforeOpen: notificationService.clearDeliveredNotifications,
+          onBeforeRouteTarget: (rt) => _prepareNotificationRouteTarget(
+            rt,
+            drainOfflineInbox: stack.p2pService.drainOfflineInbox,
+            trace: trace,
+          ),
+          onRouteTarget: (rt) => _handleNotificationRouteTarget(
+            routeTarget: rt,
+            labels: _placeholderLabels,
+            deps: convDeps,
+            trace: trace,
+          ),
         );
-      }
-      final bobNotification = recording.shown.last;
-
-      // ── Step 4: Simulate Alice tapping the notification ───────────────
-      //
-      // Mirror the real iOS resume sequence (paused → hidden → inactive →
-      // resumed) on the listener-observable lifecycle BEFORE firing the
-      // tap. flutter_local_notifications delivers the tap via the platform
-      // channel just after the engine resumes, so the resume must run first.
-      print('[ALICE-NO] Resuming app before tap');
-      await setLogicalLifecycle(AppLifecycleState.hidden);
-      await setLogicalLifecycle(AppLifecycleState.inactive);
-      await setLogicalLifecycle(AppLifecycleState.resumed);
-
-      print('[ALICE-NO] Simulating tap on Bob notification');
-
-      // FlutterNotificationService resolves null payloads to contactPeerId
-      // before handing the notification to the OS, so on tap the OS hands
-      // back contactPeerId (= Bob's peer id) to onNotificationTap. Mirror
-      // that fallback here so the simulated tap matches production.
-      final tapPayload = (bobNotification.payload?.isNotEmpty ?? false)
-          ? bobNotification.payload!
-          : bobNotification.contactPeerId;
-      if (tapPayload.isEmpty) {
-        throw StateError('Notification payload was empty; cannot simulate tap');
-      }
-      notificationService.onNotificationTap?.call(tapPayload);
-
-      // Pump aggressively over ~5s so:
-      //  (a) the microtask scheduled by onNotificationTap can run,
-      //  (b) drainOfflineInbox's platform-channel calls can land,
-      //  (c) the navigator.push and any route transition fully settle
-      //      into the widget tree before find.byKey runs.
-      //
-      // Mixing real-time delays with explicit pumps avoids both failure
-      // modes we hit earlier: Future.delayed alone left the widget tree
-      // stale; tester.pump alone starved the platform isolate.
-      for (var i = 0; i < 50; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        await tester.pump();
-      }
-
-      // ── Step 5: Inspect resulting navigation ───────────────────────────
-      // Expectation: top route shows Bob's conversation.
-      // Bug today: top route still shows user-C's conversation.
-      //
-      // We compute three orthogonal signals so the verdict captures both
-      // “onstage widget tree” and “navigator route stack” independently:
-      //   * find.byKey with skipOffstage:true → onstage check
-      //   * find.byKey with skipOffstage:false → presence-anywhere check
-      //   * navigator-observer event log → ground truth for push/pop ops
-      final bobOnstage = find
-          .byKey(const ValueKey('alice-conversation-user-b'))
-          .evaluate()
-          .isNotEmpty;
-      final userCOnstage = find
-          .byKey(const ValueKey('alice-conversation-user-c'))
-          .evaluate()
-          .isNotEmpty;
-      final bobInTree = find
-          .byKey(
-            const ValueKey('alice-conversation-user-b'),
-            skipOffstage: false,
-          )
-          .evaluate()
-          .isNotEmpty;
-      final userCInTree = find
-          .byKey(
-            const ValueKey('alice-conversation-user-c'),
-            skipOffstage: false,
-          )
-          .evaluate()
-          .isNotEmpty;
-
-      // Capture the topmost route non-destructively. `popUntil(()=>true)`
-      // visits exactly one route (the top) and never pops, since the
-      // predicate stops popping the moment it returns true. We must NOT
-      // use a `false`-returning predicate here — that pops every route.
-      //
-      // The full navigator stack history is reconstructed from the
-      // navigator observer's event log instead.
-      Route<dynamic>? topRoute;
-      _navigatorKey.currentState?.popUntil((route) {
-        topRoute ??= route;
-        return true;
       });
-      final navEvents = _navObserver.events
-          .map((e) => '${e['op']}@${e['t+ms']}ms:${e['route']}')
-          .toList();
+    };
 
-      final verdict = <String, dynamic>{
-        'bobOnstage': bobOnstage,
-        'userCOnstage': userCOnstage,
-        'bobInTree': bobInTree,
-        'userCInTree': userCInTree,
-        'topRouteName': topRoute?.settings.name,
-        'navEvents': navEvents,
-        'shownCount': recording.shown.length,
-        'notificationPayload': tapPayload,
-        'bobPeerId': bobPeerId,
-        'userCPeerId': userCPeerId,
-        'trace': trace,
-        // Legacy aliases so existing analyzers keep working.
-        'bobChatVisible': bobOnstage,
-        'userCChatVisible': userCOnstage,
-        // The "programmatic pass" condition encodes the EXPECTED behaviour.
-        // Today this fails because the app stays on user-C's chat. The fix
-        // should make this true.
-        'programmaticPass': bobOnstage,
-        'reproducedBug': userCOnstage && !bobOnstage,
-      };
-      _signals.writeJson('alice_verdict', verdict);
-      print('[ALICE-NO] Verdict: $verdict');
+    // ── Identity exchange ─────────────────────────────────────────────
+    _signals.writeJson('alice_identity.json', {
+      'peerId': stack.identity.peerId,
+      'publicKey': stack.identity.publicKey,
+      'mlKemPublicKey': stack.identity.mlKemPublicKey,
+    });
+    _signals.writeSignal('alice_ready');
+    print('[ALICE-NO] Ready — waiting for Bob identity...');
 
-      // We deliberately DO NOT throw here. The whole point of this harness
-      // is to produce a verdict the orchestrator can read; an early
-      // expect-failure would short-circuit teardown and leak processes.
-      // The orchestrator is responsible for enforcing the pass/fail gate.
+    final bobFixture = await _signals.waitForJson(
+      'bob_identity.json',
+      timeout: const Duration(seconds: 300),
+    );
+    final bobPeerId = bobFixture['peerId'] as String;
+    final bobMlKemPk = bobFixture['mlKemPublicKey'] as String?;
 
-      // ── Cold-start variant ────────────────────────────────────────────
-      //
-      // The warm-tap phase above proved push lands correctly when the user
-      // was actively in user-c's chat. The user's bug report could *also*
-      // describe a cold start: iOS killed the app while suspended, Bob's
-      // notification arrived, the user tapped to launch.
-      //
-      // Cold-start production path:
-      //   - main() runs → MyApp builds → StartupRouter pushReplaces Feed
-      //   - `_handleInitialLocalNotificationLaunch` runs (after services ready)
-      //   - reads `consumeInitialPayload()` → Bob's peerId
-      //   - calls `routeAppRootInitialLocalNotificationOpen` →
-      //     `_handleNotificationRouteTarget` → push Bob's chat
-      //
-      // To simulate: pop everything to home, prime
-      // `recording.pendingInitialPayload` with Bob's payload, invoke
-      // `routeAppRootInitialLocalNotificationOpen`, and capture a separate
-      // verdict.
-      print('\n[ALICE-NO] ──── Cold-start variant ────');
-      final navigator = _navigatorKey.currentState!;
-      navigator.popUntil((route) => route.isFirst);
-      for (var i = 0; i < 10; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        await tester.pump();
-      }
-      final navEventsBeforeColdStart = _navObserver.events.length;
+    await stack.contactRepo.addContact(
+      ContactModel(
+        peerId: bobPeerId,
+        publicKey: bobFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'BobNotifOpen',
+        signature: 'sig-bob-notif-open',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: bobMlKemPk,
+      ),
+    );
 
-      recording.pendingInitialPayload = bobPeerId;
-      print(
-        '[ALICE-NO] coldstart: consumeInitialPayload primed with $bobPeerId',
-      );
+    // ── Pre-seed user-C as a fake contact + one stored message ────────
+    final userCPeerId = '12D3KooWFakeUserC0000000000000000000000000000000';
+    final userCContact = ContactModel(
+      peerId: userCPeerId,
+      publicKey: 'pk-fake-user-c',
+      rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+      username: 'UserCSeeded',
+      signature: 'sig-fake-user-c',
+      scannedAt: DateTime.now().toUtc().toIso8601String(),
+      mlKemPublicKey: null,
+    );
+    await stack.contactRepo.addContact(userCContact);
 
-      await routeAppRootInitialLocalNotificationOpen(
-        consumeInitialPayload: notificationService.consumeInitialPayload,
-        onBeforeOpen: notificationService.clearDeliveredNotifications,
-        onBeforeRouteTarget: (rt) => _prepareNotificationRouteTarget(
-          rt,
-          drainOfflineInbox: stack.p2pService.drainOfflineInbox,
-          trace: trace,
-        ),
-        onRouteTarget: (rt) => _handleNotificationRouteTarget(
-          routeTarget: rt,
-          labels: _placeholderLabels,
+    final userCMessageId = 'seed-user-c-msg-1';
+    await messageRepo.saveMessage(
+      ConversationMessage(
+        id: userCMessageId,
+        contactPeerId: userCPeerId,
+        senderPeerId: userCPeerId,
+        text: 'Old message from user-c',
+        timestamp: DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String(),
+        status: 'read',
+        isIncoming: true,
+        createdAt: DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 1))
+            .toIso8601String(),
+      ),
+    );
+
+    // Publish labels so the dispatch helper can resolve them.
+    _placeholderLabels = _PeerToLabel(
+      userBPeerId: bobPeerId,
+      userCPeerId: userCPeerId,
+    );
+
+    // ── Step 1: Alice opens user-C's conversation from "Orbit" ────────
+    // Uses the production `buildConversationRoute` + real
+    // `ConversationWired` so the harness exercises the same widget tree
+    // the production app builds for an open conversation.
+    print('[ALICE-NO] Alice opens user-C conversation');
+    chatConversationTracker.setActive(userCPeerId);
+    _navigatorKey.currentState!.push(
+      buildConversationRoute<void>(
+        settings: const RouteSettings(name: 'conversation:user-c'),
+        builder: (_) => _LabeledConversationHost(
+          label: 'user-c',
+          contact: userCContact,
           deps: convDeps,
-          trace: trace,
         ),
-      );
+      ),
+    );
+    // Pump enough cycles for the slide-up animation (420ms) plus
+    // ConversationWired's initial load to settle.
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
 
-      for (var i = 0; i < 50; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        await tester.pump();
-      }
+    // Sanity check: user-C's chat is visible.
+    expect(
+      find.byKey(const ValueKey('alice-conversation-user-c')),
+      findsOneWidget,
+      reason: 'user-c chat should be visible after explicit push',
+    );
+    _signals.writeSignal('alice_in_user_c_chat');
 
-      final coldStartBobOnstage = find
-          .byKey(const ValueKey('alice-conversation-user-b'))
-          .evaluate()
-          .isNotEmpty;
-      final coldStartUserCOnstage = find
-          .byKey(const ValueKey('alice-conversation-user-c'))
-          .evaluate()
-          .isNotEmpty;
-
-      Route<dynamic>? coldStartTopRoute;
-      _navigatorKey.currentState?.popUntil((route) {
-        coldStartTopRoute ??= route;
-        return true;
-      });
-
-      final coldStartNavEvents = _navObserver.events
-          .sublist(navEventsBeforeColdStart)
-          .map((e) => '${e['op']}@${e['t+ms']}ms:${e['route']}')
-          .toList();
-
-      final coldStartVerdict = <String, dynamic>{
-        'phase': 'cold-start',
-        'bobOnstage': coldStartBobOnstage,
-        'userCOnstage': coldStartUserCOnstage,
-        'topRouteName': coldStartTopRoute?.settings.name,
-        'navEvents': coldStartNavEvents,
-        'programmaticPass': coldStartBobOnstage,
-        'reproducedBug': !coldStartBobOnstage,
-      };
-      _signals.writeJson('alice_cold_start_verdict', coldStartVerdict);
-      print('[ALICE-NO] Cold-start verdict: $coldStartVerdict');
-
-      // ── Same-peer no-duplicate variant (Report 139) ───────────────────
-      //
-      // Bug 139: Alice is ALREADY viewing Bob's chat (app backgrounded), Bob
-      // sends, Alice taps Bob's notification. The fix must NOT push a second
-      // Bob conversation — the existing screen stays mounted and re-fetches
-      // the new message on resume. Reuses Bob's already-delivered notification
-      // (no second send needed); the bug is a single, correct tap.
-      print('\n[ALICE-NO] ──── Same-peer no-duplicate variant (139) ────');
-      navigator.popUntil((route) => route.isFirst);
-      for (var i = 0; i < 10; i++) {
+    // ── Step 2: "Background" the app ───────────────────────────────────
+    //
+    // We update the *listener-observable* lifecycle state (the
+    // `currentLifecycle` capture the chat listener reads) but DO NOT
+    // call `WidgetsBinding.handleAppLifecycleStateChanged(paused)` —
+    // doing so deadlocks `tester.pump()` because the binding stops
+    // producing frames in the paused state. Concretely: an earlier run
+    // hung Alice for 5 minutes after the first paused-pump.
+    //
+    // For the routing bug under test, the observable lifecycle is what
+    // the suppress gate reads, so this faithfully covers the
+    // notification path. The real binding state stays `resumed`.
+    print('[ALICE-NO] Backgrounding the app (logical lifecycle only)');
+    Future<void> setLogicalLifecycle(AppLifecycleState state) async {
+      currentLifecycle = state;
+      trace.add('lifecycle:${state.name}');
+      // Let pending streams flush.
+      for (var i = 0; i < 4; i++) {
         await Future<void>.delayed(const Duration(milliseconds: 50));
         await tester.pump();
       }
+    }
 
-      // Alice opens BOB's conversation (the peer the notification is for).
-      chatConversationTracker.setActive(bobPeerId);
-      final bobContact = await stack.contactRepo.getContact(bobPeerId);
-      _navigatorKey.currentState!.push(
-        buildConversationRoute<void>(
-          settings: const RouteSettings(name: 'conversation:user-b'),
-          builder: (_) => _LabeledConversationHost(
-            label: 'user-b',
-            contact: bobContact!,
-            deps: convDeps,
-          ),
+    await setLogicalLifecycle(AppLifecycleState.inactive);
+    await setLogicalLifecycle(AppLifecycleState.hidden);
+    await setLogicalLifecycle(AppLifecycleState.paused);
+    _signals.writeSignal('alice_backgrounded');
+
+    // ── Step 3: Wait for Bob's send. The chat listener will fire
+    //           `showMessageNotification` on the recording wrapper as it
+    //           processes Bob's incoming P2P message. We poll the
+    //           recording list with pure Future.delayed (no tester.pump)
+    //           — matching the pattern used by
+    //           notification_sound_smoke_bob_harness — because
+    //           tester.pump in fullyLive mode can starve the platform
+    //           event loop that delivers stream events. ────
+    final preSendShown = recording.shown.length;
+    print('[ALICE-NO] Awaiting Bob send (notification gate paused, off-conv)');
+    final deadline = DateTime.now().add(const Duration(minutes: 3));
+    bool received = false;
+    while (DateTime.now().isBefore(deadline)) {
+      if (recording.shown.length > preSendShown) {
+        final last = recording.shown.last;
+        if (last.contactPeerId == bobPeerId) {
+          print(
+            '[ALICE-NO] Notification fired for Bob: payload=${last.payload}',
+          );
+          _signals.writeSignal('alice_notification_received');
+          received = true;
+          break;
+        }
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+    if (!received) {
+      throw TimeoutException(
+        'Alice never received a notification for Bob\'s message',
+      );
+    }
+    final bobNotification = recording.shown.last;
+
+    // ── Step 4: Simulate Alice tapping the notification ───────────────
+    //
+    // Mirror the real iOS resume sequence (paused → hidden → inactive →
+    // resumed) on the listener-observable lifecycle BEFORE firing the
+    // tap. flutter_local_notifications delivers the tap via the platform
+    // channel just after the engine resumes, so the resume must run first.
+    print('[ALICE-NO] Resuming app before tap');
+    await setLogicalLifecycle(AppLifecycleState.hidden);
+    await setLogicalLifecycle(AppLifecycleState.inactive);
+    await setLogicalLifecycle(AppLifecycleState.resumed);
+
+    print('[ALICE-NO] Simulating tap on Bob notification');
+
+    // FlutterNotificationService resolves null payloads to contactPeerId
+    // before handing the notification to the OS, so on tap the OS hands
+    // back contactPeerId (= Bob's peer id) to onNotificationTap. Mirror
+    // that fallback here so the simulated tap matches production.
+    final tapPayload = (bobNotification.payload?.isNotEmpty ?? false)
+        ? bobNotification.payload!
+        : bobNotification.contactPeerId;
+    if (tapPayload.isEmpty) {
+      throw StateError('Notification payload was empty; cannot simulate tap');
+    }
+    notificationService.onNotificationTap?.call(tapPayload);
+
+    // Pump aggressively over ~5s so:
+    //  (a) the microtask scheduled by onNotificationTap can run,
+    //  (b) drainOfflineInbox's platform-channel calls can land,
+    //  (c) the navigator.push and any route transition fully settle
+    //      into the widget tree before find.byKey runs.
+    //
+    // Mixing real-time delays with explicit pumps avoids both failure
+    // modes we hit earlier: Future.delayed alone left the widget tree
+    // stale; tester.pump alone starved the platform isolate.
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await tester.pump();
+    }
+
+    // ── Step 5: Inspect resulting navigation ───────────────────────────
+    // Expectation: top route shows Bob's conversation.
+    // Bug today: top route still shows user-C's conversation.
+    //
+    // We compute three orthogonal signals so the verdict captures both
+    // “onstage widget tree” and “navigator route stack” independently:
+    //   * find.byKey with skipOffstage:true → onstage check
+    //   * find.byKey with skipOffstage:false → presence-anywhere check
+    //   * navigator-observer event log → ground truth for push/pop ops
+    final bobOnstage = find
+        .byKey(const ValueKey('alice-conversation-user-b'))
+        .evaluate()
+        .isNotEmpty;
+    final userCOnstage = find
+        .byKey(const ValueKey('alice-conversation-user-c'))
+        .evaluate()
+        .isNotEmpty;
+    final bobInTree = find
+        .byKey(const ValueKey('alice-conversation-user-b'), skipOffstage: false)
+        .evaluate()
+        .isNotEmpty;
+    final userCInTree = find
+        .byKey(const ValueKey('alice-conversation-user-c'), skipOffstage: false)
+        .evaluate()
+        .isNotEmpty;
+
+    // Capture the topmost route non-destructively. `popUntil(()=>true)`
+    // visits exactly one route (the top) and never pops, since the
+    // predicate stops popping the moment it returns true. We must NOT
+    // use a `false`-returning predicate here — that pops every route.
+    //
+    // The full navigator stack history is reconstructed from the
+    // navigator observer's event log instead.
+    Route<dynamic>? topRoute;
+    _navigatorKey.currentState?.popUntil((route) {
+      topRoute ??= route;
+      return true;
+    });
+    final navEvents = _navObserver.events
+        .map((e) => '${e['op']}@${e['t+ms']}ms:${e['route']}')
+        .toList();
+
+    final verdict = <String, dynamic>{
+      'bobOnstage': bobOnstage,
+      'userCOnstage': userCOnstage,
+      'bobInTree': bobInTree,
+      'userCInTree': userCInTree,
+      'topRouteName': topRoute?.settings.name,
+      'navEvents': navEvents,
+      'shownCount': recording.shown.length,
+      'notificationPayload': tapPayload,
+      'bobPeerId': bobPeerId,
+      'userCPeerId': userCPeerId,
+      'trace': trace,
+      // Legacy aliases so existing analyzers keep working.
+      'bobChatVisible': bobOnstage,
+      'userCChatVisible': userCOnstage,
+      // The "programmatic pass" condition encodes the EXPECTED behaviour.
+      // Today this fails because the app stays on user-C's chat. The fix
+      // should make this true.
+      'programmaticPass': bobOnstage,
+      'reproducedBug': userCOnstage && !bobOnstage,
+    };
+    _signals.writeJson('alice_verdict', verdict);
+    print('[ALICE-NO] Verdict: $verdict');
+
+    // We deliberately DO NOT throw here. The whole point of this harness
+    // is to produce a verdict the orchestrator can read; an early
+    // expect-failure would short-circuit teardown and leak processes.
+    // The orchestrator is responsible for enforcing the pass/fail gate.
+
+    // ── Cold-start variant ────────────────────────────────────────────
+    //
+    // The warm-tap phase above proved push lands correctly when the user
+    // was actively in user-c's chat. The user's bug report could *also*
+    // describe a cold start: iOS killed the app while suspended, Bob's
+    // notification arrived, the user tapped to launch.
+    //
+    // Cold-start production path:
+    //   - main() runs → MyApp builds → StartupRouter pushReplaces Feed
+    //   - `_handleInitialLocalNotificationLaunch` runs (after services ready)
+    //   - reads `consumeInitialPayload()` → Bob's peerId
+    //   - calls `routeAppRootInitialLocalNotificationOpen` →
+    //     `_handleNotificationRouteTarget` → push Bob's chat
+    //
+    // To simulate: pop everything to home, prime
+    // `recording.pendingInitialPayload` with Bob's payload, invoke
+    // `routeAppRootInitialLocalNotificationOpen`, and capture a separate
+    // verdict.
+    print('\n[ALICE-NO] ──── Cold-start variant ────');
+    final navigator = _navigatorKey.currentState!;
+    navigator.popUntil((route) => route.isFirst);
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
+    final navEventsBeforeColdStart = _navObserver.events.length;
+
+    recording.pendingInitialPayload = bobPeerId;
+    print('[ALICE-NO] coldstart: consumeInitialPayload primed with $bobPeerId');
+
+    await routeAppRootInitialLocalNotificationOpen(
+      consumeInitialPayload: notificationService.consumeInitialPayload,
+      onBeforeOpen: notificationService.clearDeliveredNotifications,
+      onBeforeRouteTarget: (rt) => _prepareNotificationRouteTarget(
+        rt,
+        drainOfflineInbox: stack.p2pService.drainOfflineInbox,
+        trace: trace,
+      ),
+      onRouteTarget: (rt) => _handleNotificationRouteTarget(
+        routeTarget: rt,
+        labels: _placeholderLabels,
+        deps: convDeps,
+        trace: trace,
+      ),
+    );
+
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await tester.pump();
+    }
+
+    final coldStartBobOnstage = find
+        .byKey(const ValueKey('alice-conversation-user-b'))
+        .evaluate()
+        .isNotEmpty;
+    final coldStartUserCOnstage = find
+        .byKey(const ValueKey('alice-conversation-user-c'))
+        .evaluate()
+        .isNotEmpty;
+
+    Route<dynamic>? coldStartTopRoute;
+    _navigatorKey.currentState?.popUntil((route) {
+      coldStartTopRoute ??= route;
+      return true;
+    });
+
+    final coldStartNavEvents = _navObserver.events
+        .sublist(navEventsBeforeColdStart)
+        .map((e) => '${e['op']}@${e['t+ms']}ms:${e['route']}')
+        .toList();
+
+    final coldStartVerdict = <String, dynamic>{
+      'phase': 'cold-start',
+      'bobOnstage': coldStartBobOnstage,
+      'userCOnstage': coldStartUserCOnstage,
+      'topRouteName': coldStartTopRoute?.settings.name,
+      'navEvents': coldStartNavEvents,
+      'programmaticPass': coldStartBobOnstage,
+      'reproducedBug': !coldStartBobOnstage,
+    };
+    _signals.writeJson('alice_cold_start_verdict', coldStartVerdict);
+    print('[ALICE-NO] Cold-start verdict: $coldStartVerdict');
+
+    // ── Same-peer no-duplicate variant (Report 139) ───────────────────
+    //
+    // Bug 139: Alice is ALREADY viewing Bob's chat (app backgrounded), Bob
+    // sends, Alice taps Bob's notification. The fix must NOT push a second
+    // Bob conversation — the existing screen stays mounted and re-fetches
+    // the new message on resume. Reuses Bob's already-delivered notification
+    // (no second send needed); the bug is a single, correct tap.
+    print('\n[ALICE-NO] ──── Same-peer no-duplicate variant (139) ────');
+    navigator.popUntil((route) => route.isFirst);
+    for (var i = 0; i < 10; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
+
+    // Alice opens BOB's conversation (the peer the notification is for).
+    chatConversationTracker.setActive(bobPeerId);
+    final bobContact = await stack.contactRepo.getContact(bobPeerId);
+    _navigatorKey.currentState!.push(
+      buildConversationRoute<void>(
+        settings: const RouteSettings(name: 'conversation:user-b'),
+        builder: (_) => _LabeledConversationHost(
+          label: 'user-b',
+          contact: bobContact!,
+          deps: convDeps,
         ),
-      );
-      for (var i = 0; i < 20; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-        await tester.pump();
-      }
+      ),
+    );
+    for (var i = 0; i < 20; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+    }
 
-      // Count pushes of Bob's route across the whole observer log; only the
-      // delta across the tap matters (cumulative absolute count is fine).
-      int bobPushCount() => _navObserver.events
-          .where(
-            (e) => e['op'] == 'push' && e['route'] == 'conversation:user-b',
-          )
-          .length;
-      final bobPushesBeforeTap = bobPushCount();
-      final traceLenBeforeSamePeerTap = trace.length;
+    // Count pushes of Bob's route across the whole observer log; only the
+    // delta across the tap matters (cumulative absolute count is fine).
+    int bobPushCount() => _navObserver.events
+        .where((e) => e['op'] == 'push' && e['route'] == 'conversation:user-b')
+        .length;
+    final bobPushesBeforeTap = bobPushCount();
+    final traceLenBeforeSamePeerTap = trace.length;
 
-      // Logical background → resume → tap (mirrors the warm path above).
-      await setLogicalLifecycle(AppLifecycleState.inactive);
-      await setLogicalLifecycle(AppLifecycleState.hidden);
-      await setLogicalLifecycle(AppLifecycleState.paused);
-      await setLogicalLifecycle(AppLifecycleState.hidden);
-      await setLogicalLifecycle(AppLifecycleState.inactive);
-      await setLogicalLifecycle(AppLifecycleState.resumed);
+    // Logical background → resume → tap (mirrors the warm path above).
+    await setLogicalLifecycle(AppLifecycleState.inactive);
+    await setLogicalLifecycle(AppLifecycleState.hidden);
+    await setLogicalLifecycle(AppLifecycleState.paused);
+    await setLogicalLifecycle(AppLifecycleState.hidden);
+    await setLogicalLifecycle(AppLifecycleState.inactive);
+    await setLogicalLifecycle(AppLifecycleState.resumed);
 
-      print('[ALICE-NO] Same-peer: tapping Bob notification while in Bob chat');
-      notificationService.onNotificationTap?.call(tapPayload);
-      for (var i = 0; i < 50; i++) {
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        await tester.pump();
-      }
+    print('[ALICE-NO] Same-peer: tapping Bob notification while in Bob chat');
+    notificationService.onNotificationTap?.call(tapPayload);
+    for (var i = 0; i < 50; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await tester.pump();
+    }
 
-      final bobPushesAfterTap = bobPushCount();
-      final bobRouteCount = find
-          .byKey(
-            const ValueKey('alice-conversation-user-b'),
-            skipOffstage: false,
-          )
-          .evaluate()
-          .length;
-      final samePeerGuardTrace = trace
-          .sublist(traceLenBeforeSamePeerTap)
-          .where((t) => t.startsWith('conversation-already-active:'))
-          .toList();
+    final bobPushesAfterTap = bobPushCount();
+    final bobRouteCount = find
+        .byKey(const ValueKey('alice-conversation-user-b'), skipOffstage: false)
+        .evaluate()
+        .length;
+    final samePeerGuardTrace = trace
+        .sublist(traceLenBeforeSamePeerTap)
+        .where((t) => t.startsWith('conversation-already-active:'))
+        .toList();
 
-      final samePeerVerdict = <String, dynamic>{
-        'phase': 'same-peer-no-duplicate',
-        'bobPushesBeforeTap': bobPushesBeforeTap,
-        'bobPushesAfterTap': bobPushesAfterTap,
-        'bobRouteCount': bobRouteCount,
-        'guardTrace': samePeerGuardTrace,
-        // Expected with the fix: the tap pushes NO second route and leaves
-        // exactly one Bob chat, and the already-active guard fired.
-        'programmaticPass':
-            bobPushesAfterTap == bobPushesBeforeTap &&
-            bobRouteCount == 1 &&
-            samePeerGuardTrace.isNotEmpty,
-        // Bug repro (no guard): the tap stacks a second Bob route.
-        'reproducedBug': bobPushesAfterTap > bobPushesBeforeTap,
-      };
-      _signals.writeJson('alice_same_peer_verdict', samePeerVerdict);
-      print('[ALICE-NO] Same-peer verdict: $samePeerVerdict');
+    final samePeerVerdict = <String, dynamic>{
+      'phase': 'same-peer-no-duplicate',
+      'bobPushesBeforeTap': bobPushesBeforeTap,
+      'bobPushesAfterTap': bobPushesAfterTap,
+      'bobRouteCount': bobRouteCount,
+      'guardTrace': samePeerGuardTrace,
+      // Expected with the fix: the tap pushes NO second route and leaves
+      // exactly one Bob chat, and the already-active guard fired.
+      'programmaticPass':
+          bobPushesAfterTap == bobPushesBeforeTap &&
+          bobRouteCount == 1 &&
+          samePeerGuardTrace.isNotEmpty,
+      // Bug repro (no guard): the tap stacks a second Bob route.
+      'reproducedBug': bobPushesAfterTap > bobPushesBeforeTap,
+    };
+    _signals.writeJson('alice_same_peer_verdict', samePeerVerdict);
+    print('[ALICE-NO] Same-peer verdict: $samePeerVerdict');
 
-      // ── Done ──────────────────────────────────────────────────────────
-      await _signals.waitForSignal(
-        'all_done',
-        timeout: const Duration(seconds: 300),
-      );
-      chatListener.dispose();
-      notificationService.dispose();
-      await stack.teardown();
-      _signals.writeSignal('alice_done');
-    },
-    timeout: const Timeout(Duration(minutes: 15)),
-  );
+    // ── Done ──────────────────────────────────────────────────────────
+    await _signals.waitForSignal(
+      'all_done',
+      timeout: const Duration(seconds: 300),
+    );
+    chatListener.dispose();
+    notificationService.dispose();
+    await stack.teardown();
+    _signals.writeSignal('alice_done');
+  }, timeout: const Timeout(Duration(minutes: 15)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1135,261 +1112,250 @@ void _runAlice() {
 // ---------------------------------------------------------------------------
 
 void _runBob() {
-  testWidgets(
-    'Bob(notif-open during other chat) — sender',
-    (tester) async {
-      print('\n${'═' * 60}');
-      print('  BOB (NOTIF-OPEN DURING OTHER CHAT) — SENDER');
-      print('${'═' * 60}\n');
+  testWidgets('Bob(notif-open during other chat) — sender', (tester) async {
+    print('\n${'═' * 60}');
+    print('  BOB (NOTIF-OPEN DURING OTHER CHAT) — SENDER');
+    print('${'═' * 60}\n');
 
-      // Mount a neutral staging screen so the binding is happy.
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: Center(
-              key: Key('bob-staging-screen'),
-              child: Text('Bob: notif-open sender'),
-            ),
+    // Mount a neutral staging screen so the binding is happy.
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: Center(
+            key: Key('bob-staging-screen'),
+            child: Text('Bob: notif-open sender'),
           ),
         ),
-      );
+      ),
+    );
 
-      // ── Stack ─────────────────────────────────────────────────────────
-      final stack = await setupGroupMultiDeviceStack(
-        dbName: _dbName,
-        username: 'BobNotifOpen',
-        cliPeerFixture: null,
-      );
-      await waitForOnline(
-        stack.p2pService,
-        timeout: const Duration(seconds: 60),
-      );
+    // ── Stack ─────────────────────────────────────────────────────────
+    final stack = await setupGroupMultiDeviceStack(
+      dbName: _dbName,
+      username: 'BobNotifOpen',
+      cliPeerFixture: null,
+    );
+    await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
-      final custodyDb = DirectInboxCustodyDbBindings(stack.db);
-      final messageRepo = MessageRepositoryImpl(
-        dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
-        dbApplyIncomingOrdinaryTextMutation:
-            ({required incomingRow, required kind}) =>
-                dbApplyIncomingOrdinaryTextMutation(
-                  stack.db,
-                  incomingRow: incomingRow,
-                  kind: kind,
-                ),
-        dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
-        dbLoadLatestMessageForContact: (p) =>
-            dbLoadLatestMessageForContact(stack.db, p),
-        dbUpdateMessageStatus: (id, s) =>
-            dbUpdateMessageStatus(stack.db, id, s),
-        dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
-        dbExistsMessageByContent:
-            (contactPeerId, senderPeerId, text, timestamp) =>
-                dbExistsMessageByContent(
-                  stack.db,
-                  contactPeerId,
-                  senderPeerId,
-                  text,
-                  timestamp,
-                ),
-        dbCountMessagesForContact: (p) =>
-            dbCountMessagesForContact(stack.db, p),
-        dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
-        dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),
-        dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
-        dbCountTotalUnreadExcludingArchived: () =>
-            dbCountTotalUnreadExcludingArchived(stack.db),
-        dbDeleteMessagesForContact: (p) =>
-            dbDeleteMessagesForContact(stack.db, p),
-        dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
-        dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
-            dbLoadMessagesPage(
-              stack.db,
-              p,
-              limit: limit,
-              beforeTimestamp: beforeTimestamp,
-            ),
-        dbLoadFailedOutgoingMessages: () =>
-            dbLoadFailedOutgoingMessages(stack.db),
-        dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
-            dbLoadUnackedOutgoingMessages(
-              stack.db,
-              olderThan: olderThan,
-              limit: limit,
-            ),
-        dbLoadConversationThreadSummaries: (ids) =>
-            dbLoadConversationThreadSummaries(stack.db, ids),
-        dbRecoverStuckSendingMessages:
-            ({required DateTime olderThan, int limit = 50}) =>
-                dbRecoverStuckSendingMessages(
-                  stack.db,
-                  olderThan: olderThan,
-                  limit: limit,
-                ),
-        dbUpdateWireEnvelope: (id, we) =>
-            dbUpdateWireEnvelope(stack.db, id, we),
-        dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
-        dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
-        dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
-        loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
-        dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
-        dbLoadDirectInboxCustodyOutbox: custodyDb.load,
-        dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
-        dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
-            custodyDb.loadOwnerForMessageId,
-        dbRecordDirectInboxCustodyFailureIfExact:
-            custodyDb.recordFailureIfExact,
-        dbCompleteAcceptedDirectInboxCustodyIfExact:
-            custodyDb.completeAcceptedIfExact,
-        dbLoadStuckSendingOutgoingMessages:
-            ({required DateTime olderThan, int limit = 50}) =>
-                dbLoadStuckSendingOutgoingMessages(
-                  stack.db,
-                  olderThan: olderThan,
-                  limit: limit,
-                ),
-        dbLoadSendingOutgoingMessages: () =>
-            dbLoadSendingOutgoingMessages(stack.db),
-        dbConditionalTransitionStatus:
-            (id, {required fromStatus, required toStatus}) =>
-                dbConditionalTransitionStatus(
-                  stack.db,
-                  id,
-                  fromStatus: fromStatus,
-                  toStatus: toStatus,
-                ),
-        dbStageOutgoingOrdinaryAttempt:
-            ({required expectedRow, required stagedRow, required kind}) =>
-                dbStageOutgoingOrdinaryAttempt(
-                  stack.db,
-                  expectedRow: expectedRow,
-                  stagedRow: stagedRow,
-                  kind: kind,
-                ),
-        dbSettleOutgoingOrdinaryTransport:
-            ({
-              required messageId,
-              required expectedContactPeerId,
-              required expectedEnvelope,
-              required status,
-              required transport,
-              required relayExpiresAt,
-              required mode,
-            }) => dbSettleOutgoingOrdinaryTransport(
-              stack.db,
-              messageId: messageId,
-              expectedContactPeerId: expectedContactPeerId,
-              expectedEnvelope: expectedEnvelope,
-              status: status,
-              transport: transport,
-              relayExpiresAt: relayExpiresAt,
-              mode: mode,
-            ),
-        dbSettleOutgoingOrdinaryDeleteTombstone:
-            ({
-              required messageId,
-              required expectedContactPeerId,
-              required expectedEnvelope,
-              required status,
-              required transport,
-              required relayExpiresAt,
-              required mode,
-            }) => dbSettleOutgoingOrdinaryDeleteTombstone(
-              stack.db,
-              messageId: messageId,
-              expectedContactPeerId: expectedContactPeerId,
-              expectedEnvelope: expectedEnvelope,
-              status: status,
-              transport: transport,
-              relayExpiresAt: relayExpiresAt,
-              mode: mode,
-            ),
-        dbInvalidateOutgoingOrdinaryEnvelope:
-            ({
-              required messageId,
-              required expectedContactPeerId,
-              required expectedEnvelope,
-            }) => dbInvalidateOutgoingOrdinaryEnvelope(
-              stack.db,
-              messageId: messageId,
-              expectedContactPeerId: expectedContactPeerId,
-              expectedEnvelope: expectedEnvelope,
-            ),
-        dbQuarantineUnsafeLegacyOutgoingEnvelope:
-            ({
-              required messageId,
-              required expectedContactPeerId,
-              required expectedEnvelope,
-              required isDeleteTombstone,
-            }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
-              stack.db,
-              messageId: messageId,
-              expectedContactPeerId: expectedContactPeerId,
-              expectedEnvelope: expectedEnvelope,
-              isDeleteTombstone: isDeleteTombstone,
-            ),
-      );
+    final custodyDb = DirectInboxCustodyDbBindings(stack.db);
+    final messageRepo = MessageRepositoryImpl(
+      dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                stack.db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
+      dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
+      dbLoadLatestMessageForContact: (p) =>
+          dbLoadLatestMessageForContact(stack.db, p),
+      dbUpdateMessageStatus: (id, s) => dbUpdateMessageStatus(stack.db, id, s),
+      dbLoadMessage: (id) => dbLoadMessage(stack.db, id),
+      dbExistsMessageByContent:
+          (contactPeerId, senderPeerId, text, timestamp) =>
+              dbExistsMessageByContent(
+                stack.db,
+                contactPeerId,
+                senderPeerId,
+                text,
+                timestamp,
+              ),
+      dbCountMessagesForContact: (p) => dbCountMessagesForContact(stack.db, p),
+      dbMarkConversationAsRead: (p) => dbMarkConversationAsRead(stack.db, p),
+      dbCountUnreadForContact: (p) => dbCountUnreadForContact(stack.db, p),
+      dbCountTotalUnread: () => dbCountTotalUnread(stack.db),
+      dbCountTotalUnreadExcludingArchived: () =>
+          dbCountTotalUnreadExcludingArchived(stack.db),
+      dbDeleteMessagesForContact: (p) =>
+          dbDeleteMessagesForContact(stack.db, p),
+      dbDeleteMessage: (id) => dbDeleteMessage(stack.db, id),
+      dbLoadMessagesPage: (p, {limit = 50, beforeTimestamp}) =>
+          dbLoadMessagesPage(
+            stack.db,
+            p,
+            limit: limit,
+            beforeTimestamp: beforeTimestamp,
+          ),
+      dbLoadFailedOutgoingMessages: () =>
+          dbLoadFailedOutgoingMessages(stack.db),
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+          dbLoadUnackedOutgoingMessages(
+            stack.db,
+            olderThan: olderThan,
+            limit: limit,
+          ),
+      dbLoadConversationThreadSummaries: (ids) =>
+          dbLoadConversationThreadSummaries(stack.db, ids),
+      dbRecoverStuckSendingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbRecoverStuckSendingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbSaveAuthoredDirectTextIntent: custodyDb.saveAuthored,
+      dbCancelAuthoredDirectTextIntent: custodyDb.cancelAuthored,
+      dbLoadAuthoredDirectTextIntents: custodyDb.loadAuthored,
+      loadAuthoredTextSenderPeerId: custodyDb.loadSenderPeerId,
+      dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+      dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+      dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          custodyDb.loadOwnerForMessageId,
+      dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          custodyDb.completeAcceptedIfExact,
+      dbLoadStuckSendingOutgoingMessages:
+          ({required DateTime olderThan, int limit = 50}) =>
+              dbLoadStuckSendingOutgoingMessages(
+                stack.db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbLoadSendingOutgoingMessages: () =>
+          dbLoadSendingOutgoingMessages(stack.db),
+      dbConditionalTransitionStatus:
+          (id, {required fromStatus, required toStatus}) =>
+              dbConditionalTransitionStatus(
+                stack.db,
+                id,
+                fromStatus: fromStatus,
+                toStatus: toStatus,
+              ),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                stack.db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
+    );
 
-      // ── Identity exchange ─────────────────────────────────────────────
-      _signals.writeJson('bob_identity.json', {
-        'peerId': stack.identity.peerId,
-        'publicKey': stack.identity.publicKey,
-        'mlKemPublicKey': stack.identity.mlKemPublicKey,
-      });
+    // ── Identity exchange ─────────────────────────────────────────────
+    _signals.writeJson('bob_identity.json', {
+      'peerId': stack.identity.peerId,
+      'publicKey': stack.identity.publicKey,
+      'mlKemPublicKey': stack.identity.mlKemPublicKey,
+    });
 
-      final aliceFixture = await _signals.waitForJson(
-        'alice_identity.json',
-        timeout: const Duration(seconds: 300),
-      );
-      final alicePeerId = aliceFixture['peerId'] as String;
-      final aliceMlKemPk = aliceFixture['mlKemPublicKey'] as String?;
+    final aliceFixture = await _signals.waitForJson(
+      'alice_identity.json',
+      timeout: const Duration(seconds: 300),
+    );
+    final alicePeerId = aliceFixture['peerId'] as String;
+    final aliceMlKemPk = aliceFixture['mlKemPublicKey'] as String?;
 
-      await stack.contactRepo.addContact(
-        ContactModel(
-          peerId: alicePeerId,
-          publicKey: aliceFixture['publicKey'] as String,
-          rendezvous: '/dns4/relay/tcp/443/p2p/relay',
-          username: 'AliceNotifOpen',
-          signature: 'sig-alice-notif-open',
-          scannedAt: DateTime.now().toUtc().toIso8601String(),
-          mlKemPublicKey: aliceMlKemPk,
-        ),
-      );
+    await stack.contactRepo.addContact(
+      ContactModel(
+        peerId: alicePeerId,
+        publicKey: aliceFixture['publicKey'] as String,
+        rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+        username: 'AliceNotifOpen',
+        signature: 'sig-alice-notif-open',
+        scannedAt: DateTime.now().toUtc().toIso8601String(),
+        mlKemPublicKey: aliceMlKemPk,
+      ),
+    );
 
-      _signals.writeSignal('bob_ready');
-      print('[BOB-NO] Ready — waiting for go signal');
+    _signals.writeSignal('bob_ready');
+    print('[BOB-NO] Ready — waiting for go signal');
 
-      // ── Send the message that triggers Alice's notification ───────────
-      await _signals.waitForSignal(
-        'bob_send_go',
-        timeout: const Duration(seconds: 300),
-      );
-      print('[BOB-NO] Sending 1:1 to Alice');
-      final result = await sendChatMessage(
-        p2pService: stack.p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: alicePeerId,
-        text: 'Bob says: tap me while you are in user-c chat',
-        senderPeerId: stack.identity.peerId,
-        senderUsername: stack.identity.username,
-        bridge: stack.bridge,
-        recipientMlKemPublicKey: aliceMlKemPk,
-      );
-      _signals.writeJson('bob_sent', {
-        'outcome': result.$1.name,
-        'messageId': result.$2?.id,
-      });
-      print('[BOB-NO] Send outcome: ${result.$1.name}');
+    // ── Send the message that triggers Alice's notification ───────────
+    await _signals.waitForSignal(
+      'bob_send_go',
+      timeout: const Duration(seconds: 300),
+    );
+    print('[BOB-NO] Sending 1:1 to Alice');
+    final result = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: messageRepo,
+      targetPeerId: alicePeerId,
+      text: 'Bob says: tap me while you are in user-c chat',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: aliceMlKemPk,
+    );
+    _signals.writeJson('bob_sent', {
+      'outcome': result.$1.name,
+      'messageId': result.$2?.id,
+    });
+    print('[BOB-NO] Send outcome: ${result.$1.name}');
 
-      // ── Done ──────────────────────────────────────────────────────────
-      await _signals.waitForSignal(
-        'all_done',
-        timeout: const Duration(seconds: 300),
-      );
-      print('[BOB-NO] Complete');
-      await stack.teardown();
-      _signals.writeSignal('bob_done');
-    },
-    timeout: const Timeout(Duration(minutes: 15)),
-  );
+    // ── Done ──────────────────────────────────────────────────────────
+    await _signals.waitForSignal(
+      'all_done',
+      timeout: const Duration(seconds: 300),
+    );
+    print('[BOB-NO] Complete');
+    await stack.teardown();
+    _signals.writeSignal('bob_done');
+  }, timeout: const Timeout(Duration(minutes: 15)));
 }
 
 // Initialised once we know Bob's peerId. Read by `_handleNotificationRouteTarget`.

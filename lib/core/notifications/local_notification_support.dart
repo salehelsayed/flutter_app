@@ -1,3 +1,4 @@
+import 'dart:math' show max;
 import 'dart:ui' show Locale, PlatformDispatcher;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'missed_call_action_payload.dart';
@@ -123,22 +124,34 @@ const mknoonThoughtsChannel = AndroidNotificationChannel(
   audioAttributesUsage: mknoonMessageAudioAttributesUsage,
 );
 
-const mknoonThoughtsNotificationDetails = NotificationDetails(
-  android: AndroidNotificationDetails(
-    mknoonThoughtsChannelId,
-    mknoonThoughtsChannelName,
-    channelDescription: mknoonThoughtsChannelDescription,
-    importance: Importance.high,
-    priority: Priority.high,
-    playSound: true,
-    audioAttributesUsage: mknoonMessageAudioAttributesUsage,
-  ),
-  iOS: DarwinNotificationDetails(
-    presentSound: true,
-    presentAlert: true,
-    presentBadge: true,
-  ),
-);
+/// Details for one thought card. With [remaining], Android drops the card by
+/// itself when the thought's 24 h are up, so a card never outlives its thought
+/// while the app stays closed; iOS has no such timeout, and the expiry sweep
+/// cancels the card the next time the app runs. Android treats a timeout of
+/// zero or less as none, so an already-due card gets the shortest one instead.
+NotificationDetails mknoonThoughtNotificationDetails({Duration? remaining}) =>
+    NotificationDetails(
+      android: AndroidNotificationDetails(
+        mknoonThoughtsChannelId,
+        mknoonThoughtsChannelName,
+        channelDescription: mknoonThoughtsChannelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        audioAttributesUsage: mknoonMessageAudioAttributesUsage,
+        timeoutAfter: remaining == null
+            ? null
+            : max(1, remaining.inMilliseconds),
+      ),
+      iOS: const DarwinNotificationDetails(
+        presentSound: true,
+        presentAlert: true,
+        presentBadge: true,
+      ),
+    );
+
+/// The push isolate's card: it shows a thought before knowing its expiry.
+final mknoonThoughtsNotificationDetails = mknoonThoughtNotificationDetails();
 
 // SE-41 T4a: update reminders from the background update check. Default
 // importance, so a reminder never pops over a chat. Native code posts on it

@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -67,8 +68,11 @@ Future<ThoughtRetraction> retractThought({
     );
   }
 
-  await mediaFileManager.deleteMediaForPost(postId);
-  await postRepo.deletePostCascade(postId);
+  await deleteStoredThought(
+    postRepo: postRepo,
+    mediaFileManager: mediaFileManager,
+    postId: postId,
+  );
 
   if (queued.isEmpty) {
     return const ThoughtRetraction(RetractThoughtResult.deleted);

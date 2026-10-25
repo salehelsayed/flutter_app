@@ -115,6 +115,30 @@ void main() {
     expect(log, isEmpty);
   });
 
+  test(
+    'a thought card shown by the app times out with its thought on Android',
+    () {
+      final android =
+          mknoonThoughtNotificationDetails(
+                remaining: const Duration(hours: 23, minutes: 30),
+              ).android
+              as AndroidNotificationDetails;
+
+      expect(android.timeoutAfter, 84600000);
+      expect(android.channelId, mknoonThoughtsChannelId);
+      expect(android.importance, Importance.high);
+
+      final due =
+          mknoonThoughtNotificationDetails(
+                remaining: const Duration(seconds: -5),
+              ).android
+              as AndroidNotificationDetails;
+      // Android treats a zero or negative timeout as none, which would keep an
+      // already-due card forever.
+      expect(due.timeoutAfter, 1);
+    },
+  );
+
   test('notification details match the channel contract', () {
     final androidDetails =
         mknoonMessagesNotificationDetails.android as AndroidNotificationDetails;

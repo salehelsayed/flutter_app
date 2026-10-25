@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -309,6 +310,22 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       'elapsedMs': createStopwatch.elapsedMilliseconds,
     },
   );
+  final olderOwnThoughts = await otherThoughtsBy(
+    postRepo,
+    authorPeerId: senderPeerId,
+    incoming: false,
+    exceptPostId: post.id,
+  );
+  if (olderOwnThoughts.isNotEmpty) {
+    // The orbit's composer passes no media manager; the default one reaches
+    // the same post_media folders.
+    await deleteReplacedThoughts(
+      postRepo: postRepo,
+      mediaFileManager: mediaFileManager ?? MediaFileManager(),
+      thoughts: olderOwnThoughts,
+      replacedBy: post.id,
+    );
+  }
 
   if (!hasMedia) {
     emitFlowEvent(

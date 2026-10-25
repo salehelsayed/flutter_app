@@ -4,10 +4,12 @@ import 'package:flutter_app/features/posts/application/attach_post_media_use_cas
 import 'package:flutter_app/features/posts/application/send_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/contact_presence_snapshot.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
 
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
@@ -48,6 +50,60 @@ void main() {
     posts.dispose();
     snapshots.dispose();
     privacySettings.dispose();
+  });
+
+  test("a new thought replaces the author's older one here", () async {
+    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+    final media = FakeMediaFileManager();
+    PostModel thought(String id, String author, {required bool incoming}) =>
+        PostModel(
+          id: id,
+          eventId: 'evt-$id',
+          senderPeerId: author,
+          authorPeerId: author,
+          authorUsername: author,
+          text: 'Thought $id',
+          audience: PostAudience.allFriends(),
+          createdAt: '2026-03-15T09:00:00.000Z',
+          visibleAt: '2026-03-15T09:00:00.000Z',
+          expiresAt: '2026-03-16T09:00:00.000Z',
+          isIncoming: incoming,
+          deliveryStatus: incoming ? 'delivered' : 'partial',
+        );
+    await posts.savePost(thought('mine-old', 'peer-alice', incoming: false));
+    await posts.savePostMediaAttachment(
+      PostMediaAttachmentModel(
+        mediaId: 'media-mine-old',
+        postId: 'mine-old',
+        blobId: 'blob-mine-old',
+        kind: 'image',
+        mime: 'image/jpeg',
+        sizeBytes: 10,
+        createdAt: '2026-03-15T09:00:00.000Z',
+      ),
+    );
+    await posts.savePost(thought('bob-1', 'peer-bob', incoming: true));
+    final changes = <String>[];
+    posts.postChanges.listen(changes.add);
+
+    final (result, created) = await createLocalPost(
+      postRepo: posts,
+      contactRepo: contacts,
+      senderPeerId: 'peer-alice',
+      senderUsername: 'Alice',
+      text: 'Newer thought',
+      audience: PostAudience.allFriends(),
+      mediaFileManager: media,
+    );
+
+    expect(result, SendPostResult.success);
+    expect(
+      (await posts.loadFeed()).map((post) => post.id),
+      unorderedEquals([created!.post.id, 'bob-1']),
+    );
+    expect(await posts.loadPostMediaAttachments('mine-old'), isEmpty);
+    expect(media.deletedPostIds, ['mine-old']);
+    expect(changes, contains('mine-old'));
   });
 
   test(
@@ -175,28 +231,31 @@ void main() {
     },
   );
 
-  test('createLocalPost strips dangerous bidi controls from persisted text', () async {
-    contacts.addTestContact(_contact('peer-bob', 'Bob'));
+  test(
+    'createLocalPost strips dangerous bidi controls from persisted text',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
-    final (result, created) = await createLocalPost(
-      postRepo: posts,
-      contactRepo: contacts,
-      senderPeerId: 'peer-alice',
-      senderUsername: 'A\u202Eli\u200Fce',
-      text: '  Hello\u202E world\u200F  ',
-      audience: PostAudience.allFriends(),
-    );
+      final (result, created) = await createLocalPost(
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'A\u202Eli\u200Fce',
+        text: '  Hello\u202E world\u200F  ',
+        audience: PostAudience.allFriends(),
+      );
 
-    expect(result, SendPostResult.success);
-    expect(created, isNotNull);
-    expect(created!.post.authorUsername, 'Ali\u200Fce');
-    expect(created.post.text, '  Hello world\u200F  ');
+      expect(result, SendPostResult.success);
+      expect(created, isNotNull);
+      expect(created!.post.authorUsername, 'Ali\u200Fce');
+      expect(created.post.text, '  Hello world\u200F  ');
 
-    final storedPost = await posts.getPost(created.post.id);
-    expect(storedPost, isNotNull);
-    expect(storedPost!.authorUsername, 'Ali\u200Fce');
-    expect(storedPost.text, '  Hello world\u200F  ');
-  });
+      final storedPost = await posts.getPost(created.post.id);
+      expect(storedPost, isNotNull);
+      expect(storedPost!.authorUsername, 'Ali\u200Fce');
+      expect(storedPost.text, '  Hello world\u200F  ');
+    },
+  );
 
   test(
     'createLocalPost rejects text-only payloads that become empty after sanitization',

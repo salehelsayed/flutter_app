@@ -7,7 +7,9 @@ import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/early_thought_retractions.dart';
 import 'package:flutter_app/features/posts/application/reconcile_pending_post_child_events_use_case.dart';
+import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
@@ -16,6 +18,9 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart
     show PostMediaCryptoEntry;
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
+/// The returned thought is null unless it was stored ([postCreated],
+/// [duplicate] after a merge) or parsed and then not kept ([expired],
+/// [superseded], [retracted]), so a card a push already showed for it can go.
 enum HandleIncomingPostResult {
   postCreated,
   notPostCreate,
@@ -23,6 +28,12 @@ enum HandleIncomingPostResult {
   blockedSender,
   duplicate,
   expired,
+
+  /// A newer thought from the same friend is already stored here.
+  superseded,
+
+  /// The author's retraction arrived before this copy did.
+  retracted,
 }
 
 typedef HydratePostMediaFn =
@@ -30,6 +41,12 @@ typedef HydratePostMediaFn =
       required PostMediaAttachmentModel attachment,
       required String postId,
     });
+
+/// Runs once the thought and every media row (with its keys) are saved and
+/// before any media download. [post] carries the media rows as stored, still
+/// pending. [created] is false when the copy merged into a thought already held.
+typedef OnPostDurablyStoredFn =
+    Future<void> Function(PostModel post, {required bool created});
 
 Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   required ChatMessage message,
@@ -40,9 +57,8 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   HydratePostMediaFn? hydratePostMediaFn,
   MediaFileManager? mediaFileManager,
   DateTime Function()? nowProvider,
-  /// Runs once the thought and every media row (with its keys) are saved,
-  /// before any media download.
-  Future<void> Function()? onDurablyStored,
+  OnPostDurablyStoredFn? onDurablyStored,
+  EarlyThoughtRetractions? earlyRetractions,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -94,14 +110,6 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
   final now = (nowProvider?.call() ?? DateTime.now()).toUtc();
   final suppliedCreatedAt = DateTime.parse(envelope.createdAt).toUtc();
   final createdAt = suppliedCreatedAt.isAfter(now) ? now : suppliedCreatedAt;
-  if (ThoughtLifetime.isExpired(createdAt, now)) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'POST_RECEIVE_EXPIRED',
-      details: {'postId': envelope.postId},
-    );
-    return (HandleIncomingPostResult.expired, null);
-  }
   final incomingPost = _sanitizeIncomingPost(
     envelope
         .toPostModel(isIncoming: true, deliveryStatus: 'delivered')
@@ -112,6 +120,14 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
           keepAvailable: false,
         ),
   );
+  if (ThoughtLifetime.isExpired(createdAt, now)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_RECEIVE_EXPIRED',
+      details: {'postId': envelope.postId},
+    );
+    return (HandleIncomingPostResult.expired, incomingPost);
+  }
 
   Future<bool> isStillEligible() async =>
       !ThoughtLifetime.isExpired(
@@ -145,11 +161,16 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
       isStillEligible: isStillEligible,
       mediaFileManager: mediaFileManager,
-      onDurablyStored: onDurablyStored,
+      onRowsStored: onDurablyStored == null
+          ? null
+          : (rows) => onDurablyStored(
+              mergedPost.copyWith(media: rows),
+              created: false,
+            ),
     );
     if (!await isStillEligible()) {
       await postRepo.deletePostCascade(mergedPost.id);
-      return (HandleIncomingPostResult.expired, null);
+      return (HandleIncomingPostResult.expired, mergedPost);
     }
     await postRepo.savePostOrigin(
       PostOriginModel(
@@ -179,8 +200,44 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     );
   }
 
+  if (earlyRetractions?.rejects(
+        postId: envelope.postId,
+        authorPeerId: envelope.senderPeerId,
+      ) ??
+      false) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_RECEIVE_RETRACTED',
+      details: {'postId': envelope.postId},
+    );
+    return (HandleIncomingPostResult.retracted, incomingPost);
+  }
+
+  // One live thought per friend: a newer one already here wins, and the new
+  // one takes every older one with it.
+  final otherThoughts = await otherThoughtsBy(
+    postRepo,
+    authorPeerId: envelope.senderPeerId,
+    incoming: true,
+    exceptPostId: envelope.postId,
+  );
+  if (otherThoughts.any((other) => _createdAfter(other, createdAt))) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_RECEIVE_SUPERSEDED',
+      details: {'postId': envelope.postId},
+    );
+    return (HandleIncomingPostResult.superseded, incomingPost);
+  }
+
   final post = incomingPost;
   await postRepo.savePost(post);
+  await deleteReplacedThoughts(
+    postRepo: postRepo,
+    mediaFileManager: mediaFileManager,
+    thoughts: otherThoughts,
+    replacedBy: post.id,
+  );
   final storedMedia = await _storeIncomingMedia(
     postRepo: postRepo,
     postId: post.id,
@@ -190,11 +247,13 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
     isStillEligible: isStillEligible,
     mediaFileManager: mediaFileManager,
-    onDurablyStored: onDurablyStored,
+    onRowsStored: onDurablyStored == null
+        ? null
+        : (rows) => onDurablyStored(post.copyWith(media: rows), created: true),
   );
   if (!await isStillEligible()) {
     await postRepo.deletePostCascade(post.id);
-    return (HandleIncomingPostResult.expired, null);
+    return (HandleIncomingPostResult.expired, post);
   }
   await reconcilePendingPostChildEvents(
     postId: post.id,
@@ -212,6 +271,9 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
     post.copyWith(media: storedMedia),
   );
 }
+
+bool _createdAfter(PostModel post, DateTime instant) =>
+    DateTime.tryParse(post.createdAt)?.toUtc().isAfter(instant) ?? false;
 
 String _laterTimestamp(String currentIso, String candidateIso) {
   final current = DateTime.tryParse(currentIso);
@@ -266,7 +328,10 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
   HydratePostMediaFn? hydratePostMediaFn,
   List<PostMediaAttachmentModel> existingMedia =
       const <PostMediaAttachmentModel>[],
-  Future<void> Function()? onDurablyStored,
+
+  /// Runs with every media row saved (preserved ones and pending ones), before
+  /// any download.
+  Future<void> Function(List<PostMediaAttachmentModel> rows)? onRowsStored,
 }) async {
   final existingById = <String, PostMediaAttachmentModel>{
     for (final attachment in existingMedia) attachment.mediaId: attachment,
@@ -295,7 +360,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
     await postRepo.savePostMediaAttachment(pendingAttachment);
     pendingAttachments.add(pendingAttachment);
   }
-  await onDurablyStored?.call();
+  await onRowsStored?.call([...storedMedia, ...pendingAttachments]);
 
   for (final pendingAttachment in pendingAttachments) {
     if (!await isStillEligible()) return const [];

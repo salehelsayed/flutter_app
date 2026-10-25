@@ -5,10 +5,12 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
@@ -45,6 +47,35 @@ ChatMessage _messageFromJson(
     isIncoming: true,
   );
 }
+
+/// A friend's thought with one photo, written at [createdAt].
+PostCreateEnvelope _thought(String id, String author, String createdAt) =>
+    PostCreateEnvelope.fromPost(
+      PostModel(
+        id: id,
+        eventId: 'evt-$id',
+        senderPeerId: author,
+        authorPeerId: author,
+        authorUsername: author,
+        text: 'Thought $id',
+        audience: const PostAudience(kind: PostAudienceKind.allFriends),
+        createdAt: createdAt,
+        visibleAt: createdAt,
+        expiresAt: '2026-03-18T10:15:30.000Z',
+        mediaKind: 'image',
+        media: [
+          PostMediaAttachmentModel(
+            mediaId: 'media-$id',
+            postId: id,
+            blobId: 'blob-$id',
+            kind: 'image',
+            mime: 'image/jpeg',
+            sizeBytes: 10,
+            createdAt: createdAt,
+          ),
+        ],
+      ),
+    );
 
 void main() {
   late InMemoryContactRepository contacts;
@@ -123,6 +154,69 @@ void main() {
     expect(first.$1, HandleIncomingPostResult.postCreated);
     expect(second.$1, HandleIncomingPostResult.duplicate);
     expect((await posts.loadFeed()), hasLength(1));
+  });
+
+  group('one live thought per friend', () {
+    final now = DateTime.parse('2026-03-15T13:00:00Z');
+    late FakeMediaFileManager media;
+    late List<String> changes;
+
+    setUp(() {
+      media = FakeMediaFileManager();
+      changes = <String>[];
+      posts.postChanges.listen(changes.add);
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      contacts.addTestContact(_contact('peer-cat', 'Cat'));
+    });
+
+    Future<(HandleIncomingPostResult, PostModel?)> receive(
+      PostCreateEnvelope thought,
+    ) => handleIncomingPost(
+      message: _messageFromEnvelope(thought),
+      postRepo: posts,
+      contactRepo: contacts,
+      mediaFileManager: media,
+      nowProvider: () => now,
+    );
+
+    test(
+      "a friend's newer thought replaces the older one stored here",
+      () async {
+        await receive(
+          _thought('bob-1', 'peer-bob', '2026-03-15T09:00:00.000Z'),
+        );
+        await receive(
+          _thought('cat-1', 'peer-cat', '2026-03-15T09:30:00.000Z'),
+        );
+        changes.clear();
+
+        final (result, _) = await receive(
+          _thought('bob-2', 'peer-bob', '2026-03-15T10:00:00.000Z'),
+        );
+
+        expect(result, HandleIncomingPostResult.postCreated);
+        expect(
+          (await posts.loadFeed()).map((post) => post.id),
+          unorderedEquals(['bob-2', 'cat-1']),
+        );
+        expect(await posts.loadPostMediaAttachments('bob-1'), isEmpty);
+        expect(media.deletedPostIds, ['bob-1']);
+        expect(changes, contains('bob-1'));
+      },
+    );
+
+    test('a late older thought is not stored beside the newer one', () async {
+      await receive(_thought('bob-2', 'peer-bob', '2026-03-15T10:00:00.000Z'));
+
+      final (result, _) = await receive(
+        _thought('bob-1', 'peer-bob', '2026-03-15T09:00:00.000Z'),
+      );
+
+      expect(result, HandleIncomingPostResult.superseded);
+      expect((await posts.loadFeed()).map((post) => post.id), ['bob-2']);
+      expect(await posts.loadPostMediaAttachments('bob-1'), isEmpty);
+      expect(media.deletedPostIds, isEmpty);
+    });
   });
 
   test(

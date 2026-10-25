@@ -65,12 +65,14 @@ class FakeNotificationService implements NotificationService {
     required String postId,
     required String title,
     required String body,
+    required DateTime expiresAt,
   }) async {
     shownThoughts.add(
       FakeGenericNotification(
         title: title,
         body: body,
         payload: 'post:$postId',
+        expiresAt: expiresAt,
       ),
     );
   }
@@ -141,11 +143,15 @@ class FakeGenericNotification {
   final int? androidNotificationId;
   final String? androidNotificationTag;
 
+  /// Set on thought cards only.
+  final DateTime? expiresAt;
+
   const FakeGenericNotification({
     required this.title,
     required this.body,
     this.payload,
     this.androidNotificationId,
     this.androidNotificationTag,
+    this.expiresAt,
   });
 }

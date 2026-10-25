@@ -654,11 +654,14 @@ class FlutterNotificationService
     required String postId,
     required String title,
     required String body,
+    required DateTime expiresAt,
   }) => _showGenericNotification(
     title: title,
     body: body,
     payload: NotificationRouteTarget.post(postId).toPayload(),
-    details: mknoonThoughtsNotificationDetails,
+    details: mknoonThoughtNotificationDetails(
+      remaining: expiresAt.difference(DateTime.now()),
+    ),
   );
 
   @override

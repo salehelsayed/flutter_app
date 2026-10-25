@@ -362,8 +362,13 @@ class _RecordingNotificationService implements NotificationService {
     required String postId,
     required String title,
     required String body,
-  }) =>
-      _inner.showThoughtNotification(postId: postId, title: title, body: body);
+    required DateTime expiresAt,
+  }) => _inner.showThoughtNotification(
+    postId: postId,
+    title: title,
+    body: body,
+    expiresAt: expiresAt,
+  );
 
   @override
   Future<String?> consumeInitialPayload() => _inner.consumeInitialPayload();

@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 Future<List<String>> sweepExpiredPosts({
@@ -14,8 +15,11 @@ Future<List<String>> sweepExpiredPosts({
   for (final post in expiredPosts) {
     // One post that cannot be deleted must not keep every later one alive.
     try {
-      await mediaFileManager.deleteMediaForPost(post.id);
-      await postRepo.deletePostCascade(post.id);
+      await deleteStoredThought(
+        postRepo: postRepo,
+        mediaFileManager: mediaFileManager,
+        postId: post.id,
+      );
       deletedPostIds.add(post.id);
     } catch (error) {
       emitFlowEvent(

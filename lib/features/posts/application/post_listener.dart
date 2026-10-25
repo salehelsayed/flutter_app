@@ -10,6 +10,7 @@ import 'package:flutter_app/core/notifications/recent_remote_notification_gate.d
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/posts/application/early_thought_retractions.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_retract_use_case.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -43,6 +44,9 @@ class PostListener {
   })?
   hydratePostMediaFn;
 
+  /// Retractions that beat their thought here, so the thought stays out.
+  final EarlyThoughtRetractions earlyRetractions;
+
   StreamSubscription<ChatMessage>? _subscription;
   StreamSubscription<ChatMessage>? _retractSubscription;
   final _postController = StreamController<PostModel>.broadcast();
@@ -61,7 +65,8 @@ class PostListener {
     this.friendThoughtCards,
     this.hydratePostMediaFn,
     DateTime Function()? nowProvider,
-  }) : now = nowProvider ?? DateTime.now;
+  }) : now = nowProvider ?? DateTime.now,
+       earlyRetractions = EarlyThoughtRetractions(nowProvider: nowProvider);
 
   Stream<PostModel> get incomingPostStream => _postController.stream;
 
@@ -84,6 +89,7 @@ class PostListener {
         message: message,
         postRepo: postRepo,
         mediaFileManager: mediaFileManager,
+        earlyRetractions: earlyRetractions,
       );
       if (result == HandleIncomingPostRetractResult.thoughtDeleted &&
           postId != null) {
@@ -112,6 +118,14 @@ class PostListener {
       await _maybeConfirmDirectNonce(message, ok: true);
     }
 
+    // Media downloads can outlast the sender's ack window and the process
+    // itself; the thought, its media keys and its media kind are saved, so
+    // the ack and the friend's card both go out now.
+    Future<void> durablyStored(PostModel post, {required bool created}) async {
+      await confirmStored();
+      if (created) await _announce(post);
+    }
+
     try {
       final ownMlKemSecretKey = getOwnMlKemSecretKey == null
           ? null
@@ -125,9 +139,8 @@ class PostListener {
         ownMlKemSecretKey: ownMlKemSecretKey,
         hydratePostMediaFn: hydratePostMediaFn,
         nowProvider: now,
-        // Media downloads can outlast the sender's ack window; the thought and
-        // its media keys are already saved, so release the ack first.
-        onDurablyStored: confirmStored,
+        onDurablyStored: durablyStored,
+        earlyRetractions: earlyRetractions,
       );
     } catch (error) {
       // Nothing final happened, so the sender keeps custody: Go withholds its
@@ -144,50 +157,77 @@ class PostListener {
     // good), so the sender's Go node may release its ack.
     await confirmStored();
     final (result, post) = outcome;
-    if (result != HandleIncomingPostResult.postCreated || post == null) {
+    switch (result) {
+      case HandleIncomingPostResult.postCreated when post != null:
+        if (_expired(post)) {
+          await _cancelCard(NotificationRouteTarget.post(post.id).toPayload());
+          return;
+        }
+        _postController.add(post);
+        return;
+      case HandleIncomingPostResult.expired:
+      case HandleIncomingPostResult.superseded:
+      case HandleIncomingPostResult.retracted:
+        // The push isolate may have shown this thought's card already; the
+        // thought is not kept, so the card goes.
+        if (post != null) {
+          await _cancelCard(NotificationRouteTarget.post(post.id).toPayload());
+        }
+      default:
+        break;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'POST_LISTENER_IGNORED',
+      details: {'result': result.name},
+    );
+  }
+
+  /// Shows the friend's card for a thought just stored, unless the app is in
+  /// the foreground, the sender is archived, a push already announced it, or
+  /// a newer thought from the friend holds the card. Claiming the card retires
+  /// the friend's older one either way. A card that cannot be shown must not
+  /// stop the media download that follows.
+  Future<void> _announce(PostModel post) async {
+    final cardKey = NotificationRouteTarget.post(post.id).toPayload();
+    try {
+      final sender = await contactRepo.getContact(post.senderPeerId);
+      final current =
+          !post.isIncoming ||
+          await _claimFriendsCard(post.senderPeerId, cardKey);
+      final showsCard =
+          current &&
+          sender != null &&
+          !sender.isArchived &&
+          notificationService != null &&
+          post.isIncoming &&
+          !(await isAppForegroundActive?.call() ?? false);
+      final announcedByPush =
+          showsCard &&
+          (await remoteNotificationGate?.consumeIfRecentAnnouncement(
+                payload: cardKey,
+                messageId: post.eventId,
+              ) ??
+              false);
+      if (showsCard && !announcedByPush) {
+        await notificationService!.showThoughtNotification(
+          postId: post.id,
+          title: localizedThoughtNotificationTitle(sender.username),
+          body: localizedThoughtNotificationBody(
+            text: post.text,
+            mediaKind: post.mediaKind,
+            mediaCount: post.media.length,
+          ),
+          expiresAt: DateTime.parse(post.expiresAt),
+        );
+      }
+    } catch (error) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'POST_LISTENER_IGNORED',
-        details: {'result': result.name},
-      );
-      return;
-    }
-
-    final sender = await contactRepo.getContact(post.senderPeerId);
-    if (_expired(post)) return;
-    final cardKey = NotificationRouteTarget.post(post.id).toPayload();
-    final current =
-        !post.isIncoming || await _claimFriendsCard(post.senderPeerId, cardKey);
-    final showsCard =
-        current &&
-        sender != null &&
-        !sender.isArchived &&
-        notificationService != null &&
-        post.isIncoming &&
-        !(await isAppForegroundActive?.call() ?? false);
-    final announcedByPush =
-        showsCard &&
-        (await remoteNotificationGate?.consumeIfRecentAnnouncement(
-              payload: cardKey,
-              messageId: post.eventId,
-            ) ??
-            false);
-    if (showsCard && !announcedByPush) {
-      await notificationService!.showThoughtNotification(
-        postId: post.id,
-        title: localizedThoughtNotificationTitle(sender.username),
-        body: localizedThoughtNotificationBody(
-          text: post.text,
-          mediaKind: post.mediaKind,
-          mediaCount: post.media.length,
-        ),
+        event: 'POST_LISTENER_CARD_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
       );
     }
-    if (_expired(post)) {
-      await _cancelCard(cardKey);
-      return;
-    }
-    _postController.add(post);
   }
 
   /// One card per friend: claiming the friend's card for this thought retires

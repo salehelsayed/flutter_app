@@ -302,11 +302,13 @@ abstract class NotificationService {
   });
 
   /// Plan 407: one friend's thought on the thoughts channel. Its id and tap
-  /// route are those of `post:<postId>`, so expiry retires the exact card.
+  /// route are those of `post:<postId>`, so expiry retires the exact card, and
+  /// on Android the card drops itself at [expiresAt] if the app never does.
   Future<void> showThoughtNotification({
     required String postId,
     required String title,
     required String body,
+    required DateTime expiresAt,
   });
 
   /// 406: show one missed-call card for [contactAccountPeerId].

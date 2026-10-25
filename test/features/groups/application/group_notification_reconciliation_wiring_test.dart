@@ -800,6 +800,7 @@ final class _GenerationNotificationService
     required String postId,
     required String title,
     required String body,
+    required DateTime expiresAt,
   }) async {}
 
   @override

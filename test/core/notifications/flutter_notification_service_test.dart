@@ -863,10 +863,12 @@ void main() {
     () async {
       final service = buildService();
       await service.initialize();
+      final expiresAt = DateTime.now().toUtc().add(const Duration(hours: 2));
       await service.showThoughtNotification(
         postId: 'thought-1',
         title: 'Friend shared a thought',
         body: 'Private thought',
+        expiresAt: expiresAt,
       );
       final thought = log.last.arguments as Map;
       expect(log.last.method, 'show');
@@ -877,10 +879,17 @@ void main() {
         (thought['platformSpecifics'] as Map)['channelId'],
         'mknoon_thoughts',
       );
+      // The card drops itself at the thought's expiry when the app stays
+      // closed; the test's own clock allows a few seconds of drift.
+      expect(
+        (thought['platformSpecifics'] as Map)['timeoutAfter'],
+        inInclusiveRange(7190000, 7200000),
+      );
       await service.showThoughtNotification(
         postId: 'thought-2',
         title: 'Another friend shared a thought',
         body: 'Live thought',
+        expiresAt: expiresAt,
       );
       final liveId = (log.last.arguments as Map)['id'];
       expect(thought['id'], isNot(liveId));

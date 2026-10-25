@@ -488,7 +488,7 @@ void main() {
         },
       );
       expect(result, HandleIncomingPostResult.expired);
-      expect(received, isNull);
+      expect(received?.id, 'thought');
       expect(await posts.getPost('thought'), isNull);
       expect(await posts.loadPostMediaAttachments('thought'), isEmpty);
       expect(await lateFile.exists(), isFalse);
@@ -558,7 +558,7 @@ void main() {
         },
       );
       expect(result, HandleIncomingPostResult.expired);
-      expect(received, isNull);
+      expect(received?.id, 'thought');
       expect(await posts.getPost('thought'), isNull);
       expect(await posts.loadPostMediaAttachments('thought'), isEmpty);
       expect(hydrated, isFalse);
