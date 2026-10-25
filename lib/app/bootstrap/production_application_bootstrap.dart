@@ -2243,6 +2243,8 @@ final class ProductionApplicationBootstrap
           dbDeletePendingPostChildEvent(db, eventId),
       dbUpsertFollowOnOutboxEvent: (row) =>
           dbUpsertPostFollowOnOutboxEvent(db, row),
+      dbUpsertFollowOnOutboxEventWithRecipients: (event, recipients) =>
+          dbUpsertPostFollowOnOutboxEventWithRecipients(db, event, recipients),
       dbLoadFollowOnOutboxEvent: (eventId) =>
           dbLoadPostFollowOnOutboxEvent(db, eventId),
       dbDeleteFollowOnOutboxEvent: (eventId) =>

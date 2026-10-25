@@ -334,17 +334,6 @@ Future<List<PostFollowOnOutboxRecipientDelivery>> queuePostFollowOn({
     recipientPeerIds.where((recipientPeerId) => recipientPeerId.isNotEmpty),
   ).toList(growable: false);
 
-  await postRepo.saveFollowOnOutboxEvent(
-    PostFollowOnOutboxEvent(
-      eventId: eventId,
-      eventType: eventType,
-      postId: postId,
-      senderPeerId: senderPeerId,
-      rawEnvelope: envelope,
-      createdAt: createdAt,
-    ),
-  );
-
   final queuedDeliveries = recipients
       .map(
         (recipientPeerId) => PostFollowOnOutboxRecipientDelivery(
@@ -357,9 +346,17 @@ Future<List<PostFollowOnOutboxRecipientDelivery>> queuePostFollowOn({
         ),
       )
       .toList(growable: false);
-  for (final delivery in queuedDeliveries) {
-    await postRepo.saveFollowOnOutboxRecipientDelivery(delivery);
-  }
+  await postRepo.saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent(
+      eventId: eventId,
+      eventType: eventType,
+      postId: postId,
+      senderPeerId: senderPeerId,
+      rawEnvelope: envelope,
+      createdAt: createdAt,
+    ),
+    queuedDeliveries,
+  );
   return queuedDeliveries;
 }
 

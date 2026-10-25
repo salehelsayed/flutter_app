@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,7 @@ import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_e
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
@@ -63,7 +65,9 @@ void main() {
     await tempDir.delete(recursive: true);
   });
 
-  PostRepositoryImpl buildRepository() {
+  PostRepositoryImpl buildRepository({
+    Future<void> Function()? afterInitialQueueWrite,
+  }) {
     return PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(
@@ -81,20 +85,171 @@ void main() {
       dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
       dbUpsertFollowOnOutboxEvent: (row) =>
           dbUpsertPostFollowOnOutboxEvent(db, row),
+      dbUpsertFollowOnOutboxEventWithRecipients: (event, recipients) async {
+        await dbUpsertPostFollowOnOutboxEventWithRecipients(
+          db,
+          event,
+          recipients,
+        );
+        await afterInitialQueueWrite?.call();
+      },
       dbLoadFollowOnOutboxEvent: (eventId) =>
           dbLoadPostFollowOnOutboxEvent(db, eventId),
       dbDeleteFollowOnOutboxEvent: (eventId) =>
           dbDeletePostFollowOnOutboxEvent(db, eventId),
       dbLoadRetryableFollowOnOutboxEvents: () =>
           dbLoadRetryablePostFollowOnOutboxEvents(db),
-      dbUpsertFollowOnOutboxRecipientDelivery: (row) =>
-          dbUpsertPostFollowOnOutboxRecipientDelivery(db, row),
+      dbUpsertFollowOnOutboxRecipientDelivery: (row) async {
+        await dbUpsertPostFollowOnOutboxRecipientDelivery(db, row);
+        if (row['recipient_peer_id'] == 'bob' &&
+            row['delivery_status'] == 'pending') {
+          await afterInitialQueueWrite?.call();
+        }
+      },
       dbLoadFollowOnOutboxRecipientDeliveries: (eventId) =>
           dbLoadPostFollowOnOutboxRecipientDeliveries(db, eventId),
       dbLoadRetryableFollowOnOutboxRecipientDeliveries: (eventIds) =>
           dbLoadRetryablePostFollowOnOutboxRecipientDeliveries(db, eventIds),
     );
   }
+
+  test('initial retraction snapshot survives retry during queueing', () async {
+    final firstWrite = Completer<void>();
+    final finishQueueing = Completer<void>();
+    addTearDown(() {
+      if (!finishQueueing.isCompleted) finishQueueing.complete();
+    });
+    final queueRepository = buildRepository(
+      afterInitialQueueWrite: () async {
+        firstWrite.complete();
+        await finishQueueing.future;
+      },
+    );
+    final retryRepository = buildRepository();
+    addTearDown(queueRepository.dispose);
+    addTearDown(retryRepository.dispose);
+    final network = FakeP2PNetwork()..inboxDisabled = true;
+    final service = _RetractP2PService(
+      network,
+      acknowledgedRecipients: {'bob'},
+    );
+    addTearDown(service.dispose);
+    final now = DateTime.utc(2026, 3, 15, 12);
+    final envelope = PostRetractEnvelope(
+      eventId: 'evt-queue-interleaving',
+      postId: 'thought-queue-interleaving',
+      createdAt: now,
+      postCreatedAt: now.subtract(const Duration(hours: 2)),
+    );
+    final queueing = queuePostFollowOn(
+      postRepo: queueRepository,
+      eventId: envelope.eventId,
+      eventType: PostRetractEnvelope.type,
+      postId: envelope.postId,
+      senderPeerId: 'me',
+      envelope: envelope.toJson(),
+      createdAt: now.toIso8601String(),
+      recipientPeerIds: ['bob', 'cara'],
+    );
+    await firstWrite.future.timeout(const Duration(seconds: 5));
+    final initiallyVisible = await retryRepository
+        .loadFollowOnOutboxRecipientDeliveries(envelope.eventId);
+    expect(initiallyVisible.map((row) => row.recipientPeerId), contains('bob'));
+    try {
+      expect(
+        await retryPendingPostFollowOns(
+          postRepo: retryRepository,
+          p2pService: service,
+          nowProvider: () => now,
+        ),
+        1,
+      );
+    } finally {
+      finishQueueing.complete();
+    }
+    final deliveries = await queueing;
+    await deliverQueuedPostFollowOn(
+      postRepo: queueRepository,
+      p2pService: service,
+      eventId: envelope.eventId,
+      envelope: envelope.toJson(),
+      deliveries: deliveries,
+    );
+
+    await db.close();
+    db = await openDatabase('${tempDir.path}/posts.db');
+    final reopened = buildRepository();
+    addTearDown(reopened.dispose);
+    final jobs = await reopened.loadRetryableFollowOnOutboxJobs();
+    expect(
+      jobs,
+      hasLength(1),
+      reason:
+          'later recipient must stay durable; initial visible snapshot had ${initiallyVisible.length} recipients',
+    );
+    expect(jobs.single.recipientDeliveries.single.recipientPeerId, 'cara');
+    expect(jobs.single.recipientDeliveries.single.deliveryStatus, 'failed');
+    expect(
+      initiallyVisible.map((row) => row.recipientPeerId),
+      unorderedEquals(['bob', 'cara']),
+    );
+
+    network.inboxDisabled = false;
+    expect(
+      await retryPendingPostFollowOns(
+        postRepo: reopened,
+        p2pService: service,
+        nowProvider: () => now.add(const Duration(minutes: 1)),
+      ),
+      1,
+    );
+    expect(network.inboxCount('cara'), 1);
+    expect(await db.query('post_follow_on_outbox_events'), isEmpty);
+    expect(
+      await db.query('post_follow_on_outbox_recipient_deliveries'),
+      isEmpty,
+    );
+  });
+
+  test(
+    'failed initial recipient write rolls back the entire snapshot',
+    () async {
+      final repository = buildRepository();
+      addTearDown(repository.dispose);
+      await db.execute('''
+      CREATE TRIGGER reject_later_recipient
+      BEFORE INSERT ON post_follow_on_outbox_recipient_deliveries
+      WHEN NEW.recipient_peer_id = 'cara'
+      BEGIN SELECT RAISE(ABORT, 'fixture recipient write failed'); END
+    ''');
+
+      await expectLater(
+        queuePostFollowOn(
+          postRepo: repository,
+          eventId: 'evt-snapshot-rollback',
+          eventType: 'post_retract',
+          postId: 'thought-snapshot-rollback',
+          senderPeerId: 'me',
+          envelope: '{"type":"post_retract"}',
+          createdAt: '2026-03-15T12:00:00.000Z',
+          recipientPeerIds: ['bob', 'cara'],
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(await db.query('post_follow_on_outbox_events'), isEmpty);
+      expect(
+        await db.query('post_follow_on_outbox_recipient_deliveries'),
+        isEmpty,
+      );
+      await db.close();
+      db = await openDatabase('${tempDir.path}/posts.db');
+      expect(await db.query('post_follow_on_outbox_events'), isEmpty);
+      expect(
+        await db.query('post_follow_on_outbox_recipient_deliveries'),
+        isEmpty,
+      );
+    },
+  );
 
   for (final expireBeforeRetry in [false, true]) {
     test(
@@ -103,7 +258,7 @@ void main() {
         var repository = buildRepository();
         addTearDown(() => repository.dispose());
         final network = FakeP2PNetwork()..inboxDisabled = true;
-        final service = _UnacknowledgedP2PService(network);
+        final service = _RetractP2PService(network);
         addTearDown(service.dispose);
         final createdAt = DateTime.utc(2026, 3, 15, 10);
         final now = createdAt.add(const Duration(hours: 2));
@@ -430,10 +585,13 @@ class _PathProvider extends Fake
   Future<String?> getApplicationDocumentsPath() async => path;
 }
 
-class _UnacknowledgedP2PService extends FakeP2PService {
-  _UnacknowledgedP2PService(FakeP2PNetwork network)
-    : super(peerId: 'me', network: network);
+class _RetractP2PService extends FakeP2PService {
+  _RetractP2PService(
+    FakeP2PNetwork network, {
+    this.acknowledgedRecipients = const {},
+  }) : super(peerId: 'me', network: network);
 
+  final Set<String> acknowledgedRecipients;
   int directAttempts = 0;
 
   @override
@@ -446,6 +604,9 @@ class _UnacknowledgedP2PService extends FakeP2PService {
     int? timeoutMs,
   }) async {
     directAttempts++;
-    return const SendMessageResult(sent: true, acked: false);
+    return SendMessageResult(
+      sent: true,
+      acked: acknowledgedRecipients.contains(targetPeerId),
+    );
   }
 }

@@ -79,6 +79,11 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(String eventId)? dbDeletePendingChildEvent;
   final Future<void> Function(Map<String, Object?> row)?
   dbUpsertFollowOnOutboxEvent;
+  final Future<void> Function(
+    Map<String, Object?> event,
+    List<Map<String, Object?>> recipients,
+  )?
+  dbUpsertFollowOnOutboxEventWithRecipients;
   final Future<Map<String, Object?>?> Function(String eventId)?
   dbLoadFollowOnOutboxEvent;
   final Future<void> Function(String eventId)? dbDeleteFollowOnOutboxEvent;
@@ -176,6 +181,7 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadPendingChildEvents,
     this.dbDeletePendingChildEvent,
     this.dbUpsertFollowOnOutboxEvent,
+    this.dbUpsertFollowOnOutboxEventWithRecipients,
     this.dbLoadFollowOnOutboxEvent,
     this.dbDeleteFollowOnOutboxEvent,
     this.dbLoadRetryableFollowOnOutboxEvents,
@@ -570,6 +576,21 @@ class PostRepositoryImpl implements PostRepository {
       'Posts follow-on outbox is not configured for this repository.',
     );
     await dbUpsert(event.toMap());
+  }
+
+  @override
+  Future<void> saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent event,
+    List<PostFollowOnOutboxRecipientDelivery> recipients,
+  ) async {
+    final dbSave = _require(
+      dbUpsertFollowOnOutboxEventWithRecipients,
+      'Posts follow-on outbox snapshot is not configured for this repository.',
+    );
+    await dbSave(
+      event.toMap(),
+      recipients.map((delivery) => delivery.toMap()).toList(growable: false),
+    );
   }
 
   @override

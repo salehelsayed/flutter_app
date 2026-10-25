@@ -2,6 +2,29 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
 
+Future<void> dbUpsertPostFollowOnOutboxEventWithRecipients(
+  Database db,
+  Map<String, Object?> event,
+  List<Map<String, Object?>> recipients,
+) async {
+  await dbWriteTransaction(db, (txn) async {
+    final batch = txn.batch();
+    batch.insert(
+      'post_follow_on_outbox_events',
+      event,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    for (final recipient in recipients) {
+      batch.insert(
+        'post_follow_on_outbox_recipient_deliveries',
+        recipient,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  });
+}
+
 Future<void> dbDeletePostFollowOnOutboxEvent(
   Database db,
   String eventId,

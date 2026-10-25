@@ -3425,7 +3425,12 @@ inbox outcomes and the acknowledged-send control without an inbox duplicate.
 `post_follow_on_outbox_repository_test.dart` uses the real repository, SQLite
 cascade, media-file deletion and database close/reopen: the thought, media and
 legacy follow-ons disappear while the retraction event and failed recipients
-survive. Once all recipients settle or the original thought's 24-hour deadline
+survive. Initial enqueue publishes the event and its complete intended recipient
+snapshot in one transaction; a retrier must never settle and retire an earlier
+subset while the rest are being queued. The file-backed interleaving control
+requires a later failed recipient to remain retryable after reopen, and the
+recipient-write failure control requires the whole initial snapshot to roll back.
+Once all recipients settle or the original thought's 24-hour deadline
 expires, the existing delivery/retry owner removes the event and all recipient
 rows in one transaction. The delivery result is computed before retirement;
 recipient writes require their event to still exist in the same transaction,
@@ -3435,7 +3440,9 @@ rows from retry selection does not establish cleanup. The original four causal
 failures on `03467e0de` remain under
 `.codex-test-logs/thought-retract-delivery-20261026/`; the two terminal-row REDs
 on `87c713129` and focused cleanup evidence are under
-`.codex-test-logs/thought-retract-retirement-20261026/`. Its two-line repository
+`.codex-test-logs/thought-retract-retirement-20261026/`; atomic enqueue's
+lost-recipient RED on `47e73886d` and preservation evidence are under
+`.codex-test-logs/thought-retract-atomic-queue-20261026/`. Each two-line repository
 callback binding re-pins only the two bootstrap digests, with the historical
 notification callback and other pins byte-identical. These host contracts do
 not establish installed-device retract latency.

@@ -90,6 +90,11 @@ abstract class PostRepository {
 
   Future<void> saveFollowOnOutboxEvent(PostFollowOnOutboxEvent event);
 
+  Future<void> saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent event,
+    List<PostFollowOnOutboxRecipientDelivery> recipients,
+  );
+
   Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(String eventId);
 
   Future<void> deleteFollowOnOutboxEvent(String eventId);
