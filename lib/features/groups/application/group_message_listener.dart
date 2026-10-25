@@ -29,6 +29,7 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -2613,6 +2614,7 @@ class GroupMessageListener {
   }
 
   Future<void> _handleLiveMessage(Map<String, dynamic> data) {
+    groupRecoveryGate.invalidateIncomingCompletion();
     return _trackInFlight(() async {
       if (!await _allowsInboundAccountSideEffects(
         operation: 'group_live_message',

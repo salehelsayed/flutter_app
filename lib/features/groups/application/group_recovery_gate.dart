@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../../../core/utils/flow_event_emitter.dart';
+import '../domain/repositories/group_pending_key_repair_repository.dart';
 
 /// Serializes group-recovery passes (startup rejoin, app-resume recovery,
 /// background retrier sweeps) so they execute one at a time instead of
@@ -29,6 +30,48 @@ class GroupRecoveryGate {
   /// pass running in the zone of whichever caller dispatched the chain.
   final List<void Function()> _queued = <void Function()>[];
   bool _running = false;
+
+  Object _incomingRevision = Object();
+  ({Object scope, Object revision})? _canonicalIncomingCompletion;
+
+  Object get incomingRevision => _incomingRevision;
+
+  /// Independent input or a new foreground/runtime wave makes old work stale.
+  void invalidateIncomingCompletion() {
+    _incomingRevision = Object();
+    _canonicalIncomingCompletion = null;
+  }
+
+  /// Only a successful, exhausted ALL-group owner may publish this receipt.
+  /// It is not an ACK and never caches arbitrary gate actions or periodic polls.
+  Future<void> recordCanonicalIncomingCompletion({
+    required Object scope,
+    required Object revision,
+    GroupPendingKeyRepairRepository? pendingKeyRepairRepo,
+  }) async {
+    try {
+      if (pendingKeyRepairRepo != null &&
+          (await pendingKeyRepairRepo.getAllPendingRepairs(
+            limit: 1,
+          )).isNotEmpty) {
+        return;
+      }
+      if (identical(revision, _incomingRevision)) {
+        _canonicalIncomingCompletion = (scope: scope, revision: revision);
+      }
+    } catch (_) {
+      // Missing completion proof leaves the existing initial retry available.
+    }
+  }
+
+  /// A receipt covers one duplicate initial pass, without a time-based cache.
+  bool consumeCanonicalIncomingCompletion(Object scope) {
+    final completed = _canonicalIncomingCompletion;
+    _canonicalIncomingCompletion = null;
+    return completed != null &&
+        completed.scope == scope &&
+        identical(completed.revision, _incomingRevision);
+  }
 
   bool get isActive => _activeDepth > 0;
   ValueListenable<int> get activeDepthListenable => _activeDepthListenable;
@@ -153,6 +196,7 @@ class GroupRecoveryGate {
   }
 
   void resetForTest() {
+    invalidateIncomingCompletion();
     _activeDepth = 0;
     _activeDepthListenable.value = 0;
     _queued.clear();
@@ -175,8 +219,10 @@ Duration _groupRecoveryEditWait = defaultGroupRecoveryEditWait;
 set debugGroupRecoveryEditWait(Duration wait) => _groupRecoveryEditWait = wait;
 
 /// Waits up to the edit wait for group recovery to finish; `true` when idle.
-Future<bool> waitForGroupRecoveryIdle() =>
-    groupRecoveryGate.whenIdle(timeout: _groupRecoveryEditWait);
+Future<bool> waitForGroupRecoveryIdle() {
+  groupRecoveryGate.invalidateIncomingCompletion();
+  return groupRecoveryGate.whenIdle(timeout: _groupRecoveryEditWait);
+}
 
 const groupRecoveryPendingError =
     'Group recovery is in progress. Try again after resync completes.';

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -77,6 +78,7 @@ Future<(AcceptPendingGroupInviteResult, GroupModel?)> acceptPendingGroupInvite({
   int acceptedInboxDrainMaxAttempts = 1,
   Duration acceptedInboxDrainRetryDelay = const Duration(milliseconds: 250),
 }) async {
+  groupRecoveryGate.invalidateIncomingCompletion();
   // Capture the invite up-front (the core consumes/deletes it) so the success
   // hook can address the inviter even after the row is gone.
   final inviteForHook = onJoinConfigRequest == null

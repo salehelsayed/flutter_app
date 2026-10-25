@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_release_diagnostics.dart';
@@ -92,6 +93,7 @@ class GroupExitIntentCoordinator {
   /// Fresh active Leave. A role row pays exactly one coordinated immediate
   /// drain, followed by an authoritative reload; a count is never trusted.
   Future<GroupExitIntentRequestResult> requestLeave(String groupId) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     try {
       final existing = await intentRepository.forGroup(groupId);
       if (existing != null) {
@@ -178,6 +180,7 @@ class GroupExitIntentCoordinator {
   Future<GroupExitIntentRequestResult> queueLeaveWhenSyncCompletes(
     String groupId,
   ) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     try {
       final existing = await intentRepository.forGroup(groupId);
       if (existing != null) {
@@ -247,6 +250,7 @@ class GroupExitIntentCoordinator {
   }
 
   Future<GroupExitIntentCancelResult> cancelQueued(String groupId) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     try {
       final current = await intentRepository.forGroup(groupId);
       if (current == null) {

@@ -1252,12 +1252,21 @@ class _StartupRouterState extends State<StartupRouter> {
       final groupMsgRepo = widget.groupMessageRepository;
       Future<bool>? startupGroupRecovery;
       if (groupRepo != null) {
+        final incomingRevision = groupRecoveryGate.incomingRevision;
+        final state = widget.p2pService.currentState;
+        final incomingScope = (
+          widget.p2pService,
+          widget.repository,
+          state.peerId,
+          state.watchdogRestartCount,
+        );
         startupGroupRecovery = runWithGroupRecoveryGate(() async {
           var canonicalGroupInboxComplete = false;
+          var incomingPassComplete = false;
           IdentityModel? identity;
           try {
             identity = await widget.repository.loadIdentity();
-            await rejoinGroupTopics(
+            final rejoinResult = await rejoinGroupTopics(
               bridge: widget.bridge,
               groupRepo: groupRepo,
               canRejoinForExitIntent: widget.canRejoinForExitIntent,
@@ -1269,13 +1278,16 @@ class _StartupRouterState extends State<StartupRouter> {
             // re-subscribe immediately — the cursor-independent inbox scan must
             // not delay live-message reception (see IR-018).
             final groupMsgListener = widget.groupMessageListener;
+            var terminalProbeComplete = false;
             if (groupMsgListener != null) {
-              await reconcileMissedGroupDissolves(
+              final probeResult = await reconcileMissedGroupDissolves(
                 bridge: widget.bridge,
                 groupRepo: groupRepo,
                 groupMessageListener: groupMsgListener,
                 selfPeerId: identity?.peerId,
               );
+              terminalProbeComplete =
+                  probeResult.errorCount == 0 && !probeResult.truncated;
             }
             if (groupMsgRepo != null && !droppedPushRecoveryOwnsInbox) {
               final drainResult = await drainGroupOfflineInbox(
@@ -1294,6 +1306,10 @@ class _StartupRouterState extends State<StartupRouter> {
               );
               canonicalGroupInboxComplete =
                   drainResult.isSuccessful && !drainResult.hasMorePages;
+              incomingPassComplete =
+                  rejoinResult.isComplete &&
+                  terminalProbeComplete &&
+                  canonicalGroupInboxComplete;
             } else if (droppedPushRecoveryOwnsInbox) {
               emitFlowEvent(
                 layer: 'FL',
@@ -1325,6 +1341,13 @@ class _StartupRouterState extends State<StartupRouter> {
             identity: identity,
             transportPeerId: widget.p2pService.currentState.peerId,
           );
+          if (incomingPassComplete) {
+            await groupRecoveryGate.recordCanonicalIncomingCompletion(
+              scope: incomingScope,
+              revision: incomingRevision,
+              pendingKeyRepairRepo: widget.groupPendingKeyRepairRepository,
+            );
+          }
           return canonicalGroupInboxComplete;
         });
         unawaited(startupGroupRecovery);

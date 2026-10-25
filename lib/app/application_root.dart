@@ -2382,6 +2382,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _prepareNotificationRouteTarget(
     NotificationRouteTarget routeTarget,
   ) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final identity = await widget.repository.loadIdentity();
     await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
@@ -2515,6 +2516,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onDetached() {
+    groupRecoveryGate.invalidateIncomingCompletion();
     if (kDebugMode) {
       debugPrint('[LIFECYCLE] detached — running best-effort teardown');
     }
@@ -2526,6 +2528,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final pauseCallSignaling = widget.pauseCallSignaling;
     if (pauseCallSignaling != null) {
       unawaited(pauseCallSignaling());
@@ -3010,6 +3013,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleForegroundRemotePush(RemoteMessage message) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final iosRecoveryMutationScope =
         await _beginIosNotificationCanonicalMutation(source: 'foreground_push');
     var result = ForegroundRemoteMessageResult.drainFailed;

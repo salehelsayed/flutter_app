@@ -136,7 +136,7 @@ const _closureConsumerUriRewrites = <String, String>{
 // incumbent recovery; the DTR-18 relocation and feature-import floor stay
 // unchanged.
 const _resumeSha256 =
-    'd922d3be1eae6726670285f210b5ca82a58d924862fc0f4bdda136a86a8cf833';
+    '0b02fec7d3ab076b9d9f8fc0319dac317c035ec909144e493db560fc8c79a046';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
@@ -245,9 +245,10 @@ const _privacySha256 =
 // Contact notification dialogs join the existing listener's consent queue.
 // Application and resume ownership stay in place.
 // 2026-10-25: reuse secure storage for banner dismissal and report settings-launch
-// failure. Application and resume owners remain in place.
+// failure; initial group-pass reuse adds four input/lifecycle invalidations only.
+// Application, notification routing, pause, detach and resume owners remain in place.
 const _applicationRootNormalizedSha256 =
-    '3c6a4df2a46a41f4ce5f54e5c6c2da7503cd0b6fde95a2cbe1225c4d9d289f4d';
+    '0e0237ccada1b1d8069fa9b507220a3e0cdd3e2b6a423d3835c5c927181a53c6';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

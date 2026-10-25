@@ -5240,9 +5240,25 @@ visible and cannot become an ordinary first-attempt PASS.
   notification settlement still waits for initial-open ownership and all
   required drains. `startup_router_recovery_test.dart` holds the empty-native
   FCM lookup pending and checks actual group join/inbox calls before release;
-  settlement remains withheld until the lookup completes. No new timeout or
-  catch-up coalescing is introduced. Host evidence:
+  settlement remains withheld until the lookup completes. The initial repair
+  introduced no timeout or coalescing; its host evidence remains in
   `.codex-test-logs/startup-group-catchup-20261024/`.
+  The later duplicate-pass fix lets only the retrier's debounced initial
+  incoming-group pass consume a successful canonical startup/resume completion.
+  The existing group gate retains one process-local receipt, with no TTL or
+  persistence. Service/account bindings, peer/restart state and the input
+  revision must match. Failed, deferred or keyless rejoins, failed/truncated
+  terminal probes, incomplete drains and known pending key repairs grant no
+  receipt. Independent lifecycle, network, group ingress and local authority
+  input invalidates it; replay through the canonical owner does not. An
+  outstanding node recovery request still runs the existing ACK path.
+  `startup_router_recovery_test.dart` exercises real startup/resume owners and
+  the initial retrier together; `pending_message_retrier_test.dart` preserves
+  outbound/direct/custody/notification callbacks and recurring fresh polls.
+  Causal RED (two all-group passes), GREEN (one), failure and dirty-input
+  controls are retained in
+  `.codex-test-logs/group-catchup-initial-reuse-20261025/`. These host proofs do
+  not certify an installed iPhone build or change the separate tap-target drain.
 
 - **Notification-tap missing group keys:** MyApp passes its durable pending-key
   repository and active repair sender into the shared route preparation;

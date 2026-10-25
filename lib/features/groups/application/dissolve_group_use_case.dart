@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -77,6 +78,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
   String? actorKeyPackageId,
   DateTime? dissolvedAt,
 }) async {
+  groupRecoveryGate.invalidateIncomingCompletion();
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_DISSOLVE_USE_CASE_BEGIN',

@@ -6,6 +6,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
@@ -80,6 +81,7 @@ class GroupKeyUpdateListener {
   }
 
   void _enqueueMessage(ChatMessage message) {
+    groupRecoveryGate.invalidateIncomingCompletion();
     _messageProcessing = _messageProcessing.then(
       (_) => _handleMessage(message),
     );

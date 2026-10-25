@@ -5,6 +5,7 @@ import 'package:flutter_app/core/config/on_join_metadata_resync_flag.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
@@ -159,6 +160,7 @@ class GroupInviteListener {
   }
 
   void _enqueueMessage(ChatMessage message) {
+    groupRecoveryGate.invalidateIncomingCompletion();
     _messageProcessing = _messageProcessing
         .catchError((Object error) {
           emitFlowEvent(

@@ -1687,6 +1687,119 @@ void main() {
     );
   });
 
+  group('PendingMessageRetrier initial canonical completion', () {
+    for (final input in [
+      'clean',
+      'network-restored',
+      'dirty-during-pass',
+      'other-account',
+      'other-runtime',
+      'old-peer',
+      'old-restart',
+      'needs-recovery',
+    ]) {
+      test('initial receipt preserves fresh work for $input', () {
+        fakeAsync((async) {
+          final restored = StreamController<void>.broadcast();
+          final state = NodeState(
+            isStarted: true,
+            peerId: 'self',
+            circuitAddresses: const ['/relay'],
+            needsGroupRecovery: input == 'needs-recovery',
+            watchdogRestartCount: 2,
+          );
+          p2pService.emitState(state);
+          var rejoins = 0;
+          var drains = 0;
+          var outgoing = 0;
+          var direct = 0;
+          var custody = 0;
+          var notifications = 0;
+          var acknowledgements = 0;
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn: () async {
+              rejoins++;
+              return state.needsGroupRecovery ?? false;
+            },
+            drainGroupOfflineInboxFn: () async {
+              drains++;
+            },
+            acknowledgeGroupRecoveryFn: () async {
+              acknowledgements++;
+            },
+            retryFailedGroupMessagesFn: () async {
+              outgoing++;
+              return 0;
+            },
+            retryFailedMessagesOverride: () async {
+              direct++;
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async => 0,
+            drainDirectInboxCustodyOutboxFn: () async {
+              custody++;
+              return 0;
+            },
+            drainNotificationCompletedOutcomesFn: () async {
+              notifications++;
+            },
+          );
+          retrier.start();
+          final revision = groupRecoveryGate.incomingRevision;
+          if (input == 'dirty-during-pass') {
+            groupRecoveryGate.invalidateIncomingCompletion();
+          }
+          unawaited(
+            groupRecoveryGate.recordCanonicalIncomingCompletion(
+              scope: (
+                input == 'other-runtime' ? Object() : p2pService,
+                input == 'other-account' ? Object() : identityRepo,
+                input == 'old-peer' ? 'old-self' : state.peerId,
+                input == 'old-restart' ? 1 : state.watchdogRestartCount,
+              ),
+              revision: revision,
+            ),
+          );
+          async.flushMicrotasks();
+          if (input == 'network-restored') restored.add(null);
+          async.flushMicrotasks();
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+          final expected = input == 'clean' ? 0 : 1;
+          expect(rejoins, expected);
+          expect(drains, expected);
+          expect(outgoing, 1);
+          expect(direct, 1);
+          expect(custody, input == 'network-restored' ? 2 : 1);
+          expect(notifications, greaterThanOrEqualTo(2));
+          expect(acknowledgements, input == 'needs-recovery' ? 1 : 0);
+
+          if (input == 'clean') {
+            // Both recurring owners remain real polls after consuming receipt.
+            async.elapse(const Duration(seconds: 26));
+            async.flushMicrotasks();
+            expect(rejoins, 1);
+            expect(drains, 1);
+            async.elapse(const Duration(minutes: 5));
+            async.flushMicrotasks();
+            expect(rejoins, greaterThan(1));
+            expect(drains, greaterThan(1));
+            expect(outgoing, greaterThan(1));
+          }
+          retrier.dispose();
+          unawaited(restored.close());
+          async.flushMicrotasks();
+        });
+      });
+    }
+  });
+
   group('PendingMessageRetrier group recovery gate (P1.3)', () {
     const onlineState = NodeState(
       isStarted: true,

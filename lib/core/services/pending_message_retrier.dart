@@ -188,11 +188,21 @@ class PendingMessageRetrier {
     _wasOnline = _isOnline(p2pService.currentState);
     _wasGroupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
     _needsGroupRecovery = p2pService.currentState.needsGroupRecovery ?? false;
+    var previousState = p2pService.currentState;
 
     _stateSubscription = p2pService.stateStream.listen((state) {
       final nowOnline = _isOnline(state);
       final nowGroupRecoveryReady = _isGroupRecoveryReady(state);
       final nowNeedsGroupRecovery = state.needsGroupRecovery ?? false;
+      if (nowOnline != _wasOnline ||
+          nowGroupRecoveryReady != _wasGroupRecoveryReady ||
+          (nowNeedsGroupRecovery && !_needsGroupRecovery) ||
+          state.peerId != previousState.peerId ||
+          state.watchdogRestartCount != previousState.watchdogRestartCount ||
+          state.isStarted != previousState.isStarted) {
+        groupRecoveryGate.invalidateIncomingCompletion();
+      }
+      previousState = state;
 
       if (nowOnline && !_wasOnline) {
         // Finding 05 Phase 4: a reconnect grants every backed-off failed group
@@ -263,6 +273,7 @@ class PendingMessageRetrier {
     final restoredSignal = networkRestoredSignal;
     if (restoredSignal != null) {
       _networkRestoredSubscription = restoredSignal.listen((_) {
+        groupRecoveryGate.invalidateIncomingCompletion();
         emitFlowEvent(
           layer: 'FL',
           event: 'PENDING_RETRIER_NETWORK_RESTORED_TRIGGER',
@@ -576,7 +587,7 @@ class PendingMessageRetrier {
     // ack).
     _debounceTimer = Timer(
       retryDebounce,
-      () => _retryIfNeeded(unackedOlderThan: Duration.zero),
+      () => _retryIfNeeded(unackedOlderThan: Duration.zero, initial: true),
     );
 
     _periodicTimer?.cancel();
@@ -753,6 +764,7 @@ class PendingMessageRetrier {
   Future<void> _retryIfNeeded({
     Duration? unackedOlderThan,
     bool periodic = false,
+    bool initial = false,
   }) async {
     if (_isRetrying) {
       unawaited(_drainNotificationCompletedOutcomes());
@@ -801,35 +813,47 @@ class PendingMessageRetrier {
         // order is preserved byte-for-byte (finding-125 GAP 3a: inbox-store
         // custody-confirm before the re-publish retrier).
         await runWithGroupRecoveryGate(() async {
-          var shouldAcknowledgeRecovery = false;
-          if (rejoinGroupTopicsFn != null ||
-              rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
+          final state = p2pService.currentState;
+          final reuseIncoming =
+              initial &&
+              !(state.needsGroupRecovery ?? false) &&
+              groupRecoveryGate.consumeCanonicalIncomingCompletion((
+                p2pService,
+                identityRepo,
+                state.peerId,
+                state.watchdogRestartCount,
+              ));
+          if (!reuseIncoming) {
+            var shouldAcknowledgeRecovery = false;
+            if (rejoinGroupTopicsFn != null ||
+                rejoinGroupTopicsWithRecoveryAckEligibilityFn != null) {
+              try {
+                shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
+              } catch (e) {
+                emitFlowEvent(
+                  layer: 'FL',
+                  event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+                  details: {'error': e.toString()},
+                );
+              }
+            }
+
+            var drainSucceeded = true;
             try {
-              shouldAcknowledgeRecovery = await _runGroupRejoinIfNeeded();
+              drainSucceeded = await _runGroupDrainIfNeeded();
             } catch (e) {
+              drainSucceeded = false;
               emitFlowEvent(
                 layer: 'FL',
-                event: 'PENDING_RETRIER_GROUP_REJOIN_ERROR',
+                event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
                 details: {'error': e.toString()},
               );
             }
-          }
 
-          var drainSucceeded = true;
-          try {
-            drainSucceeded = await _runGroupDrainIfNeeded();
-          } catch (e) {
-            drainSucceeded = false;
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'PENDING_RETRIER_GROUP_DRAIN_ERROR',
-              details: {'error': e.toString()},
+            await _acknowledgeGroupRecoveryIfEligible(
+              shouldAcknowledgeRecovery && drainSucceeded,
             );
           }
-
-          await _acknowledgeGroupRecoveryIfEligible(
-            shouldAcknowledgeRecovery && drainSucceeded,
-          );
 
           // The same incoming-media owner also runs on OS network restore.
           // Production's migration gate and the coordinator's per-transfer
@@ -1058,6 +1082,7 @@ class PendingMessageRetrier {
 
   /// Stops listening and cleans up resources.
   void dispose() {
+    groupRecoveryGate.invalidateIncomingCompletion();
     emitFlowEvent(layer: 'FL', event: 'PENDING_RETRIER_DISPOSE', details: {});
 
     _stopAllTimers();

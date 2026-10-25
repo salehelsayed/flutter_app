@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -28,6 +29,7 @@ Future<GroupModel> createGroup({
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   String? description,
 }) async {
+  groupRecoveryGate.invalidateIncomingCompletion();
   emitFlowEvent(
     layer: 'FL',
     event: 'GROUP_CREATE_USE_CASE_BEGIN',
