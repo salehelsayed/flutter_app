@@ -315,6 +315,8 @@ const _applicationRootNormalizedSha256 =
 // Account erase removes owned notification state from support and the iOS
 // shared container before database/key cleanup, preserving disposable isolation.
 // Both pins retain the exact historical callback; see erase-notification-state-20261023/dtr18-pin-proof.json.
+// DC-004 boundary repair composes fanout-aware retry through the retrier's
+// existing callback in bootstrap; no new core-to-feature exception is allowed.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -427,7 +429,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    '0ab315df896eda302720fb1c803a056070434de37c4e45db26fbd6aeb05dc327';
+    '63abdb5cb8d4859d5b0fdb9ba1a0a7cadafac929a609cd3acdae75ac2f9ec901';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -460,8 +462,9 @@ const _productionBootstrapNormalizedSha256 =
 // the exact historical notification callback remains byte-identical and unique.
 // Combined main erasure/recovery and Thoughts wiring retain the historical callback.
 // The same contact-request requireFresh argument changes only the reviewed remainder.
+// The same retry composition leaves the historical notification callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '6f8870a2e1f7d87fd2b744b94669cb33970fd64a6232d26194b9bb89997a23f1';
+    'b414945adf110115273e36e7d669cac11a1fd40e2cad029ac6bbe86f43dfa381';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

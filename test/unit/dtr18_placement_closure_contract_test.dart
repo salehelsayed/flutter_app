@@ -102,7 +102,9 @@ const _relocations = <String, List<String>>{
     // adapter; no repository responsibility changes layer.
     // Quiet recovery adds the exact-row annotation delegate and invalidates the
     // same cached message snapshot after persistence; no owner changes layer.
-    'e3aaf9899ca8547067a2324d8e7ed269df9f39c72f03ce805527a14a0c40bd7e',
+    // DC-004 adds authored-text intent delegates, token forwarding and pending
+    // projections to this same data adapter; placement is unchanged.
+    '6b8cb9bd4771a4e5711ac12baab58b5c4284d577beeeb8535ef05eac83ee569b',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -49,7 +48,6 @@ class PendingMessageRetrier {
   final IdentityRepository identityRepo;
   final ContactRepository contactRepo;
   final Bridge bridge;
-  final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
 
@@ -137,7 +135,6 @@ class PendingMessageRetrier {
     required this.identityRepo,
     required this.contactRepo,
     required this.bridge,
-    this.directEventFanoutResolver,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.rejoinGroupTopicsFn,
@@ -482,7 +479,6 @@ class PendingMessageRetrier {
       return retryFailedMessagesOverride!();
     }
     return retryFailedMessages(
-      directEventFanout: directEventFanoutResolver?.call(),
       messageRepo: messageRepo,
       identityRepo: identityRepo,
       contactRepo: contactRepo,

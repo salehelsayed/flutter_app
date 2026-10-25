@@ -3126,9 +3126,13 @@ void main() {
       'directEventFanoutResolver: resolveDirectEventFanout,'.allMatches(
         production,
       ),
-      hasLength(2),
-      reason:
-          'route pushes and authored-text recovery share the current factory',
+      hasLength(1),
+      reason: 'route pushes receive the current factory',
+    );
+    expect(
+      'directEventFanout: resolveDirectEventFanout(),'.allMatches(production),
+      hasLength(1),
+      reason: 'bootstrap injects recovery with the same current factory',
     );
     expect(
       'isLinkedBlobFreeRuntime: () =>'.allMatches(production),

@@ -215,6 +215,7 @@ import 'package:flutter_app/features/conversation/application/retry_direct_priva
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -9105,7 +9106,18 @@ final class ProductionApplicationBootstrap
     }
 
     final pendingMessageRetrier = PendingMessageRetrier(
-      directEventFanoutResolver: resolveDirectEventFanout,
+      retryFailedMessagesOverride: () => retryFailedMessages(
+        directEventFanout: resolveDirectEventFanout(),
+        messageRepo: messageRepository,
+        identityRepo: repository,
+        contactRepo: contactRepository,
+        p2pService: p2pService,
+        bridge: bridge,
+        mediaAttachmentRepo: mediaAttachmentRepository,
+        mediaFileManager: mediaFileManager,
+        // The retrier has already run the shared custody-family drain.
+        retryDirectInboxCustody: false,
+      ),
       p2pService: p2pService,
       messageRepo: messageRepository,
       identityRepo: repository,

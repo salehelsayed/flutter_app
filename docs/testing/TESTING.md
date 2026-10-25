@@ -15,6 +15,15 @@ build-profile, entrypoint, discovery, and group-gate contracts when moving these
 helpers. Focused evidence is in
 `.codex-test-logs/failure-fixes-20260920/architecture-debug.log`.
 
+DC-004 recovery supplies fanout-aware failed-message retry from production
+bootstrap through `PendingMessageRetrier.retryFailedMessagesOverride`. Importing
+the feature's fanout coordinator into the core retrier adds an unapproved
+dependency and fails this lane. Keep the shared custody drain before that
+callback, with its duplicate-drain flag off, and preserve both reviewed
+bootstrap fingerprints and the exact historical notification callback.
+The causal boundary failure and focused recovery evidence are retained under
+`.codex-test-logs/direct-text-intent-20261025/boundary-*`.
+
 The current application uses Flutter with native Go, not the earlier QuickJS
 core. `lib/app/bootstrap/production_application_bootstrap.dart:5296` constructs `GoBridgeClient` over method/event
 channels. Android's `android/app/build.gradle.kts:431` connects `buildGoAar` to
