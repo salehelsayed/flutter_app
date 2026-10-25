@@ -338,7 +338,7 @@ Future<List<CreatedLocalPostRecipient>> _loadRetryRecipients({
 
   for (final delivery in unresolvedDeliveries) {
     final contact = await contactRepo.getContact(delivery.recipientPeerId);
-    if (contact == null) {
+    if (contact == null || contact.isBlocked || contact.isArchived) {
       emitFlowEvent(
         layer: 'FL',
         event: 'PENDING_POST_MEDIA_UPLOAD_RETRIER_MISSING_CONTACT',

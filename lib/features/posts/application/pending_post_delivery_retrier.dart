@@ -220,7 +220,8 @@ Future<int> retryPendingPostDeliveries({
     final retryRecipients = <CreatedLocalPostRecipient>[];
     for (final delivery in unresolvedDeliveries) {
       final contact = await contactRepo.getContact(delivery.recipientPeerId);
-      if (contact == null) {
+      // A friend blocked or archived after posting no longer gets it.
+      if (contact == null || contact.isBlocked || contact.isArchived) {
         emitFlowEvent(
           layer: 'FL',
           event: 'PENDING_POST_RETRIER_MISSING_CONTACT',

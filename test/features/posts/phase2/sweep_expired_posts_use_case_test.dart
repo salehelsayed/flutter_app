@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -7,10 +9,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 
-PostModel _post({
-  required String id,
-  required String expiresAt,
-}) {
+PostModel _post({required String id, required String expiresAt}) {
   return PostModel(
     id: id,
     eventId: 'evt-$id',
@@ -71,4 +70,35 @@ void main() {
     expect(await posts.getPost('post-fresh'), isNotNull);
     expect(mediaFileManager.deletedPostIds, ['post-expired']);
   });
+
+  test('one post that cannot be deleted does not keep the others', () async {
+    await posts.savePost(
+      _post(id: 'post-stuck', expiresAt: '2026-03-16T07:00:00.000Z'),
+    );
+    await posts.savePost(
+      _post(id: 'post-next', expiresAt: '2026-03-16T08:00:00.000Z'),
+    );
+    final failing = _FailingMediaFileManager('post-stuck');
+
+    final deletedPostIds = await sweepExpiredPosts(
+      postRepo: posts,
+      mediaFileManager: failing,
+      nowProvider: () => DateTime.parse('2026-03-16T09:00:00.000Z'),
+    );
+
+    expect(deletedPostIds, ['post-next']);
+    expect(await posts.getPost('post-next'), isNull);
+    expect(await posts.getPost('post-stuck'), isNotNull);
+  });
+}
+
+class _FailingMediaFileManager extends FakeMediaFileManager {
+  _FailingMediaFileManager(this.failingPostId);
+  final String failingPostId;
+
+  @override
+  Future<void> deleteMediaForPost(String postId) async {
+    if (postId == failingPostId) throw const FileSystemException('busy');
+    await super.deleteMediaForPost(postId);
+  }
 }

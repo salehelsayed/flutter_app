@@ -1,3 +1,4 @@
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -11,9 +12,18 @@ Future<List<String>> sweepExpiredPosts({
   final deletedPostIds = <String>[];
 
   for (final post in expiredPosts) {
-    await mediaFileManager.deleteMediaForPost(post.id);
-    await postRepo.deletePostCascade(post.id);
-    deletedPostIds.add(post.id);
+    // One post that cannot be deleted must not keep every later one alive.
+    try {
+      await mediaFileManager.deleteMediaForPost(post.id);
+      await postRepo.deletePostCascade(post.id);
+      deletedPostIds.add(post.id);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_EXPIRY_SWEEP_POST_ERROR',
+        details: {'postId': post.id, 'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   return deletedPostIds;

@@ -301,6 +301,30 @@ void main() {
     );
   }
 
+  for (final (label, friend) in [
+    ('blocked', _contact('friend').copyWith(isBlocked: true)),
+    ('archived', _contact('friend').copyWith(isArchived: true)),
+  ]) {
+    test(
+      'a retry never reaches a friend who was $label after posting',
+      () async {
+        final now = DateTime.now().toUtc();
+        await posts.savePost(_post(now.subtract(const Duration(hours: 1))));
+        await _addFailedDelivery(posts);
+        contacts.addTestContact(friend);
+        await retryPendingPostDeliveries(
+          postRepo: posts,
+          contactRepo: contacts,
+          p2pService: service,
+          bridge: bridge,
+          nowProvider: () => now,
+        );
+        expect(network.inboxCount('friend'), 0);
+        expect(service.sentTo, isEmpty);
+      },
+    );
+  }
+
   test('expiry is checked again after loading a retry contact', () async {
     var now = DateTime.now().toUtc();
     final createdAt = now.subtract(const Duration(hours: 23));
