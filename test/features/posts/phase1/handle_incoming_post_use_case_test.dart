@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -217,6 +218,91 @@ void main() {
       expect(await posts.loadPostMediaAttachments('bob-1'), isEmpty);
       expect(media.deletedPostIds, isEmpty);
     });
+
+    for (final newerFirst in [false, true]) {
+      test(
+        'same-drain burst keeps only the newest thought (newer first: $newerFirst)',
+        () async {
+          final delayedPosts = _PauseFirstIncomingSaveRepository();
+          addTearDown(delayedPosts.dispose);
+          final older = _thought(
+            'bob-1',
+            'peer-bob',
+            '2026-03-15T09:00:00.000Z',
+          );
+          final newer = _thought(
+            'bob-2',
+            'peer-bob',
+            '2026-03-15T10:00:00.000Z',
+          );
+          Future<(HandleIncomingPostResult, PostModel?)> receiveBurst(
+            PostCreateEnvelope thought,
+          ) => handleIncomingPost(
+            message: _messageFromEnvelope(thought),
+            postRepo: delayedPosts,
+            contactRepo: contacts,
+            mediaFileManager: media,
+            nowProvider: () => now,
+          );
+          // Start both futures in the same drain, without awaiting either one.
+          final first = receiveBurst(newerFirst ? newer : older);
+          final second = receiveBurst(newerFirst ? older : newer);
+          await delayedPosts.firstSaveEntered.future;
+          await Future<void>.delayed(Duration.zero);
+          delayedPosts.releaseFirstSave.complete();
+          await Future.wait([first, second]);
+
+          expect((await delayedPosts.loadFeed()).map((post) => post.id), [
+            'bob-2',
+          ]);
+          expect(await delayedPosts.loadPostMediaAttachments('bob-1'), isEmpty);
+          expect(
+            await delayedPosts.loadPostMediaAttachments('bob-2'),
+            hasLength(1),
+          );
+          await delayedPosts.deletePostCascade('bob-2');
+          expect(
+            await delayedPosts.loadFeed(),
+            isEmpty,
+            reason: 'Removing the newest thought cannot reveal an older copy',
+          );
+        },
+      );
+    }
+
+    test(
+      'a stalled media download does not hold admission for the same author',
+      () async {
+        final hydrating = Completer<void>();
+        final releaseMedia = Completer<void>();
+        final first = handleIncomingPost(
+          message: _messageFromEnvelope(
+            _thought('bob-1', 'peer-bob', '2026-03-15T09:00:00.000Z'),
+          ),
+          postRepo: posts,
+          contactRepo: contacts,
+          mediaFileManager: media,
+          nowProvider: () => now,
+          hydratePostMediaFn: ({required attachment, required postId}) async {
+            hydrating.complete();
+            await releaseMedia.future;
+            return attachment.copyWith(downloadStatus: 'done');
+          },
+        );
+        await hydrating.future;
+        try {
+          final second = await receive(
+            _thought('bob-2', 'peer-bob', '2026-03-15T10:00:00.000Z'),
+          ).timeout(const Duration(seconds: 2));
+          expect(second.$1, HandleIncomingPostResult.postCreated);
+          expect((await posts.loadFeed()).map((post) => post.id), ['bob-2']);
+        } finally {
+          releaseMedia.complete();
+          await first;
+        }
+        expect(await posts.loadPostMediaAttachments('bob-1'), isEmpty);
+      },
+    );
   });
 
   test(
@@ -386,4 +472,18 @@ void main() {
       expect(stored.text, '  Hi there\u200F  ');
     },
   );
+}
+
+class _PauseFirstIncomingSaveRepository extends InMemoryPostRepository {
+  final firstSaveEntered = Completer<void>();
+  final releaseFirstSave = Completer<void>();
+
+  @override
+  Future<void> savePost(PostModel post) async {
+    if (!firstSaveEntered.isCompleted) {
+      firstSaveEntered.complete();
+      await releaseFirstSave.future;
+    }
+    await super.savePost(post);
+  }
 }

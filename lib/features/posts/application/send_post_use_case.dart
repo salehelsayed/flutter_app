@@ -310,20 +310,31 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       'elapsedMs': createStopwatch.elapsedMilliseconds,
     },
   );
-  final olderOwnThoughts = await otherThoughtsBy(
+  final otherOwnThoughts = await otherThoughtsBy(
     postRepo,
     authorPeerId: senderPeerId,
     incoming: false,
     exceptPostId: post.id,
   );
-  if (olderOwnThoughts.isNotEmpty) {
+  if (otherOwnThoughts.any((other) => isNewerThought(other, post))) {
+    // Another composer can finish while this one is saving recipients. It
+    // already replaced us; remove any late rows and never start this send.
+    await deleteStoredThought(
+      postRepo: postRepo,
+      mediaFileManager: mediaFileManager ?? MediaFileManager(),
+      postId: post.id,
+    );
+    emitPostTiming(outcome: 'superseded');
+    return (SendPostResult.sendFailed, null);
+  }
+  if (otherOwnThoughts.isNotEmpty) {
     // The orbit's composer passes no media manager; the default one reaches
     // the same post_media folders.
     await deleteReplacedThoughts(
       postRepo: postRepo,
       mediaFileManager: mediaFileManager ?? MediaFileManager(),
-      thoughts: olderOwnThoughts,
-      replacedBy: post.id,
+      thoughts: otherOwnThoughts,
+      replacement: post,
     );
   }
 

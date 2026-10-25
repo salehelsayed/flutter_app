@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -136,45 +137,101 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
       ) &&
       await postRepo.getPost(envelope!.postId) != null;
 
-  final existingPost = await postRepo.getPost(envelope.postId);
-  if (existingPost != null) {
-    final existingOrigin = await postRepo.getPostOrigin(envelope.postId);
-    final canMergeExistingRepost =
-        existingPost.senderPeerId != existingPost.authorPeerId ||
-        existingOrigin?.originKind == PostOriginKind.pass;
-    if (!canMergeExistingRepost) {
-      return (HandleIncomingPostResult.duplicate, null);
-    }
+  // Stream listeners do not await one receive before starting the next. Keep
+  // the read/admit/save/replace decision ordered for this author, but release
+  // it before media downloads so a slow blob cannot hold up the next thought.
+  final (result, post, existingOrigin) = await _orderAuthorAdmission(
+    postRepo,
+    envelope.senderPeerId,
+    () async {
+      final receivedEnvelope = envelope!;
+      final existingPost = await postRepo.getPost(receivedEnvelope.postId);
+      if (existingPost != null) {
+        final origin = await postRepo.getPostOrigin(receivedEnvelope.postId);
+        final canMergeExistingRepost =
+            existingPost.senderPeerId != existingPost.authorPeerId ||
+            origin?.originKind == PostOriginKind.pass;
+        if (!canMergeExistingRepost) {
+          return (HandleIncomingPostResult.duplicate, null, null);
+        }
+        final mergedPost = _mergeExistingRepostedCopy(
+          existingPost: existingPost,
+          incomingPost: incomingPost,
+        );
+        await postRepo.savePost(mergedPost);
+        return (HandleIncomingPostResult.duplicate, mergedPost, origin);
+      }
 
-    final mergedPost = _mergeExistingRepostedCopy(
-      existingPost: existingPost,
-      incomingPost: incomingPost,
-    );
-    await postRepo.savePost(mergedPost);
-    final storedMedia = await _storeIncomingMedia(
-      postRepo: postRepo,
-      postId: mergedPost.id,
-      incomingMedia: envelope.media,
-      mediaKeys: envelope.mediaKeys,
-      hydratePostMediaFn: hydratePostMediaFn,
-      existingMedia: await postRepo.loadPostMediaAttachments(mergedPost.id),
-      hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
-      isStillEligible: isStillEligible,
-      mediaFileManager: mediaFileManager,
-      onRowsStored: onDurablyStored == null
-          ? null
-          : (rows) => onDurablyStored(
-              mergedPost.copyWith(media: rows),
-              created: false,
-            ),
-    );
-    if (!await isStillEligible()) {
-      await postRepo.deletePostCascade(mergedPost.id);
-      return (HandleIncomingPostResult.expired, mergedPost);
-    }
+      if (earlyRetractions?.rejects(
+            postId: receivedEnvelope.postId,
+            authorPeerId: receivedEnvelope.senderPeerId,
+          ) ??
+          false) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_RECEIVE_RETRACTED',
+          details: {'postId': receivedEnvelope.postId},
+        );
+        return (HandleIncomingPostResult.retracted, incomingPost, null);
+      }
+
+      final otherThoughts = await otherThoughtsBy(
+        postRepo,
+        authorPeerId: receivedEnvelope.senderPeerId,
+        incoming: true,
+        exceptPostId: receivedEnvelope.postId,
+      );
+      if (otherThoughts.any((other) => isNewerThought(other, incomingPost))) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_RECEIVE_SUPERSEDED',
+          details: {'postId': receivedEnvelope.postId},
+        );
+        return (HandleIncomingPostResult.superseded, incomingPost, null);
+      }
+      await postRepo.savePost(incomingPost);
+      await deleteReplacedThoughts(
+        postRepo: postRepo,
+        mediaFileManager: mediaFileManager,
+        thoughts: otherThoughts,
+        replacement: incomingPost,
+      );
+      return (HandleIncomingPostResult.postCreated, incomingPost, null);
+    },
+  );
+  if (post == null ||
+      (result != HandleIncomingPostResult.postCreated &&
+          result != HandleIncomingPostResult.duplicate)) {
+    return (result, post);
+  }
+
+  final storedMedia = await _storeIncomingMedia(
+    postRepo: postRepo,
+    postId: post.id,
+    incomingMedia: envelope.media,
+    mediaKeys: envelope.mediaKeys,
+    hydratePostMediaFn: hydratePostMediaFn,
+    existingMedia: result == HandleIncomingPostResult.duplicate
+        ? await postRepo.loadPostMediaAttachments(post.id)
+        : const [],
+    hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
+    isStillEligible: isStillEligible,
+    mediaFileManager: mediaFileManager,
+    onRowsStored: onDurablyStored == null
+        ? null
+        : (rows) => onDurablyStored(
+            post.copyWith(media: rows),
+            created: result == HandleIncomingPostResult.postCreated,
+          ),
+  );
+  if (!await isStillEligible()) {
+    await postRepo.deletePostCascade(post.id);
+    return (HandleIncomingPostResult.expired, post);
+  }
+  if (result == HandleIncomingPostResult.duplicate) {
     await postRepo.savePostOrigin(
       PostOriginModel(
-        postId: mergedPost.id,
+        postId: post.id,
         originKind: PostOriginKind.direct,
         passId: existingOrigin?.passId,
         passerPeerId: existingOrigin?.passerPeerId,
@@ -182,98 +239,44 @@ Future<(HandleIncomingPostResult, PostModel?)> handleIncomingPost({
         passCreatedAt: existingOrigin?.passCreatedAt,
       ),
     );
-    await reconcilePendingPostChildEvents(
-      postId: mergedPost.id,
-      postRepo: postRepo,
-      contactRepo: contactRepo,
-    );
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'POST_RECEIVE_STORED',
-      details: {'postId': mergedPost.id, 'sender': mergedPost.senderPeerId},
-    );
-    final storedPost = await postRepo.getPost(mergedPost.id);
-    return (
-      HandleIncomingPostResult.duplicate,
-      storedPost?.copyWith(media: storedMedia) ??
-          mergedPost.copyWith(media: storedMedia),
-    );
-  }
-
-  if (earlyRetractions?.rejects(
-        postId: envelope.postId,
-        authorPeerId: envelope.senderPeerId,
-      ) ??
-      false) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'POST_RECEIVE_RETRACTED',
-      details: {'postId': envelope.postId},
-    );
-    return (HandleIncomingPostResult.retracted, incomingPost);
-  }
-
-  // One live thought per friend: a newer one already here wins, and the new
-  // one takes every older one with it.
-  final otherThoughts = await otherThoughtsBy(
-    postRepo,
-    authorPeerId: envelope.senderPeerId,
-    incoming: true,
-    exceptPostId: envelope.postId,
-  );
-  if (otherThoughts.any((other) => _createdAfter(other, createdAt))) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'POST_RECEIVE_SUPERSEDED',
-      details: {'postId': envelope.postId},
-    );
-    return (HandleIncomingPostResult.superseded, incomingPost);
-  }
-
-  final post = incomingPost;
-  await postRepo.savePost(post);
-  await deleteReplacedThoughts(
-    postRepo: postRepo,
-    mediaFileManager: mediaFileManager,
-    thoughts: otherThoughts,
-    replacedBy: post.id,
-  );
-  final storedMedia = await _storeIncomingMedia(
-    postRepo: postRepo,
-    postId: post.id,
-    incomingMedia: envelope.media,
-    mediaKeys: envelope.mediaKeys,
-    hydratePostMediaFn: hydratePostMediaFn,
-    hydrateErrorEvent: 'POST_MEDIA_HYDRATE_ERROR',
-    isStillEligible: isStillEligible,
-    mediaFileManager: mediaFileManager,
-    onRowsStored: onDurablyStored == null
-        ? null
-        : (rows) => onDurablyStored(post.copyWith(media: rows), created: true),
-  );
-  if (!await isStillEligible()) {
-    await postRepo.deletePostCascade(post.id);
-    return (HandleIncomingPostResult.expired, post);
   }
   await reconcilePendingPostChildEvents(
     postId: post.id,
     postRepo: postRepo,
     contactRepo: contactRepo,
   );
-
   emitFlowEvent(
     layer: 'FL',
     event: 'POST_RECEIVE_STORED',
     details: {'postId': post.id, 'sender': post.senderPeerId},
   );
-  return (
-    HandleIncomingPostResult.postCreated,
-    post.copyWith(media: storedMedia),
-  );
+  final storedPost = result == HandleIncomingPostResult.duplicate
+      ? await postRepo.getPost(post.id)
+      : null;
+  return (result, (storedPost ?? post).copyWith(media: storedMedia));
 }
 
-bool _createdAfter(PostModel post, DateTime instant) =>
-    DateTime.tryParse(post.createdAt)?.toUtc().isAfter(instant) ?? false;
+final _pendingAuthorAdmissions = Expando<Map<String, Future<void>>>();
+
+Future<T> _orderAuthorAdmission<T>(
+  PostRepository postRepo,
+  String authorPeerId,
+  Future<T> Function() admit,
+) async {
+  final pending = _pendingAuthorAdmissions[postRepo] ??= {};
+  final previous = pending[authorPeerId];
+  final released = Completer<void>();
+  pending[authorPeerId] = released.future;
+  try {
+    await previous;
+    return await admit();
+  } finally {
+    released.complete();
+    if (identical(pending[authorPeerId], released.future)) {
+      pending.remove(authorPeerId);
+    }
+  }
+}
 
 String _laterTimestamp(String currentIso, String candidateIso) {
   final current = DateTime.tryParse(currentIso);

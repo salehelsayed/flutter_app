@@ -3384,6 +3384,18 @@ described in the microphone preflight guidance below. Focused verification and
 the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+Thought replacement must use creation order, not the order asynchronous sends
+finish. Equal creation times use the orbit's post-ID tie-break. A local creation
+that finishes after its newer replacement removes its late rows and returns no
+upload/send candidate. Incoming admission, save, and replacement run in order
+per author and repository; media downloads run outside that queue. The causal
+cases in `create_local_post_use_case_test.dart` and
+`handle_incoming_post_use_case_test.dart` pause recipient/save writes, start
+both arrivals in the same drain (in both orders), and prove that deleting the
+newest thought cannot reveal its older copy. A blocked media download must not
+hold the next admission. Original-code failures and corrected-run evidence are
+retained under `.codex-test-logs/thought-ordering-20261025/`.
+
 On 2026-10-22 the owner accepted Thoughts completion with the three pre-existing
 skip-only host gaps documented. The original Step 1 affected selection remains
 122 PASS / 0 FAIL / 3 BLOCKED: identity completed with 751 passes and 13 skips,

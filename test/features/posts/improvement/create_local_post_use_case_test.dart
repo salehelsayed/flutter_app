@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
@@ -105,6 +107,73 @@ void main() {
     expect(media.deletedPostIds, ['mine-old']);
     expect(changes, contains('mine-old'));
   });
+
+  test(
+    'reversed creation completion preserves the newer thought and its rows',
+    () async {
+      final delayedPosts = _PauseFirstRecipientRepository();
+      addTearDown(delayedPosts.dispose);
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final media = FakeMediaFileManager();
+      Future<(SendPostResult, CreatedLocalPost?)> create(String text) =>
+          createLocalPost(
+            postRepo: delayedPosts,
+            contactRepo: contacts,
+            senderPeerId: 'peer-alice',
+            senderUsername: 'Alice',
+            text: text,
+            audience: PostAudience.allFriends(),
+            mediaFileManager: media,
+          );
+
+      final first = create('Older, still saving recipients');
+      await delayedPosts.firstRecipientEntered.future;
+      final firstId = delayedPosts.firstPostId!;
+      final firstPost = (await delayedPosts.getPost(firstId))!;
+      final (newResult, newer) = await create('Newer, finished first');
+      expect(newResult, SendPostResult.success);
+      expect(
+        DateTime.parse(
+          newer!.post.createdAt,
+        ).isAfter(DateTime.parse(firstPost.createdAt)),
+        isTrue,
+      );
+      await delayedPosts.savePostMediaAttachment(
+        PostMediaAttachmentModel(
+          mediaId: 'newer-media',
+          postId: newer.post.id,
+          blobId: 'newer-blob',
+          kind: 'image',
+          mime: 'image/jpeg',
+          sizeBytes: 10,
+          createdAt: newer.post.createdAt,
+        ),
+      );
+
+      delayedPosts.releaseFirstRecipient.complete();
+      final (oldResult, older) = await first;
+
+      expect(oldResult, SendPostResult.sendFailed);
+      expect(
+        older,
+        isNull,
+        reason: 'A superseded creation must not start uploading or sending',
+      );
+      expect((await delayedPosts.loadFeed()).map((post) => post.id), [
+        newer.post.id,
+      ]);
+      expect(await delayedPosts.getRecipientDeliveries(firstId), isEmpty);
+      expect(
+        await delayedPosts.getRecipientDeliveries(newer.post.id),
+        hasLength(1),
+      );
+      expect(
+        await delayedPosts.loadPostMediaAttachments(newer.post.id),
+        hasLength(1),
+      );
+      expect(media.deletedPostIds, isNot(contains(newer.post.id)));
+    },
+  );
 
   test(
     'createLocalPost persists sending post and pending recipient rows',
@@ -289,5 +358,21 @@ class _FailAfterPostSaveRepository extends InMemoryPostRepository {
   @override
   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery) async {
     throw StateError('simulated recipient persistence interruption');
+  }
+}
+
+class _PauseFirstRecipientRepository extends InMemoryPostRepository {
+  final firstRecipientEntered = Completer<void>();
+  final releaseFirstRecipient = Completer<void>();
+  String? firstPostId;
+
+  @override
+  Future<void> saveRecipientDelivery(PostRecipientDelivery delivery) async {
+    if (firstPostId == null) {
+      firstPostId = delivery.postId;
+      firstRecipientEntered.complete();
+      await releaseFirstRecipient.future;
+    }
+    await super.saveRecipientDelivery(delivery);
   }
 }

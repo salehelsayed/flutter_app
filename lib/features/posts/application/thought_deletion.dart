@@ -33,7 +33,16 @@ Future<List<PostModel>> otherThoughtsBy(
       post,
 ];
 
-/// One live thought per author: the thought [replacedBy] takes the author's
+/// Match the orbit's newest-thought ordering, including equal creation times.
+bool isNewerThought(PostModel candidate, PostModel previous) {
+  final byCreatedAt = DateTime.parse(
+    candidate.createdAt,
+  ).compareTo(DateTime.parse(previous.createdAt));
+  return byCreatedAt > 0 ||
+      (byCreatedAt == 0 && candidate.id.compareTo(previous.id) < 0);
+}
+
+/// One live thought per author: the [replacement] takes the author's
 /// older [thoughts] with it, so deleting it later cannot bring one of them
 /// back. A thought that cannot be removed is logged and does not keep the new
 /// one out; the expiry sweep gets another run at it within 24 h.
@@ -41,9 +50,10 @@ Future<void> deleteReplacedThoughts({
   required PostRepository postRepo,
   required MediaFileManager? mediaFileManager,
   required Iterable<PostModel> thoughts,
-  required String replacedBy,
+  required PostModel replacement,
 }) async {
   for (final thought in thoughts) {
+    if (!isNewerThought(replacement, thought)) continue;
     try {
       await deleteStoredThought(
         postRepo: postRepo,
@@ -53,7 +63,7 @@ Future<void> deleteReplacedThoughts({
       emitFlowEvent(
         layer: 'FL',
         event: 'POST_REPLACED_OLDER',
-        details: {'postId': thought.id, 'replacedBy': replacedBy},
+        details: {'postId': thought.id, 'replacedBy': replacement.id},
       );
     } catch (error) {
       emitFlowEvent(
