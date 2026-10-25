@@ -1624,6 +1624,10 @@ def sims_environment(config, report, check=None):
         # the production app while the config claims a disposable fixture.
         env.update(ANDROID_APP_PACKAGE=package, SIMS_APP_ID=package,
                    ORG_GRADLE_PROJECT_androidApplicationId=package)
+        # The only Firebase Android client is production's, so a disposable
+        # package that never needs FCM builds without the Google services step.
+        if not (check or {}).get('requires_firebase_android_client'):
+            env['ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof'] = 'true'
     supplied = config.get('full_suite', {})
     bindings = {
         'relay_addresses':['MKNOON_RELAY_ADDRESSES'],
