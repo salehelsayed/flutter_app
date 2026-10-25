@@ -4949,6 +4949,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_PICK_CAMERA_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
     }
   }
 
@@ -4976,6 +4982,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         event: 'GROUP_CONV_FL_PICK_VIDEO_ERROR',
         details: {'error': e.toString()},
       );
+      if (mounted) {
+        showVideoProcessingNotice(
+          context,
+          message: AppLocalizations.of(context)!.media_unavailable,
+        );
+      }
     }
   }
 

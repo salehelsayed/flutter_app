@@ -4649,6 +4649,12 @@ do not count `test(...)` strings as executions. Runner listings took about
   these cases do not prove OS Settings interaction. Astra's original failure
   and focused reproduction/fix receipts are retained in
   `.codex-test-logs/astra-d1/`.
+  Group Take Photo and Record Video use the same notice for generic picker
+  failures. Their wired widget cases inject a camera permission exception,
+  assert visible localized feedback, preserve the text draft and leave the
+  message repository empty. The native picker remains substituted; this is
+  not a device permission proof. Causal failures and corrected receipts are
+  under `.codex-test-logs/notification-followup-media-call-insets-20261025/`.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired
@@ -8906,6 +8912,12 @@ visible and cannot become an ordinary first-attempt PASS.
   minimized Back pops ordinary routes and backgrounds at the navigator root.
   The return bar needs its own semantics tap action when child semantics are
   excluded. Remote end clears a minimized bar without opening a terminal modal.
+  The minimized bar and full-screen access card remove their consumed top
+  padding from the stable routed child. With a 44 pixel status inset, their
+  widget tests align the visible AppBar toolbar to the bar/card bottom, retain
+  the same Navigator and restore the normal inset when the notice hides.
+  Baselines reproduced an extra 44 pixels in both surfaces; these host layout
+  proofs are retained under the notification follow-up evidence path above.
   Local Call back actions are untrusted routing hints: resolve the received
   terminal row, reject superseded/duplicate actions, wait for canonical runtime
   and foreground/unlock, then use current contact/authenticated outgoing

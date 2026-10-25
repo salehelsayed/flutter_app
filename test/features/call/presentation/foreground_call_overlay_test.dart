@@ -1374,6 +1374,60 @@ void main() {
     },
   );
 
+  testWidgets('minimized bar removes its consumed top inset from the route', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = FakeViewPadding(top: 44);
+    tester.view.viewPadding = FakeViewPadding(top: 44);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      harness(
+        capability: capability,
+        child: Navigator(
+          key: navigator,
+          onGenerateRoute: (_) => MaterialPageRoute<void>(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text('Chat')),
+              body: const Text('Retained chat'),
+            ),
+          ),
+        ),
+      ),
+    );
+    final retainedNavigator = navigator.currentState;
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _outgoingId,
+        peerId: 'outgoing-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.connected,
+        audio: _audio(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('call-minimize')));
+    await tester.pumpAndSettle();
+    final bar = find.byKey(const ValueKey('call-return-bar'));
+    final toolbar = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.byType(NavigationToolbar),
+    );
+    expect(tester.getTopLeft(toolbar).dy, tester.getBottomLeft(bar).dy);
+    expect(tester.getSize(find.byType(AppBar)).height, kToolbarHeight);
+    expect(navigator.currentState, same(retainedNavigator));
+    capability.emit(null);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(toolbar).dy, 44);
+    expect(navigator.currentState, same(retainedNavigator));
+  });
+
   testWidgets(
     'minimize permits text and restores modal focus on return; reconnect and end keep canonical state',
     (tester) async {

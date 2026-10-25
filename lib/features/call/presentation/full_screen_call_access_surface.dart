@@ -72,7 +72,13 @@ class _FullScreenCallAccessSurfaceState
                 ),
               ),
             ),
-          Expanded(child: Semantics(container: true, child: widget.child)),
+          Expanded(
+            child: MediaQuery.removePadding(
+              context: context,
+              removeTop: visible,
+              child: Semantics(container: true, child: widget.child),
+            ),
+          ),
         ],
       ),
     );
