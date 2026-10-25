@@ -2867,18 +2867,24 @@ after a real database/repository reopen. Evidence is retained under
 native SQLCipher, OS process termination and signed-candidate behavior remain
 separate.
 
-CR-016 has a separate QR-storage KNOWN GAP. The real signed scanner cases in
+CR-016's QR-storage gap is closed by sanitizing the stored contact-name copy
+with the existing `sanitizeUsername` in `ContactModel.fromQRPayload`, after
+signature verification. The signed payload and signature are unchanged.
+The real signed scanner cases in
 `qr_timestamp_admission_test.dart` accept Arabic-first and English-first mixed
 names containing bidi overrides, verify the original Ed25519 signature, persist
 one contact and queue one outbound request, then require the SQL name to omit
-overrides while preserving Arabic and emoji. Both active cases fail on the
-stored name: `ContactModel.fromQRPayload` copies the signed `un` field without
-sanitization after verification. They remain explicitly skipped with that
-reason; the active RED source and first failures are retained under
-`.codex-test-logs/astra-contact-catalog/group2/002-cr016-red*`. Existing request
+overrides while preserving Arabic and emoji. Both cases are enabled. The
+original failure was an unsanitized signed `un` copy; its active RED source
+and first failures remain under
+`.codex-test-logs/astra-contact-catalog/group2/002-cr016-red*`, with a second
+causal RED on unchanged production under
+`.codex-test-logs/qr-stored-name-sanitizer-20261025/red-02.log`. The shared
+sanitizer policy is unchanged: safe Arabic direction markers, isolates and
+emoji joins are preserved, with the existing username length bound. Existing request
 model/dialog sanitization and text-direction cases cover that separate display
 boundary. These host cases do not prove contact-screen rendering, native
-camera/crypto or signed-device behavior. No production fix is included.
+camera/crypto or signed-device behavior.
 
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses

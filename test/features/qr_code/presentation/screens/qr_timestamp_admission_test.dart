@@ -118,60 +118,44 @@ void main() {
     },
   );
 
-  group(
-    'CR-016 QR-saved contact names',
-    () {
-      for (final sample in const [
-        (
-          'Arabic-first',
-          'ليلى\u202e Alpha 👩🏽‍💻\u202c',
-          'ليلى Alpha 👩🏽‍💻',
-        ),
-        (
-          'English-first',
-          'Alpha\u202d ليلى 👨‍👩‍👧‍👦\u202c',
-          'Alpha ليلى 👨‍👩‍👧‍👦',
-        ),
-      ]) {
-        testWidgets(
-          '${sample.$1} signed name is stored without bidi overrides',
-          (tester) async {
-            final h = await _mount(tester);
-            await h.scan(
-              tester,
-              DateTime.now().toUtc().toIso8601String(),
-              overrides: {'un': sample.$2},
-            );
-            final contacts = (await tester.runAsync(
-              h.contacts.getAllContacts,
-            ))!;
-            expect(contacts, hasLength(1));
-            expect(contacts.single.peerId, h.sender.peerId);
-            expect(contacts.single.publicKey, h.sender.publicKey);
-            expect(h.bridge.verifyCalls, 1);
-            expect(find.text('Added to your circle!'), findsOneWidget);
-            expect(
-              await tester.runAsync(h.requests.getPendingRequests),
-              isEmpty,
-            );
-            expect(h.bridge.encrypts, hasLength(1));
-            expect(h.network.sendMessageCallCount, 0);
-            expect(h.network.storeInInboxCallCount, 1);
-            expect(
-              contacts.single.username,
-              sample.$3,
-              reason:
-                  'Verify the original signed name, then persist a safe contact '
-                  'name while preserving Arabic, mixed text and emoji.',
-            );
-          },
+  group('CR-016 QR-saved contact names', () {
+    for (final sample in const [
+      ('Arabic-first', 'ليلى\u202e Alpha 👩🏽‍💻\u202c', 'ليلى Alpha 👩🏽‍💻'),
+      (
+        'English-first',
+        'Alpha\u202d ليلى 👨‍👩‍👧‍👦\u202c',
+        'Alpha ليلى 👨‍👩‍👧‍👦',
+      ),
+    ]) {
+      testWidgets('${sample.$1} signed name is stored without bidi overrides', (
+        tester,
+      ) async {
+        final h = await _mount(tester);
+        await h.scan(
+          tester,
+          DateTime.now().toUtc().toIso8601String(),
+          overrides: {'un': sample.$2},
         );
-      }
-    },
-    skip:
-        'KNOWN GAP: signed QR contact names retain bidi overrides in SQL; '
-        'see .codex-test-logs/astra-contact-catalog/group2/002-cr016-red.log',
-  );
+        final contacts = (await tester.runAsync(h.contacts.getAllContacts))!;
+        expect(contacts, hasLength(1));
+        expect(contacts.single.peerId, h.sender.peerId);
+        expect(contacts.single.publicKey, h.sender.publicKey);
+        expect(h.bridge.verifyCalls, 1);
+        expect(find.text('Added to your circle!'), findsOneWidget);
+        expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
+        expect(h.bridge.encrypts, hasLength(1));
+        expect(h.network.sendMessageCallCount, 0);
+        expect(h.network.storeInInboxCallCount, 1);
+        expect(
+          contacts.single.username,
+          sample.$3,
+          reason:
+              'Verify the original signed name, then persist a safe contact '
+              'name while preserving Arabic, mixed text and emoji.',
+        );
+      });
+    }
+  });
 
   group('CR-025 QR timestamp admission through the real scanner', () {
     for (final entry in <({String label, String timestamp, String error})>[
