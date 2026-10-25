@@ -12,8 +12,8 @@ name: production_call_microphone_denial
         - text: "Missed call"
 - extendedWaitUntil:
     visible:
-      id: "(com.android|com.google.android).permissioncontroller:id/permission_deny_button"
+      id: "(com.android|com.google.android).permissioncontroller:id/permission_deny(_and_dont_ask_again)?_button"
     timeout: 30000
 - tapOn:
-    id: "(com.android|com.google.android).permissioncontroller:id/permission_deny_button"
+    id: "(com.android|com.google.android).permissioncontroller:id/permission_deny(_and_dont_ask_again)?_button"
 - assertVisible: "Microphone permission is needed to make calls."
