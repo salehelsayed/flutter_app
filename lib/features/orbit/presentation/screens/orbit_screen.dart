@@ -1197,6 +1197,7 @@ class _OrbitScreenView extends StatelessWidget {
             selfAvatarBytes: projection.userAvatarBytes,
             active: depthActive,
             gesturesEnabled: !innerEditing && !findOpen,
+            bottomClearance: _innerCircleBottomClearance(context),
             resetSignal: innerCircleResetListenable,
             nowProvider: thoughtNowProvider,
             onFriendTap: onFriendTap,

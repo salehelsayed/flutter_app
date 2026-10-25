@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
@@ -29,6 +30,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.selfAvatarBytes,
     this.active = true,
     this.gesturesEnabled = true,
+    this.bottomClearance = 0,
     this.resetSignal,
     this.nowProvider,
     this.onOwnsHostGestureChanged,
@@ -45,6 +47,9 @@ class OrbitDepthSurface extends StatefulWidget {
   final Uint8List? selfAvatarBytes;
   final bool active;
   final bool gesturesEnabled;
+
+  /// Host chrome (the persistent nav band) that the dial must stay above.
+  final double bottomClearance;
   final Listenable? resetSignal;
   final DateTime Function()? nowProvider;
   final ValueChanged<bool>? onOwnsHostGestureChanged;
@@ -109,20 +114,30 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   final _lastLoadedMedia = <String, List<PostMediaAttachmentModel>>{};
   Timer? _age;
   double _scale = 1;
-  bool get _active => widget.active && _routeActive && _foreground;
-  bool get _enabled => _active && widget.gesturesEnabled;
+  // Seats frozen for one visit into depth, so a re-sort of friends (a new
+  // message) cannot move faces or swap the front card under the finger.
+  OrbitDepthLayout? _seating;
+  bool get _active => widget.active && _foreground;
+  bool get _enabled => _active && _routeActive && widget.gesturesEnabled;
   bool get _depth => _layer != OrbitDepthLayer.flat || _vertical.value > 0.01;
   bool get _reduceMotion =>
       MediaQuery.disableAnimationsOf(context) ||
       MediaQuery.accessibleNavigationOf(context);
   bool get _rtl => Directionality.of(context) == TextDirection.rtl;
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
-  OrbitDepthLayout get _layout => OrbitDepthLayout.fromItems(
-    widget.items,
-    widget.thoughts,
-    _now,
-    mirrored: _rtl,
-  );
+  Map<String, OrbitFriend> get _friends => {
+    for (final item in widget.items)
+      if (item is OrbitFriendItem) item.friend.peerId: item.friend,
+  };
+  OrbitDepthLayout get _layout => switch (_seating) {
+    null => OrbitDepthLayout.fromItems(
+      widget.items,
+      widget.thoughts,
+      _now,
+      mirrored: _rtl,
+    ),
+    final seating => seating.reseated(_friends, widget.thoughts, _now),
+  };
   List<OrbitDepthSeat> get _seats => _layout.inLayer(_layer);
   OrbitDepthSeat? get _front => _seats
       .where((seat) => seat.friend.peerId == _frontPeer && seat.thought != null)
@@ -143,23 +158,44 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _routeActive = ModalRoute.isCurrentOf(context) ?? true;
     if (!_active) _reset(notifyBuild: false);
-    if (_reduceMotion) {
-      final pending = _pendingLanding;
-      _vertical.stop();
-      _rotation.stop();
-      _fold.stop();
-      _vertical.value = _stop(_layer);
-      final front = _front;
-      if (front != null) {
-        _rotation.value = orbitDepthRotationFor(front, _rotation.value);
+    final routeActive = ModalRoute.isCurrentOf(context) ?? true;
+    if (routeActive != _routeActive) {
+      _routeActive = routeActive;
+      if (!routeActive) {
+        _hold();
+      } else if (_depth) {
+        _publish(true);
       }
-      _fold.value = _gesture == OrbitDepthGesture.turn ? 1 : 0;
-      _overviewProgress.stop();
-      _overviewProgress.value = _overviewRequested ? 1 : 0;
-      if (pending != null) _completeLanding(pending);
     }
+    if (_reduceMotion) _land();
+  }
+
+  /// Lands every controller at its stop and finishes any pending landing.
+  void _land() {
+    final pending = _pendingLanding;
+    _vertical.stop();
+    _rotation.stop();
+    _fold.stop();
+    _overviewProgress.stop();
+    _vertical.value = _stop(_layer);
+    final front = _front;
+    if (front != null) {
+      _rotation.value = orbitDepthRotationFor(front, _rotation.value);
+    }
+    _fold.value = _gesture == OrbitDepthGesture.turn ? 1 : 0;
+    _overviewProgress.value = _overviewRequested ? 1 : 0;
+    if (pending != null) _completeLanding(pending);
+  }
+
+  // A covering route (the card, a chat) freezes the dial at its stop and lends
+  // the host its gestures back. Ring, anchor and front friend wait for the pop.
+  void _hold() {
+    _gesture = OrbitDepthGesture.idle;
+    _pointers.clear();
+    _start = null;
+    _land();
+    _publish(false);
   }
 
   @override
@@ -169,7 +205,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       oldWidget.resetSignal?.removeListener(_reset);
       widget.resetSignal?.addListener(_reset);
     }
-    if (!_enabled) _reset(notifyBuild: false);
+    if (!_active || !widget.gesturesEnabled) _reset(notifyBuild: false);
     if (_depth && _front == null) {
       final next = orbitDepthNearest(_seats, _rotation.value);
       _frontPeer = next?.friend.peerId;
@@ -202,7 +238,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _foreground = state == AppLifecycleState.resumed;
+    // A shade, Control Center or permission dialog only makes the app
+    // inactive; the ring survives that and resets once the app is hidden.
+    _foreground = switch (state) {
+      AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+      AppLifecycleState.hidden ||
+      AppLifecycleState.paused ||
+      AppLifecycleState.detached => false,
+    };
     if (!_foreground) _reset();
   }
 
@@ -228,6 +271,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _gesture = OrbitDepthGesture.idle;
     _frontPeer = null;
     _landedPostId = null;
+    _seating = null;
     _overviewProgress.value = 0;
     _overviewRequested = false;
     _pointers.clear();
@@ -378,6 +422,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (_layer == OrbitDepthLayer.flat) {
       _overviewProgress.value = 0;
       _overviewRequested = false;
+      _seating = null;
       _publish(false);
     }
     _armTimers();
@@ -466,6 +511,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           _anchor = delta.dy < 0
               ? OrbitDepthAnchor.top
               : OrbitDepthAnchor.bottom;
+          _seating = _layout;
         }
       } else if (_depth) {
         _gesture = OrbitDepthGesture.turn;
@@ -583,30 +629,40 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             ]),
             builder: (context, _) => LayoutBuilder(
               builder: (context, constraints) {
-                _scale = math.min(
-                  constraints.maxWidth / 390,
-                  constraints.maxHeight / 640,
+                final stage = Size(
+                  constraints.maxWidth,
+                  constraints.maxHeight - widget.bottomClearance,
                 );
+                _scale = math.min(stage.width / 390, stage.height / 640);
                 final depth = _depth;
                 return Stack(
                   fit: StackFit.expand,
                   children: [
                     IgnorePointer(
                       ignoring: depth,
-                      child: Opacity(
-                        opacity: 1 - (_vertical.value / 320).clamp(0.0, 1.0),
-                        child: ScrollConfiguration(
-                          behavior: _enabled
-                              ? ScrollConfiguration.of(context).copyWith(
-                                  physics: const NeverScrollableScrollPhysics(),
-                                )
-                              : ScrollConfiguration.of(context),
-                          child: widget.child,
+                      // The flat orbit's own clocks (note swim) rest under
+                      // the stage instead of ticking unseen.
+                      child: TickerMode(
+                        enabled: !depth,
+                        child: Opacity(
+                          opacity: 1 - (_vertical.value / 320).clamp(0.0, 1.0),
+                          child: ScrollConfiguration(
+                            behavior: _enabled
+                                ? ScrollConfiguration.of(context).copyWith(
+                                    physics:
+                                        const NeverScrollableScrollPhysics(),
+                                  )
+                                : ScrollConfiguration.of(context),
+                            child: widget.child,
+                          ),
                         ),
                       ),
                     ),
                     if (depth && _active)
-                      _dial(Size(constraints.maxWidth, constraints.maxHeight)),
+                      Positioned.fill(
+                        bottom: widget.bottomClearance,
+                        child: _dial(stage),
+                      ),
                   ],
                 );
               },
@@ -707,6 +763,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         ));
         if (thought != null &&
             (_overviewProgress.value > .01 || (front && _fold.value > .5))) {
+          final note = thought.text.isEmpty
+              ? seat.friend.username
+              : thought.text;
           faces.add((
             depth: position.dy + 1,
             widget: Positioned(
@@ -726,7 +785,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Text(
-                    thought.text.isEmpty ? seat.friend.username : thought.text,
+                    note,
+                    textDirection: detectTextDirection(note),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -742,7 +802,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           ));
         }
       }
-      if (layer == OrbitDepthLayer.outer && rel > .01) {
+      final live = layout
+          .inLayer(layer)
+          .where((seat) => seat.thought != null)
+          .length;
+      if (layer == OrbitDepthLayer.outer && rel > .01 && live > 0) {
         final (back, _) = projectOrbitDepth(-math.pi / 2, radius, tilt);
         children.add(
           Positioned(
@@ -758,7 +822,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                   }
                 },
                 child: Text(
-                  '${AppLocalizations.of(context)!.orbit_depth_outer_ring} · ${layout.inLayer(layer).length}',
+                  '${AppLocalizations.of(context)!.orbit_depth_outer_ring} · $live',
                 ),
               ),
             ),
@@ -886,8 +950,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       }
     }
 
-    return SingleChildScrollView(
+    // A drag on the card tilts or turns the orbit, so the card cannot scroll.
+    // It clips to its slot; the tap opens the whole thought.
+    return UnconstrainedBox(
       key: ValueKey('orbit-depth-card-${post.id}'),
+      constrainedAxis: Axis.horizontal,
+      alignment: Alignment.topCenter,
+      clipBehavior: Clip.hardEdge,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -912,6 +981,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       padding: EdgeInsets.only(top: 12 * k),
                       child: Text(
                         post.text,
+                        textDirection: detectTextDirection(post.text),
                         style: TextStyle(fontSize: 22 * k, height: 1.3),
                       ),
                     ),

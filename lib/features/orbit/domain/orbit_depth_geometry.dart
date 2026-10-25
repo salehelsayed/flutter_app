@@ -53,6 +53,22 @@ class OrbitDepthLayout {
 
   List<OrbitDepthSeat> inLayer(OrbitDepthLayer layer) =>
       seats.where((seat) => seat.layer == layer).toList(growable: false);
+
+  /// The same seats with today's friends and thoughts. A friend who left takes
+  /// the seat along; everyone else stays where they were seated.
+  OrbitDepthLayout reseated(
+    Map<String, OrbitFriend> friends,
+    Map<String, PostModel> thoughts,
+    DateTime now,
+  ) => OrbitDepthLayout([
+    for (final seat in seats)
+      if (friends[seat.friend.peerId] case final friend?)
+        OrbitDepthSeat(
+          friend,
+          seat.placement,
+          liveOrbitDepthThought(thoughts[friend.peerId], now),
+        ),
+  ], overflow);
 }
 
 PostModel? liveOrbitDepthThought(PostModel? thought, DateTime now) {

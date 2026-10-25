@@ -89,6 +89,36 @@ void main() {
       );
     },
   );
+  test(
+    'reseating keeps placements, refreshes thoughts and drops a friend who left',
+    () {
+      final seated = OrbitDepthLayout.fromItems(
+        [for (var i = 0; i < 5; i++) OrbitFriendItem(depthFriend(i))],
+        {'peer-1': depthThought(1)},
+        depthNow,
+      );
+      final later = seated.reseated(
+        {
+          for (final i in [4, 3, 1, 0]) 'peer-$i': depthFriend(i),
+        },
+        {'peer-3': depthThought(3)},
+        depthNow,
+      );
+      expect(later.seats.map((seat) => seat.friend.peerId), [
+        'peer-0',
+        'peer-1',
+        'peer-3',
+        'peer-4',
+      ]);
+      expect(later.seats.map((seat) => seat.placement.index), [0, 1, 3, 4]);
+      expect(later.seats.map((seat) => seat.thought?.id), [
+        null,
+        null,
+        'post-3',
+        null,
+      ]);
+    },
+  );
   test('one camera makes the front face and ring larger together', () {
     final (front, frontScale) = projectOrbitDepth(
       math.pi / 2,
