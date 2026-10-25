@@ -130,7 +130,7 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
         envelope,
         timeoutMs: interactiveBudget.inMilliseconds,
       );
-      if (sendResult.sent) {
+      if (sendResult.acknowledged) {
         return PostFollowOnRecipientResult(
           recipientPeerId: recipientPeerId,
           deliveryStatus: 'delivered',
@@ -138,7 +138,9 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
           attemptedAt: attemptedAt,
         );
       }
-      directFailureReason = 'direct_send_returned_not_sent';
+      directFailureReason = sendResult.sent
+          ? 'direct_send_unacknowledged'
+          : 'direct_send_returned_not_sent';
     } else {
       directFailureReason = 'direct_connect_unavailable';
     }

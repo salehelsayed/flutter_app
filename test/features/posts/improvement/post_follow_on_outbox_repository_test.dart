@@ -1,17 +1,41 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/helpers/post_follow_on_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
+import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
+import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
+import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
 import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
+import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
+import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
+import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
+import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
+import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_p2p_service_integration.dart';
 
 void main() {
   late Database db;
+  late Directory tempDir;
+  late PathProviderPlatform previousPathProvider;
 
   setUpAll(() {
     sqfliteFfiInit();
@@ -19,13 +43,24 @@ void main() {
   });
 
   setUp(() async {
-    db = await openDatabase(inMemoryDatabasePath, version: 1);
+    tempDir = await Directory.systemTemp.createTemp('post_follow_on_outbox_');
+    previousPathProvider = PathProviderPlatform.instance;
+    PathProviderPlatform.instance = _PathProvider(tempDir.path);
+    db = await openDatabase('${tempDir.path}/posts.db', version: 1);
     await runPostsCoreMigration(db);
+    await runPostsEngagementMigration(db);
+    await runPostsPassAlongMigration(db);
+    await runPostsPinsMigration(db);
     await runPostsFollowOnOutboxMigration(db);
+    await runPostsMediaUploadRecoveryMigration(db);
+    await runPostsRepostEngagementStateMigration(db);
+    await runPostsPassAvatarSnapshotsMigration(db);
   });
 
   tearDown(() async {
     await db.close();
+    PathProviderPlatform.instance = previousPathProvider;
+    await tempDir.delete(recursive: true);
   });
 
   PostRepositoryImpl buildRepository() {
@@ -38,6 +73,7 @@ void main() {
       ),
       dbLoadPostsFeed: () =>
           dbLoadPostsFeed(db, nowProvider: () => DateTime.utc(2026, 3, 15, 12)),
+      dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),
       dbLoadRecipientDeliveries: (postId) =>
@@ -55,6 +91,153 @@ void main() {
           dbLoadPostFollowOnOutboxRecipientDeliveries(db, eventId),
       dbLoadRetryableFollowOnOutboxRecipientDeliveries: (eventIds) =>
           dbLoadRetryablePostFollowOnOutboxRecipientDeliveries(db, eventIds),
+    );
+  }
+
+  for (final expireBeforeRetry in [false, true]) {
+    test(
+      'local retraction survives SQLite reopen and ${expireBeforeRetry ? 'expires at the original deadline' : 'retries after inbox recovery'}',
+      () async {
+        var repository = buildRepository();
+        addTearDown(() => repository.dispose());
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final service = _UnacknowledgedP2PService(network);
+        addTearDown(service.dispose);
+        final createdAt = DateTime.utc(2026, 3, 15, 10);
+        final now = createdAt.add(const Duration(hours: 2));
+        final createdIso = createdAt.toIso8601String();
+        await repository.savePost(
+          PostModel(
+            id: 'thought-1',
+            eventId: 'evt-thought-1',
+            senderPeerId: 'me',
+            authorPeerId: 'me',
+            authorUsername: 'Me',
+            text: 'Retract this thought',
+            audience: PostAudience.allFriends(),
+            createdAt: createdIso,
+            visibleAt: createdIso,
+            expiresAt: ThoughtLifetime.expiresAt(createdAt).toIso8601String(),
+            isIncoming: false,
+            deliveryStatus: 'delivered',
+          ),
+        );
+        await repository.saveRecipientDelivery(
+          PostRecipientDelivery(
+            postId: 'thought-1',
+            recipientPeerId: 'bob',
+            deliveryStatus: 'delivered',
+            deliveryPath: 'direct',
+            lastAttemptAt: createdIso,
+            createdAt: createdIso,
+            updatedAt: createdIso,
+          ),
+        );
+        final mediaFile = File(
+          '${tempDir.path}/post_media/thought-1/photo.jpg',
+        );
+        await mediaFile.parent.create(recursive: true);
+        await mediaFile.writeAsBytes([1, 2, 3]);
+        await db.insert('post_media_attachments', {
+          'media_id': 'media-1',
+          'post_id': 'thought-1',
+          'blob_id': 'blob-1',
+          'kind': 'image',
+          'mime': 'image/jpeg',
+          'local_path': mediaFile.path,
+          'created_at': createdIso,
+        });
+        await queuePostFollowOn(
+          postRepo: repository,
+          eventId: 'evt-legacy',
+          eventType: 'post_comment',
+          postId: 'thought-1',
+          senderPeerId: 'me',
+          envelope: '{"type":"post_comment"}',
+          createdAt: createdIso,
+          recipientPeerIds: ['bob'],
+        );
+
+        final retraction = await retractThought(
+          postRepo: repository,
+          p2pService: service,
+          mediaFileManager: MediaFileManager(),
+          postId: 'thought-1',
+          senderPeerId: 'me',
+          nowProvider: () => now,
+        );
+        final firstDelivery = await retraction.delivery;
+
+        expect(retraction.result, RetractThoughtResult.deleted);
+        expect(await repository.getPost('thought-1'), isNull);
+        expect(await mediaFile.exists(), isFalse);
+        expect(await db.query('post_media_attachments'), isEmpty);
+        expect(await db.query('post_recipients'), isEmpty);
+        final events = await db.query('post_follow_on_outbox_events');
+        expect(
+          events,
+          hasLength(1),
+          reason: 'the cascade must retain the queued retraction event',
+        );
+        expect(events.single['event_type'], 'post_retract');
+        final eventId = events.single['event_id']! as String;
+        expect(await repository.getFollowOnOutboxEvent('evt-legacy'), isNull);
+        expect(
+          await repository.loadFollowOnOutboxRecipientDeliveries('evt-legacy'),
+          isEmpty,
+        );
+        expect(firstDelivery!.settlement, PostFollowOnSettlement.notSettled);
+        expect(network.storeInInboxCallCount, 1);
+        expect(service.directAttempts, 1);
+
+        repository.dispose();
+        await db.close();
+        db = await openDatabase('${tempDir.path}/posts.db');
+        repository = buildRepository();
+        final jobs = await repository.loadRetryableFollowOnOutboxJobs();
+        expect(jobs, hasLength(1));
+        expect(jobs.single.event.eventId, eventId);
+        expect(jobs.single.recipientDeliveries.single.recipientPeerId, 'bob');
+        expect(jobs.single.recipientDeliveries.single.deliveryStatus, 'failed');
+        expect(
+          jobs.single.recipientDeliveries.single.lastError,
+          'direct_send_unacknowledged',
+        );
+
+        network.inboxDisabled = false;
+        final retryAt = expireBeforeRetry
+            ? ThoughtLifetime.expiresAt(
+                createdAt,
+              ).add(const Duration(minutes: 1))
+            : now.add(const Duration(minutes: 5));
+        final retried = await retryPendingPostFollowOns(
+          postRepo: repository,
+          p2pService: service,
+          nowProvider: () => retryAt,
+        );
+        expect(retried, expireBeforeRetry ? 0 : 1);
+        expect(service.directAttempts, expireBeforeRetry ? 1 : 2);
+        expect(network.storeInInboxCallCount, expireBeforeRetry ? 1 : 2);
+        expect(network.inboxCount('bob'), expireBeforeRetry ? 0 : 1);
+        final rows = await repository.loadFollowOnOutboxRecipientDeliveries(
+          eventId,
+        );
+        expect(
+          rows.single.deliveryStatus,
+          expireBeforeRetry ? 'expired' : 'inbox',
+        );
+        expect(await repository.loadRetryableFollowOnOutboxJobs(), isEmpty);
+        expect(
+          await retryPendingPostFollowOns(
+            postRepo: repository,
+            p2pService: service,
+            nowProvider: () => retryAt.add(const Duration(minutes: 5)),
+          ),
+          0,
+        );
+        expect(service.directAttempts, expireBeforeRetry ? 1 : 2);
+        expect(network.storeInInboxCallCount, expireBeforeRetry ? 1 : 2);
+      },
     );
   }
 
@@ -214,4 +397,34 @@ void main() {
       secondRepository.dispose();
     },
   );
+}
+
+class _PathProvider extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  _PathProvider(this.path);
+  final String path;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+class _UnacknowledgedP2PService extends FakeP2PService {
+  _UnacknowledgedP2PService(FakeP2PNetwork network)
+    : super(peerId: 'me', network: network);
+
+  int directAttempts = 0;
+
+  @override
+  bool isConnectedToPeer(String peerId) => true;
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    directAttempts++;
+    return const SendMessageResult(sent: true, acked: false);
+  }
 }

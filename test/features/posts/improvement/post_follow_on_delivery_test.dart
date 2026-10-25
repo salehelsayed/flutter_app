@@ -15,6 +15,64 @@ void main() {
     network = FakeP2PNetwork();
   });
 
+  for (final inboxAvailable in [true, false]) {
+    test(
+      'unacknowledged direct send falls back to inbox ($inboxAvailable)',
+      () async {
+        final service = _ControlledP2PService(
+          peerId: 'peer-alice',
+          network: network,
+          policies: {
+            'peer-bob': _PeerPolicy(
+              sendResult: true,
+              acked: false,
+              storeInInboxResult: inboxAvailable,
+            ),
+          },
+        );
+        addTearDown(service.dispose);
+
+        final result = await fanoutPostFollowOnEnvelope(
+          p2pService: service,
+          recipientPeerIds: const ['peer-bob'],
+          envelope: '{"type":"post_retract"}',
+        );
+
+        expect(service.sendStartOrder, ['peer-bob']);
+        expect(service.inboxAttempts, ['peer-bob']);
+        final outcome = result.recipientResults.single;
+        expect(outcome.deliveryPath, 'inbox');
+        expect(outcome.deliveryStatus, inboxAvailable ? 'inbox' : 'failed');
+        expect(outcome.isSettled, inboxAvailable);
+        expect(
+          outcome.lastError,
+          inboxAvailable ? null : 'direct_send_unacknowledged',
+        );
+      },
+    );
+  }
+
+  test('acknowledged direct send settles without an inbox duplicate', () async {
+    final service = _ControlledP2PService(
+      peerId: 'peer-alice',
+      network: network,
+      policies: const {'peer-bob': _PeerPolicy(sendResult: true, acked: true)},
+    );
+    addTearDown(service.dispose);
+
+    final result = await fanoutPostFollowOnEnvelope(
+      p2pService: service,
+      recipientPeerIds: const ['peer-bob'],
+      envelope: '{"type":"post_retract"}',
+    );
+
+    expect(result.settlement, PostFollowOnSettlement.fullySettled);
+    expect(result.recipientResults.single.deliveryStatus, 'delivered');
+    expect(result.recipientResults.single.deliveryPath, 'direct');
+    expect(service.sendStartOrder, ['peer-bob']);
+    expect(service.inboxAttempts, isEmpty);
+  });
+
   test(
     'fanoutPostFollowOnEnvelope never exceeds the configured concurrency limit',
     () async {
@@ -278,6 +336,7 @@ class _ControlledP2PService extends FakeP2PService {
       }
       return SendMessageResult(
         sent: policy.sendResult ?? true,
+        acked: policy.acked,
         reply: (policy.sendResult ?? true) ? 'received' : null,
       );
     } finally {
@@ -286,7 +345,11 @@ class _ControlledP2PService extends FakeP2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     inboxAttempts.add(toPeerId);
     return (policies[toPeerId] ?? const _PeerPolicy()).storeInInboxResult ??
         true;
@@ -317,6 +380,7 @@ class _ControlledP2PService extends FakeP2PService {
 class _PeerPolicy {
   final Completer<void>? sendGate;
   final bool? sendResult;
+  final bool? acked;
   final bool? storeInInboxResult;
   final bool throwOnSend;
   final bool requireDiscoverAndDialBeforeSend;
@@ -324,6 +388,7 @@ class _PeerPolicy {
   const _PeerPolicy({
     this.sendGate,
     this.sendResult,
+    this.acked,
     this.storeInInboxResult,
     this.throwOnSend = false,
     this.requireDiscoverAndDialBeforeSend = false,

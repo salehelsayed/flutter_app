@@ -3418,6 +3418,19 @@ described in the microphone preflight guidance below. Focused verification and
 the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
+`sent: true, acked: false` must attempt the existing inbox fallback and remain
+retryable if that storage fails. `post_follow_on_delivery_test.dart` covers both
+inbox outcomes and the acknowledged-send control without an inbox duplicate.
+`post_follow_on_outbox_repository_test.dart` uses the real repository, SQLite
+cascade, media-file deletion and database close/reopen: the thought, media and
+legacy follow-ons disappear while the retraction event and failed recipients
+survive. Inbox recovery settles that retained job; the original thought's
+24-hour deadline expires it without another network attempt. The original
+four causal failures on `03467e0de` and focused passing evidence are retained
+under `.codex-test-logs/thought-retract-delivery-20261026/`. These host contracts
+do not establish installed-device retract latency.
+
 On 2026-10-22 the owner accepted Thoughts completion with the three pre-existing
 skip-only host gaps documented. The original Step 1 affected selection remains
 122 PASS / 0 FAIL / 3 BLOCKED: identity completed with 751 passes and 13 skips,

@@ -448,11 +448,16 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
 
 Future<void> dbDeletePostCascade(Database db, String postId) async {
   await dbWriteTransaction(db, (txn) async {
+    // Retractions must survive removal of their thought so delivery can retry.
     await txn.rawDelete(
-      'DELETE FROM post_follow_on_outbox_recipient_deliveries WHERE event_id IN (SELECT event_id FROM post_follow_on_outbox_events WHERE post_id = ?)',
-      <Object?>[postId],
+      'DELETE FROM post_follow_on_outbox_recipient_deliveries WHERE event_id IN (SELECT event_id FROM post_follow_on_outbox_events WHERE post_id = ? AND event_type != ?)',
+      <Object?>[postId, 'post_retract'],
     );
-    await _deleteRequiredPostRows(txn, 'post_follow_on_outbox_events', postId);
+    await txn.delete(
+      'post_follow_on_outbox_events',
+      where: 'post_id = ? AND event_type != ?',
+      whereArgs: <Object?>[postId, 'post_retract'],
+    );
     await _deleteRequiredPostRows(txn, 'post_comment_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_reactions', postId);
     await _deleteRequiredPostRows(txn, 'post_comments', postId);
