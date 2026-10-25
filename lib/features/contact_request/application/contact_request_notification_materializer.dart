@@ -4,6 +4,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/resolve_contact_request_notification_target_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -31,6 +32,7 @@ typedef ShowContactRequestNotificationErrorFn =
     void Function({required NavigatorState navigator, required String message});
 
 class ContactRequestNotificationMaterializer {
+  final ContactRequestListener contactRequestListener;
   final ContactRequestRepository requestRepository;
   final ContactRepository contactRepository;
   final IdentityRepository identityRepository;
@@ -45,6 +47,7 @@ class ContactRequestNotificationMaterializer {
   final ShowContactRequestNotificationErrorFn showError;
 
   ContactRequestNotificationMaterializer({
+    required this.contactRequestListener,
     required this.requestRepository,
     required this.contactRepository,
     required this.identityRepository,
@@ -72,11 +75,16 @@ class ContactRequestNotificationMaterializer {
     switch (target.state) {
       case ContactRequestNotificationTargetState.pendingRequest:
         final request = target.request!;
-        await presentPendingRequest(
-          navigator: navigator,
-          request: request,
-          onAccept: () => acceptRequest(navigator: navigator, request: request),
-          onDecline: () => declineRequest(request: request),
+        await contactRequestListener.presentRequest(
+          request,
+          () => presentPendingRequest(
+            navigator: navigator,
+            request: request,
+            onAccept: () =>
+                acceptRequest(navigator: navigator, request: request),
+            onDecline: () => declineRequest(request: request),
+          ),
+          allowSuppressed: true,
         );
         return;
       case ContactRequestNotificationTargetState.conversation:

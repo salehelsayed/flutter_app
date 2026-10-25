@@ -95,6 +95,11 @@ class MediaRepositoryRealDbFixture {
     // 356: fires INSIDE the atomic private tombstone + v109 transaction, after
     // the parent update and before the event insert.
     Future<void> Function()? beforePrivateDeletionCustodyInsert,
+    // Restart probes pause outside the SQL transaction at these boundaries.
+    // reopen() deliberately constructs a fresh repository without the hooks.
+    Future<void> Function()? beforeDirectTextCustodyStage,
+    Future<void> Function()? afterDirectTextCustodyStage,
+    Future<void> Function()? beforeDirectInboxCustodyCompletion,
   }) async {
     sqfliteFfiInit();
     final db = await (databaseFactoryOverride ?? databaseFactoryFfi)
@@ -116,6 +121,9 @@ class MediaRepositoryRealDbFixture {
         owner: MediaOwnerLane.direct,
       ),
       beforePrivateDeletionCustodyInsert: beforePrivateDeletionCustodyInsert,
+      beforeDirectTextCustodyStage: beforeDirectTextCustodyStage,
+      afterDirectTextCustodyStage: afterDirectTextCustodyStage,
+      beforeDirectInboxCustodyCompletion: beforeDirectInboxCustodyCompletion,
     );
     repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
@@ -1159,6 +1167,9 @@ MessageRepositoryImpl _buildMessageRepository(
   required Future<List<MediaAttachment>> Function(String messageId)
   loadOutgoingOrdinaryMedia,
   Future<void> Function()? beforePrivateDeletionCustodyInsert,
+  Future<void> Function()? beforeDirectTextCustodyStage,
+  Future<void> Function()? afterDirectTextCustodyStage,
+  Future<void> Function()? beforeDirectInboxCustodyCompletion,
 }) {
   return MessageRepositoryImpl(
     projectConversationRead: projectConversationRead,
@@ -1232,16 +1243,21 @@ MessageRepositoryImpl _buildMessageRepository(
           required messageId,
           required incarnationId,
           required wireEnvelope,
-        }) => dbStageOutgoingDirectTextInboxCustody(
-          db,
-          expectedRow: expectedRow,
-          stagedRow: stagedRow,
-          kind: kind,
-          recipientPeerId: recipientPeerId,
-          messageId: messageId,
-          incarnationId: incarnationId,
-          wireEnvelope: wireEnvelope,
-        ),
+        }) async {
+          await beforeDirectTextCustodyStage?.call();
+          final result = await dbStageOutgoingDirectTextInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            incarnationId: incarnationId,
+            wireEnvelope: wireEnvelope,
+          );
+          await afterDirectTextCustodyStage?.call();
+          return result;
+        },
     dbLoadDirectTextMutationInboxCustodyForEvent:
         ({required recipientPeerId, required eventId}) =>
             dbLoadDirectReactionInboxCustodyOutboxForEvent(
@@ -1330,14 +1346,17 @@ MessageRepositoryImpl _buildMessageRepository(
           required expectedIncarnationId,
           required expectedWireEnvelope,
           required relayExpiresAt,
-        }) => dbCompleteAcceptedDirectInboxCustodyIfExact(
-          db,
-          recipientPeerId: recipientPeerId,
-          messageId: messageId,
-          expectedIncarnationId: expectedIncarnationId,
-          expectedWireEnvelope: expectedWireEnvelope,
-          relayExpiresAt: relayExpiresAt,
-        ),
+        }) async {
+          await beforeDirectInboxCustodyCompletion?.call();
+          return dbCompleteAcceptedDirectInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            expectedIncarnationId: expectedIncarnationId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            relayExpiresAt: relayExpiresAt,
+          );
+        },
     dbSettleOutgoingOrdinaryTransport:
         ({
           required messageId,

@@ -44,6 +44,7 @@ void main() {
       bridge: bridge,
       getOwnPeerId: () => 'peer-self',
       shouldSuppressPresentationForPeerId: presentationGate.shouldSuppress,
+      presentationGateChanges: presentationGate,
     )..start();
 
     listener.requestStream.listen(liveRequests.add);
@@ -55,7 +56,7 @@ void main() {
   });
 
   test(
-    'warm push open plus inbox replay yields one materialization path, not a duplicate live request',
+    'missed notification presentation replays the pending inbox request when suppression ends',
     () async {
       final sender = TestEd25519Identity.fromSeedByte(0x13);
       final peerId = sender.peerId;
@@ -91,7 +92,8 @@ void main() {
 
       await _flushMicrotasks();
 
-      expect(liveRequests, isEmpty);
+      expect(liveRequests.map((request) => request.peerId), [peerId]);
+      expect(await contactRepository.getAllContacts(), isEmpty);
       expect(
         (await requestRepository.getRequest(peerId))?.status,
         ContactRequestStatus.pending,
@@ -120,10 +122,15 @@ void main() {
     contactRequestStream.add(_makeContactRequestMessage(unsuppressed));
 
     await _flushMicrotasks();
+    expect(liveRequests.map((request) => request.peerId), [unsuppressedPeerId]);
     presentationGate.release(suppressedPeerId);
     await _flushMicrotasks();
 
-    expect(liveRequests.map((request) => request.peerId), [unsuppressedPeerId]);
+    expect(
+      liveRequests.where((request) => request.peerId == suppressedPeerId),
+      hasLength(1),
+    );
+    expect(await contactRepository.getAllContacts(), isEmpty);
     expect(
       (await requestRepository.getRequest(suppressedPeerId))?.status,
       ContactRequestStatus.pending,

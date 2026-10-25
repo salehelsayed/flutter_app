@@ -242,8 +242,10 @@ const _privacySha256 =
 // Main merge preserves both callback fencing and shared-store erasure wiring.
 // 2026-10-24: pass the existing pending-key repair repository and repair
 // callback into notification route preparation. No owner or resume dispatch moves.
+// Contact notification dialogs join the existing listener's consent queue.
+// Application and resume ownership stay in place.
 const _applicationRootNormalizedSha256 =
-    '25f4456b1b03ef3a6dbb229ee8bdb7816cc160ebe0ba26dfa26fe3b94bc22ffe';
+    '2d05c241e3c98d665f45cb4156d91bc740a6f5ec04d1fc64cc656f6e463cf62a';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

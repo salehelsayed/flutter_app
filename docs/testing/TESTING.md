@@ -2350,6 +2350,35 @@ Three focused integration-tagged Go host contracts pass in the same evidence
 directory's `007-go-checkpoint-summary.json`. These are host results, not device
 coverage. GC-005 still needs its separate membership process-death companion,
 and call content audio still needs the unapproved test-build audio hook.
+
+Direct text catalog host coverage also includes
+`direct_text_restart_sqlite_test.dart` in `offline-recovery`. DC-002 starts
+100 sends without awaiting each send, injects duplicate live deliveries, and
+requires all original identities in send order, stable receiver row identities,
+and exactly 100 SQL rows per peer after both peers reopen and after production
+protected-inbox replay of already-delivered envelopes. DC-004 pauses the real
+send path before custody, after custody, after committed live delivery before
+local settlement, and after relay acceptance before local custody completion.
+The last three checkpoints recover the original envelope/incarnation, settle
+one sender row through actual receipt handling, and retain one receiver row.
+The existing production-schema SQLite fixture supplies only optional boundary
+hooks; restarted repositories omit those hooks. Old Dart continuations are
+abandoned and their timers cancelled. These are real file close/reopen and
+listener/staging/recovery proofs with fake transport/crypto, not OS process-kill,
+native SQLCipher, linked-device fanout, live relay or signed-candidate evidence.
+
+DC-004 before-custody remains a **KNOWN GAP**: fresh ordinary text has no
+durable parent before atomic custody staging, although the conversation screen
+already schedules an optimistic sending bubble. The unskipped no-loss assertion
+finds zero receiver rows after restart. Reproduce with
+`--dart-define=MKNOON_RUN_KNOWN_GAPS=true --name '^DC-004 beforeCustody:'`;
+the default skip does not close DC-004. Evidence in
+`.codex-test-logs/astra-direct-restart/008-known-gap-red.log` retains that RED;
+`010-burst-focused-final.log` records 22 focused/preservation passes and one
+skip. The curated wrapper's `013-curated/` records 16 passes, zero failures and
+one skip, classified **BLOCKED** by its completeness gate. Do not relabel that
+lane as passing or waive the skip. The original invalid test-key fixture
+startup failure remains in `003-initial-red.log`.
 Changes to the nested direct-media target owner also require reviewed source
 hash updates in `tool/testing/legacy_target_contracts.json`; its four route
 commands, roles and environments remain fixed. The bounded host checkpoint
@@ -2772,12 +2801,15 @@ The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release
 replays durable pending rows, both retained screens share one presentation queue,
-and distinct burst requests wait for their own explicit answer. The queue starts
-eagerly; releasing it on the last stream-subscriber cancellation is necessary
+and distinct burst requests wait for their own explicit answer. The notification
+integration fixture wires `presentationGateChanges` as production does: releasing
+a missed notification open replays the still-pending request without another
+network delivery or implicit contact creation. The queue starts eagerly; releasing it on the last stream-subscriber cancellation is necessary
 because removing a Navigator does not complete its old dialog Future. A generation
 check keeps that obsolete callback from releasing a new mount's presentation.
-All nine shell cases pass, including remount, blocked-peer filtering, duplicate
-input/restart, reciprocal acceptance and repair overflow/retry. The scanner's
+All fourteen shell cases pass, including remount, blocked-peer filtering, duplicate
+input/restart and reciprocal acceptance with both Feed and Orbit retained, and
+repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
@@ -2794,13 +2826,18 @@ one to two to three contacts without avatars. This is host UI/stream/SQL proof,
 not device/native delivery. Evidence:
 `.codex-test-logs/contact-accept-refresh-20261024/`.
 
-Consent ownership must include the decision Future after the dialog route pops.
-Otherwise an observable gate release can read a still-pending row and present it
-again before Accept/Decline persists. The root and shell presenters await the
-captured decision. The notification materializer's delayed-write test causally
-proves persistence precedes replay; its companion source guard checks the root
-callback wiring. This host fixture uses an in-memory delayed repository/presenter,
-so it is not an OS notification or complete application-root journey.
+Consent ownership includes the decision Future after the dialog route pops.
+Otherwise gate release can present a still-pending row before Accept/Decline
+persists. Notification materialization and FTE share the listener queue with Feed
+and Orbit; notification opens join an already-active or queued peer's completion.
+Only the explicit notification path may present through its own suppression gate.
+The four collision shell cases use signed input, production SQL, real Feed/Orbit
+or FTE, and the production materializer with an injected dialog callback. They
+causally reproduce two dialogs before the fix and require one until the decision
+persists. Evidence: `.codex-test-logs/contact-dedup-missed-20261025/`.
+The materializer's delayed-write test also proves persistence precedes replay;
+its companion source guard checks root callback ownership. These host fixtures
+do not certify OS notification delivery or a complete application-root journey.
 Evidence: `test/features/contact_request/presentation/screens/pending_request_shell_test.dart`,
 `test/features/qr_code/presentation/screens/qr_timestamp_admission_test.dart`,
 `test/features/contact_request/application/contact_request_notification_materializer_test.dart`

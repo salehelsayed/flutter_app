@@ -21,6 +21,7 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	relayclient "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 )
 
 // startNW002RelayNodeWithTracer is like startNW002RelayNode but installs the
@@ -108,11 +110,16 @@ func TestHolePunchFeasibility_LoopbackUpgradeObservable(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if c := firstDirectConn(nodeA, targetID); c != nil {
 			directConn = c
-			break
+			// The connection opens before libp2p emits EndHolePunch. A
+			// successful ordinary direct dial emits no End event at all.
+			if tracerA.Successes() > 0 {
+				break
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	logFeasibilityTraces(t, tracerA, tracerB, capA, capB)
 	if directConn == nil && tracerA.Successes() == 0 {
 		t.Skipf("loopback DCUtR upgrade did not materialize within window "+
 			"(forced-public hosts do not auto-hole-punch); tracerA.Successes()=%d. "+
@@ -129,6 +136,9 @@ func TestHolePunchFeasibility_LoopbackUpgradeObservable(t *testing.T) {
 	}
 	if got := classifyStreamTransportConn(directConn); got != "direct" {
 		t.Fatalf("classifyStreamTransport over upgraded conn = %q, want direct", got)
+	}
+	if ordinaryDirectDialOnly(tracerA, tracerB, capA, capB, nodeA.PeerId(), nodeB.PeerId()) {
+		t.Skip("loopback ordinary direct dial bypassed DCUtR; no punch evidence on either peer")
 	}
 	if tracerA.Successes() < 1 {
 		t.Fatalf("tracerA.Successes() = %d, want >= 1 when a direct conn opened", tracerA.Successes())
@@ -170,11 +180,14 @@ func TestFeasibility_DirectUpgrade_TcpLane(t *testing.T) {
 	for time.Now().Before(deadline) {
 		if c := firstDirectTCPConn(nodeA, targetID); c != nil {
 			tcpConn = c
-			break
+			if tracerA.Successes() > 0 {
+				break
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	logFeasibilityTraces(t, tracerA, tracerB, capA, capB)
 	if tcpConn == nil {
 		t.Skipf("no direct TCP upgrade materialized on loopback within the window "+
 			"(forced-public hosts do not auto-hole-punch; a punch may also take the QUIC lane); "+
@@ -188,8 +201,105 @@ func TestFeasibility_DirectUpgrade_TcpLane(t *testing.T) {
 	if got := classifyStreamTransportConn(tcpConn); got != "direct" {
 		t.Fatalf("classifyStreamTransport over upgraded TCP conn = %q, want direct", got)
 	}
+	if ordinaryDirectDialOnly(tracerA, tracerB, capA, capB, nodeA.PeerId(), nodeB.PeerId()) {
+		t.Skip("loopback ordinary direct TCP dial bypassed DCUtR; no punch evidence on either peer")
+	}
 	if tracerA.Successes() < 1 {
 		t.Fatalf("tracerA.Successes() = %d, want >= 1 when a direct TCP conn opened", tracerA.Successes())
+	}
+}
+
+// Ordinary direct dials are non-counted breadcrumbs, not successful punches.
+// Only a positive dial to the counterpart, with no punch evidence on either
+// peer, explains a direct connection without the required successful End event.
+func ordinaryDirectDialOnly(a, b *nodeHolePunchTracer, capA, capB *testEventCollector, peerA, peerB string) bool {
+	eventsByPeer := [][]map[string]interface{}{
+		capA.collectEvents("holepunch:attempt"),
+		capB.collectEvents("holepunch:attempt"),
+	}
+	if a.Attempts() != 0 || a.Successes() != 0 || a.Failures() != 0 ||
+		b.Attempts() != 0 || b.Successes() != 0 || b.Failures() != 0 {
+		return false
+	}
+	// StartHolePunch precedes the counted attempt in a separate tracer call.
+	// Inspect both peers before accepting either ordinary-dial breadcrumb.
+	for _, events := range eventsByPeer {
+		for _, event := range events {
+			if event["step"] == "started" || event["step"] == "attempt" {
+				return false
+			}
+		}
+	}
+	for i, events := range eventsByPeer {
+		remote := peerB
+		if i == 1 {
+			remote = peerA
+		}
+		for _, event := range events {
+			if event["step"] == "direct_dial" && event["success"] == true && event["remotePeerShort"] == shortPeerID(remote) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func logFeasibilityTraces(t *testing.T, a, b *nodeHolePunchTracer, capA, capB *testEventCollector) {
+	t.Helper()
+	t.Logf("DCUtR counters: A attempts=%d successes=%d failures=%d; B attempts=%d successes=%d failures=%d",
+		a.Attempts(), a.Successes(), a.Failures(), b.Attempts(), b.Successes(), b.Failures())
+	for i, collector := range []*testEventCollector{capA, capB} {
+		t.Logf("peer %d holepunch:attempt=%+v holepunch:success=%+v holepunch:failure=%+v", i,
+			collector.collectEvents("holepunch:attempt"), collector.collectEvents("holepunch:success"), collector.collectEvents("holepunch:failure"))
+	}
+}
+
+func TestHolePunchFeasibility_OrdinaryDirectDialSkipRequiresNoPunchEvidence(t *testing.T) {
+	peerA, peerB, unrelated := testRemotePeerID(t), testRemotePeerID(t), testRemotePeerID(t)
+	type scenario struct {
+		name          string
+		dialPeer      int
+		dialSuccess   bool
+		unrelatedDial bool
+		punchPeer     int
+		punch         *holepunch.Event
+		wantSkip      bool
+	}
+	tests := []scenario{
+		{name: "successful_direct_A", dialSuccess: true, wantSkip: true},
+		{name: "successful_direct_B", dialPeer: 1, dialSuccess: true, wantSkip: true},
+		{name: "failed_direct", wantSkip: false},
+		{name: "unrelated_direct", dialSuccess: true, unrelatedDial: true, wantSkip: false},
+	}
+	for _, side := range []int{0, 1} {
+		for _, punch := range []*holepunch.Event{
+			{Type: holepunch.StartHolePunchEvtT, Evt: &holepunch.StartHolePunchEvt{RTT: time.Millisecond}},
+			{Type: holepunch.HolePunchAttemptEvtT, Evt: &holepunch.HolePunchAttemptEvt{Attempt: 1}},
+			{Type: holepunch.EndHolePunchEvtT, Evt: &holepunch.EndHolePunchEvt{Success: false}},
+			{Type: holepunch.EndHolePunchEvtT, Evt: &holepunch.EndHolePunchEvt{Success: true}},
+		} {
+			tests = append(tests, scenario{name: fmt.Sprintf("peer_%d_%s_%v", side, punch.Type, punch.Evt), dialSuccess: true, punchPeer: side, punch: punch})
+		}
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			capA, capB := &testEventCollector{}, &testEventCollector{}
+			tracers := []*nodeHolePunchTracer{newNodeHolePunchTracer(newTracerTestNode(capA)), newNodeHolePunchTracer(newTracerTestNode(capB))}
+			remotes := []peer.ID{peerB, peerA}
+			dialRemote := remotes[test.dialPeer]
+			if test.unrelatedDial {
+				dialRemote = unrelated
+			}
+			tracers[test.dialPeer].Trace(&holepunch.Event{Remote: dialRemote, Type: holepunch.DirectDialEvtT, Evt: &holepunch.DirectDialEvt{Success: test.dialSuccess}})
+			if test.punch != nil {
+				event := *test.punch
+				event.Remote = remotes[test.punchPeer]
+				tracers[test.punchPeer].Trace(&event)
+			}
+			if got := ordinaryDirectDialOnly(tracers[0], tracers[1], capA, capB, peerA.String(), peerB.String()); got != test.wantSkip {
+				t.Fatalf("ordinary-direct skip=%v, want %v", got, test.wantSkip)
+			}
+		})
 	}
 }
 

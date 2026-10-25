@@ -139,12 +139,13 @@
     "offline-recovery": {
       "kind": "flutter",
       "paths": [
-        "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
+        "test/features/conversation/integration/offline_inbox_roundtrip_test.dart",
+        "test/features/conversation/integration/direct_text_restart_sqlite_test.dart"
       ],
-      "boundary": "Concurrent inbox custody, offline drain, retry and canonical deduplication",
-      "limitations": "Shared fake P2P/bridge/repositories; real disconnection and relay restart separate",
+      "boundary": "Concurrent inbox custody, exact 100-message ordering, both-peer SQLite reopen, sender interruption checkpoints, protected inbox replay and canonical deduplication",
+      "limitations": "Includes real production-schema SQLite repositories/listener/staging with fake transport and crypto; pre-custody loss remains a KNOWN GAP skip. Abandoned Dart continuations model restart; OS process death, native SQLCipher, live disconnection/relay restart and signed artifacts remain separate",
       "timeout_seconds": 900,
-      "estimated_seconds": 5,
+      "estimated_seconds": null,
       "requirements": [
         "flutter"
       ],
@@ -154,15 +155,7 @@
         "lib/core/services/",
         "lib/features/conversation/application/"
       ],
-      "inspected": true,
-      "runtime_basis": {
-        "kind": "measured",
-        "seconds": 4.184,
-        "status": "PASS",
-        "source_sha256": "531120e4323b7346d0e6d48a97c31da476046c2619c9b6cd40e6f7eadb956e4a",
-        "evidence": ".codex-test-logs/workflow-compatible-host/results.json",
-        "environment": "macOS ARM64, Flutter 3.47.2; warm resolved packages; host only"
-      }
+      "inspected": true
     },
     "small-group": {
       "kind": "flutter",
