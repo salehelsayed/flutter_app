@@ -1142,7 +1142,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _openPushNotificationSettingsSafely() async {
     try {
-      await widget.pushNotificationSettingsGateway.openNotificationSettings();
+      final opened = await widget.pushNotificationSettingsGateway
+          .openNotificationSettings();
+      if (!opened) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_REGISTER_NOTIFICATION_SETTINGS_OPEN_FAILED',
+          details: {'errorType': 'settingsUnavailable'},
+        );
+      }
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -3528,6 +3536,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 ? routedChild
                 : PushRegistrationHealthSurface(
                     healthListenable: healthNotifier,
+                    dismissalStore: widget.secureKeyStore,
                     onRetry: _retryPushRegistration,
                     onOpenNotificationSettings: _openPushNotificationSettings,
                     child: routedChild,

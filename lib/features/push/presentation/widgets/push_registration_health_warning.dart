@@ -11,12 +11,14 @@ class PushRegistrationHealthWarning extends StatelessWidget {
     required this.healthListenable,
     required this.onRetry,
     required this.onOpenNotificationSettings,
-    this.margin = const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+    required this.onDismiss,
+    this.margin = EdgeInsets.zero,
   });
 
   final ValueListenable<PushRegistrationHealthViewModel> healthListenable;
   final VoidCallback onRetry;
   final VoidCallback onOpenNotificationSettings;
+  final VoidCallback onDismiss;
   final EdgeInsetsGeometry margin;
 
   @override
@@ -50,92 +52,65 @@ class PushRegistrationHealthWarning extends StatelessWidget {
           liveRegion: true,
           child: Container(
             key: const ValueKey('push-registration-health-warning'),
+            height: 48,
             margin: margin,
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: warning.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: warning.withValues(alpha: 0.72)),
-            ),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(color: warning.withValues(alpha: 0.12)),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.notifications_off_outlined,
-                    color: warning,
-                    size: 22,
+                Icon(
+                  Icons.notifications_off_outlined,
+                  color: warning,
+                  size: 20,
+                  semanticLabel: l10n.push_registration_health_warning_title,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    message,
+                    key: const ValueKey('push-registration-health-message'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: readable.textPrimary, fontSize: 13),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        l10n.push_registration_health_warning_title,
-                        key: const ValueKey('push-registration-health-title'),
-                        style: TextStyle(
-                          color: readable.textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        message,
-                        key: const ValueKey('push-registration-health-message'),
-                        style: TextStyle(
-                          color: readable.textSecondary,
-                          fontSize: 13,
-                          height: 1.35,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: AlignmentDirectional.centerStart,
-                        child: opensSettings
-                            ? TextButton(
-                                key: const ValueKey(
-                                  'push-registration-health-action',
-                                ),
-                                onPressed: onOpenNotificationSettings,
-                                style: TextButton.styleFrom(
-                                  foregroundColor: warning,
-                                  minimumSize: const Size(48, 48),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                ),
-                                child: Text(
-                                  l10n.push_registration_health_open_notification_settings,
-                                ),
-                              )
-                            : OutlinedButton(
-                                key: const ValueKey(
-                                  'push-registration-health-action',
-                                ),
-                                onPressed: health.retryInProgress
-                                    ? null
-                                    : onRetry,
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: warning,
-                                  side: BorderSide(color: warning),
-                                  minimumSize: const Size(48, 48),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                ),
-                                child: Text(
-                                  health.retryInProgress
-                                      ? l10n.push_registration_health_retrying
-                                      : l10n.push_registration_health_retry,
-                                ),
-                              ),
-                      ),
-                    ],
+                Tooltip(
+                  excludeFromSemantics: true,
+                  message: opensSettings
+                      ? l10n.push_registration_health_open_notification_settings
+                      : l10n.push_registration_health_retry,
+                  child: TextButton(
+                    key: const ValueKey('push-registration-health-action'),
+                    onPressed: opensSettings
+                        ? onOpenNotificationSettings
+                        : health.retryInProgress
+                        ? null
+                        : onRetry,
+                    style: TextButton.styleFrom(
+                      foregroundColor: warning,
+                      minimumSize: const Size(48, 48),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      textStyle: const TextStyle(fontSize: 13),
+                    ),
+                    child: Text(
+                      opensSettings
+                          ? l10n.settings_title
+                          : health.retryInProgress
+                          ? l10n.push_registration_health_retrying
+                          : l10n.push_registration_health_retry,
+                      maxLines: 1,
+                    ),
                   ),
+                ),
+                IconButton(
+                  key: const ValueKey('push-registration-health-dismiss'),
+                  tooltip: l10n.push_registration_health_dismiss,
+                  onPressed: onDismiss,
+                  constraints: const BoxConstraints.tightFor(
+                    width: 48,
+                    height: 48,
+                  ),
+                  icon: const Icon(Icons.close, size: 20),
                 ),
               ],
             ),

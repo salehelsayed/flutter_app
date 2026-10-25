@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+
 import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
 import 'package:flutter_app/features/push/application/register_push_token_use_case.dart';
 import 'package:flutter_app/features/push/infrastructure/push_registration_health_store.dart';
@@ -11,6 +12,8 @@ import 'package:flutter_app/features/push/presentation/widgets/push_registration
 import 'package:flutter_app/features/push/presentation/widgets/push_registration_health_warning.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
   Widget wrap({
@@ -27,6 +30,7 @@ void main() {
         body: PushRegistrationHealthWarning(
           healthListenable: notifier,
           onRetry: onRetry ?? () {},
+          onDismiss: () {},
           onOpenNotificationSettings: onOpenNotificationSettings ?? () {},
         ),
       ),
@@ -40,6 +44,246 @@ void main() {
         firstFailureAt: DateTime.utc(2026, 8, 1),
         lastAttemptAt: DateTime.utc(2026, 8, 1, 1),
       );
+
+  for (final locale in ['en', 'de', 'ar']) {
+    testWidgets(
+      'compact $locale banner leaves chat back button below one top inset',
+      (tester) async {
+        final semantics = tester.ensureSemantics();
+        try {
+          tester.view.physicalSize = const Size(320, 568);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final notifier = PushRegistrationHealthNotifier()
+            ..publish(
+              PushRegistrationHealthRecord.permissionDenied(
+                at: DateTime.utc(2026, 10, 25),
+              ),
+            );
+          addTearDown(notifier.dispose);
+          final navigator = GlobalKey<NavigatorState>();
+          await tester.pumpWidget(
+            MaterialApp(
+              navigatorKey: navigator,
+              locale: Locale(locale),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  padding: const EdgeInsets.only(top: 44),
+                  viewPadding: const EdgeInsets.only(top: 44),
+                ),
+                child: PushRegistrationHealthSurface(
+                  healthListenable: notifier,
+                  onRetry: () {},
+                  onOpenNotificationSettings: () {},
+                  child: child!,
+                ),
+              ),
+              home: const Scaffold(body: Text('Home')),
+            ),
+          );
+          navigator.currentState!.push(
+            MaterialPageRoute<void>(
+              builder: (_) => Scaffold(
+                appBar: AppBar(title: const Text('Chat')),
+                body: const Text('Conversation'),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final warning = find.byKey(
+            const ValueKey('push-registration-health-warning'),
+          );
+          expect(tester.getSize(warning).height, lessThanOrEqualTo(48));
+          final dismiss = find.byKey(
+            const ValueKey('push-registration-health-dismiss'),
+          );
+          expect(tester.getSize(dismiss), const Size(48, 48));
+          expect(dismiss.hitTestable(), findsOneWidget);
+          final dismissLabel = tester.widget<IconButton>(dismiss).tooltip!;
+          expect(dismissLabel, isNotEmpty);
+          expect(
+            find.semantics.byPredicate(
+              (node) =>
+                  node.label == dismissLabel ||
+                  node.getSemanticsData().tooltip == dismissLabel,
+            ),
+            findsOneWidget,
+          );
+          final back = find.byType(BackButton);
+          expect(
+            tester.getCenter(back).dy,
+            tester.getBottomLeft(warning).dy + kToolbarHeight / 2,
+          );
+          expect(back.hitTestable(), findsOneWidget);
+          expect(
+            Directionality.of(tester.element(back)),
+            locale == 'ar' ? TextDirection.rtl : TextDirection.ltr,
+          );
+          await tester.tap(back);
+          await tester.pumpAndSettle();
+          expect(navigator.currentState!.canPop(), isFalse);
+          expect(tester.takeException(), isNull);
+        } finally {
+          semantics.dispose();
+        }
+      },
+    );
+  }
+
+  Widget persistedShell(
+    PushRegistrationHealthNotifier notifier,
+    FakeSecureKeyStore store,
+  ) => MaterialApp(
+    locale: const Locale('en'),
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    builder: (context, child) => PushRegistrationHealthSurface(
+      healthListenable: notifier,
+      dismissalStore: store,
+      onRetry: () {},
+      onOpenNotificationSettings: () {},
+      child: child!,
+    ),
+    home: const Scaffold(body: Text('Home')),
+  );
+
+  testWidgets('dismissal survives rebuild and restart for the same reason', (
+    tester,
+  ) async {
+    final store = FakeSecureKeyStore();
+    final first = PushRegistrationHealthNotifier()
+      ..publish(
+        PushRegistrationHealthRecord.permissionDenied(
+          at: DateTime.utc(2026, 10, 25),
+        ),
+      );
+    addTearDown(first.dispose);
+    final warning = find.byKey(
+      const ValueKey('push-registration-health-warning'),
+    );
+    await tester.pumpWidget(persistedShell(first, store));
+    await tester.pumpAndSettle();
+    expect(warning, findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('push-registration-health-dismiss')),
+    );
+    await tester.pumpAndSettle();
+    expect(warning, findsNothing);
+    await tester.pumpWidget(persistedShell(first, store));
+    await tester.pumpAndSettle();
+    expect(warning, findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final restarted = PushRegistrationHealthNotifier();
+    addTearDown(restarted.dispose);
+    await tester.pumpWidget(persistedShell(restarted, store));
+    await tester.pumpAndSettle();
+    final previous = PushRegistrationHealthRecord.permissionDenied(
+      at: DateTime.utc(2026, 10, 26),
+    );
+    restarted.publish(
+      PushRegistrationHealthRecord.checking(
+        at: DateTime.utc(2026, 10, 27),
+        previous: previous,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(warning, findsNothing);
+    restarted.publish(previous);
+    await tester.pumpAndSettle();
+    expect(warning, findsNothing);
+  });
+
+  testWidgets('a new reason and grant followed by denial rearm the notice', (
+    tester,
+  ) async {
+    final store = FakeSecureKeyStore();
+    final notifier = PushRegistrationHealthNotifier()
+      ..publish(
+        PushRegistrationHealthRecord.permissionDenied(
+          at: DateTime.utc(2026, 10, 25),
+        ),
+      );
+    addTearDown(notifier.dispose);
+    final warning = find.byKey(
+      const ValueKey('push-registration-health-warning'),
+    );
+    final dismiss = find.byKey(
+      const ValueKey('push-registration-health-dismiss'),
+    );
+    await tester.pumpWidget(persistedShell(notifier, store));
+    await tester.pumpAndSettle();
+    await tester.tap(dismiss);
+    await tester.pumpAndSettle();
+    notifier.publish(failedRecord());
+    await tester.pumpAndSettle();
+    expect(warning, findsOneWidget);
+    expect(find.text('Notification setup failed'), findsOneWidget);
+    await tester.tap(dismiss);
+    await tester.pumpAndSettle();
+    notifier.publish(
+      PushRegistrationHealthRecord.permissionDenied(
+        at: DateTime.utc(2026, 10, 26),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(warning, findsOneWidget);
+    await tester.tap(dismiss);
+    await tester.pumpAndSettle();
+    notifier.publish(
+      PushRegistrationHealthRecord.healthy(at: DateTime.utc(2026, 10, 27)),
+    );
+    await tester.pumpAndSettle();
+    notifier.publish(
+      PushRegistrationHealthRecord.permissionDenied(
+        at: DateTime.utc(2026, 10, 28),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(warning, findsOneWidget);
+  });
+
+  testWidgets(
+    'a permission grant during dismissal restore cannot be overwritten by old data',
+    (tester) async {
+      final store = _DeferredDismissalReadStore();
+      final notifier = PushRegistrationHealthNotifier()
+        ..publish(
+          PushRegistrationHealthRecord.permissionDenied(
+            at: DateTime.utc(2026, 10, 25),
+          ),
+        );
+      addTearDown(notifier.dispose);
+      final warning = find.byKey(
+        const ValueKey('push-registration-health-warning'),
+      );
+      await tester.pumpWidget(persistedShell(notifier, store));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('push-registration-health-dismiss')),
+      );
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+      store.holdReads = true;
+      await tester.pumpWidget(persistedShell(notifier, store));
+      await tester.pump();
+      expect(warning, findsNothing);
+      notifier.publish(
+        PushRegistrationHealthRecord.healthy(at: DateTime.utc(2026, 10, 26)),
+      );
+      notifier.publish(
+        PushRegistrationHealthRecord.permissionDenied(
+          at: DateTime.utc(2026, 10, 27),
+        ),
+      );
+      store.release.complete();
+      await tester.pumpAndSettle();
+      expect(warning, findsOneWidget);
+    },
+  );
 
   testWidgets(
     'UI25 05.1 retry follows real coordinator settlement and rejects rapid activation',
@@ -72,38 +316,51 @@ void main() {
         ),
       );
       final action = tester
-          .widget<OutlinedButton>(find.byType(OutlinedButton))
+          .widget<TextButton>(
+            find.byKey(const ValueKey('push-registration-health-action')),
+          )
           .onPressed!;
       action();
       action();
       await tester.pump();
       expect(registrations, 1);
-      expect(find.text('Trying again…'), findsOneWidget);
+      expect(find.text('Trying…'), findsOneWidget);
       expect(
-        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey('push-registration-health-action')),
+            )
+            .onPressed,
         isNull,
       );
       expect(notifier.value.retryInProgress, isTrue);
       registration.complete(RegisterPushTokenResult.failed);
       await tester.pump();
       expect(notifier.value.retryInProgress, isFalse);
-      expect(find.text('Retry notification setup'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
       expect(
-        tester.widget<OutlinedButton>(find.byType(OutlinedButton)).onPressed,
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey('push-registration-health-action')),
+            )
+            .onPressed,
         isNotNull,
       );
       await notifier.retryRegistration(coordinator.retryNow);
       expect(registrations, 2);
       expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
       await tester.pump();
-      expect(find.byType(OutlinedButton), findsNothing);
+      expect(
+        find.byKey(const ValueKey('push-registration-health-action')),
+        findsNothing,
+      );
     },
   );
 
   for (final entry in {
-    'en': ('Retry notification setup', 'Trying again…'),
-    'de': ('Benachrichtigungen erneut einrichten', 'Erneuter Versuch…'),
-    'ar': ('إعادة محاولة إعداد الإشعارات', 'جارٍ إعادة المحاولة…'),
+    'en': ('Retry', 'Trying…'),
+    'de': ('Erneut versuchen', 'Versuche…'),
+    'ar': ('إعادة المحاولة', 'جارٍ…'),
   }.entries) {
     testWidgets('UI25 05.1 localized pending action ${entry.key}', (
       tester,
@@ -200,18 +457,9 @@ void main() {
     'permission warning is localized and opens notification settings',
     (tester) async {
       const expectedCopy = <String, ({String title, String action})>{
-        'en': (
-          title: 'Notifications need attention',
-          action: 'Open notification settings',
-        ),
-        'de': (
-          title: 'Benachrichtigungen prüfen',
-          action: 'Benachrichtigungseinstellungen öffnen',
-        ),
-        'ar': (
-          title: 'تحتاج الإشعارات إلى انتباهك',
-          action: 'فتح إعدادات الإشعارات',
-        ),
+        'en': (title: 'Notifications are off', action: 'Settings'),
+        'de': (title: 'Benachrichtigungen aus', action: 'Einstellungen'),
+        'ar': (title: 'الإشعارات متوقفة', action: 'الإعدادات'),
       };
 
       for (final entry in expectedCopy.entries) {
@@ -262,8 +510,11 @@ void main() {
       ),
     );
 
-    expect(find.text('Retry notification setup'), findsOneWidget);
-    expect(find.byType(OutlinedButton), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('push-registration-health-action')),
+      findsOneWidget,
+    );
     expect(find.textContaining('SocketException'), findsNothing);
     await tester.tap(
       find.byKey(const ValueKey('push-registration-health-action')),
@@ -326,6 +577,7 @@ void main() {
         ),
       );
 
+      await tester.pumpAndSettle();
       for (final name in <String>['Feed', 'Orbit', 'Settings', 'Posts']) {
         final routeName = '/${name.toLowerCase()}';
         if (name != 'Feed') {
@@ -402,25 +654,20 @@ void main() {
 
         notifier.publish(warning);
         await tester.pumpAndSettle();
-        expect(find.text('Notifications need attention'), findsOneWidget);
-        expect(find.text('Retry notification setup'), findsOneWidget);
+        expect(find.text('Notification setup failed'), findsOneWidget);
+        expect(find.text('Retry'), findsOneWidget);
         // Active tree membership matters: widget semantics can retain detached
         // nodes that the Navigator has blocked from accessibility traversal.
         expect(
           find.semantics.byLabel(RegExp('Notifications need attention')),
           findsOneWidget,
         );
-        expect(
-          find.semantics.byLabel('Retry notification setup'),
-          findsOneWidget,
-        );
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
         expect(
           find.semantics.byLabel('Increment pushed route'),
           findsOneWidget,
         );
-        tester.semantics.tap(
-          find.semantics.byLabel('Retry notification setup'),
-        );
+        tester.semantics.tap(find.semantics.byLabel('Retry'));
         await tester.pump();
         expect(retries, 1);
         expect(navigatorKey.currentState, same(navigator));
@@ -434,18 +681,12 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(
-          find.semantics.byLabel('Retry notification setup'),
-          findsNothing,
-        );
+        expect(find.semantics.byLabel('Retry'), findsNothing);
         tester.semantics.tap(find.semantics.byLabel('Increment pushed route'));
         await tester.pump();
         notifier.publish(warning);
         await tester.pumpAndSettle();
-        expect(
-          find.semantics.byLabel('Retry notification setup'),
-          findsOneWidget,
-        );
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
         expect(pushedKey.currentState, same(pushedState));
         expect(pushedState.count, 2);
         navigator.pop();
@@ -454,10 +695,7 @@ void main() {
         expect(homeKey.currentState, same(homeState));
         expect(homeState.count, 1);
         expect(navigator.canPop(), isFalse);
-        expect(
-          find.semantics.byLabel('Retry notification setup'),
-          findsOneWidget,
-        );
+        expect(find.semantics.byLabel('Retry'), findsOneWidget);
         expect(find.semantics.byLabel('Increment home route'), findsOneWidget);
       } finally {
         semantics.dispose();
@@ -529,6 +767,18 @@ class _PreservedHealthRouteState extends State<_PreservedHealthRoute> {
       ],
     ),
   );
+}
+
+class _DeferredDismissalReadStore extends FakeSecureKeyStore {
+  bool holdReads = false;
+  final release = Completer<void>();
+
+  @override
+  Future<String?> read(String key) async {
+    final value = await super.read(key);
+    if (holdReads) await release.future;
+    return value;
+  }
 }
 
 final class _MemoryHealthStore implements PushRegistrationHealthStorage {

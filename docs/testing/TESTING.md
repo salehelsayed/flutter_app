@@ -4781,6 +4781,22 @@ do not count `test(...)` strings as executions. Runner listings took about
   `push_registration_health_surface_test.dart` exercises the real coordinator
   with deferred registration, failure/recovery, rapid activation, and notifier
   clear/disposal fencing. Permission denial retains its settings action.
+- The notification health surface consumes the top inset once before its
+  48 logical pixel row and removes that consumed padding from the stable
+  Navigator child. Its standard `Overlay.wrap` supplies the tooltip owner above
+  the Navigator; a tooltip without that owner fails in the production builder
+  composition. Compact English, German and Arabic tests check a 48 by 48 dismiss
+  target, active localized semantics, RTL and a hittable chat Back button.
+  The existing secure store retains only the dismissed reason: a fresh shell
+  suppresses the same reason through startup checking, while reason changes
+  and healthy-to-denied transitions rearm the notice. A deferred-read test
+  prevents an old stored dismissal from hiding a newly rearmed warning.
+  Gateway channel tests preserve Android dispatch and check iOS
+  `permission_handler.openAppSettings` success, false and thrown results.
+  These are host widget, persistence and dispatch assertions; they do not prove
+  an installed iOS Settings launch or native screen-reader behavior. Initial
+  failures and corrected receipts are retained under
+  `.codex-test-logs/notification-permission-banner-20261025/`.
 - The approved UI-25 loading label fits Orbit's existing top-strip reservation;
   skeleton geometry and settled list position are unchanged. Geometry checks
   must advance the existing zero-delay, 400 ms row entrance before comparing

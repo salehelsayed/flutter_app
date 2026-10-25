@@ -3828,8 +3828,7 @@ class AppLocalizationsAr extends AppLocalizations {
       'تحتاج الإشعارات إلى انتباهك';
 
   @override
-  String get push_registration_health_permission_denied =>
-      'إشعارات مكنون متوقفة على هذا الجهاز.';
+  String get push_registration_health_permission_denied => 'الإشعارات متوقفة';
 
   @override
   String get call_full_screen_access_title => 'اعرض المكالمات على شاشة القفل';
@@ -3846,18 +3845,18 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get push_registration_health_no_token =>
-      'لم يتلقَّ هذا الجهاز رمز إشعارات بعد.';
+      'إعداد الإشعارات قيد الانتظار';
 
   @override
   String get push_registration_health_registration_failed =>
-      'تعذّر تسجيل هذا الجهاز لاستلام إشعارات مكنون.';
+      'تعذّر إعداد الإشعارات';
 
   @override
   String get push_registration_health_temporary_problem =>
-      'حدثت مشكلة مؤقتة أثناء إعداد الإشعارات.';
+      'تحقّق من إعداد الإشعارات';
 
   @override
-  String get push_registration_health_retry => 'إعادة محاولة إعداد الإشعارات';
+  String get push_registration_health_retry => 'إعادة المحاولة';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -4232,7 +4231,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get voice_call_unavailable => 'المكالمات الصوتية غير متاحة حاليًا';
 
   @override
-  String get push_registration_health_retrying => 'جارٍ إعادة المحاولة…';
+  String get push_registration_health_retrying => 'جارٍ…';
 
   @override
   String get orbit_loading_contacts => 'جارٍ تحميل جهات الاتصال…';
@@ -4511,4 +4510,7 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get call_end_permission_settings =>
       'الوصول إلى الميكروفون متوقف لـ MKnoon. فعّله من الإعدادات لإجراء المكالمات والرد عليها.';
+
+  @override
+  String get push_registration_health_dismiss => 'إخفاء تنبيه الإشعارات';
 }

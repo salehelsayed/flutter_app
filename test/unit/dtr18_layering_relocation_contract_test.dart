@@ -244,8 +244,10 @@ const _privacySha256 =
 // callback into notification route preparation. No owner or resume dispatch moves.
 // Contact notification dialogs join the existing listener's consent queue.
 // Application and resume ownership stay in place.
+// 2026-10-25: reuse secure storage for banner dismissal and report settings-launch
+// failure. Application and resume owners remain in place.
 const _applicationRootNormalizedSha256 =
-    'c35055b1705b9c83838ec486dcd146d37c3b0ac05066ea2c096738dd34767734';
+    '3c6a4df2a46a41f4ce5f54e5c6c2da7503cd0b6fde95a2cbe1225c4d9d289f4d';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

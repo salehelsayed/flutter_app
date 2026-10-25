@@ -6366,6 +6366,7 @@
       "patterns": [
         "lib/features/push/application/push_registration_health_notifier.dart",
         "lib/features/push/presentation/widgets/push_registration_health_warning.dart",
+        "lib/features/push/presentation/widgets/push_registration_health_surface.dart",
         "lib/app/application_root.dart",
         "lib/features/orbit/presentation/screens/orbit_screen.dart",
         "lib/features/orbit/presentation/widgets/friend_row.dart",

@@ -6275,7 +6275,7 @@ abstract class AppLocalizations {
   /// No description provided for @push_registration_health_permission_denied.
   ///
   /// In en, this message translates to:
-  /// **'Notifications are turned off for Mknoon on this device.'**
+  /// **'Notifications are off'**
   String get push_registration_health_permission_denied;
 
   /// No description provided for @call_full_screen_access_title.
@@ -6305,25 +6305,25 @@ abstract class AppLocalizations {
   /// No description provided for @push_registration_health_no_token.
   ///
   /// In en, this message translates to:
-  /// **'This device has not received a notification token yet.'**
+  /// **'Notification setup pending'**
   String get push_registration_health_no_token;
 
   /// No description provided for @push_registration_health_registration_failed.
   ///
   /// In en, this message translates to:
-  /// **'Mknoon could not register this device for notifications.'**
+  /// **'Notification setup failed'**
   String get push_registration_health_registration_failed;
 
   /// No description provided for @push_registration_health_temporary_problem.
   ///
   /// In en, this message translates to:
-  /// **'Notification setup hit a temporary problem.'**
+  /// **'Check notification setup'**
   String get push_registration_health_temporary_problem;
 
   /// No description provided for @push_registration_health_retry.
   ///
   /// In en, this message translates to:
-  /// **'Retry notification setup'**
+  /// **'Retry'**
   String get push_registration_health_retry;
 
   /// No description provided for @push_registration_health_open_notification_settings.
@@ -6941,7 +6941,7 @@ abstract class AppLocalizations {
   /// No description provided for @push_registration_health_retrying.
   ///
   /// In en, this message translates to:
-  /// **'Trying again…'**
+  /// **'Trying…'**
   String get push_registration_health_retrying;
 
   /// No description provided for @orbit_loading_contacts.
@@ -7441,6 +7441,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Microphone access is off for MKnoon. Turn it on in Settings to make and answer calls.'**
   String get call_end_permission_settings;
+
+  /// No description provided for @push_registration_health_dismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss notification notice'**
+  String get push_registration_health_dismiss;
 }
 
 class _AppLocalizationsDelegate

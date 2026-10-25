@@ -3770,7 +3770,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get push_registration_health_permission_denied =>
-      'Notifications are turned off for Mknoon on this device.';
+      'Notifications are off';
 
   @override
   String get call_full_screen_access_title => 'Show calls on your lock screen';
@@ -3786,19 +3786,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_full_screen_access_dismiss => 'Not now';
 
   @override
-  String get push_registration_health_no_token =>
-      'This device has not received a notification token yet.';
+  String get push_registration_health_no_token => 'Notification setup pending';
 
   @override
   String get push_registration_health_registration_failed =>
-      'Mknoon could not register this device for notifications.';
+      'Notification setup failed';
 
   @override
   String get push_registration_health_temporary_problem =>
-      'Notification setup hit a temporary problem.';
+      'Check notification setup';
 
   @override
-  String get push_registration_health_retry => 'Retry notification setup';
+  String get push_registration_health_retry => 'Retry';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -4164,7 +4163,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get voice_call_unavailable => 'Voice calling is unavailable right now';
 
   @override
-  String get push_registration_health_retrying => 'Trying again…';
+  String get push_registration_health_retrying => 'Trying…';
 
   @override
   String get orbit_loading_contacts => 'Loading contacts…';
@@ -4446,4 +4445,7 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get call_end_permission_settings =>
       'Microphone access is off for MKnoon. Turn it on in Settings to make and answer calls.';
+
+  @override
+  String get push_registration_health_dismiss => 'Dismiss notification notice';
 }
