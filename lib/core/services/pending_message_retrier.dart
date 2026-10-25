@@ -124,6 +124,8 @@ class PendingMessageRetrier {
   Timer? _groupContinuityTimer;
   bool _wasOnline = false;
   bool _wasGroupRecoveryReady = false;
+  bool _hasBeenOnline = false;
+  bool _hasBeenGroupRecoveryReady = false;
   bool _needsGroupRecovery = false;
   bool _isRetrying = false;
   bool _isGroupContinuitySweeping = false;
@@ -187,6 +189,8 @@ class PendingMessageRetrier {
 
     _wasOnline = _isOnline(p2pService.currentState);
     _wasGroupRecoveryReady = _isGroupRecoveryReady(p2pService.currentState);
+    _hasBeenOnline = _wasOnline;
+    _hasBeenGroupRecoveryReady = _wasGroupRecoveryReady;
     _needsGroupRecovery = p2pService.currentState.needsGroupRecovery ?? false;
     var previousState = p2pService.currentState;
 
@@ -194,8 +198,10 @@ class PendingMessageRetrier {
       final nowOnline = _isOnline(state);
       final nowGroupRecoveryReady = _isGroupRecoveryReady(state);
       final nowNeedsGroupRecovery = state.needsGroupRecovery ?? false;
-      if (nowOnline != _wasOnline ||
-          nowGroupRecoveryReady != _wasGroupRecoveryReady ||
+      // Initial readiness belongs to startup; later edges are new network input.
+      if ((_hasBeenOnline && nowOnline != _wasOnline) ||
+          (_hasBeenGroupRecoveryReady &&
+              nowGroupRecoveryReady != _wasGroupRecoveryReady) ||
           (nowNeedsGroupRecovery && !_needsGroupRecovery) ||
           state.peerId != previousState.peerId ||
           state.watchdogRestartCount != previousState.watchdogRestartCount ||
@@ -238,6 +244,9 @@ class PendingMessageRetrier {
 
       _wasOnline = nowOnline;
       _wasGroupRecoveryReady = nowGroupRecoveryReady;
+      _hasBeenOnline = _hasBeenOnline || nowOnline;
+      _hasBeenGroupRecoveryReady =
+          _hasBeenGroupRecoveryReady || nowGroupRecoveryReady;
       _needsGroupRecovery = nowNeedsGroupRecovery;
     });
 

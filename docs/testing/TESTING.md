@@ -5259,6 +5259,16 @@ visible and cannot become an ordinary first-attempt PASS.
   controls are retained in
   `.codex-test-logs/group-catchup-initial-reuse-20261025/`. These host proofs do
   not certify an installed iPhone build or change the separate tap-target drain.
+  The first tests began online and missed the initial readiness edge during
+  startup's revision capture/record window. That edge incorrectly invalidated
+  the receipt. Each readiness axis now treats its first rise as part of startup;
+  later loss/recovery still invalidates, as do the existing independent inputs.
+  The fake-clock regression captures at +1.2 s, raises readiness at +1.4 s and
+  completes at +3 s, then requires only one incoming pass at +6.8 s while
+  outbound/direct work runs. It also preserves a fresh pass after a real
+  reconnect and the unchanged 30 s continuity sweep. The causal failures and
+  corrected receipts are under `.codex-test-logs/group-catchup-first-online-20261025/`;
+  a new installed-device repeat remains separate evidence.
 
 - **Notification-tap missing group keys:** MyApp passes its durable pending-key
   repository and active repair sender into the shared route preparation;

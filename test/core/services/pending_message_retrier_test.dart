@@ -1688,6 +1688,115 @@ void main() {
   });
 
   group('PendingMessageRetrier initial canonical completion', () {
+    for (final firstReadinessOnly in [false, true]) {
+      test('first online readiness during canonical pass preserves its receipt '
+          '(readiness only: $firstReadinessOnly)', () {
+        fakeAsync((async) {
+          final initial = NodeState(
+            isStarted: true,
+            peerId: 'self',
+            watchdogRestartCount: 2,
+            circuitAddresses: firstReadinessOnly ? const ['/relay'] : const [],
+            relayState: firstReadinessOnly ? 'connecting' : null,
+          );
+          final ready = initial.copyWith(
+            circuitAddresses: const ['/relay'],
+            relayState: firstReadinessOnly ? 'online' : null,
+            sendCapabilityReady: firstReadinessOnly,
+            inboxCapabilityReady: firstReadinessOnly,
+          );
+          p2pService.emitState(initial);
+          var rejoins = 0;
+          var drains = 0;
+          var outgoing = 0;
+          var direct = 0;
+          Future<bool> rejoin() async {
+            rejoins++;
+            return false;
+          }
+
+          Future<void> drain() async {
+            drains++;
+          }
+
+          retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            rejoinGroupTopicsWithRecoveryAckEligibilityFn: rejoin,
+            drainGroupOfflineInboxFn: drain,
+            retryFailedGroupMessagesFn: () async => ++outgoing,
+            retryFailedMessagesOverride: () async => ++direct,
+            retryUnackedMessagesOverride: () async => 0,
+          );
+          retrier.start();
+          async.elapse(const Duration(milliseconds: 1200));
+          final finishCanonical = Completer<void>();
+          final scope = (
+            p2pService,
+            identityRepo,
+            ready.peerId,
+            ready.watchdogRestartCount,
+          );
+          unawaited(
+            runWithGroupRecoveryGate(() async {
+              final revision = groupRecoveryGate.incomingRevision;
+              await rejoin();
+              await drain();
+              await finishCanonical.future;
+              await groupRecoveryGate.recordCanonicalIncomingCompletion(
+                scope: scope,
+                revision: revision,
+              );
+            }),
+          );
+          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 200));
+          p2pService.emitState(ready);
+          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 1600));
+          finishCanonical.complete();
+          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 3800));
+          async.flushMicrotasks();
+          expect(rejoins, 1, reason: 'No duplicate incoming pass at +6.8s');
+          expect(drains, 1);
+          expect(outgoing, 1);
+          expect(direct, 1);
+
+          final revision = groupRecoveryGate.incomingRevision;
+          unawaited(
+            groupRecoveryGate.recordCanonicalIncomingCompletion(
+              scope: scope,
+              revision: revision,
+            ),
+          );
+          async.flushMicrotasks();
+          p2pService.emitState(initial.copyWith(circuitAddresses: const []));
+          async.flushMicrotasks();
+          expect(groupRecoveryGate.incomingRevision, isNot(same(revision)));
+          p2pService.emitState(ready);
+          async.flushMicrotasks();
+          async.elapse(PendingMessageRetrier.defaultRetryDebounce);
+          async.flushMicrotasks();
+          expect(rejoins, 2, reason: 'A real reconnect still needs fresh work');
+          expect(drains, 2);
+          expect(outgoing, 2);
+          expect(direct, 2);
+          async.elapse(
+            PendingMessageRetrier.defaultGroupContinuitySweepInterval,
+          );
+          async.flushMicrotasks();
+          expect(rejoins, 3, reason: 'The periodic continuity sweep stays');
+          expect(drains, 3);
+          retrier.dispose();
+          async.flushMicrotasks();
+        });
+      });
+    }
+
     for (final input in [
       'clean',
       'network-restored',
