@@ -2256,6 +2256,35 @@ Three focused integration-tagged Go host contracts pass in the same evidence
 directory's `007-go-checkpoint-summary.json`. These are host results, not device
 coverage. GC-005 still needs its separate membership process-death companion,
 and call content audio still needs the unapproved test-build audio hook.
+
+Direct text catalog host coverage also includes
+`direct_text_restart_sqlite_test.dart` in `offline-recovery`. DC-002 starts
+100 sends without awaiting each send, injects duplicate live deliveries, and
+requires all original identities in send order, stable receiver row identities,
+and exactly 100 SQL rows per peer after both peers reopen and after production
+protected-inbox replay of already-delivered envelopes. DC-004 pauses the real
+send path before custody, after custody, after committed live delivery before
+local settlement, and after relay acceptance before local custody completion.
+The last three checkpoints recover the original envelope/incarnation, settle
+one sender row through actual receipt handling, and retain one receiver row.
+The existing production-schema SQLite fixture supplies only optional boundary
+hooks; restarted repositories omit those hooks. Old Dart continuations are
+abandoned and their timers cancelled. These are real file close/reopen and
+listener/staging/recovery proofs with fake transport/crypto, not OS process-kill,
+native SQLCipher, linked-device fanout, live relay or signed-candidate evidence.
+
+DC-004 before-custody remains a **KNOWN GAP**: fresh ordinary text has no
+durable parent before atomic custody staging, although the conversation screen
+already schedules an optimistic sending bubble. The unskipped no-loss assertion
+finds zero receiver rows after restart. Reproduce with
+`--dart-define=MKNOON_RUN_KNOWN_GAPS=true --name '^DC-004 beforeCustody:'`;
+the default skip does not close DC-004. Evidence in
+`.codex-test-logs/astra-direct-restart/008-known-gap-red.log` retains that RED;
+`010-burst-focused-final.log` records 22 focused/preservation passes and one
+skip. The curated wrapper's `013-curated/` records 16 passes, zero failures and
+one skip, classified **BLOCKED** by its completeness gate. Do not relabel that
+lane as passing or waive the skip. The original invalid test-key fixture
+startup failure remains in `003-initial-red.log`.
 Changes to the nested direct-media target owner also require reviewed source
 hash updates in `tool/testing/legacy_target_contracts.json`; its four route
 commands, roles and environments remain fixed. The bounded host checkpoint
