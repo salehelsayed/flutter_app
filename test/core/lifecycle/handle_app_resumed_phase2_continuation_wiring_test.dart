@@ -81,7 +81,9 @@ void main() {
       );
       expect(
         continuationBlock,
-        contains('final continuation = drainGroupOfflineInboxContinuation('),
+        matches(
+          RegExp(r'final continuation =\s+drainGroupOfflineInboxContinuation\('),
+        ),
       );
       expect(
         continuationBlock,
