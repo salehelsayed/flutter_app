@@ -922,12 +922,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   bool _composingThought = false;
+  // Memory only: what the last closed composer left unshared.
+  ComposePostResult? _thoughtDraft;
 
   Future<void> _composeThought() async {
     final repository = widget.postRepository;
     final identity = _identity;
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
+    final closed = Completer<void>();
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -936,6 +939,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
           eligibleContacts: const [],
+          initialDraft: _thoughtDraft,
+          onClosed: (draft) {
+            _thoughtDraft = draft;
+            closed.complete();
+          },
           audioRecorderService: widget.audioRecorderService,
           onPickMedia: () async {
             try {
@@ -970,6 +978,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           },
         ),
       );
+      // The sheet hands its draft back only once its close animation ends.
+      await closed.future;
     } finally {
       _composingThought = false;
     }

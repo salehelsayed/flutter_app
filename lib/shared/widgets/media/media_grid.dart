@@ -26,6 +26,11 @@ class MediaGrid extends StatelessWidget {
   final String? ownedMediaPeerId;
   final Map<String, String> renderedSemanticsLabels;
 
+  /// Opt-in for thoughts: a single photo or video keeps its own shape
+  /// (clamped between 9:16 and 16:9) and stays at most this tall. Null keeps
+  /// the 4:3 frame chat uses.
+  final double? singleMaxHeight;
+
   const MediaGrid({
     super.key,
     required this.media,
@@ -35,16 +40,20 @@ class MediaGrid extends StatelessWidget {
     this.requireVerifiedContentHash = false,
     this.ownedMediaPeerId,
     this.renderedSemanticsLabels = const <String, String>{},
+    this.singleMaxHeight,
   });
 
   @override
   Widget build(BuildContext context) {
     if (media.isEmpty) return const SizedBox.shrink();
 
-    return ClipRRect(
+    final grid = ClipRRect(
       borderRadius: BorderRadius.circular(mediaGridContainerRadius),
       child: _buildLayout(),
     );
+    return singleMaxHeight != null && media.length == 1
+        ? Center(heightFactor: 1, child: grid)
+        : grid;
   }
 
   Widget _buildLayout() {
@@ -56,7 +65,19 @@ class MediaGrid extends StatelessWidget {
   }
 
   Widget _buildSingle() {
-    return AspectRatio(aspectRatio: 4 / 3, child: _cell(0));
+    final maxHeight = singleMaxHeight;
+    if (maxHeight == null) {
+      return AspectRatio(aspectRatio: 4 / 3, child: _cell(0));
+    }
+    final width = media.single.width ?? 0;
+    final height = media.single.height ?? 0;
+    final ratio = width > 0 && height > 0
+        ? (width / height).clamp(9 / 16, 16 / 9).toDouble()
+        : 4 / 3;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: AspectRatio(aspectRatio: ratio, child: _cell(0)),
+    );
   }
 
   Widget _buildTwo() {

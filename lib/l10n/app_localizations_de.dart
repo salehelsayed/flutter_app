@@ -477,6 +477,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_depth_outer_ring => 'Äußerer Kreis';
 
   @override
+  String get orbit_depth_empty_ring => 'Gerade keine Gedanken hier.';
+
+  @override
   String get orbit_view_toggle_to_list => 'Alle Chats anzeigen';
 
   @override

@@ -599,6 +599,37 @@ void main() {
     );
   }
 
+  testWidgets('a portrait video thought keeps its portrait frame on the card', (
+    tester,
+  ) async {
+    final file = _tempFile('portrait.mp4');
+    final thought = _thought(initialNow).copyWith(mediaKind: 'video');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(
+      _attachment('video').copyWith(width: 720, height: 1280),
+    );
+    await openCard(
+      tester,
+      thought,
+      download: (requested) async {
+        await posts.updatePostMediaLocalPath(requested.mediaId, file.path);
+        return requested.copyWith(localPath: file.path, downloadStatus: 'done');
+      },
+    );
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(
+      find
+          .descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(AspectRatio),
+          )
+          .first,
+    );
+    expect(rect.height / rect.width, closeTo(16 / 9, .01));
+    expect(rect.height, lessThanOrEqualTo(600 * .6));
+    await finish(tester);
+  });
+
   testWidgets('a failing seen-write keeps the thought on screen', (
     tester,
   ) async {

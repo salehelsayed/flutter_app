@@ -151,6 +151,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
             media: visual
                 .map((item) => item.toSharedMediaAttachment())
                 .toList(),
+            singleMaxHeight: MediaQuery.sizeOf(context).height * .45,
             onTap: (_) => widget.onOpen(),
             onRetryUnavailableMedia: (_) => unawaited(_load()),
           ),

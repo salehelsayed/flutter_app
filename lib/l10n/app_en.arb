@@ -202,6 +202,10 @@
   "pinned_remove": "Remove",
   "edit_pinned_hint": "Update your post",
   "orbit_depth_outer_ring": "Outer circle",
+  "orbit_depth_empty_ring": "No thoughts here right now.",
+  "@orbit_depth_empty_ring": {
+    "description": "3D orbit: shown in the card slot when no friend on this ring has a thought"
+  },
   "orbit_view_toggle_to_list": "Show all chats",
   "orbit_view_toggle_to_circle": "Show inner circle",
   "orbit_inner_circle_empty_hint": "Add friends to see your inner circle",

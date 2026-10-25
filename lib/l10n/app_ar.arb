@@ -197,6 +197,7 @@
   "pinned_remove": "إزالة",
   "edit_pinned_hint": "حدّث منشورك",
   "orbit_depth_outer_ring": "الدائرة الخارجية",
+  "orbit_depth_empty_ring": "لا توجد خواطر هنا الآن.",
   "orbit_view_toggle_to_list": "عرض كل المحادثات",
   "orbit_view_toggle_to_circle": "عرض الدائرة المقرّبة",
   "orbit_inner_circle_empty_hint": "أضِف أصدقاء لرؤية دائرتك المقرّبة",

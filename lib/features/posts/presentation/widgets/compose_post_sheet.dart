@@ -37,6 +37,10 @@ enum ComposePostSubmitOutcome {
   shareFailed,
 }
 
+/// Thoughts are short by design; chat allows 10,000.
+const int _thoughtMaxLength = 500;
+const int _thoughtCounterFrom = 450;
+
 enum _ComposeNotice {
   nobodyToShareWith,
   shareFailed,
@@ -64,6 +68,13 @@ class ComposePostSheet extends StatefulWidget {
   final int activePinCount;
   final VoidCallback? onManagePins;
 
+  /// What a previous visit left unshared; the sheet starts from it.
+  final ComposePostResult? initialDraft;
+
+  /// Runs once as the sheet goes away: the unshared draft, or null after a
+  /// share or when nothing was left to keep.
+  final ValueChanged<ComposePostResult?>? onClosed;
+
   const ComposePostSheet({
     super.key,
     this.thoughtsOnly = false,
@@ -79,6 +90,8 @@ class ComposePostSheet extends StatefulWidget {
     this.onOpenNearbySettings,
     this.activePinCount = 0,
     this.onManagePins,
+    this.initialDraft,
+    this.onClosed,
   }) : assert(
          onSubmit != null || onSubmitWithOutcome != null,
          'Either onSubmit or onSubmitWithOutcome must be provided.',
@@ -99,6 +112,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   int _nearbyRadiusM = 1000;
   final Set<String> _selectedPeerIds = <String>{};
   bool _isSubmitting = false;
+  bool _shared = false;
   bool _isAttaching = false;
   VoiceRecordingState _recordingState = VoiceRecordingState.idle;
   bool _pendingRecordingAbort = false;
@@ -118,6 +132,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialDraft case final draft?) {
+      _textController.text = draft.text;
+      _inputDirection = detectTextDirection(draft.text);
+      _mediaDrafts = draft.mediaDrafts;
+    }
     _textController.addListener(_updateInputDirection);
     _nearbyAvailability = widget.nearbyAvailability;
   }
@@ -135,6 +154,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         _isSubmitting ||
         _isAttaching ||
         _recordingState.isActive) {
+      return false;
+    }
+    if (widget.thoughtsOnly &&
+        _textController.text.characters.length > _thoughtMaxLength) {
       return false;
     }
     if (!widget.thoughtsOnly &&
@@ -180,6 +203,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       if (!mounted) return;
       switch (outcome) {
         case ComposePostSubmitOutcome.closeSheet:
+          _shared = true;
           Navigator.of(context).pop();
         case ComposePostSubmitOutcome.nobodyToShareWith:
           setState(() => _notice = _ComposeNotice.nobodyToShareWith);
@@ -207,6 +231,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   @override
   void dispose() {
+    final text = _textController.text;
+    final keep =
+        !_shared && (text.trim().isNotEmpty || _mediaDrafts.isNotEmpty);
+    widget.onClosed?.call(
+      keep
+          ? ComposePostResult(
+              text: text,
+              audience: PostAudience.allFriends(),
+              mediaDrafts: _mediaDrafts,
+            )
+          : null,
+    );
     _textController.removeListener(_updateInputDirection);
     _cancelRecorderSubscriptions();
     if (_recordingState.isActive) {
@@ -636,6 +672,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     textDirection: _inputDirection,
                     maxLines: 5,
                     minLines: 4,
+                    maxLength: widget.thoughtsOnly ? _thoughtMaxLength : null,
+                    buildCounter: widget.thoughtsOnly ? _thoughtCounter : null,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
                       hintText: AppLocalizations.of(context)!.compose_hint,
@@ -959,6 +997,23 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     );
   }
 }
+
+Widget? _thoughtCounter(
+  BuildContext context, {
+  required int currentLength,
+  required bool isFocused,
+  required int? maxLength,
+}) => currentLength < _thoughtCounterFrom
+    ? null
+    : Text(
+        '$currentLength/$maxLength',
+        style: TextStyle(
+          fontSize: 12,
+          color: currentLength > _thoughtMaxLength
+              ? const Color(0xFFFFB4A9)
+              : Colors.white54,
+        ),
+      );
 
 String _noticeText(AppLocalizations l10n, _ComposeNotice notice) =>
     switch (notice) {

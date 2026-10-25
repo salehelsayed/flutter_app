@@ -30,6 +30,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.selfAvatarBytes,
     this.active = true,
     this.gesturesEnabled = true,
+    this.topClearance = 0,
     this.bottomClearance = 0,
     this.resetSignal,
     this.nowProvider,
@@ -47,6 +48,9 @@ class OrbitDepthSurface extends StatefulWidget {
   final Uint8List? selfAvatarBytes;
   final bool active;
   final bool gesturesEnabled;
+
+  /// Host chrome (the header row) that the dial must stay below.
+  final double topClearance;
 
   /// Host chrome (the persistent nav band) that the dial must stay above.
   final double bottomClearance;
@@ -631,7 +635,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               builder: (context, constraints) {
                 final stage = Size(
                   constraints.maxWidth,
-                  constraints.maxHeight - widget.bottomClearance,
+                  constraints.maxHeight -
+                      widget.topClearance -
+                      widget.bottomClearance,
                 );
                 _scale = math.min(stage.width / 390, stage.height / 640);
                 final depth = _depth;
@@ -660,6 +666,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                     ),
                     if (depth && _active)
                       Positioned.fill(
+                        top: widget.topClearance,
                         bottom: widget.bottomClearance,
                         child: _dial(stage),
                       ),
@@ -678,11 +685,17 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final tiltProgress = (_vertical.value / 320).clamp(0.0, 1.0);
     final tilt = 67 * math.pi / 180 * tiltProgress;
     final camera = ((_vertical.value - 320) / 260).clamp(0.0, 1.0);
-    final cy =
-        size.height *
-        (.5 +
-            ((_anchor == OrbitDepthAnchor.top ? .084 : .8) - .5) *
-                tiltProgress);
+    // At the top the waiting outer ring's far edge, and the peek label above
+    // it, must stay inside the stage instead of running under host chrome.
+    final (outerFarEdge, _) = projectOrbitDepth(
+      -math.pi / 2,
+      146 * k * 1.12 * 1.45,
+      67 * math.pi / 180,
+    );
+    final restY = _anchor == OrbitDepthAnchor.top
+        ? math.max(size.height * .084, 35 * k - outerFarEdge.dy)
+        : size.height * .8;
+    final cy = size.height * .5 + (restY - size.height * .5) * tiltProgress;
     final center = Offset(size.width / 2, cy);
     final layout = _layout;
     final colors = Theme.of(context).colorScheme;
@@ -868,11 +881,21 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     }
     faces.sort((a, b) => a.depth.compareTo(b.depth));
     final front = _front;
-    final cardVisible =
-        front != null &&
+    final slotSettled =
         _overviewProgress.value < .99 &&
         _fold.value < .99 &&
         _gesture != OrbitDepthGesture.vertical;
+    final cardVisible = front != null && slotSettled;
+    final ringEmpty =
+        slotSettled &&
+        _layer != OrbitDepthLayer.flat &&
+        !layout.inLayer(_layer).any((seat) => seat.thought != null);
+    final slotTop = _anchor == OrbitDepthAnchor.top
+        ? math.max(cy + 146 * k * math.cos(tilt) * 1.45 + 38 * k, 140 * k)
+        : 60 * k;
+    final slotBottom = _anchor == OrbitDepthAnchor.bottom
+        ? math.max(0.0, size.height - cy + 146 * k * math.cos(tilt) + 30 * k)
+        : 20 * k;
     return Opacity(
       key: const ValueKey('orbit-depth-stage'),
       opacity: tiltProgress,
@@ -908,22 +931,33 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 key: const ValueKey('orbit-depth-card-slot'),
                 left: 14 * k,
                 right: 14 * k,
-                top: _anchor == OrbitDepthAnchor.top
-                    ? math.max(
-                        cy + 146 * k * math.cos(tilt) * 1.45 + 38 * k,
-                        140 * k,
-                      )
-                    : 60 * k,
-                bottom: _anchor == OrbitDepthAnchor.bottom
-                    ? math.max(
-                        0,
-                        size.height - cy + 146 * k * math.cos(tilt) + 30 * k,
-                      )
-                    : 20 * k,
+                top: slotTop,
+                bottom: slotBottom,
                 child: Opacity(
                   opacity: ((1 - _fold.value) * (1 - _overviewProgress.value))
                       .clamp(0, 1),
                   child: _card(front, k),
+                ),
+              ),
+            if (ringEmpty)
+              Positioned(
+                key: const ValueKey('orbit-depth-empty-ring'),
+                left: 14 * k,
+                right: 14 * k,
+                top: slotTop,
+                bottom: slotBottom,
+                child: IgnorePointer(
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: Text(
+                      AppLocalizations.of(context)!.orbit_depth_empty_ring,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15 * k,
+                        color: colors.onSurface.withValues(alpha: .7),
+                      ),
+                    ),
+                  ),
                 ),
               ),
           ],

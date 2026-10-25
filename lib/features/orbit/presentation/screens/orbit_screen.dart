@@ -180,6 +180,10 @@ enum _OrbitIntroEntryType {
 // never let the two overlap (TC-207-05 pins the widest state).
 const double _kIntroDockRightReserve = 206;
 
+/// The top control row (view toggle, connection pill, calls, create FAB) in
+/// SafeArea coordinates: 8 inset + 40 row + 8 gap. 3D stays below it.
+const double _kHeaderRowClearance = 56;
+
 class _OrbitIntroEntry {
   final _OrbitIntroEntryType type;
   final String? introducerUsername;
@@ -1197,6 +1201,7 @@ class _OrbitScreenView extends StatelessWidget {
             selfAvatarBytes: projection.userAvatarBytes,
             active: depthActive,
             gesturesEnabled: !innerEditing && !findOpen,
+            topClearance: _kHeaderRowClearance,
             bottomClearance: _innerCircleBottomClearance(context),
             resetSignal: innerCircleResetListenable,
             nowProvider: thoughtNowProvider,

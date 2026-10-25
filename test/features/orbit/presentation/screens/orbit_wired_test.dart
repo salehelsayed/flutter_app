@@ -953,6 +953,46 @@ void main() {
       await finishThoughtCase(tester);
     });
 
+    testWidgets(
+      'closing the thought composer keeps the draft for next time; sharing clears it',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        Future<void> openComposer() async {
+          await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+          await pumpOrbitFrames(tester, count: 6);
+          expect(find.byType(ComposePostSheet), findsOneWidget);
+        }
+
+        await openComposer();
+        await tester.enterText(find.byType(TextField), 'Half a thought');
+        await tester.pump();
+        await tester.binding.handlePopRoute();
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(ComposePostSheet), findsNothing);
+        await openComposer();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'Half a thought',
+        );
+        await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+        await pumpOrbitFrames(tester, count: 10);
+        expect(find.byType(ComposePostSheet), findsNothing);
+        expect((await posts.loadFeed()).single.text, 'Half a thought');
+        await openComposer();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,
     ) async {

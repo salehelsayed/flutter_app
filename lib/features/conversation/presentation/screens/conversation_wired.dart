@@ -4038,7 +4038,9 @@ class _ConversationWiredState extends State<ConversationWired>
         } catch (_) {
           if (mounted) {
             messenger?.showSnackBar(
-              const SnackBar(content: Text('Failed to send message.')),
+              SnackBar(
+                content: Text(AppLocalizations.of(context)!.error_send_message),
+              ),
             );
           }
           return;

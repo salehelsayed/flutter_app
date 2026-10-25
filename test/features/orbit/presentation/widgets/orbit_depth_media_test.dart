@@ -159,6 +159,39 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+  for (final (width, height, ratio) in const [
+    (720, 1280, 16 / 9),
+    (1920, 1080, 9 / 16),
+    (200, 2000, 16 / 9),
+    (null, null, 3 / 4),
+  ]) {
+    testWidgets(
+      'a single ${width}x$height video keeps its own shape (height/width $ratio)',
+      (tester) async {
+        final file = File('${temp.path}/shape.mp4')
+          ..writeAsBytesSync([0, 1, 2, 3]);
+        final item = attachment(
+          'video',
+          file.path,
+        ).copyWith(width: width, height: height);
+        await mount(tester, (_) async => [item], (item) async => item);
+        final rect = tester.getRect(
+          find
+              .descendant(
+                of: find.byType(MediaGrid),
+                matching: find.byType(AspectRatio),
+              )
+              .first,
+        );
+        expect(rect.height / rect.width, closeTo(ratio, .01));
+        expect(rect.height, lessThanOrEqualTo(600 * .45));
+        await tester.pump(const Duration(seconds: 1));
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 1));
+      },
+    );
+  }
+
   testWidgets('dispose fences pending load before any download is started', (
     tester,
   ) async {

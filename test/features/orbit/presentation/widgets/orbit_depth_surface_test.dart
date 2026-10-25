@@ -48,6 +48,7 @@ void main() {
     Future<List<PostMediaAttachmentModel>> Function(String)? load,
     Widget? child,
     Size size = const Size(390, 640),
+    double topClearance = 0,
     double bottomClearance = 0,
     List<int>? order,
   }) async {
@@ -75,6 +76,7 @@ void main() {
               thoughts: thoughts,
               active: active,
               gesturesEnabled: enabled,
+              topClearance: topClearance,
               bottomClearance: bottomClearance,
               nowProvider: () => now,
               resetSignal: reset,
@@ -635,8 +637,8 @@ void main() {
       await tester.pump();
       final finalY = tester.getCenter(self).dy;
       await finish(tester);
-      expect(partialY, closeTo(253.44, .01));
-      expect(finalY, closeTo(53.76, .01));
+      expect(partialY, closeTo(266.47, .01));
+      expect(finalY, closeTo(105.89, .01));
     },
   );
   testWidgets(
@@ -849,6 +851,78 @@ void main() {
       final front = tester.getRect(face(1));
       expect(front.bottom, lessThanOrEqualTo(560));
       expect(tester.getRect(card(1)).bottom, lessThanOrEqualTo(front.top));
+      await finish(tester);
+    },
+  );
+  for (final size in const [Size(360, 640), Size(390, 844)]) {
+    testWidgets(
+      'top-anchored 3D keeps every seat and the outer peek below the header on ${size.width.toInt()}x${size.height.toInt()}',
+      (tester) async {
+        await mount(tester, size: size, topClearance: 56, bottomClearance: 80);
+        await swipe(tester, const Offset(0, -220));
+        expect(
+          find.byKey(const ValueKey('orbit-depth-inner-top')),
+          findsOneWidget,
+        );
+        final seats = find.byWidgetPredicate(
+          (w) => switch (w.key) {
+            ValueKey<String>(:final value) => value.startsWith(
+              'orbit-depth-seat-',
+            ),
+            _ => false,
+          },
+        );
+        final tops = [
+          for (var i = 0; i < seats.evaluate().length; i++)
+            tester.getRect(seats.at(i)).top,
+        ];
+        expect(tops.length, greaterThan(5));
+        expect(tops.reduce((a, b) => a < b ? a : b), greaterThanOrEqualTo(56));
+        expect(
+          tester
+              .getRect(find.byKey(const ValueKey('orbit-depth-outer-peek')))
+              .top,
+          greaterThanOrEqualTo(56),
+        );
+        expect(
+          tester.getRect(card(1)).bottom,
+          lessThanOrEqualTo(size.height - 80),
+        );
+        await finish(tester);
+      },
+    );
+  }
+  testWidgets(
+    'a ring with no thoughts says so in the card slot instead of a blank dial',
+    (tester) async {
+      thoughts = {};
+      await mount(tester);
+      await swipe(tester, const Offset(0, -220));
+      expect(
+        find.byKey(const ValueKey('orbit-depth-inner-top')),
+        findsOneWidget,
+      );
+      expect(find.text('No thoughts here right now.'), findsOneWidget);
+      await finish(tester);
+    },
+  );
+  testWidgets(
+    'flying to an empty outer ring says so; the inner card shows no such line',
+    (tester) async {
+      thoughts = {
+        for (var i = 0; i < 5; i++) 'peer-$i': depthThought(i, read: i == 0),
+      };
+      await mount(tester);
+      await swipe(tester, const Offset(0, -220));
+      expect(anyCard, findsOneWidget);
+      expect(find.text('No thoughts here right now.'), findsNothing);
+      await swipe(tester, const Offset(0, -300));
+      expect(
+        find.byKey(const ValueKey('orbit-depth-outer-top')),
+        findsOneWidget,
+      );
+      expect(anyCard, findsNothing);
+      expect(find.text('No thoughts here right now.'), findsOneWidget);
       await finish(tester);
     },
   );

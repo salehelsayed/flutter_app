@@ -862,6 +862,12 @@ abstract class AppLocalizations {
   /// **'Outer circle'**
   String get orbit_depth_outer_ring;
 
+  /// 3D orbit: shown in the card slot when no friend on this ring has a thought
+  ///
+  /// In en, this message translates to:
+  /// **'No thoughts here right now.'**
+  String get orbit_depth_empty_ring;
+
   /// No description provided for @orbit_view_toggle_to_list.
   ///
   /// In en, this message translates to:

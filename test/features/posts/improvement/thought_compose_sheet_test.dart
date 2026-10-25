@@ -21,6 +21,8 @@ void main() {
     FakeAudioRecorderService? recorder,
     Locale locale = const Locale('en'),
     Key? key,
+    ComposePostResult? initialDraft,
+    ValueChanged<ComposePostResult?>? onClosed,
   }) => MaterialApp(
     locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -34,6 +36,8 @@ void main() {
         onAttachMedia: media,
         onPickMedia: pick,
         audioRecorderService: recorder,
+        initialDraft: initialDraft,
+        onClosed: onClosed,
       ),
     ),
   );
@@ -425,4 +429,104 @@ void main() {
     await tester.pump();
     expect(find.text(busyLine), findsOneWidget);
   });
+
+  testWidgets(
+    'closing without sharing hands back text and picked photos; reopening restores them',
+    (tester) async {
+      const photo = PostMediaDraft(
+        localFilePath: '/tmp/kept.jpg',
+        mime: 'image/jpeg',
+      );
+      final closed = <ComposePostResult?>[];
+      Future<ComposePostSubmitOutcome> keep(ComposePostResult _) async =>
+          ComposePostSubmitOutcome.keepSheetOpen;
+      await tester.pumpWidget(
+        scene(submit: keep, media: () async => [photo], onClosed: closed.add),
+      );
+      await tester.enterText(find.byType(TextField), 'Half a thought');
+      await tester.tap(find.text('Media'));
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(closed, hasLength(1));
+      expect(closed.single!.text, 'Half a thought');
+      expect(closed.single!.mediaDrafts.single, same(photo));
+      await tester.pumpWidget(scene(submit: keep, initialDraft: closed.single));
+      expect(find.text('Half a thought'), findsOneWidget);
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(share(tester).onPressed, isNotNull);
+    },
+  );
+
+  testWidgets('a stopped voice note survives a close and comes back', (
+    tester,
+  ) async {
+    const voice = PostMediaDraft(
+      localFilePath: '/tmp/kept.m4a',
+      mime: 'audio/mp4',
+      durationMs: 3000,
+    );
+    final closed = <ComposePostResult?>[];
+    Future<ComposePostSubmitOutcome> keep(ComposePostResult _) async =>
+        ComposePostSubmitOutcome.keepSheetOpen;
+    await tester.pumpWidget(
+      scene(
+        submit: keep,
+        initialDraft: ComposePostResult(
+          text: '',
+          audience: PostAudience.allFriends(),
+          mediaDrafts: const [voice],
+        ),
+        onClosed: closed.add,
+      ),
+    );
+    expect(find.text('Voice attached'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(closed.single!.mediaDrafts.single, same(voice));
+  });
+
+  testWidgets('an emptied draft is not kept', (tester) async {
+    final closed = <ComposePostResult?>[];
+    await tester.pumpWidget(
+      scene(
+        submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+        onClosed: closed.add,
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'Gone');
+    await tester.enterText(find.byType(TextField), '  ');
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(closed, [null]);
+  });
+
+  testWidgets(
+    'a thought stops at 500 characters, counts only near the end, and Share refuses more',
+    (tester) async {
+      await tester.pumpWidget(
+        scene(submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen),
+      );
+      await tester.enterText(find.byType(TextField), 'a' * 449);
+      await tester.pump();
+      expect(find.text('449/500'), findsNothing);
+      await tester.enterText(find.byType(TextField), 'a' * 460);
+      await tester.pump();
+      expect(find.text('460/500'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'a' * 790);
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'a' * 500,
+      );
+      await tester.pumpWidget(
+        scene(
+          submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+          initialDraft: ComposePostResult(
+            text: 'b' * 520,
+            audience: PostAudience.allFriends(),
+          ),
+          key: const ValueKey('over-limit'),
+        ),
+      );
+      expect(share(tester).onPressed, isNull);
+    },
+  );
 }

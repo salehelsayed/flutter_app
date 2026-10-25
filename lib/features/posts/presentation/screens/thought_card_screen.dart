@@ -559,6 +559,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             media: visual
                 .map((attachment) => attachment.toSharedMediaAttachment())
                 .toList(growable: false),
+            singleMaxHeight: MediaQuery.sizeOf(context).height * .6,
             onTap: (index) => unawaited(_openMedia(index)),
             onRetryUnavailableMedia: (attachment) {
               final original = visual

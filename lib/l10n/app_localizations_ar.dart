@@ -475,6 +475,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_depth_outer_ring => 'الدائرة الخارجية';
 
   @override
+  String get orbit_depth_empty_ring => 'لا توجد خواطر هنا الآن.';
+
+  @override
   String get orbit_view_toggle_to_list => 'عرض كل المحادثات';
 
   @override
