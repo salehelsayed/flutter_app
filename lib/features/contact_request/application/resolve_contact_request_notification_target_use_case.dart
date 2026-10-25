@@ -43,12 +43,16 @@ resolveContactRequestNotificationTarget({
   required ContactRequestRepository requestRepository,
   required ContactRepository contactRepository,
 }) async {
+  final contact = await contactRepository.getContact(peerId);
   final request = await requestRepository.getRequest(peerId);
-  if (request != null && request.status == ContactRequestStatus.pending) {
+  // An unblocked contact outranks a pending row: the peer was added another
+  // way after the request arrived, so the request is settled, not presentable.
+  if (request != null &&
+      request.status == ContactRequestStatus.pending &&
+      (contact == null || contact.isBlocked)) {
     return ContactRequestNotificationTarget.pendingRequest(request);
   }
 
-  final contact = await contactRepository.getContact(peerId);
   if (contact != null) {
     return ContactRequestNotificationTarget.conversation(contact);
   }

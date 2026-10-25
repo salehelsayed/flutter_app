@@ -98,17 +98,26 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
   /// Seedable durable pending rows for the replay-on-attach tests.
   List<ContactRequestModel> pendingRequests = [];
   bool throwOnGetPendingRequests = false;
+  final Map<String, ContactRequestStatus> statusUpdates = {};
 
   @override
   Future<List<ContactRequestModel>> getPendingRequests() async {
     if (throwOnGetPendingRequests) {
       throw Exception('db unavailable');
     }
-    return List.of(pendingRequests);
+    return pendingRequests
+        .where(
+          (r) =>
+              (statusUpdates[r.peerId] ?? r.status) ==
+              ContactRequestStatus.pending,
+        )
+        .toList();
   }
 
   @override
-  Future<void> updateStatus(String peerId, ContactRequestStatus status) async {}
+  Future<void> updateStatus(String peerId, ContactRequestStatus status) async {
+    statusUpdates[peerId] = status;
+  }
 }
 
 class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
@@ -434,6 +443,33 @@ void main() {
 
       expect(requests, isEmpty);
     });
+
+    test(
+      'settles a pending request from a peer who became a contact instead of replaying it',
+      () async {
+        requestRepo.pendingRequests = [makePending()];
+        contactRepo.addTestContact(
+          ContactModel(
+            peerId: _testPeerId,
+            publicKey: _testPublicKey,
+            rendezvous: '/addr',
+            username: 'TestUser',
+            signature: 'sig',
+            scannedAt: '2024-01-01T00:00:00Z',
+          ),
+        );
+
+        final requests = <ContactRequestModel>[];
+        listener.requestStream.listen(requests.add);
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(requests, isEmpty);
+        expect(requestRepo.statusUpdates, {
+          _testPeerId: ContactRequestStatus.accepted,
+        });
+        expect(await requestRepo.getPendingRequests(), isEmpty);
+      },
+    );
 
     test('a pending-load failure does not break live emissions', () async {
       requestRepo.throwOnGetPendingRequests = true;

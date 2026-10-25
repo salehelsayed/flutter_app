@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 
 import '../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
@@ -78,24 +79,26 @@ void main() {
       expect(contactRepo.addContactCallCount, 1);
     });
 
-    test('added contact has correct peerId and username from request',
-        () async {
-      requestRepo.seed([testRequest]);
+    test(
+      'added contact has correct peerId and username from request',
+      () async {
+        requestRepo.seed([testRequest]);
 
-      await acceptContactRequest(
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        peerId: testRequest.peerId,
-      );
+        await acceptContactRequest(
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          peerId: testRequest.peerId,
+        );
 
-      final addedContact = contactRepo.lastAddedContact;
-      expect(addedContact, isNotNull);
-      expect(addedContact!.peerId, testRequest.peerId);
-      expect(addedContact.username, testRequest.username);
-      expect(addedContact.publicKey, testRequest.publicKey);
-      expect(addedContact.rendezvous, testRequest.rendezvous);
-      expect(addedContact.mlKemPublicKey, testRequest.mlKemPublicKey);
-    });
+        final addedContact = contactRepo.lastAddedContact;
+        expect(addedContact, isNotNull);
+        expect(addedContact!.peerId, testRequest.peerId);
+        expect(addedContact.username, testRequest.username);
+        expect(addedContact.publicKey, testRequest.publicKey);
+        expect(addedContact.rendezvous, testRequest.rendezvous);
+        expect(addedContact.mlKemPublicKey, testRequest.mlKemPublicKey);
+      },
+    );
 
     test('returns addContactError when contactRepo throws', () async {
       requestRepo.seed([testRequest]);
@@ -110,21 +113,23 @@ void main() {
       expect(result, AcceptContactRequestResult.addContactError);
     });
 
-    test('returns updateStatusError when requestRepo.updateStatus throws',
-        () async {
-      requestRepo.seed([testRequest]);
-      requestRepo.throwOnUpdateStatus = true;
+    test(
+      'returns updateStatusError when requestRepo.updateStatus throws',
+      () async {
+        requestRepo.seed([testRequest]);
+        requestRepo.throwOnUpdateStatus = true;
 
-      final result = await acceptContactRequest(
-        requestRepo: requestRepo,
-        contactRepo: contactRepo,
-        peerId: testRequest.peerId,
-      );
+        final result = await acceptContactRequest(
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          peerId: testRequest.peerId,
+        );
 
-      expect(result, AcceptContactRequestResult.updateStatusError);
-      // Contact should still have been added before the status update failed
-      expect(contactRepo.addContactCallCount, 1);
-    });
+        expect(result, AcceptContactRequestResult.updateStatusError);
+        // Contact should still have been added before the status update failed
+        expect(contactRepo.addContactCallCount, 1);
+      },
+    );
 
     test('status is updated to accepted on success', () async {
       requestRepo.seed([testRequest]);
@@ -143,5 +148,39 @@ void main() {
       final updated = await requestRepo.getRequest(testRequest.peerId);
       expect(updated!.status, ContactRequestStatus.accepted);
     });
+
+    test(
+      'keeps the existing contact row when accepting a stale request from a current contact',
+      () async {
+        requestRepo.seed([testRequest]);
+        contactRepo.seed([
+          ContactModel(
+            peerId: testRequest.peerId,
+            publicKey: testRequest.publicKey,
+            rendezvous: testRequest.rendezvous,
+            username: 'Alice',
+            signature: 'sig-from-qr',
+            scannedAt: '2026-01-02T00:00:00.000Z',
+            avatarPath: 'avatars/alice.png',
+            mlKemPublicKey: 'mlkem-pk',
+            isArchived: true,
+          ),
+        ]);
+
+        final result = await acceptContactRequest(
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          peerId: testRequest.peerId,
+        );
+
+        expect(result, AcceptContactRequestResult.success);
+        final kept = (await contactRepo.getContact(testRequest.peerId))!;
+        expect(kept.avatarPath, 'avatars/alice.png');
+        expect(kept.isArchived, isTrue);
+        expect(kept.scannedAt, '2026-01-02T00:00:00.000Z');
+        final settled = await requestRepo.getRequest(testRequest.peerId);
+        expect(settled!.status, ContactRequestStatus.accepted);
+      },
+    );
   });
 }

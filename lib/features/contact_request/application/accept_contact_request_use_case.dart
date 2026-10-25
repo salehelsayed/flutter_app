@@ -26,7 +26,7 @@ enum AcceptContactRequestResult {
 /// This function:
 /// 1. Loads the request
 /// 2. Converts it to a ContactModel
-/// 3. Adds to contacts
+/// 3. Adds to contacts, unless the peer is already an unblocked contact
 /// 4. Updates request status to accepted
 ///
 /// Returns the result of the operation.
@@ -65,10 +65,15 @@ Future<AcceptContactRequestResult> acceptContactRequest({
     return AcceptContactRequestResult.notPending;
   }
 
-  // 3. Convert to contact and add
+  // 3. Convert to contact and add. The contacts table replaces on conflict,
+  //    and a current contact row carries state the request lacks (avatar,
+  //    archive flag, key timestamps), so an unblocked contact row is kept.
   final contact = request.toContactModel();
   try {
-    await contactRepo.addContact(contact);
+    final existing = await contactRepo.getContact(peerId);
+    if (existing == null || existing.isBlocked) {
+      await contactRepo.addContact(contact);
+    }
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',

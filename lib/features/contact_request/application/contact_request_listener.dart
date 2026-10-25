@@ -597,8 +597,9 @@ class ContactRequestListener {
   /// Replays still-pending stored requests to a newly-attached UI listener,
   /// through the same gate-aware presentation path as live requests. Requests
   /// from peers that were blocked after the request arrived are skipped; a
-  /// load failure only costs this replay (the rows stay pending for the next
-  /// attach).
+  /// request from a peer who became a contact after it arrived is settled as
+  /// accepted instead of presented; a load failure only costs this replay
+  /// (the rows stay pending for the next attach).
   void _replayPendingRequestsOnAttach() {
     () async {
       try {
@@ -614,6 +615,26 @@ class ContactRequestListener {
         for (final request in pending) {
           final contact = await contactRepo.getContact(request.peerId);
           if (contact?.isBlocked == true) {
+            continue;
+          }
+          if (contact != null) {
+            // The receive path only stores a request while the peer is not a
+            // contact, so this row outlived a contact added another way (their
+            // QR, an intro). A friend never gets a "wants to connect" dialog.
+            await requestRepo.updateStatus(
+              request.peerId,
+              ContactRequestStatus.accepted,
+            );
+            emitFlowEvent(
+              layer: 'FL',
+              event:
+                  'CONTACT_REQUEST_LISTENER_PENDING_SETTLED_EXISTING_CONTACT',
+              details: {
+                'peerId': request.peerId.length > 10
+                    ? request.peerId.substring(0, 10)
+                    : request.peerId,
+              },
+            );
             continue;
           }
           _routeToDialog(request);
