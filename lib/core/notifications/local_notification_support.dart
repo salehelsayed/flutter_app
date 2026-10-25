@@ -1,5 +1,6 @@
 import 'dart:math' show max;
 import 'dart:ui' show Locale, PlatformDispatcher;
+import 'package:flutter_app/core/utils/thought_lifetime.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'missed_call_action_payload.dart';
 
@@ -150,8 +151,11 @@ NotificationDetails mknoonThoughtNotificationDetails({Duration? remaining}) =>
       ),
     );
 
-/// The push isolate's card: it shows a thought before knowing its expiry.
-final mknoonThoughtsNotificationDetails = mknoonThoughtNotificationDetails();
+/// The push isolate's card: it shows a thought before knowing its expiry, but
+/// the thought was created no later than now, so it is gone within a lifetime.
+final mknoonThoughtsNotificationDetails = mknoonThoughtNotificationDetails(
+  remaining: ThoughtLifetime.duration,
+);
 
 // SE-41 T4a: update reminders from the background update check. Default
 // importance, so a reminder never pops over a chat. Native code posts on it

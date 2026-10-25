@@ -115,6 +115,14 @@ void main() {
     expect(log, isEmpty);
   });
 
+  test('a thought card shown by a push times out within a lifetime', () {
+    final android =
+        mknoonThoughtsNotificationDetails.android as AndroidNotificationDetails;
+
+    expect(android.timeoutAfter, 86400000);
+    expect(android.channelId, mknoonThoughtsChannelId);
+  });
+
   test(
     'a thought card shown by the app times out with its thought on Android',
     () {
