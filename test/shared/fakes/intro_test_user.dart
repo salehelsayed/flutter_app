@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -55,6 +56,7 @@ class IntroTestUser {
     required String username,
     required FakeP2PNetwork network,
     Bridge? bridge,
+    NotificationService? notificationService,
   }) {
     final effectiveBridge = bridge ?? PassthroughCryptoBridge();
     final p2p = FakeP2PService(peerId: peerId, network: network);
@@ -78,6 +80,7 @@ class IntroTestUser {
       getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       getOwnPeerId: () async => peerId,
       messageRepo: messageRepo,
+      notificationService: notificationService,
     );
 
     return IntroTestUser._(

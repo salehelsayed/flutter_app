@@ -27,6 +27,7 @@ import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -240,6 +241,86 @@ void main() {
       timeout: const Timeout(Duration(seconds: 45)),
     );
   });
+
+  testWidgets(
+    'repeated Feed accepts refresh retained Orbit and all-chats without avatars',
+    (tester) async {
+      final h = await _open(tester);
+      await tester.runAsync(
+        () => h.contacts.addContact(
+          h.contact(TestEd25519Identity.fromSeedByte(0x54), 'Established'),
+        ),
+      );
+      await h.mount(tester, withOrbit: true);
+      final orbit = find.byType(OrbitWired, skipOffstage: false);
+      final retainedState = tester.state(orbit);
+      OrbitScreen screen() => tester.widget<OrbitScreen>(
+        find.byType(OrbitScreen, skipOffstage: false),
+      );
+      expect(screen().listProjectionListenable.value.allFriends, hasLength(1));
+      final updates = <ContactModel>[];
+      final subscription = h.chat.contactUpdatedStream.listen(updates.add);
+      addTearDown(subscription.cancel);
+      final circleCounts = <int>[];
+      final listCounts = <int>[];
+      final visibleNames = <bool>[];
+      for (final entry in [(0x52, 'Bob'), (0x53, 'Charlie')]) {
+        h.shell.switchTo(AppShellTab.feed);
+        await _frames(tester);
+        final wire = await h.makeWire(tester, entry.$1, entry.$2);
+        await h.live(tester, wire);
+        expect(_dialogs, findsOneWidget);
+        final reciprocal = (await tester.runAsync(
+          () async => Completer<void>(),
+        ))!;
+        h.network.onStoreInInbox = (peerId, message, {timeoutMs}) async {
+          if (!reciprocal.isCompleted) reciprocal.complete();
+          return true;
+        };
+        await tester.tap(find.text('Accept'));
+        await _frames(tester);
+        await tester.runAsync(() => reciprocal.future);
+        await _frames(tester);
+        expect(
+          (await tester.runAsync(
+            () => h.requests.getRequest(wire.from),
+          ))?.status,
+          ContactRequestStatus.accepted,
+        );
+        expect(find.byType(ConversationWired), findsOneWidget);
+        Navigator.of(tester.element(find.byType(ConversationWired))).pop();
+        await _frames(tester);
+        h.shell.switchTo(AppShellTab.orbit);
+        await _frames(tester);
+        expect(tester.state(orbit), same(retainedState));
+        circleCounts.add(
+          screen().listProjectionListenable.value.allFriends.length,
+        );
+        await tester.tap(find.byKey(const ValueKey('orbit-view-toggle')));
+        await _frames(tester);
+        listCounts.add(
+          screen().listProjectionListenable.value.displayedFriends.length,
+        );
+        visibleNames.add(find.text(entry.$2).evaluate().isNotEmpty);
+      }
+      expect(await tester.runAsync(h.contacts.getAllContacts), hasLength(3));
+      // Finish the existing avatar retries before checking the independent
+      // acceptance publication: a missing avatar must never gate list updates.
+      await tester.pump(const Duration(seconds: 5));
+      await _frames(tester);
+      expect(circleCounts, [
+        2,
+        3,
+      ], reason: 'each accepted contact reaches cached Orbit');
+      expect(listCounts, [
+        2,
+        3,
+      ], reason: 'all-chats shares the updated contact list');
+      expect(visibleNames, [true, true]);
+      expect(updates.map((contact) => contact.username), ['Bob', 'Charlie']);
+    },
+    timeout: const Timeout(Duration(seconds: 45)),
+  );
 
   testWidgets(
     'CR-005 accepting once converges one contact each and no reciprocal loop',

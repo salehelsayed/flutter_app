@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
@@ -218,8 +219,10 @@ void main() {
           );
           final bridge = _RejectOneCiphertextBridge();
           addTearDown(bridge.dispose);
+          final incoming = StreamController<ChatMessage>();
+          addTearDown(incoming.close);
           final listener = ChatMessageListener(
-            chatMessageStream: const Stream<ChatMessage>.empty(),
+            chatMessageStream: incoming.stream,
             messageRepo: messages,
             contactRepo: contacts,
             bridge: bridge,
@@ -316,6 +319,47 @@ void main() {
           expect(replay.state, ChatMessageProcessState.duplicate);
           expect(await messages.getMessageCountForContact(sender.peerId), 2);
           expect(await contacts.getContactCount(), 1);
+
+          // Exercise the real subscription/queue as well as direct processing:
+          // rejected input must not wedge the valid callback queued after it.
+          listener.start();
+          final queuedDelivery = listener.incomingMessageStream.firstWhere(
+            (message) => message.id == 'queued-valid-message',
+          );
+          incoming.add(
+            wire(
+              malformed
+                  ? '{invalid-json'
+                  : envelope(
+                      'queued-rejected-message',
+                      'authentication-failure-fixture',
+                    ),
+            ),
+          );
+          incoming.add(
+            wire(
+              envelope(
+                'queued-valid-message',
+                jsonEncode({
+                  'id': 'queued-valid-message',
+                  'text': 'Queued delivery after rejection',
+                  'senderPeerId': sender.peerId,
+                  'senderUsername': 'Sender',
+                  'timestamp': '2026-01-02T00:00:01.000Z',
+                }),
+              ),
+            ),
+          );
+          expect(
+            (await queuedDelivery.timeout(const Duration(seconds: 3))).text,
+            'Queued delivery after rejection',
+          );
+          expect(await messages.getMessage('queued-rejected-message'), isNull);
+          expect(await messages.getMessageCountForContact(sender.peerId), 3);
+          expect(
+            (await messages.getMessage('preserved-message'))?.text,
+            'Existing history',
+          );
         },
       );
     }

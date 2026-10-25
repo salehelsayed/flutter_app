@@ -75,6 +75,17 @@ Future<(ParseQRResult, ContactModel?)> parseQRPayload({
     }
   }
 
+  for (final field in ['rv', 'un', 'mlkem']) {
+    if (json[field] != null && json[field] is! String) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'QR_PARSE_INVALID_FIELD_TYPE',
+        details: {'field': field},
+      );
+      return (ParseQRResult.invalidJson, null);
+    }
+  }
+
   final rawPeerId = json['ns'];
   final rawPublicKey = json['pk'];
   final rawTimestamp = json['ts'];

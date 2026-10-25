@@ -98,6 +98,17 @@ void main() {
       expect(find.byType(QRDisplayScreen), findsOneWidget);
       expect(find.byType(QrImageView), findsOneWidget);
       expect(find.byKey(const ValueKey('qr-loading-shimmer')), findsNothing);
+      final encoded = tester
+          .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+          .qrData!;
+      final payload = jsonDecode(encoded) as Map<String, dynamic>;
+      expect(payload['un'], testIdentity.username);
+      expect(payload['sig'], 'test-sig-123');
+      expect(
+        payload.keys,
+        unorderedEquals(['ns', 'pk', 'rv', 'ts', 'un', 'sig']),
+      );
+      expect(encoded, isNot(contains('\n')));
     });
 
     testWidgets('shows noIdentity state when no identity exists', (
@@ -109,7 +120,35 @@ void main() {
 
       expect(find.text('No Identity'), findsOneWidget);
       expect(find.byIcon(Icons.person_off), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
     });
+
+    testWidgets(
+      'CR-022 missing identity exposes Retry without an unsigned QR',
+      (tester) async {
+        await tester.pumpWidget(pumpQRDisplay(tester));
+        await tester.pumpAndSettle();
+        expect(find.text('No Identity'), findsOneWidget);
+        expect(find.byType(QrImageView), findsNothing);
+        expect(find.text('Try Again'), findsOneWidget);
+        repo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'test-sig-123',
+        };
+        await tester.tap(find.text('Try Again'));
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.byType(QrImageView), findsOneWidget);
+        expect(find.text('No Identity'), findsNothing);
+        final data = tester
+            .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+            .qrData!;
+        expect(
+          (jsonDecode(data) as Map<String, dynamic>)['sig'],
+          'test-sig-123',
+        );
+      },
+    );
 
     testWidgets('shows error state when bridge signing fails', (tester) async {
       repo.seed(testIdentity);
@@ -236,13 +275,20 @@ void main() {
       expectTextContrast(scanTitle.style!.color!, colors.glassSurface);
     });
 
-    testWidgets('no retry button on noIdentity state', (tester) async {
+    testWidgets('retry remains available while identity is still missing', (
+      tester,
+    ) async {
       // Do NOT seed identity.
       await tester.pumpWidget(pumpQRDisplay(tester));
       await tester.pumpAndSettle();
 
       expect(find.text('No Identity'), findsOneWidget);
-      expect(find.text('Try Again'), findsNothing);
+      expect(find.text('Try Again'), findsOneWidget);
+      await tester.tap(find.text('Try Again'));
+      await tester.pumpAndSettle();
+      expect(find.text('No Identity'), findsOneWidget);
+      expect(find.text('Try Again'), findsOneWidget);
+      expect(find.byType(QrImageView), findsNothing);
     });
 
     testWidgets('TC-360-02a dual-signed linked-device QR stages only exact '

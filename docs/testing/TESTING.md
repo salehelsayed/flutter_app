@@ -367,6 +367,17 @@ Accept control passes. Evidence is retained under
 `.codex-test-logs/introduction-pass-atomic-20261023/`; these host repository-fault
 assertions do not establish device or native SQLite crash behavior.
 
+The IN-009/IN-003 companion in
+`existing_contacts_and_conversations_preserved_test.dart` uses three file-backed
+production-schema SQLite repositories and the existing integration transport.
+Four cases cover either passing role before/after the other's acceptance,
+failed two-target Pass outbox rows preserved across complete repository/listener
+recreation, exact serialized carrier retry, duplicate and delayed acceptance
+ingress, and terminal state/contact counts after another reopen. All four pass;
+no new product code or KNOWN GAP skip is needed for these host assertions.
+Evidence: `.codex-test-logs/astra-batch5/023-focused-summary.json`. Encryption,
+transport and secure storage remain host seams; this is not device/crash proof.
+
 `QRScannerScreen` reports a code without awaiting the handler, then pops its own
 route only if that route is still current. `QRScannerWired` must therefore not
 use that route's context after
@@ -379,9 +390,30 @@ an app restart. Android emulators with animation scales of 0 (the
 there. With normal animations it needs verification slower than the ~300 ms exit
 transition. The handler now uses the navigator's context.
 `qr_scanner_wired_test.dart` holds `payload.verify` until the pushed route has
-closed, and it fails without the fix. After a successful scan, two request sends
-are expected: the scanner's own, then the key-exchange retry coordinator's about
-one second later. Evidence: `.codex-test-logs/beta-test-android-20261007/`.
+closed, and it fails without the fix. That historical capture expected the
+scanner's request plus a retry about one second later; the owner superseded
+that duplicate-send expectation on 2026-10-24. Original route evidence remains
+in `.codex-test-logs/beta-test-android-20261007/`.
+
+Equivalent background contact requests now share an in-flight/accepted
+transmission for 30 seconds per P2P service. Equivalence binds the signed material,
+target and recipient key, including exact wake-token/call-grant values, while
+excluding fresh timestamps, control IDs and receipt challenges. Control kind
+remains significant: a marked repair request never reuses an unmarked send.
+A changed capability, a new user action and an explicit live exact-receipt request still
+send immediately. Missing received-grant recovery explicitly solicits a fresh
+remote reply; its coordinator skips the send when a current grant is present.
+Failed sends, timeouts and missing grant receipts remain retryable. The host
+burst covers wake-registration and contact-key backfill through the real retry
+entry points: unchanged A-D material sends A once, coalesces B/C, and permits
+the one fresh exact-receipt reciprocal D (two outbound requests total). D still
+requires a fresh exchange even after a previous receipt for that material.
+Failure/timeout, changed-token and expiry controls preserve
+recovery, while the unchanged two-party repair and one-scan backfill sentinels
+preserve deliberate re-adds and capability follow-ups. Evidence:
+`.codex-test-logs/contact-request-burst-20261024/`. These
+host assertions do not certify a device run or promise one packet when new
+capability material genuinely needs distribution.
 
 On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
 dispatched correctly but returned to that screen before confirmation. Both the
@@ -2351,22 +2383,87 @@ attempts and the corrected subset invocation are retained. GC-001 needs all
 six registered create/invite/online-add/offline-add companions, with the actual
 two-, three- or four-role topology kept explicit.
 
-The DC-007 disposable direct-media fixture now offers explicit
+The DC-007 disposable direct-media fixture offers explicit
 `upload_storage_block` and `upload_storage_restore` faults against its owned
-filesystem storage root. The block rejects active upload reservations and
-request-level attachment/lane selectors; restore preserves an unexpected
-replacement and the original saved directory. Three focused Go contracts in
-`go-relay-server/direct_media_blob_upload_storage_faults_test.go` pass against
-real framed production upload/download handlers: storage rejection followed by
-same-upload retry, HTTP scope/busy rejection, and replacement preservation.
-The previously stored control blob and retried blob remain byte-identical.
-Evidence is the private directory's `095-dc007-go-summary.json` and retained
-`094-dc007-go-upload-storage.log`; the single native lease lasted 48.463 seconds,
-with unchanged dependency manifests and zero swap growth. This is host fixture
-proof only. App SQLite/custody projection, visible terminal manual Retry and
-same-ID app convergence remain unverified; the broader selected Go and affected
-suites were not executed. These controls do not close DC-007 or add device
-coverage.
+filesystem root, rejecting active upload reservations and target selectors.
+Restore preserves an unexpected replacement and the original saved directory.
+Three focused Go contracts cover real framed storage rejection, same-upload
+retry, HTTP scope/busy rejection and replacement preservation; original evidence
+remains in `.codex-test-logs/astra-update-relay-sims/item3/095-dc007-go-summary.json`.
+
+`direct_media_storage_retry_sqlite_test.dart` now exercises production strict
+blob preparation, automatic incomplete-upload retry, receipt minting/settlement
+and real sender/receiver SQLite reopen. A storage error retains the same owned
+ciphertext, key, attachment/message identity and durable generation; recovery
+uploads it once without re-encryption, moves the attachment to done, then the
+receiver's persisted message and actual receipt settle the sender to delivered.
+No manual Retry button is invented for this silent recovery path. Strict host
+transport fixtures must implement both ACK-or-expiry and the separate
+media-expiry-bounded capability; the test asserts that the envelope ceiling
+matches the persisted blob proof. A bool-only or ordinary ACK-only fake is
+correctly refused by production admission.
+
+The three changed Dart suites pass 42 host cases, including six new cases, and
+one existing real receiver-stop sentinel passes separately. Evidence is in
+`.codex-test-logs/astra-batch5/023-focused-summary.json` and
+`024-receiver-stop-summary.json`; initial fixture failures remain retained.
+Go and Dart results are separate host proofs with fake crypto/transport/secure
+storage on the Dart side, not a live native-bridge or device journey. Full
+affected lanes belong to the execution owner; signed-candidate UI/transport
+glyph and device evidence remain separate and incomplete.
+
+Near-limit media catalog fixtures (DC-018/GX-003) reuse a decodable 2-by-2 PNG
+padded after IEND to the actual 25-MiB image send cap minus one byte. They transfer
+and compare all bytes, then decode the recovered image through Flutter's codec;
+this is not a reduced-cap fixture or proof for every supported format. Shared
+composer controls cover every actual per-type cap at minus one, exact and plus
+one, and the actual aggregate cap with two valid video budgets plus one extra
+byte, without allocating a 500-MiB batch. A real over-cap group file is rejected
+before crypto/upload, preserving only its source. Existing direct/group wired
+oversize and group upload-retry controls preserve localized rejection and prevent
+sending invalid attachments.
+
+The existing DC-007 strict SQLite oracle now uses the same near-cap PNG and
+retains its unchanged generation, ciphertext, three upload attempts, restart,
+receipt and single-row assertions. The direct roundtrip uses the existing
+content-transforming test bridge and a real partial output before EOF, then production retry/decrypt and same-envelope
+replay; exactly one attachment remains. Large fixture transforms use Uint8List
+to avoid boxed integer copies. Group fan-out uses the existing group listener,
+member/key setup and passthrough blob-crypto fixture: each eligible recipient
+gets exactly one attachment with exact bytes; one recipient's interrupted path
+is retained pending and recovered through the existing download entry. The
+listener helper does not own the application's periodic retrier. Observe the
+started failed transfer before waiting for pending, then trigger recovery;
+initial pending state alone is not evidence of a failed attempt. Resolve every
+receiver's stored relative path through its own file manager.
+
+DC-017's SQL/bubble fixture leaves both client transports started while its
+relay fault seam rejects custody/delivery. Three original encrypted envelopes
+survive sender reopen, failed retry, recovery and repeated recipient replay/
+reopen in order; actual delivery receipts settle the same sender rows once,
+without re-encryption. Old failed and settled LetterCards show content without
+internal custody/error labels. The complementary Go test withdraws only the
+owned inbox service, transfers bytes over a healthy client link, then restores
+fresh handlers/stores over the same Redis backend and proves ordered replay,
+deduplication and explicit ACK. It does not stop/restart a relay daemon.
+The Go near-cap test reuses the DC-007 owned filesystem fault, interrupts real
+framed upload and download streams, retries the same protected blob and rejects
+cross-recipient access. Protected retrieval/ACK requests require the explicit
+custody contract; a cross-recipient negative must explicitly name the protected
+target, otherwise the authenticated caller's missing tuple correctly returns
+not-found instead of the target-authorization verdict.
+
+Evidence: `near_limit_media.dart`, `one_to_one_media_encryption_round_trip_test.dart`,
+`group_media_fanout_test.dart`, `media_rejection_test.dart`,
+`relay_outage_sqlite_replay_test.dart`, `direct_media_storage_retry_sqlite_test.dart`,
+`catalog_near_limit_media_recovery_test.go`,
+`catalog_relay_outage_recovery_test.go`, and `.codex-test-logs/astra-batch6-group3/`
+(`017-dart-focused-final.log`: 46 passes; `012-size-ui-retry-preservation.log`:
+12 passes; `010-go-causal.log`: two passes; no skips). Retain the earlier fixture
+failures under that directory. These are separate host component proofs with
+fake native transport/crypto on Dart's side; real phone transfer/viewer behavior,
+full relay-process outage, native bridge composition, all-format near-cap transfer,
+and signed-candidate coverage remain unverified. No product gap was confirmed.
 
 The introduction Catalog P0 journeys reuse the production group-profile
 three-role runtime with introducer-only contact edges; the default full contact
@@ -2628,6 +2725,41 @@ Focused causal failures and verified host results are retained under
 `.codex-test-logs/S2-baseline-fixes-20261018/F7/`; these are not OS permission or
 native cryptography proofs.
 
+QR catalog safety checks exercise the real scanner callback, production SQL
+repositories and real Ed25519 signing/verification for altered signatures,
+identity mismatch, required-field/type rejection and self-scan (CR-015). Rejected
+input must preserve empty contacts/pending requests and produce no outbound
+send, inbox store or request encryption. The stored-key conflict control also
+preserves the existing row. Migration and linked-device QR routing (CR-023)
+uses handler-present and unsupported controls with an existing contact: preserve
+that row and require zero pending requests, sends, stores and contact encryption.
+These routing controls stub protocol handlers; they do not certify migration or
+linked-device trust completion. Both normal QR display routes expose the compact
+signed payload including the display name; their signing bridge is faked here.
+
+The seven previously skipped catalog contracts are active after the QR fix:
+non-string `rv` / `un` / `mlkem` is rejected through the existing invalid-QR UI;
+a stored-key conflict produces an error before already-in-circle feedback;
+missing identity exposes Retry on both display routes; first-run signing failure
+shows the existing QR error indicator and Retry. Failed generation renders no QR.
+The three error/retry cases also restore identity/signing and tap Retry, then
+require a rendered signed payload. The scanner's conflict case preserves the
+stored row and asserts zero pending requests, sends, stores and encryption.
+
+Evidence: `.codex-test-logs/qr-payload-retry-20261024/qr-red.log` retains all seven
+causal failures on production source from `9dbb319c`; `qr-green-final.log` covers the
+four screen suites plus parser/builder and first-run screen/QR-widget preservation;
+`qr-analyze.log` covers all six changed production files and the four author
+screen test files. No known-gap skips remain in these suites. The previous test requiring no Retry
+button is superseded by a repeated no-identity retry control. The first GREEN
+retains its 91 passes and that one obsolete-expectation failure. Earlier baseline
+and fixture-setup evidence under `.codex-test-logs/astra-batch6-qr/` remains
+historical evidence, superseded only for these seven fixed contracts. CR-025's
+older unreadable/future acceptance note is superseded by current rejection and
+active negative/fresh controls.
+This host evidence does not cover camera decoding, native crypto, physical scans,
+OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
+
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses
 the reciprocal key for exact Unicode/multiline text in both directions. Its QR
@@ -2649,6 +2781,18 @@ input/restart, reciprocal acceptance and repair overflow/retry. The scanner's
 expired, unreadable and future timestamp cases plus its fresh control all pass;
 malformed/future timestamps are rejected before contact or outbound effects.
 The original assertions and per-case 45-second deadlines remain unchanged.
+
+Repeated Feed contact acceptance must publish the committed contact through
+`ChatMessageListener.contactUpdatedStream` before opening the conversation,
+independently of avatar download. Feed's own connection-card upsert does not
+refresh its retained embedded Orbit. The profile callback only fires on avatar
+success, so absent avatars previously left Orbit and all-chats stale after the
+first empty-shell rebuild. The repeated-accept shell case seeds an established
+contact, drives two real signed requests through Feed and production SQLite,
+preserves the same Orbit State, and checks both circle and all-chats grow from
+one to two to three contacts without avatars. This is host UI/stream/SQL proof,
+not device/native delivery. Evidence:
+`.codex-test-logs/contact-accept-refresh-20261024/`.
 
 Consent ownership must include the decision Future after the dialog route pops.
 Otherwise an observable gate release can read a still-pending row and present it
@@ -4130,6 +4274,42 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `full_migration_chain_test.dart` (seeded data preservation). The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
 
+`bidi_transport_rendering_test.dart` joins two-peer production message send and
+receive to both persisted rows and the actual `LetterCard`/`LinkableText`
+rendering. Arabic, mixed first-strong text, emoji/ZWJ sequences and supported
+long text retain their accepted content and expected direction without a line
+limit. Transport and crypto are host fakes; installed-device font/rendering
+and native delivery remain separate proof.
+
+`rejected_events_preserve_valid_delivery_test.dart` exercises the listener's
+subscription/queue after its direct-processing controls: malformed JSON or a
+failed ciphertext precedes an already-queued valid input against the same
+production SQLite repositories. The queue continues, the rejected input adds
+no row, and previous history survives. The IR-016/RG-003 case in
+`group_resume_recovery_test.dart` pins the retention clock for its three drains,
+crosses an expired page into retained replay under two key generations, then
+admits a later current-epoch inbox entry through the durable cursor. It does
+not establish actual relay TTL, native key-ring eviction or later live pubsub.
+
+`notification_consent_route_roundtrip_test.dart` feeds three-party production
+introduction delivery into a recording notification sink and routes the actual
+published payload through notification preparation and the shared coordinator.
+Offer and stale-Pass taps preserve consent and send no response. Mutual
+acceptance is the local-notification trigger; the introducer's anchored route
+opens recipient B even when C accepted last, while the participant keeps the
+Intros destination without another contact/consent mutation. The optional
+notification sink in `IntroTestUser` defaults to absent for existing fixtures.
+These host joins do not prove terminated/locked OS delivery or actual navigation
+on Android/iOS signed candidates.
+
+The VC-002 case in `call_direct_mailbox_convergence_test.dart` observes the
+production control executor/codec and scheduled timers for the same call after
+its coordinator reaches connected. It checks the 40-second signed-envelope
+lifetime, 45-second invite deadline and 30-second no-answer request/effective
+delay. Deterministic crypto and admitted media events remain fixture inputs;
+this metadata proof does not establish audible media or a device no-answer
+journey.
+
 The [Lever 1 host joins](astra-lever1-host-quickwins.md) connect system-picker
 cancel/result adaptation to draft/removal behavior, flag-off received PDF to
 the actual egress service, and current SQL library/history/private authority to
@@ -4884,6 +5064,40 @@ visible and cannot become an ordinary first-attempt PASS.
   `app_diagnostic_error_handlers_test.dart` checks the fixed, content-free
   debug log marker for future RenderFlex overflows. Host layout tests establish
   Flutter constraints, not a rebuilt Android device screenshot.
+
+- **Group sender avatar geometry:** the incoming group message gutter is 40 px,
+  including a 32 px avatar and 8 px gap. Without reserving that gap as padding,
+  the tight gutter constraint stretched the avatar to 40x32 and its photo clip
+  to 38x30. The gutter now reserves the gap before laying out the avatar.
+  `group_sender_avatar_geometry_test.dart` loads a real 160x80 photo through
+  `UserAvatar` in `GroupConversationScreen`, verifies the non-square decode and
+  cover fit, and asserts a square photo clip and 32x32 avatar. The affected
+  `LetterCard` source is identical on main `422c3f4b2` and UI-Update `e37f4f50e`;
+  the header, member/info and Orbit avatar call sites have separate square
+  layouts. Evidence: `.codex-test-logs/group-avatar-square-20261024/`.
+  This host geometry proof does not certify a device screenshot.
+
+- **iOS icon-launch group catch-up:** the native APNs helper returns immediately
+  on an empty consume. Its FCM fallback can still await native initial-message
+  discovery indefinitely. StartupRouter now starts its existing group
+  rejoin/drain future independently of that discovery, while canonical
+  notification settlement still waits for initial-open ownership and all
+  required drains. `startup_router_recovery_test.dart` holds the empty-native
+  FCM lookup pending and checks actual group join/inbox calls before release;
+  settlement remains withheld until the lookup completes. No new timeout or
+  catch-up coalescing is introduced. Host evidence:
+  `.codex-test-logs/startup-group-catchup-20261024/`.
+
+- **Notification-tap missing group keys:** MyApp passes its durable pending-key
+  repository and active repair sender into the shared route preparation;
+  StartupRouter forwards the same sender for cold FCM fallback. The helper
+  retains the log-only default when no sender is supplied. Behavioral tests
+  build a signed replay for an absent epoch, run the real targeted drain,
+  and check its pending placeholder plus active/default request outcome.
+  The former source-only assertion labelling this shared helper NSE-only
+  was refuted by its foreground callers and replaced by those tests.
+  Evidence: `.codex-test-logs/startup-group-catchup-20261024/`. These host
+  callback assertions do not prove device packet delivery.
 
 - **Legacy group dissolve/removal audit identity:** when a member has no device
   roster, `resolveGroupSenderDeviceBinding` returns no device binding, so its
@@ -7111,6 +7325,17 @@ visible and cannot become an ordinary first-attempt PASS.
   optional diagnostic sink failure. Red/green evidence is retained under
   `.codex-test-logs/readiness-exceptions/`. These are host lifecycle and ownership
   proofs, not live microphone, libp2p, audible audio or signed-device evidence.
+- **Blocked direct ingress and the deletion exception:**
+  `block_unblock_ingress_privacy_test.dart` composes production senders, the
+  incoming router, chat/reaction/deletion listeners and block/unblock use cases
+  over the existing two-peer fake network/storage. It observes consumption of
+  blocked text, encrypted-media descriptors and reactions, with no recipient
+  row, orphan attachment, message-stream update or new notification. Blocked
+  reactions do not reach notification dependency admission. A deletion from
+  the blocked author still tombstones its previously stored message; after
+  unblock, a fresh text reaches the notification sink and a fresh reaction is
+  persisted and admitted. These are host ingress/notification-policy proofs,
+  not real blob transfer, OS notification delivery, or device interaction.
 - **TURN availability and frozen call policy:** normal (`all`) setup and restart
   may attempt direct media after a five-second credential timeout or a typed
   transient service failure. Preserve the approved STUN entries supplied by the
@@ -7140,6 +7365,16 @@ visible and cannot become an ordinary first-attempt PASS.
   These host tests model selected direct/TURN routes; they do not prove live
   Wi-Fi calling, TURN allocation or audible device media. Red/green evidence is
   retained under `.codex-test-logs/turn-policy/`.
+  The integration suite also feeds typed `NetworkPathSource` outcomes through
+  `CallNetworkPathBinding` into the real coordinator/executor/WebRTC wrapper.
+  Path preparation retains connected media until readiness opens recovery;
+  later path epochs cannot extend that episode's original 15-second deadline.
+  Ready media recovers the same call, or timeout closes it and a late callback
+  for that retired call cannot connect a replacement. The saved-preference
+  case resolves secure storage with `forceRelay: false`: a TURN outage creates
+  no direct connection, while a later call after service restoration uses the
+  saved relay-only configuration. Native selected-pair/readiness inputs are
+  controlled fixtures, so these cases do not close VC-017/VC-023 device proof.
 - **Saved call privacy and rollout policy:** availability of **Always relay
   calls** no longer selects a transport. Its stable secure-store preference is
   independent of `VOICE_CALL_FORCE_RELAY_ENABLED`; the release defines disable
@@ -9497,6 +9732,19 @@ difference in outcomes remains unexplained; those passes do not establish a
 fix for the earlier failures. The retained first failures remain authoritative
 for their own run. See the focused investigation record and
 `artifacts/testflight-crash-investigation-20260910/check-final/results.json`.
+
+Move Account code mismatch uses the confirmation surface's existing Back
+control rather than starting a transfer. The TRANSFER-003 journey test compares
+different rendered codes, returns both host fixture routes, preserves the old
+identity keys and active authority, stops the receiving callback exactly once,
+and creates no export file or identity activation. The unchanged runtime
+`stopNewPhoneReceiver` sentinel separately proves a pre-verification stop revokes
+the actual host migration route and rejects a later proof. Evidence:
+`.codex-test-logs/astra-batch5/023-focused-summary.json` and
+`024-receiver-stop-summary.json`. Live startup/onboarding/device proof remains
+separate. Widget fixtures need synchronous temporary-file setup (or
+`tester.runAsync`) and bounded route pumping: ordinary file I/O cannot finish
+inside fake-async, and animated backgrounds do not globally settle.
 
 Move Account export cleanup (2026-10-23): the reported TRANSFER-007 cancellation
 left an encrypted database snapshot beside plaintext secure-values metadata in

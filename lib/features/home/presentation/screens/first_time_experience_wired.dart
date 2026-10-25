@@ -176,6 +176,7 @@ class FirstTimeExperienceWired extends StatefulWidget {
 
 class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   String? _qrData;
+  String? _qrError;
   String _username = 'Username';
   Uint8List? _avatarBytes;
   IdentityModel? _identity;
@@ -417,10 +418,17 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
   }
 
   Future<void> _loadIdentityAndBuildQR() async {
+    if (!mounted) return;
+    setState(() {
+      _qrData = null;
+      _qrError = null;
+    });
     try {
       final identity = await widget.repository.loadIdentity();
+      if (!mounted) return;
       if (identity == null) {
         emitFlowEvent(layer: 'FL', event: 'FTE_FL_NO_IDENTITY', details: {});
+        _setQRError(noIdentity: true);
         return;
       }
 
@@ -435,10 +443,26 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         event: 'FTE_FL_LOAD_ERROR',
         details: {'error': e.toString()},
       );
+      _setQRError();
     }
   }
 
+  void _setQRError({bool noIdentity = false}) {
+    if (!mounted) return;
+    setState(() {
+      _qrData = null;
+      _qrError = noIdentity
+          ? AppLocalizations.of(context)!.qr_no_identity_detail
+          : AppLocalizations.of(context)!.qr_sign_failed;
+    });
+  }
+
   Future<void> _buildQRPayload() async {
+    if (!mounted) return;
+    setState(() {
+      _qrData = null;
+      _qrError = null;
+    });
     try {
       Future<Map<String, dynamic>> jsSign(
         String dataToSign,
@@ -457,19 +481,23 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
         cachedIdentity: _identity,
       );
 
-      if (result == BuildQRPayloadResult.success && mounted) {
-        setState(() {
-          _qrData = qrString;
-        });
-        StartupTiming.instance.mark('fte_qr_ready');
-        emitFlowEvent(layer: 'FL', event: 'FTE_FL_QR_GENERATED', details: {});
+      if (!mounted) return;
+      if (result != BuildQRPayloadResult.success) {
+        _setQRError(noIdentity: result == BuildQRPayloadResult.noIdentity);
+        return;
       }
+      setState(() {
+        _qrData = qrString;
+      });
+      StartupTiming.instance.mark('fte_qr_ready');
+      emitFlowEvent(layer: 'FL', event: 'FTE_FL_QR_GENERATED', details: {});
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'FTE_FL_QR_ERROR',
         details: {'error': e.toString()},
       );
+      _setQRError();
     }
   }
 
@@ -770,6 +798,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     return Scaffold(
       body: FirstTimeExperienceScreen(
         qrData: _qrData,
+        qrError: _qrError,
+        onQrRetry: _loadIdentityAndBuildQR,
         username: _username,
         avatarBytes: _avatarBytes,
         peerId: _identity?.peerId,

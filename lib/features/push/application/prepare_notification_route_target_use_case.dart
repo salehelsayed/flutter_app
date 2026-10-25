@@ -20,6 +20,7 @@ Future<void> prepareNotificationRouteTarget({
   required GroupRepository? groupRepository,
   required GroupMessageRepository? groupMessageRepository,
   GroupPendingKeyRepairRepository? pendingKeyRepairRepository,
+  RequestGroupKeyRepair? requestGroupKeyRepair,
   GroupHistoryGapRepairRepository? historyGapRepairRepository,
   GroupMessageListener? groupMessageListener,
   required MediaAttachmentRepository mediaAttachmentRepository,
@@ -70,7 +71,8 @@ Future<void> prepareNotificationRouteTarget({
         pendingReactionRepo: groupPendingReactionRepository,
         pendingKeyRepairRepo: pendingKeyRepairRepository,
         historyGapRepairRepo: historyGapRepairRepository,
-        requestGroupKeyRepair: emitGroupKeyRepairRequest,
+        requestGroupKeyRepair:
+            requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
         selfPeerId: selfPeerId,
       );
     },

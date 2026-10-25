@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
@@ -17,16 +19,27 @@ import 'package:flutter_app/features/introduction/application/handle_incoming_in
 import 'package:flutter_app/features/introduction/application/handle_mutual_acceptance_use_case.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
+import 'package:flutter_app/core/services/incoming_message_router.dart';
+import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/pass_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/send_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
+import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_outbox_delivery.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_p2p_service_integration.dart' as fake_p2p;
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 
-Future<Database> _openDb() {
+Future<Database> _openDb({String databasePath = inMemoryDatabasePath}) {
   sqfliteFfiInit();
   return databaseFactoryFfiNoIsolate.openDatabase(
-    inMemoryDatabasePath,
+    databasePath,
     options: OpenDatabaseOptions(
       version: currentIdentityDatabaseVersion,
       singleInstance: false,
@@ -227,6 +240,233 @@ IntroductionRepositoryImpl _buildIntroRepo(Database db) =>
     );
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  group('IN-009 Pass and IN-003 durable terminal consent', () {
+    for (final passerIsRecipient in [true, false]) {
+      for (final acceptsBeforePass in [true, false]) {
+        test(
+          'offline Pass survives SQLite reopen and late acceptance: '
+          'recipient=$passerIsRecipient acceptFirst=$acceptsBeforePass',
+          () async {
+            final temp = await Directory.systemTemp.createTemp('intro_pass_');
+            addTearDown(() => temp.delete(recursive: true));
+            final network = FakeP2PNetwork();
+            final identities = [
+              TestEd25519Identity.fromSeedByte(0x41),
+              TestEd25519Identity.fromSeedByte(0x42),
+              TestEd25519Identity.fromSeedByte(0x43),
+            ];
+            final peers = <_PersistentIntroPeer>[];
+            addTearDown(() async {
+              for (final peer in peers) {
+                await peer.close();
+              }
+            });
+            for (var i = 0; i < 3; i++) {
+              peers.add(
+                await _PersistentIntroPeer.open(
+                  databasePath: '${temp.path}/peer-$i.sqlite',
+                  peerId: identities[i].peerId,
+                  network: network,
+                ),
+              );
+            }
+            ContactModel contact(int i) => ContactModel(
+              peerId: identities[i].peerId,
+              publicKey: identities[i].publicKey,
+              username: 'Participant $i',
+              rendezvous: 'fixture-relay',
+              signature: 'fixture-signature',
+              scannedAt: '2026-10-24T00:00:00.000Z',
+              mlKemPublicKey: 'fixture-mlkem-$i',
+            );
+            await peers[0].contacts.addContact(contact(1));
+            await peers[0].contacts.addContact(contact(2));
+            await peers[1].contacts.addContact(contact(0));
+            await peers[2].contacts.addContact(contact(0));
+            final bReceived = peers[1].listener.introReceivedStream.first;
+            final cReceived = peers[2].listener.introReceivedStream.first;
+            final sent = await sendIntroductions(
+              contactRepo: peers[0].contacts,
+              introRepo: peers[0].intros,
+              p2pService: peers[0].p2p,
+              bridge: peers[0].bridge,
+              introducerPeerId: peers[0].peerId,
+              introducerUsername: 'Participant 0',
+              recipientPeerId: peers[1].peerId,
+              recipientUsername: 'Participant 1',
+              recipientMlKemPublicKey: contact(1).mlKemPublicKey,
+              friendsToIntroduce: [contact(2)],
+            );
+            final introId = sent.single.id;
+            expect(
+              (await bReceived.timeout(const Duration(seconds: 5))).id,
+              introId,
+            );
+            expect(
+              (await cReceived.timeout(const Duration(seconds: 5))).id,
+              introId,
+            );
+            final passerIndex = passerIsRecipient ? 1 : 2;
+            final otherIndex = passerIsRecipient ? 2 : 1;
+            network.inboxDisabled = true;
+            for (final peer in peers) {
+              peer.p2p.setOnline(false);
+            }
+            var lateAccepts = <IntroductionOutboxDelivery>[];
+            if (acceptsBeforePass) {
+              await acceptIntroduction(
+                introRepo: peers[otherIndex].intros,
+                contactRepo: peers[otherIndex].contacts,
+                p2pService: peers[otherIndex].p2p,
+                bridge: peers[otherIndex].bridge,
+                introductionId: introId,
+                ownPeerId: peers[otherIndex].peerId,
+                ownUsername: 'Other participant',
+              );
+              lateAccepts = await peers[otherIndex].intros
+                  .loadOutboxDeliveriesForIntroduction(introId);
+              expect(lateAccepts, hasLength(2));
+              expect(
+                lateAccepts.every((row) => row.action == 'accept'),
+                isTrue,
+              );
+            }
+            final passed = await passIntroduction(
+              introRepo: peers[passerIndex].intros,
+              contactRepo: peers[passerIndex].contacts,
+              p2pService: peers[passerIndex].p2p,
+              bridge: peers[passerIndex].bridge,
+              introductionId: introId,
+              ownPeerId: peers[passerIndex].peerId,
+              ownUsername: 'Passing participant',
+            );
+            expect(passed!.status, IntroductionOverallStatus.passed);
+            final durablePass = await peers[passerIndex].intros
+                .loadOutboxDeliveriesForIntroduction(introId);
+            expect(durablePass, hasLength(2));
+            expect(
+              durablePass.every(
+                (row) => row.action == 'pass' && row.deliveryStatus == 'failed',
+              ),
+              isTrue,
+            );
+            final passWires = {
+              for (final row in durablePass) row.deliveryId: row.rawEnvelope,
+            };
+
+            // All repositories and transport/listener instances are discarded;
+            // only real file-backed SQLite and the fixture network survive.
+            for (var i = 0; i < peers.length; i++) {
+              peers[i] = await peers[i].reopen();
+            }
+            expect(
+              (await peers[passerIndex].intros.getIntroduction(
+                introId,
+              ))!.status,
+              IntroductionOverallStatus.passed,
+            );
+            final reopenedPass = await peers[passerIndex].intros
+                .loadOutboxDeliveriesForIntroduction(introId);
+            expect({
+              for (final row in reopenedPass) row.deliveryId: row.rawEnvelope,
+            }, passWires);
+            network.inboxDisabled = false;
+            final receivedPass = [0, otherIndex]
+                .map(
+                  (i) => peers[i].listener.introStatusChangedStream
+                      .firstWhere(
+                        (intro) =>
+                            intro.id == introId &&
+                            intro.status == IntroductionOverallStatus.passed,
+                      )
+                      .timeout(const Duration(seconds: 5)),
+                )
+                .toList();
+            expect(
+              await retryPendingIntroductionDeliveries(
+                introRepo: peers[passerIndex].intros,
+                p2pService: peers[passerIndex].p2p,
+                olderThan: Duration.zero,
+              ),
+              2,
+            );
+            for (final peer in peers) {
+              await peer.p2p.drainOfflineInbox();
+            }
+            await Future.wait(receivedPass);
+            expect(
+              await peers[passerIndex].intros
+                  .loadOutboxDeliveriesForIntroduction(introId),
+              isEmpty,
+            );
+
+            // Replay actual previously serialized carriers through the public
+            // production ingress pipeline, with authenticated sender binding.
+            for (final row in [...durablePass, ...lateAccepts]) {
+              final target = peers.singleWhere(
+                (p) => p.peerId == row.targetPeerId,
+              );
+              for (var duplicate = 0; duplicate < 2; duplicate++) {
+                await target.listener.processIncomingMessage(
+                  ChatMessage(
+                    from: row.senderPeerId,
+                    to: row.targetPeerId,
+                    content: row.rawEnvelope,
+                    timestamp: DateTime.now().toUtc().toIso8601String(),
+                    isIncoming: true,
+                    transport: 'direct',
+                  ),
+                );
+              }
+            }
+            if (!acceptsBeforePass) {
+              final ignored = await acceptIntroduction(
+                introRepo: peers[otherIndex].intros,
+                contactRepo: peers[otherIndex].contacts,
+                p2pService: peers[otherIndex].p2p,
+                bridge: peers[otherIndex].bridge,
+                introductionId: introId,
+                ownPeerId: peers[otherIndex].peerId,
+                ownUsername: 'Other participant',
+              );
+              expect(ignored!.status, IntroductionOverallStatus.passed);
+            }
+            for (final peer in peers) {
+              await retryPendingIntroductionDeliveries(
+                introRepo: peer.intros,
+                p2pService: peer.p2p,
+                olderThan: Duration.zero,
+              );
+            }
+            for (final peer in peers) {
+              await peer.p2p.drainOfflineInbox();
+            }
+            for (var i = 0; i < peers.length; i++) {
+              peers[i] = await peers[i].reopen();
+              expect(
+                (await peers[i].intros.getIntroduction(introId))!.status,
+                IntroductionOverallStatus.passed,
+              );
+              expect(await peers[i].db.query('introductions'), hasLength(1));
+              expect(
+                await peers[i].intros.loadOutboxDeliveriesForIntroduction(
+                  introId,
+                ),
+                isEmpty,
+              );
+              expect(
+                await peers[i].contacts.getAllContacts(),
+                hasLength(i == 0 ? 2 : 1),
+              );
+            }
+            expect(await peers[1].contacts.getContact(peers[2].peerId), isNull);
+            expect(await peers[2].contacts.getContact(peers[1].peerId), isNull);
+          },
+        );
+      }
+    }
+  });
+
   group('IN-007 introductions preserve existing contacts and conversations', () {
     for (final ownIsRecipient in [true, false]) {
       for (final mutuallyAccepted in [false, true]) {
@@ -407,4 +647,67 @@ void main() {
       }
     }
   });
+}
+
+// Reuses the existing real production-schema repository builders above and
+// existing fake transport. No app service construction or device harness.
+class _PersistentIntroPeer {
+  _PersistentIntroPeer(this.databasePath, this.peerId, this.network, this.db)
+    : contacts = _buildContactRepo(db),
+      intros = _buildIntroRepo(db),
+      messages = _buildMessageRepo(db) {
+    p2p = fake_p2p.FakeP2PService(peerId: peerId, network: network);
+    router = IncomingMessageRouter(p2pService: p2p);
+    listener = IntroductionListener(
+      introductionStream: router.introductionStream,
+      introRepo: intros,
+      contactRepo: contacts,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => 'fixture-secret-key',
+      getOwnPeerId: () async => peerId,
+      messageRepo: messages,
+    );
+    router.start();
+    listener.start();
+  }
+
+  final String databasePath;
+  final String peerId;
+  final FakeP2PNetwork network;
+  final Database db;
+  final ContactRepositoryImpl contacts;
+  final IntroductionRepositoryImpl intros;
+  final MessageRepositoryImpl messages;
+  final bridge = PassthroughCryptoBridge();
+  late final fake_p2p.FakeP2PService p2p;
+  late final IncomingMessageRouter router;
+  late final IntroductionListener listener;
+  bool _closed = false;
+
+  static Future<_PersistentIntroPeer> open({
+    required String databasePath,
+    required String peerId,
+    required FakeP2PNetwork network,
+  }) async => _PersistentIntroPeer(
+    databasePath,
+    peerId,
+    network,
+    await _openDb(databasePath: databasePath),
+  );
+
+  Future<_PersistentIntroPeer> reopen() async {
+    await close();
+    return open(databasePath: databasePath, peerId: peerId, network: network);
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    p2p.setOnline(false);
+    listener.dispose();
+    router.dispose();
+    p2p.dispose();
+    await Future<void>.delayed(Duration.zero);
+    await db.close();
+  }
 }

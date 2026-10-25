@@ -269,7 +269,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           icon: Icons.person_off,
           title: AppLocalizations.of(context)!.qr_no_identity,
           message: _errorMessage!,
-          showRetry: false,
+          showRetry: true,
         );
 
       case _QRDisplayState.error:

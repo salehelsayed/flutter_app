@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -13,6 +15,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -20,6 +23,7 @@ import '../../../shared/fakes/fake_group_pubsub_network.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/group_test_user.dart';
 import '../../../shared/fixtures/media_bytes.dart';
+import '../../../shared/fixtures/near_limit_media.dart';
 
 class _DownloadWritingBridge extends FakeBridge {
   @override
@@ -115,6 +119,37 @@ class _FailOncePartialDownloadBridge extends _DownloadWritingBridge {
       }
     }
     return super.send(message);
+  }
+}
+
+// Same group download/crypto fixture as the existing fan-out tests, with
+// exact full near-cap bytes and one real partial file before a transport error.
+class _NearLimitDownloadBridge extends _DownloadWritingBridge {
+  _NearLimitDownloadBridge(this.bytes, {this.interruptNextDownload = false});
+  final Uint8List bytes;
+  bool interruptNextDownload;
+  String? interruptedPath;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] != 'media:download') return super.send(message);
+    commandLog.add('media:download');
+    final payload = parsed['payload'] as Map<String, dynamic>;
+    final path = payload['outputPath'] as String;
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    if (interruptNextDownload) {
+      interruptNextDownload = false;
+      interruptedPath = path;
+      await file.writeAsBytes(bytes.sublist(0, 1024), flush: true);
+      return jsonEncode({
+        'ok': false,
+        'errorMessage': 'download incomplete: wrote 1024, err=EOF',
+      });
+    }
+    await file.writeAsBytes(bytes, flush: true);
+    return jsonEncode({'ok': true, 'id': payload['id'], 'size': bytes.length});
   }
 }
 
@@ -394,6 +429,184 @@ void main() {
     expect(actual.encryptionNonce, sent.encryptionNonce);
     expect(actual.encryptionScheme, sent.encryptionScheme);
   }
+
+  test(
+    'GX-003 actual over-cap file is refused before crypto or relay upload',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'astra_gx003_oversize_',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final file = File(p.join(root.path, 'over-limit.png'));
+      await file.writeAsBytes(nearLimitPngBytes());
+      await file.writeAsBytes([0, 0], mode: FileMode.append);
+      expect(await file.length(), kGroupMediaImageLimitBytes + 1);
+      final bridge = FakeBridge();
+      final outcome = await uploadMedia(
+        bridge: bridge,
+        localFilePath: file.path,
+        mime: 'image/png',
+        recipientPeerId: 'gx003-bob',
+        allowedPeers: ['gx003-sender', 'gx003-bob', 'gx003-charlie'],
+      );
+      expect(outcome, isA<UploadMediaFailed>());
+      expect((outcome as UploadMediaFailed).stage, UploadMediaStage.validation);
+      expect(outcome.errorCode, 'INVALID_MEDIA_SIZE');
+      expect(bridge.commandLog, isNot(contains('blob:keygen')));
+      expect(bridge.commandLog, isNot(contains('blob:encrypt')));
+      expect(bridge.commandLog, isNot(contains('media:upload')));
+      expect(
+        (await root.list().toList()).map((entry) => p.basename(entry.path)),
+        ['over-limit.png'],
+      );
+    },
+  );
+
+  test(
+    'GX-003 near-limit PNG reaches each authorized recipient after one interrupted transfer',
+    () async {
+      final bytes = nearLimitPngBytes();
+      final hash = sha256.convert(bytes).toString();
+      final alice = GroupTestUser.create(
+        peerId: 'gx003-sender',
+        username: 'Alice',
+        network: network,
+      );
+      final bobBridge = _NearLimitDownloadBridge(
+        bytes,
+        interruptNextDownload: true,
+      );
+      final charlieBridge = _NearLimitDownloadBridge(bytes);
+      final bobFiles = _ScopedMediaFileManager('astra-gx003-bob');
+      final charlieFiles = _ScopedMediaFileManager('astra-gx003-charlie');
+      final bob = GroupTestUser.create(
+        peerId: 'gx003-bob',
+        username: 'Bob',
+        network: network,
+        bridge: bobBridge,
+        mediaFileManager: bobFiles,
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'gx003-charlie',
+        username: 'Charlie',
+        network: network,
+        bridge: charlieBridge,
+        mediaFileManager: charlieFiles,
+      );
+      addTearDown(() async {
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+        for (final files in [bobFiles, charlieFiles]) {
+          if (await files._root.exists()) {
+            await files._root.delete(recursive: true);
+          }
+        }
+      });
+      const groupId = 'astra-gx003-near-limit';
+      await alice.createGroup(groupId: groupId, name: 'Near Limit');
+      await alice.addMember(groupId: groupId, invitee: bob);
+      await alice.addMember(groupId: groupId, invitee: charlie);
+      for (final user in [alice, bob, charlie]) {
+        await saveLatestKey(user: user, groupId: groupId, epoch: 1);
+        user.start();
+      }
+      await alice.broadcastMemberAdded(groupId: groupId, newMember: charlie);
+      await pump();
+      final media = attachment(
+        id: 'gx003-near-image',
+        mime: 'image/png',
+        size: bytes.length,
+        contentHash: hash,
+        width: 2,
+        height: 2,
+      );
+      final (result, sent) = await alice.sendGroupMessageViaBridge(
+        groupId: groupId,
+        text: 'near-limit group image',
+        mediaAttachments: [media],
+      );
+      expect(result, group_send.SendGroupMessageResult.success);
+      expect(sent, isNotNull);
+      // GroupTestUser owns listeners, not the application's periodic retrier.
+      // Observe the retained pending row, then use the existing production retry entry.
+      await waitForDownloads(user: bob, expectedCount: 1);
+      await waitForAttachmentStatus(
+        user: bob,
+        messageId: sent!.id,
+        expectedStatus: kMediaDownloadStatusPending,
+      );
+      final interrupted =
+          (await bob.mediaAttachmentRepo.getAttachmentsForMessage(
+            sent.id,
+            owner: MediaOwnerLane.group,
+          )).single;
+      expect(interrupted.localPath, isNull);
+      expect(bobBridge.interruptedPath, isNotNull);
+      expect(File(bobBridge.interruptedPath!).lengthSync(), 1024);
+      final recovered = await downloadMedia(
+        bridge: bobBridge,
+        mediaAttachmentRepo: bob.mediaAttachmentRepo,
+        mediaFileManager: bobFiles,
+        attachment: interrupted,
+        contactPeerId: groupId,
+        owner: MediaOwnerLane.group,
+        groupMessageRepo: bob.msgRepo,
+        enforceGroupMediaPolicy: true,
+      );
+      expect(recovered, isNotNull);
+      for (final user in [bob, charlie]) {
+        await waitForDownloadedAttachments(
+          user: user,
+          groupId: groupId,
+          messageTexts: ['near-limit group image'],
+        );
+        final messages = (await user.loadGroupMessages(
+          groupId,
+        )).where((m) => m.id == sent.id).toList();
+        expect(messages, hasLength(1));
+        final rows = await user.mediaAttachmentRepo.getAttachmentsForMessage(
+          sent.id,
+          owner: MediaOwnerLane.group,
+        );
+        expect(rows, hasLength(1));
+        expect(rows.single.id, media.id);
+        expect(rows.single.downloadStatus, kMediaDownloadStatusDone);
+        final files = identical(user, bob) ? bobFiles : charlieFiles;
+        final received = await File(
+          await files.resolveStoredPath(rows.single.localPath!),
+        ).readAsBytes();
+        expect(received.length, bytes.length);
+        expect(sha256.convert(received).toString(), hash);
+        final codec = await ui.instantiateImageCodec(received);
+        final frame = await codec.getNextFrame();
+        expect(frame.image.width, 2);
+        expect(frame.image.height, 2);
+        frame.image.dispose();
+        codec.dispose();
+      }
+      expect(bobBridge.interruptedPath, isNotNull);
+      expect(File(bobBridge.interruptedPath!).existsSync(), isFalse);
+      expect(
+        bobBridge.commandLog.where((cmd) => cmd == 'media:download'),
+        hasLength(2),
+      );
+      expect(
+        charlieBridge.commandLog.where((cmd) => cmd == 'media:download'),
+        hasLength(1),
+      );
+      final delivery = network.deliveryRecords
+          .where((record) => record['messageId'] == sent.id)
+          .toList();
+      expect(delivery, hasLength(2));
+      expect(
+        (await alice.loadGroupMessages(
+          groupId,
+        )).where((m) => m.id == sent.id).single.status,
+        isNot('sending'),
+      );
+    },
+  );
 
   group('Existing-member group media fan-out', () {
     test(

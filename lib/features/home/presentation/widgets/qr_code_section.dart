@@ -11,9 +11,17 @@ import 'package:qr_flutter/qr_flutter.dart';
 /// QR code display section with green glow effect.
 class QRCodeSection extends StatelessWidget {
   final String? qrData;
+  final String? qrError;
+  final VoidCallback? onQrRetry;
   final double scaleFactor;
 
-  const QRCodeSection({super.key, this.qrData, this.scaleFactor = 1.0});
+  const QRCodeSection({
+    super.key,
+    this.qrData,
+    this.qrError,
+    this.onQrRetry,
+    this.scaleFactor = 1.0,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -62,7 +70,9 @@ class QRCodeSection extends StatelessWidget {
               ],
             ),
             child: Center(
-              child: qrData != null
+              child: qrError != null
+                  ? _buildQRRenderError(context, qrImageSize)
+                  : qrData != null
                   ? qrCode == null
                         ? _buildQRRenderError(context, qrImageSize)
                         : QrImageView.withQr(
@@ -86,6 +96,16 @@ class QRCodeSection extends StatelessWidget {
             ),
           ),
         ),
+        if (qrError != null) ...[
+          SizedBox(height: spacing),
+          Text(qrError!, textAlign: TextAlign.center),
+          if (onQrRetry != null)
+            TextButton.icon(
+              onPressed: onQrRetry,
+              icon: const Icon(Icons.refresh),
+              label: Text(AppLocalizations.of(context)!.qr_try_again),
+            ),
+        ],
         // Debug hint
         if (kDebugMode && qrData != null && t > 0.5)
           Padding(

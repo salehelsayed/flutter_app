@@ -240,8 +240,10 @@ const _privacySha256 =
 // 2026-10-23: forward the existing iOS shared secure store to account erasure.
 // No application owner or resume dispatch moves.
 // Main merge preserves both callback fencing and shared-store erasure wiring.
+// 2026-10-24: pass the existing pending-key repair repository and repair
+// callback into notification route preparation. No owner or resume dispatch moves.
 const _applicationRootNormalizedSha256 =
-    'b6b479d037c93e3b3f79bfd4a1f8cf89063abf8870a7d2c8fbcc8dc514baa7e7';
+    '25f4456b1b03ef3a6dbb229ee8bdb7816cc160ebe0ba26dfa26fe3b94bc22ffe';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -420,7 +422,10 @@ const _productionBootstrapNormalizedSha256 =
     // Plan 407 fixes: PostListener receives the friend thought-card registry
     // built beside the notification-id registry, so one card per friend holds
     // across the main and background isolates. No owner moves.
-    '68d52f403c813f545d81af0625ef18c6c8297fbb628dca2d0d0af8d158f61741';
+    // Contact-request burst fix: the received-call-wake recovery send passes
+    // requireFresh: true so it never reuses an earlier coalesced send. One
+    // argument at the existing call site; no owner moves.
+    '1988ad6d367a7c50551c1be55701ad5c7fd5298277ff608f343d9e20f4ad3fab';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -452,8 +457,9 @@ const _productionBootstrapNormalizedSha256 =
 // The same approved media erasure/shared-store wiring changes this remainder;
 // the exact historical notification callback remains byte-identical and unique.
 // Combined main erasure/recovery and Thoughts wiring retain the historical callback.
+// The same contact-request requireFresh argument changes only the reviewed remainder.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '59dad478e7397d875d51f5f389be9b03f547139ff45c7d1ec1500c4075da1485';
+    'bd00c236d816fe0fff7aa75dedc923c9676e2ae1318e26ec02f4863553542ffa';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

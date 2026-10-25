@@ -2383,6 +2383,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       bridge: widget.bridge,
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
+      pendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      requestGroupKeyRepair: widget.requestGroupKeyRepair,
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,
       reactionRepository: widget.reactionRepository,

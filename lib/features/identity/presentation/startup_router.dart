@@ -1227,19 +1227,22 @@ class _StartupRouterState extends State<StartupRouter> {
 
       var initialIosApnsOpenComplete = true;
       var initialPushOpenComplete = true;
+      Future<void>? initialPushOpenRecovery;
       if (settleIosColdStartRecovery != null) {
-        final initialIosApnsOpen =
-            await _consumeInitialIosApnsNotificationOpen();
-        initialIosApnsOpenComplete =
-            initialIosApnsOpen !=
-            IosApnsInitialNotificationOpenDisposition.failed;
-        if (initialIosApnsOpen !=
-            IosApnsInitialNotificationOpenDisposition.routed) {
-          // The native AppDelegate path is authoritative on iOS. Consult FCM
-          // only when native had no pending open (or its bridge failed), so one
-          // cold tap cannot be routed twice by both integrations.
-          initialPushOpenComplete = await _handleInitialPushOpen();
-        }
+        initialPushOpenRecovery = () async {
+          final initialIosApnsOpen =
+              await _consumeInitialIosApnsNotificationOpen();
+          initialIosApnsOpenComplete =
+              initialIosApnsOpen !=
+              IosApnsInitialNotificationOpenDisposition.failed;
+          if (initialIosApnsOpen !=
+              IosApnsInitialNotificationOpenDisposition.routed) {
+            // The native AppDelegate path is authoritative on iOS. Consult FCM
+            // only when native had no pending open (or its bridge failed), so one
+            // cold tap cannot be routed twice by both integrations.
+            initialPushOpenComplete = await _handleInitialPushOpen();
+          }
+        }();
       }
 
       // Now that the Go node is running (pubsub initialized), rejoin group
@@ -1327,6 +1330,12 @@ class _StartupRouterState extends State<StartupRouter> {
         unawaited(startupGroupRecovery);
       } else {
         unawaited(_recoverGroupExitIntentsAtStartup());
+      }
+
+      // Group catch-up does not depend on discovering an initial push.
+      // Settlement still waits for notification ownership to be resolved.
+      if (initialPushOpenRecovery != null) {
+        await initialPushOpenRecovery;
       }
 
       final recoverDroppedPushes = widget.recoverDroppedPushes;
@@ -1857,6 +1866,7 @@ class _StartupRouterState extends State<StartupRouter> {
       groupRepository: widget.groupRepository,
       groupMessageRepository: widget.groupMessageRepository,
       pendingKeyRepairRepository: widget.groupPendingKeyRepairRepository,
+      requestGroupKeyRepair: widget.requestGroupKeyRepair,
       historyGapRepairRepository: widget.groupHistoryGapRepairRepository,
       groupMessageListener: widget.groupMessageListener,
       mediaAttachmentRepository: widget.mediaAttachmentRepository,

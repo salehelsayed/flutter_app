@@ -277,6 +277,116 @@ final class _MailboxBackedControlPort implements CallControlSignalingPort {
 }
 
 void main() {
+  test('VC-002 signed invite and scheduled ringing limits bind the established '
+      'call', () async {
+    final now = DateTime.utc(2026, 10, 24, 12);
+    final callId = CallId.parse('22222222-2222-4222-8222-222222222222');
+    final wires = <({CallSignal signal, String envelope})>[];
+    final timers =
+        <
+          ({
+            CallId callId,
+            CallTimeoutKind kind,
+            DateTime at,
+            Duration requested,
+            Duration effective,
+          })
+        >[];
+    final codec = SecureCallEnvelopeCodec(
+      crypto: _Crypto(),
+      nowMs: () => now.millisecondsSinceEpoch,
+      onEncoded: (signal, envelope) {
+        if (signal.event == CallSignalType.invite) {
+          wires.add((signal: signal, envelope: envelope));
+        }
+      },
+    );
+    final context = CallSignalingContextStore();
+    final mailbox = _Mailbox(null);
+    final sender = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+      historyProjector: CallHistoryProjector(_History()),
+      effectExecutor: CallControlEffectExecutor(
+        contextStore: context,
+        signalingPort: _MailboxBackedControlPort(
+          mailbox: mailbox,
+          codec: codec,
+          callHandle: '33333333-3333-4333-8333-333333333333',
+        ),
+        clock: () => now,
+        idSource: () => CallId.parse('11111111-1111-4111-8111-111111111111'),
+      ),
+      clock: () => now,
+      idSource: () => callId,
+      onTimerScheduled: (id, kind, at, requested, effective) {
+        timers.add((
+          callId: id,
+          kind: kind,
+          at: at,
+          requested: requested,
+          effective: effective,
+        ));
+      },
+    );
+    addTearDown(sender.dispose);
+    await sender.placeCall(
+      contactPeerId: 'recipient-account',
+      localAccountPeerId: 'sender-account',
+      localDeviceId: 'sender-device',
+    );
+    expect(mailbox.storeCalls, 1);
+    for (final type in [
+      CallEventType.remoteAccept,
+      CallEventType.negotiationReady,
+      CallEventType.mediaConnected,
+    ]) {
+      await sender.dispatch(
+        CallEvent(
+          type: type,
+          eventId: 'vc002-${type.name}',
+          occurredAt: now,
+          callId: callId,
+        ),
+      );
+    }
+    expect(sender.activeSession?.state, CallState.connected);
+    expect(wires, hasLength(1));
+    final wire = wires.single;
+    final outer = jsonDecode(wire.envelope) as Map<String, dynamic>;
+    expect(wire.signal.callId, callId);
+    expect(wire.signal.expiresAtMs - wire.signal.createdAtMs, 40000);
+    expect(outer['expires_at_ms'], wire.signal.expiresAtMs);
+    expect(
+      outer['signature'],
+      isA<String>().having(
+        (signature) => signature.isNotEmpty,
+        'signature present',
+        isTrue,
+      ),
+    );
+    final delivery = timers.singleWhere(
+      (timer) => timer.kind == CallTimeoutKind.inviteExpiry,
+    );
+    final unanswered = timers.singleWhere(
+      (timer) => timer.kind == CallTimeoutKind.noAnswer,
+    );
+    expect(delivery.callId, callId);
+    expect(unanswered.callId, callId);
+    expect(delivery.requested, const Duration(seconds: 45));
+    expect(unanswered.requested, const Duration(seconds: 30));
+    expect(unanswered.effective, const Duration(seconds: 30));
+    final deliveryDeadline = delivery.at.add(delivery.effective);
+    expect(
+      deliveryDeadline,
+      sender.activeSession!.startedAt!.add(const Duration(seconds: 45)),
+    );
+    expect(
+      deliveryDeadline.millisecondsSinceEpoch - wire.signal.expiresAtMs,
+      5000,
+    );
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
   for (final route in <CallRouteClass>[
     CallRouteClass.direct,

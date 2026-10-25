@@ -1335,6 +1335,88 @@ void main() {
   );
 
   testWidgets(
+    'icon cold start drains groups while the empty-native FCM lookup is pending',
+    (tester) async {
+      const peerId = '12D3KooWIconColdGroupRecovery';
+      const groupId = 'icon-cold-group';
+      await seedActiveReturningAccount(peerId);
+      final createdAt = DateTime.utc(2026, 10, 24);
+      final groups = InMemoryGroupRepository();
+      await groups.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Cold group',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: createdAt,
+          createdBy: peerId,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groups.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: peerId,
+          role: MemberRole.admin,
+          publicKey: 'pk-self',
+          mlKemPublicKey: 'mlkem-self',
+          joinedAt: createdAt,
+        ),
+      );
+      await groups.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'group-key',
+          createdAt: createdAt,
+        ),
+      );
+      final initialMessage = Completer<RemoteMessage?>();
+      final settlements = <bool>[];
+      var initialLookups = 0;
+      var emptyNativeConsumes = 0;
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: groups,
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          shouldHandleInitialPushOpen: () => true,
+          getInitialRemoteMessage: () {
+            initialLookups++;
+            return initialMessage.future;
+          },
+          consumeInitialIosApnsNotificationOpen: () async {
+            emptyNativeConsumes++;
+            return IosApnsInitialNotificationOpenDisposition.empty;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async => Object(),
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                settlements.add(canonicalStateComplete);
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+      final commandsBeforeLookupCompletes = List<String>.of(bridge.commandLog);
+      final settledBeforeLookupCompletes = settlements.isNotEmpty;
+      initialMessage.complete(null);
+      await pumpFrames(tester, count: 30);
+
+      expect(emptyNativeConsumes, 1);
+      expect(initialLookups, 1);
+      expect(commandsBeforeLookupCompletes, contains('group:join'));
+      expect(
+        commandsBeforeLookupCompletes,
+        contains('group:inboxRetrieveCursor'),
+      );
+      expect(settledBeforeLookupCompletes, isFalse);
+      expect(settlements, <bool>[true]);
+    },
+  );
+
+  testWidgets(
     'initial push opens after cold begin and completes before exact drains settle',
     (tester) async {
       const peerId = '12D3KooWIosColdInitialOpen';

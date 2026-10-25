@@ -16,6 +16,8 @@ import '../widgets/empty_circle_state.dart';
 /// First time experience screen with staggered animations.
 class FirstTimeExperienceScreen extends StatefulWidget {
   final String? qrData;
+  final String? qrError;
+  final VoidCallback? onQrRetry;
   final String username;
   final Uint8List? avatarBytes;
   final String? peerId;
@@ -28,6 +30,8 @@ class FirstTimeExperienceScreen extends StatefulWidget {
   const FirstTimeExperienceScreen({
     super.key,
     this.qrData,
+    this.qrError,
+    this.onQrRetry,
     required this.username,
     this.avatarBytes,
     this.peerId,
@@ -184,6 +188,8 @@ class _FirstTimeExperienceScreenState extends State<FirstTimeExperienceScreen>
                           child: RepaintBoundary(
                             child: QRCodeSection(
                               qrData: widget.qrData,
+                              qrError: widget.qrError,
+                              onQrRetry: widget.onQrRetry,
                               scaleFactor: t,
                             ),
                           ),
