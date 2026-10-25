@@ -35,9 +35,18 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_out
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart' as shared;
+
+class _ContactDeletePathProvider extends PathProviderPlatform {
+  _ContactDeletePathProvider(this.root);
+  final String root;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => root;
+}
 
 class FakeContactRepository implements ContactRepository {
   final List<String> deletedPeerIds = [];
@@ -663,97 +672,213 @@ void main() {
 
     for (final withFinalPurge in <bool>[true, false]) {
       final path = withFinalPurge ? 'final purge' : 'split delete fallback';
-      test('Calls page total, missed count and rows agree after deleting a '
-          'contact ($path)', () async {
-        final fixture = await MediaRepositoryRealDbFixture.create();
-        addTearDown(fixture.dispose);
-        final db = fixture.db;
-        await seedContact(db, deletedPeer, 'Dana');
-        await seedContact(db, otherPeer, 'Omar');
-        await seedCall(
-          db,
-          callId: '11111111-1111-4111-8111-111111111111',
-          peerId: deletedPeer,
-          direction: 'incoming',
-          status: 'missed',
-          terminalReason: 'no_answer',
-          startedAt: '2026-10-17T10:00:00.000Z',
-        );
-        await seedCall(
-          db,
-          callId: '22222222-2222-4222-8222-222222222222',
-          peerId: deletedPeer,
-          direction: 'outgoing',
-          status: 'completed',
-          terminalReason: 'local_hangup',
-          startedAt: '2026-10-17T10:05:00.000Z',
-        );
-        await seedCall(
-          db,
-          callId: '33333333-3333-4333-8333-333333333333',
-          peerId: otherPeer,
-          direction: 'incoming',
-          status: 'missed',
-          terminalReason: 'no_answer',
-          startedAt: '2026-10-17T10:10:00.000Z',
-        );
-        final before = await loadCallHistoryPage(
-          db,
-          missedOnly: false,
-          search: '',
-          limit: 50,
-        );
-        expect((before.total, before.missed, before.rows.length), (3, 2, 3));
-
-        await deleteContactAndMessages(
-          contactRepo: realContactRepository(
-            db,
-            withFinalPurge: withFinalPurge,
-          ),
-          messageRepo: fixture.messageRepo,
-          peerId: deletedPeer,
-          mediaAttachmentRepo: fixture.repo,
-        );
-
-        final all = await loadCallHistoryPage(
-          db,
-          missedOnly: false,
-          search: '',
-          limit: 50,
-        );
-        final missedOnly = await loadCallHistoryPage(
-          db,
-          missedOnly: true,
-          search: '',
-          limit: 50,
-        );
-        expect(all.total, 1);
-        expect(all.missed, 1);
-        expect(
-          all.rows
-              .map(
-                (row) => (
-                  row['call_id'],
-                  row['contact_account_peer_id'],
-                  row['local_contact_name'],
+      test(
+        'Calls page total, missed count and rows agree after deleting a '
+        'contact ($path); DC-013 chat/media purge persists after reopen',
+        () async {
+          final temp = await Directory.systemTemp.createTemp(
+            'dc013-contact-delete-',
+          );
+          addTearDown(() => temp.delete(recursive: true));
+          final previousPaths = PathProviderPlatform.instance;
+          PathProviderPlatform.instance = _ContactDeletePathProvider(temp.path);
+          addTearDown(() => PathProviderPlatform.instance = previousPaths);
+          var fixture = await MediaRepositoryRealDbFixture.create(
+            databasePath: p.join(temp.path, 'contact.sqlite'),
+          );
+          addTearDown(() => fixture.dispose());
+          var db = fixture.db;
+          await seedContact(db, deletedPeer, 'Dana');
+          await seedContact(db, otherPeer, 'Omar');
+          const deletedMessages = ['dc013-deleted-in', 'dc013-deleted-out'];
+          const keptMessage = 'dc013-kept';
+          for (final id in [...deletedMessages, keptMessage]) {
+            final contact = id == keptMessage ? otherPeer : deletedPeer;
+            await fixture.messageRepo.saveMessage(
+              ConversationMessage(
+                id: id,
+                contactPeerId: contact,
+                senderPeerId: id.endsWith('-out') ? 'dc013-self' : contact,
+                text: 'Contact deletion fixture $id',
+                timestamp: t0,
+                status: 'delivered',
+                isIncoming: !id.endsWith('-out'),
+                createdAt: t0,
+              ),
+            );
+          }
+          final files = <String, File>{};
+          for (final id in [deletedMessages.last, keptMessage]) {
+            final contact = id == keptMessage ? otherPeer : deletedPeer;
+            for (final pending in [false, true]) {
+              final attachmentId = '$id-${pending ? 'pending' : 'done'}';
+              final relative = pending
+                  ? 'pending_uploads/$id/$attachmentId.jpg'
+                  : 'media/$contact/$attachmentId.jpg';
+              final file = File(p.join(temp.path, relative));
+              await file.parent.create(recursive: true);
+              await file.writeAsBytes([1, 2, 3, 4]);
+              files[attachmentId] = file;
+              await fixture.repo.saveAttachment(
+                MediaAttachment(
+                  id: attachmentId,
+                  messageId: id,
+                  mime: 'image/jpeg',
+                  size: 4,
+                  mediaType: 'image',
+                  localPath: relative,
+                  downloadStatus: pending ? 'upload_pending' : 'done',
+                  createdAt: t0,
                 ),
-              )
-              .toList(),
-          [('33333333-3333-4333-8333-333333333333', otherPeer, 'Omar')],
-        );
-        expect((missedOnly.total, missedOnly.missed), (1, 1));
-        expect(missedOnly.rows.map((row) => row['call_id']).toList(), [
-          '33333333-3333-4333-8333-333333333333',
-        ]);
-        expect(
-          await db.query(
-            'contacts',
-            where: 'peer_id = ?',
-            whereArgs: const <Object?>[deletedPeer],
-          ),
-          isEmpty,
-        );
-      });
+                owner: MediaOwnerLane.direct,
+              );
+            }
+          }
+          final otherMessagesBefore = await db.query(
+            'messages',
+            where: 'contact_peer_id = ?',
+            whereArgs: [otherPeer],
+          );
+          final otherMediaBefore = await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: [keptMessage],
+            orderBy: 'id',
+          );
+          await seedCall(
+            db,
+            callId: '11111111-1111-4111-8111-111111111111',
+            peerId: deletedPeer,
+            direction: 'incoming',
+            status: 'missed',
+            terminalReason: 'no_answer',
+            startedAt: '2026-10-17T10:00:00.000Z',
+          );
+          await seedCall(
+            db,
+            callId: '22222222-2222-4222-8222-222222222222',
+            peerId: deletedPeer,
+            direction: 'outgoing',
+            status: 'completed',
+            terminalReason: 'local_hangup',
+            startedAt: '2026-10-17T10:05:00.000Z',
+          );
+          await seedCall(
+            db,
+            callId: '33333333-3333-4333-8333-333333333333',
+            peerId: otherPeer,
+            direction: 'incoming',
+            status: 'missed',
+            terminalReason: 'no_answer',
+            startedAt: '2026-10-17T10:10:00.000Z',
+          );
+          final before = await loadCallHistoryPage(
+            db,
+            missedOnly: false,
+            search: '',
+            limit: 50,
+          );
+          expect((before.total, before.missed, before.rows.length), (3, 2, 3));
+
+          await deleteContactAndMessages(
+            contactRepo: realContactRepository(
+              db,
+              withFinalPurge: withFinalPurge,
+            ),
+            messageRepo: fixture.messageRepo,
+            peerId: deletedPeer,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: MediaFileManager(),
+          );
+
+          Future<void> expectPurged() async {
+            expect(
+              await db.query(
+                'messages',
+                where: 'contact_peer_id = ?',
+                whereArgs: [deletedPeer],
+              ),
+              isEmpty,
+            );
+            expect(
+              await db.query(
+                'media_attachments',
+                where: 'message_id = ?',
+                whereArgs: [deletedMessages.last],
+              ),
+              isEmpty,
+            );
+            expect(
+              await db.query(
+                'messages',
+                where: 'contact_peer_id = ?',
+                whereArgs: [otherPeer],
+              ),
+              otherMessagesBefore,
+            );
+            expect(
+              await db.query(
+                'media_attachments',
+                where: 'message_id = ?',
+                whereArgs: [keptMessage],
+                orderBy: 'id',
+              ),
+              otherMediaBefore,
+            );
+            expect(await contacts_db.dbLoadContact(db, otherPeer), isNotNull);
+            for (final entry in files.entries) {
+              if (entry.key.startsWith(keptMessage)) {
+                expect(await entry.value.readAsBytes(), [1, 2, 3, 4]);
+              } else {
+                expect(await entry.value.exists(), isFalse);
+              }
+            }
+            final all = await loadCallHistoryPage(
+              db,
+              missedOnly: false,
+              search: '',
+              limit: 50,
+            );
+            final missedOnly = await loadCallHistoryPage(
+              db,
+              missedOnly: true,
+              search: '',
+              limit: 50,
+            );
+            expect(all.total, 1);
+            expect(all.missed, 1);
+            expect(
+              all.rows
+                  .map(
+                    (row) => (
+                      row['call_id'],
+                      row['contact_account_peer_id'],
+                      row['local_contact_name'],
+                    ),
+                  )
+                  .toList(),
+              [('33333333-3333-4333-8333-333333333333', otherPeer, 'Omar')],
+            );
+            expect((missedOnly.total, missedOnly.missed), (1, 1));
+            expect(missedOnly.rows.map((row) => row['call_id']).toList(), [
+              '33333333-3333-4333-8333-333333333333',
+            ]);
+            expect(
+              await db.query(
+                'contacts',
+                where: 'peer_id = ?',
+                whereArgs: const <Object?>[deletedPeer],
+              ),
+              isEmpty,
+            );
+          }
+
+          await expectPurged();
+          fixture = await fixture.reopen();
+          db = fixture.db;
+          await expectPurged();
+        },
+      );
     }
   });
 

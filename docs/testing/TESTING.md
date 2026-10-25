@@ -2852,6 +2852,21 @@ active negative/fresh controls.
 This host evidence does not cover camera decoding, native crypto, physical scans,
 OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
 
+DC-013 extends the two existing call-history deletion cases in
+`delete_contact_use_case_test.dart` rather than adding a separate harness.
+Both the final atomic purge and split-delete fallback now use a file-backed
+production-schema SQLite database with incoming/outgoing chat rows, completed
+and pending owned media, and an unrelated conversation. The real file manager
+uses a temporary documents root through the path-provider boundary. Deletion
+must remove the selected contact's messages, attachment rows and owned files;
+the other contact's SQL rows and file bytes remain unchanged. The same oracle,
+including the original Calls-page counts and identity assertions, runs again
+after a real database/repository reopen. Evidence is retained under
+`.codex-test-logs/astra-contact-catalog/group1/` (`003-dc013-causal.log` and
+`004-group1-focused.log`). These are host SQL/filesystem proofs; mobile UI,
+native SQLCipher, OS process termination and signed-candidate behavior remain
+separate.
+
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses
 the reciprocal key for exact Unicode/multiline text in both directions. Its QR
