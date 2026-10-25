@@ -17,18 +17,25 @@ class OrbitDepthMedia extends StatefulWidget {
     required this.load,
     required this.download,
     required this.onOpen,
+    this.lastLoaded,
   });
   final String postId;
   final Future<List<PostMediaAttachmentModel>> Function(String) load;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   download;
   final VoidCallback onOpen;
+
+  /// Media this card showed before, by post id. The card is rebuilt on every
+  /// entry into depth; starting from it avoids a spinner flash before the
+  /// same photo reappears.
+  final Map<String, List<PostMediaAttachmentModel>>? lastLoaded;
   @override
   State<OrbitDepthMedia> createState() => _OrbitDepthMediaState();
 }
 
 class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
-  List<PostMediaAttachmentModel> _media = const [];
+  late List<PostMediaAttachmentModel> _media =
+      widget.lastLoaded?[widget.postId] ?? const [];
   bool _loading = true;
   bool _failed = false;
   int _generation = 0;
@@ -42,7 +49,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   void didUpdateWidget(covariant OrbitDepthMedia oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.postId != widget.postId) {
-      _media = const [];
+      _media = widget.lastLoaded?[widget.postId] ?? const [];
       unawaited(_load());
     }
   }
@@ -85,6 +92,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
       if (!current()) return;
       media = await widget.load(postId).timeout(const Duration(seconds: 30));
       if (!current()) return;
+      widget.lastLoaded?[postId] = media;
       setState(() {
         _media = media;
         _loading = false;

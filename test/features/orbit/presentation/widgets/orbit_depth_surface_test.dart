@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_media.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../../support/depth_fixtures.dart';
 
@@ -694,6 +696,57 @@ void main() {
       final writes = List<String>.of(seen);
       await finish(tester);
       expect(writes, isNot(contains('replacement')));
+    },
+  );
+  testWidgets(
+    'the front card keeps its media while the orbit springs into depth',
+    (tester) async {
+      reduceMotion = false;
+      thoughts['peer-1'] = depthThought(1, mediaKind: 'image');
+      await mount(tester, load: (_) async => const []);
+      final gesture = await tester.startGesture(const Offset(195, 560));
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(0, -22));
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      await gesture.up();
+      final mediaStates = <State>{};
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 25));
+        final media = find.byType(OrbitDepthMedia);
+        if (media.evaluate().isNotEmpty) mediaStates.add(tester.state(media));
+      }
+      expect(card(1), findsOneWidget);
+      expect(mediaStates, hasLength(1));
+      await finish(tester);
+    },
+  );
+  testWidgets(
+    'entering depth again shows the card media it already loaded at once',
+    (tester) async {
+      final photo = PostMediaAttachmentModel(
+        mediaId: 'photo-1',
+        postId: 'post-1',
+        blobId: 'blob-1',
+        kind: 'image',
+        mime: 'image/jpeg',
+        sizeBytes: 1,
+        createdAt: depthNow.toIso8601String(),
+      );
+      thoughts['peer-1'] = depthThought(1, mediaKind: 'image');
+      Completer<List<PostMediaAttachmentModel>>? held;
+      await mount(tester, load: (_) => held?.future ?? Future.value([photo]));
+      await swipe(tester, const Offset(0, -220));
+      expect(find.byType(MediaGrid), findsOneWidget);
+      await swipe(tester, const Offset(0, 220));
+      expect(card(1), findsNothing);
+      held = Completer();
+      await swipe(tester, const Offset(0, -220));
+      expect(card(1), findsOneWidget);
+      expect(find.byType(MediaGrid), findsOneWidget);
+      held.complete([photo]);
+      await tester.pump();
+      await finish(tester);
     },
   );
 }

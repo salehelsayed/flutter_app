@@ -106,6 +106,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   _DepthLanding? _pendingLanding;
   bool _overviewRequested = false;
   Timer? _expiry;
+  final _lastLoadedMedia = <String, List<PostMediaAttachmentModel>>{};
   Timer? _age;
   double _scale = 1;
   bool get _active => widget.active && _routeActive && _foreground;
@@ -694,6 +695,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         faces.add((
           depth: position.dy,
           widget: Positioned(
+            key: ValueKey(
+              'orbit-depth-seat-${layer.name}-${seat.friend.peerId}',
+            ),
             left: position.dx - diameter / 2,
             top: position.dy - diameter / 2,
             width: diameter,
@@ -706,6 +710,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           faces.add((
             depth: position.dy + 1,
             widget: Positioned(
+              key: ValueKey('orbit-depth-note-slot-${thought.id}'),
               left: (position.dx - 52 * k).clamp(
                 0,
                 math.max(0, size.width - 104 * k),
@@ -833,7 +838,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             ),
             ...faces.map((face) => face.widget),
             if (cardVisible)
+              // Faces come and go and re-sort every frame; without a key the
+              // card's subtree is rebuilt and its media reloads and flickers.
               Positioned(
+                key: const ValueKey('orbit-depth-card-slot'),
                 left: 14 * k,
                 right: 14 * k,
                 top: _anchor == OrbitDepthAnchor.top
@@ -920,6 +928,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               load: widget.loadMedia!,
               download: widget.downloadMedia!,
               onOpen: open,
+              lastLoaded: _lastLoadedMedia,
             ),
         ],
       ),
