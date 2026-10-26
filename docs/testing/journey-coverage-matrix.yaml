@@ -16792,9 +16792,9 @@ gaps:
 - rank: 21
   journey_id: VC-024
   test_type: e2e
-  status: n_a
+  status: not_started
   status_date: "2026-10-26"
-  status_note: "Owner reports unavailable hardware leg; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024); no sustained-audio certification or Astra discovery."
+  status_note: "Not started: sustained bidirectional audio/resource proof; only unavailable wired/Bluetooth accessory legs are N/A per owner; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024)."
   must_verify: Specify duration/resource thresholds, hold real bidirectional audio and test only actually available
     output accessories with positive audio continuity.
   why: Short RTP/control runs and sampler unit tests cannot prove sustained audio/resource behavior.

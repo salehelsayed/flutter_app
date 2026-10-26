@@ -9667,7 +9667,7 @@ Progress as of 2026-10-26T14:45:24Z. `ready` means reviewed preparation waiting 
 | 18 | GX-002 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; actual mixed-platform full-media/membership execution pending. |
 | 19 | VC-023 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (VC-023); actual selected route/TURN outage/privacy execution pending. |
 | 20 | MEDIA-018 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-018), including cut-actor binding; native partial-transfer recovery pending. |
-| 21 | VC-024 | n_a | 2026-10-26 | Owner reports unavailable hardware leg; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024); no sustained-audio certification or Astra discovery. |
+| 21 | VC-024 | not_started | 2026-10-26 | Not started: sustained bidirectional audio/resource proof; only unavailable wired/Bluetooth accessory legs are N/A per owner; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024). |
 | 22 | GX-001 | n_a | 2026-10-26 | Owner reports eight concurrent targets unavailable; /Volumes/CrucialX9/Kayan/testplan.yaml (GX-001); N/A by available-target policy. |
 | 23 | NAV-006 | blocked | 2026-10-26 | Owner decision on supported Inner-Circle membership/order entry remains pending; docs/testing/journey-coverage-matrix.md (NAV-006). |
 
