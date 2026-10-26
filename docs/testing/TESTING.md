@@ -3048,6 +3048,10 @@ The preparation packets `privacy-e2e-mcp.md` and `introduction-e2e-mcp.md` reuse
 existing native/host oracles and identify the additional manual MCP observations.
 Their new privacy/Pass/OS-notification legs are not cases in the Python receipt
 checker and remain unrun until the execution owner records actual device proof.
+The introduction packet also prepares IN-009's missing offline Pass leg, with
+both committed recipient carriers, an observed process cut, natural convergence
+and unchanged consent/history. Existing offline ACCEPT and signed SQL/atomic
+outbox controls retain their narrower scope; native Pass execution is unrun.
 `messaging-reliability-e2e-mcp.md` adds the Group A handoff while reusing the
 existing typed native/host oracles. It distinguishes current transport glyphs,
 conditional linked authoring versus persisted authority, emulator-scoped relay

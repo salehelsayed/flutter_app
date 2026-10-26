@@ -1,4 +1,4 @@
-# Introductions: Pass and notification routing through MCP
+# Introductions: Pass, offline responses and notification routing through MCP
 
 Execution owner: `flutter_app`. Astra prepared these steps from source; every
 device leg below is unrun by Astra. Use actual Appium MCP tools, existing setup
@@ -19,6 +19,7 @@ unavailable hardware.
 | Item | Existing evidence to reuse | Missing execution prepared here |
 | --- | --- | --- |
 | IN-003 | Pass/terminal/late-accept host controls | real three-person Pass UI, delivery and restart |
+| IN-009 | existing offline offers/ACCEPT campaign and atomic Pass/outbox controls | offline Pass carriers, real process restart and eventual consent convergence |
 | IN-008 | resolver, Orbit route and consent roundtrip host controls | real OS notification delivery and tap, platform/state separately |
 
 The existing `run_production_introduction_mutual.dart` and
@@ -78,6 +79,86 @@ Planning estimate: 15–25 minutes for the four orders, excluding setup.
    retain the host causal late-envelope proof and mark the native late-accept
    injection unrun/incomplete. A later tap on a different introduction or a
    fabricated notification is not that control. Add no production fault seam.
+
+## IN-009 — offline Pass survives restart and reaches both recipients
+
+Prepared after the 2026-10-26 catalog audit. Reuse the reviewed
+`production.introduction_catalog.offline_outbox_recovery` campaign for its
+offline offers and **ACCEPT** leg; its
+`tool/sims/production_introduction_offline_criteria.dart:12-15` explicitly leaves
+Pass to a separate leg. IN-001/002 already have reviewed runners; add no duplicate
+notification or mutual-acceptance harness. This additional Pass sequence is
+unrun by Astra and is not implemented by the priority Python receipt checker.
+
+Exact host controls to retain:
+
+- `test/features/introduction/application/pass_introduction_outbox_failure_test.dart`
+  rejects a committed response when atomic outbox persistence fails, including
+  the acceptance control. The earlier Pass persistence bug was fixed by the
+  owner in `9b0131182`; do not reinstate separate terminal/outbox writes.
+- `test/features/introduction/integration/existing_contacts_and_conversations_preserved_test.dart:243`
+  has four signed, file-backed SQL Pass/reopen/late-accept cases (both participant
+  roles, with/without a prior acceptance). Transport/native lifecycle are faked.
+- `lib/features/introduction/application/pass_introduction_use_case.dart:91-150`
+  stages **two** carriers: to I and to the other participant, commits the guarded
+  response with both, then attempts delivery. Preserve each actual carrier's
+  recipient/identity; their recipient-specific encrypted bytes need not match.
+
+Use the same three owned roles and selective I↔P/I↔Q contacts as IN-003. Bind
+source/artifact/package/configuration and actual actor/network state privately.
+Remote test relay is Hetzner; owned local fixtures are allowed, with no AWS
+fallback or remote relay change. Appium MCP owns ordinary UI; an existing
+fixture may own only its documented offline/custody/process boundary. Do not
+overlap automation owners or introduce a new app fault hook.
+
+| Fresh introduction | Initial decision | Offline response to exercise |
+| --- | --- | --- |
+| P passes first | Q remains pending | P's Pass to I and Q |
+| Q passes first | P remains pending | Q's Pass to I and P |
+| Q accepted first | P has not accepted | P's Pass to I and Q |
+| P accepted first | Q has not accepted | Q's Pass to I and P |
+
+1. Confirm the exact introduction is pending, both offers have arrived, the
+   initial decision above has settled, and P/Q still lack mutual contacts.
+   Keep unrelated contacts/history as preservation controls. Use a fresh
+   introduction for each row; a new introduction after an old terminal is a
+   different identity, not revival of that old row.
+2. Leave I and the non-passing participant genuinely offline through supported
+   owned operations. To stage a durable pending response before egress, also
+   isolate the passing emulator's network while leaving its UI usable, or use
+   the existing stopped-node window from
+   `integration_test/support/production_intro_offline_probe.dart`. Establish the
+   real state and preserve its original bound. A stopped node is not OS airplane
+   mode; a network icon alone is insufficient. Never turn off a shared host
+   network or change unrelated targets.
+3. Tap actual Pass through MCP. Observe the committed terminal response and
+   both actual recipient carriers through existing storage/custody observers.
+   If an outbox entry already drained, require its accepted relay custody or
+   actual recipient delivery instead; do not require two permanently pending
+   rows after success. No committed Pass may have neither a durable carrier
+   nor accepted outbound custody for either recipient.
+4. Kill the passing app's owned process after the observed commit, retain the
+   actual cut receipt, and restart without clearing data. Preserve terminal
+   identity and pending delivery/custody. A kill after relay acceptance is a
+   post-custody cut, not proof of a pre-egress cut. If a pending window cannot
+   be staged or observed with existing controls, retain the host atomic-failure
+   proof and mark that native checkpoint incomplete; never synthesize rows.
+5. Restore the passer's network, then bring I and the other participant back
+   through normal supported foreground/inbox recovery. Observe natural UI
+   convergence before a generic protocol probe or explicit drain can cause it.
+   All copies of the same introduction settle passed once, both carriers reach
+   their intended recipients, and no P↔Q contact or successful pair chat is
+   created. Retain actual first-failure/deadline evidence rather than extend a
+   failed response wait.
+6. Reopen the three apps and inspect exact rows, carrier disposition and
+   unchanged unrelated history. Restart/replay must not duplicate consent or
+   strand a committed response. Reuse IN-003's same-introduction late-accept
+   control where its actual queued order is observable; otherwise keep that
+   causal host result separate. Finally use a fresh IN-002 mutual-acceptance
+   positive control so a broken delivery path cannot masquerade as refusal.
+
+Record each role/order/cut separately. SQL-only Pass, the offline ACCEPT campaign,
+or one recipient's terminal screen cannot fill missing native Pass/carrier proof.
 
 ## IN-008 — notification opens the current authorized destination
 
