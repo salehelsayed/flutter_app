@@ -373,14 +373,24 @@ void main() {
   test('a media-only thought names its media in the body', () async {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
+    Future<void> cardsShown(int count) async {
+      for (
+        var i = 0;
+        i < 300 && notifications.shownThoughts.length < count;
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    }
+
     controller.add(
       _message('peer-bob', 'Bob', postId: 'v', text: '', mediaKind: 'voice'),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await cardsShown(1);
     controller.add(
       _message('peer-bob', 'Bob', postId: 'p', text: '', mediaKind: 'image'),
     );
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await cardsShown(2);
 
     expect(notifications.shownThoughts.map((n) => n.body), [
       'Voice message',
