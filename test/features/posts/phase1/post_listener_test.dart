@@ -508,10 +508,11 @@ void main() {
     'suppresses notifications for archived senders but still persists',
     () async {
       contacts.addTestContact(_contact('peer-bob', 'Bob', archived: true));
+      final emitted = listener.incomingPostStream.first;
 
       controller.add(_message('peer-bob', 'Bob'));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
 
+      expect((await emitted).id, 'post-peer-bob');
       expect(notifications.shownThoughts, isEmpty);
       expect((await posts.loadFeed()), hasLength(1));
     },
