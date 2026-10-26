@@ -3039,11 +3039,11 @@ checker and remain unrun until the execution owner records actual device proof.
 existing typed native/host oracles. It distinguishes current transport glyphs,
 conditional linked authoring versus persisted authority, emulator-scoped relay
 faults and controlled host retention/rejection proof from unrun native legs.
-The owner's 2026-10-26 relay rule requires an explicit Hetzner test-relay binding
-for networked testing; AWS is reserved for pre-publish store-build lanes. Stop
-and report runners/artifacts that cannot take that binding, with no production
-fallback or relay deployment/configuration change. Hermetic host oracles do not
-contact either remote service.
+The owner's clarified 2026-10-26 relay rule sends remote test traffic to Hetzner;
+owned disposable local relay/coturn fixtures remain allowed. AWS is reserved for
+pre-publish store-build lanes. Stop and report runners/artifacts that cannot use
+the intended test binding, with no AWS fallback or remote relay deployment/
+configuration change. Hermetic host oracles do not contact either remote service.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build

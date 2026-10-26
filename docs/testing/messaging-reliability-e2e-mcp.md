@@ -8,14 +8,15 @@ one USB Android and an available Android emulator; the full linked/group legs
 use a third owned instance when available. Missing hardware is N/A by project
 policy; a missing artifact, feature fixture or observation is a separate blocker.
 
-Owner relay rule, 2026-10-26: all networked test runs explicitly use the Hetzner
-test relay. AWS is reserved for the owner's pre-publish store-build lanes; this
+Owner relay rule, clarified 2026-10-26: remote test traffic explicitly uses the
+Hetzner test relay; owned disposable local relay/coturn fixtures are also allowed.
+AWS is reserved for the owner's pre-publish store-build lanes; this
 preparation grants no AWS exception. The coordinator reports both services at
 v1.11.2; Astra has not inspected either deployment. No deployment, configuration
 or service changes on either relay. If an existing campaign/artifact cannot be
-bound to Hetzner, stop that leg and report it; never use its production/default
-fallback. Only an owned emulator-side fault may affect a live test path. Existing
-hermetic host fixtures stay local and do not contact AWS. Keep identities,
+bound to Hetzner or its intended local fixture, stop that leg and report it;
+never use its production/default fallback. Fault only an owned emulator or
+local fixture. Existing hermetic host fixtures stay local and do not contact AWS. Keep identities,
 addresses, synthetic content and raw evidence private; mail paths/redacted facts.
 
 | Item | Existing coverage | Additional execution |
@@ -62,8 +63,9 @@ terminal manual-Retry proof (`TESTING.md:2453–2469`).
    For strict media, existing hermetic fixture/SQL coverage uses
    `upload_storage_block`/`upload_storage_restore` only on its owned filesystem
    root and proves same-generation/ciphertext recovery and receipt settlement
-   (`TESTING.md:2478–2505`). These are host controls: do not apply storage faults
-   to Hetzner or substitute a live local/AWS profile for this native test leg.
+   (`TESTING.md:2478–2505`). The corresponding existing owned local fixture may
+   support a separate instrumented native leg; never apply storage faults to
+   Hetzner/AWS or call local-fixture evidence a remote signed-candidate pass.
 4. Restore only the owned fault. Automatic recovery must use the original
    logical message/attachment, deliver once and leave no stale in-flight UI
    after the existing retry/receipt convergence deadline. Reopen both apps:
@@ -98,7 +100,8 @@ scoped direct selectors, not `MKNOON_ENABLE_MULTI_DEVICE_SYNC`
 (`run_invite_reliability_multi_device.dart:102–117`). Preserve its actual profile
 and disposable guards; do not substitute the group B1b campaign.
 Set `MKNOON_RELAY_ADDRESSES` explicitly to the executor's verified Hetzner test
-profile: this runner otherwise defaults to production (:19,52). Confirm every
+profile or intended disposable local fixture: this runner otherwise defaults
+to production (:19,52). Confirm every
 role's artifact actually contains the override before launch; otherwise stop.
 
 That runner proves linked-origin identity mapping, one blob-free event, one
@@ -173,7 +176,8 @@ or a stopped client node do not isolate this fault.
 5. If the existing emulator control cannot isolate all configured routes or
    cannot prove actual failed custody, mark this native fault leg blocked. Do
    not create a second networking/UI harness, widen the outage to unrelated
-   peers, use an AWS/local-relay fallback for the native run or change a service.
+   peers, use an AWS fallback or change a remote service. An existing owned local
+   fixture profile is allowed with its source-built/configuration scope explicit.
 
 Reuse `TestCatalogDC017OwnedRelayServiceOutageAndReplay` in
 `go-relay-server/catalog_relay_outage_recovery_test.go:16–125`: it removes only
