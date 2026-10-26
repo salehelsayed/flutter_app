@@ -48,6 +48,9 @@ class LetterCard extends StatelessWidget {
   final String? transport;
   final String? quotedText;
   final bool isQuoteUnavailable;
+
+  /// Replaces the plain quote bar, e.g. for a quoted thought.
+  final Widget? quoteSlot;
   final bool isEdited;
   final bool isForwarded;
   final bool isDeleted;
@@ -153,6 +156,7 @@ class LetterCard extends StatelessWidget {
     this.transport,
     this.quotedText,
     this.isQuoteUnavailable = false,
+    this.quoteSlot,
     this.isEdited = false,
     this.isForwarded = false,
     this.isDeleted = false,
@@ -433,7 +437,12 @@ class LetterCard extends StatelessWidget {
           ),
         ),
       // Quote bar (if quoting another message)
-      if (quotedText != null || isQuoteUnavailable)
+      if (quoteSlot != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
+          child: quoteSlot,
+        )
+      else if (quotedText != null || isQuoteUnavailable)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: _buildQuoteBar(readableColors),

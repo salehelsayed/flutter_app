@@ -868,6 +868,90 @@ abstract class AppLocalizations {
   /// **'No thoughts here right now.'**
   String get orbit_depth_empty_ring;
 
+  /// Thought card: reply field over a friend's thought
+  ///
+  /// In en, this message translates to:
+  /// **'Reply to {name}…'**
+  String thought_reply_hint(String name);
+
+  /// Thought card: send button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'Send reply'**
+  String get thought_reply_send;
+
+  /// Thought card: close button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get thought_close;
+
+  /// Thought card: time left before the thought disappears, in hours
+  ///
+  /// In en, this message translates to:
+  /// **'gone in {hours} h'**
+  String thought_gone_in_hours(int hours);
+
+  /// Thought card: time left before the thought disappears, under an hour
+  ///
+  /// In en, this message translates to:
+  /// **'gone in {minutes} min'**
+  String thought_gone_in_minutes(int minutes);
+
+  /// Thought card: heart reaction button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'React with love'**
+  String get thought_react_love;
+
+  /// Thought card: laugh reaction button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'React with a laugh'**
+  String get thought_react_laugh;
+
+  /// Thought card: fire reaction button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'React with fire'**
+  String get thought_react_fire;
+
+  /// Thought card: applause reaction button label for screen readers
+  ///
+  /// In en, this message translates to:
+  /// **'React with applause'**
+  String get thought_react_applause;
+
+  /// Chat: label of a quoted thought you wrote
+  ///
+  /// In en, this message translates to:
+  /// **'Your thought'**
+  String get thought_quote_yours;
+
+  /// Chat: label of a quoted thought a friend wrote
+  ///
+  /// In en, this message translates to:
+  /// **'{name}\'s thought'**
+  String thought_quote_theirs(String name);
+
+  /// Chat: a quoted thought that has expired or was deleted
+  ///
+  /// In en, this message translates to:
+  /// **'No longer available'**
+  String get thought_quote_gone;
+
+  /// Chat: quiet line when a friend reacts to your thought
+  ///
+  /// In en, this message translates to:
+  /// **'{name} reacted {glyph} to your thought'**
+  String thought_reaction_incoming(String name, String glyph);
+
+  /// Chat: quiet line when you react to a friend's thought
+  ///
+  /// In en, this message translates to:
+  /// **'You reacted {glyph} to {name}\'s thought'**
+  String thought_reaction_outgoing(String name, String glyph);
+
   /// No description provided for @orbit_view_toggle_to_list.
   ///
   /// In en, this message translates to:

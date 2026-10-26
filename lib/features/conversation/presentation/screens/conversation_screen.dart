@@ -3,6 +3,8 @@ import 'dart:ui';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_quote_block.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -330,6 +332,10 @@ class ConversationScreen extends StatefulWidget {
   final ValueChanged<String>? onDraftChanged;
   final ValueChanged<PrivateMediaPolicy>? onPrivateMediaPolicyChanged;
   final ValueChanged<String>? onQuoteReply;
+
+  /// Thoughts quoted by messages here, by post id; null when not stored here.
+  final Map<String, ThoughtQuotePreview?> thoughtQuotes;
+  final DateTime? thoughtNow;
   final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
@@ -440,6 +446,8 @@ class ConversationScreen extends StatefulWidget {
     this.onDraftChanged,
     this.onPrivateMediaPolicyChanged,
     this.onQuoteReply,
+    this.thoughtQuotes = const {},
+    this.thoughtNow,
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
@@ -1113,6 +1121,31 @@ class _ConversationScreenState extends State<ConversationScreen>
                 child: IntroSystemMessage(text: message.text),
               );
             }
+            final quotedThoughtId = message.isDeleted
+                ? null
+                : thoughtIdFromQuote(message.quotedMessageId);
+            final thoughtReaction =
+                quotedThoughtId == null || message.media.isNotEmpty
+                ? null
+                : ThoughtReaction.fromText(message.text);
+            if (thoughtReaction != null) {
+              final reactionL10n = AppLocalizations.of(context)!;
+              return Padding(
+                key: ValueKey('msg-${message.id}'),
+                padding: const EdgeInsets.only(bottom: 16),
+                child: IntroSystemMessage(
+                  text: message.isIncoming
+                      ? reactionL10n.thought_reaction_incoming(
+                          widget.contactUsername,
+                          thoughtReaction.glyph,
+                        )
+                      : reactionL10n.thought_reaction_outgoing(
+                          widget.contactUsername,
+                          thoughtReaction.glyph,
+                        ),
+                ),
+              );
+            }
 
             final l10n = AppLocalizations.of(context)!;
             final isPrivatePresentation =
@@ -1121,7 +1154,24 @@ class _ConversationScreenState extends State<ConversationScreen>
             // Resolve quoted message text
             String? quotedText;
             bool isQuoteUnavailable = false;
-            if (!message.isDeleted && message.quotedMessageId != null) {
+            final thoughtQuote = quotedThoughtId == null
+                ? null
+                : ThoughtQuoteBlock(
+                    label: message.isIncoming
+                        ? l10n.thought_quote_yours
+                        : l10n.thought_quote_theirs(widget.contactUsername),
+                    preview: widget.thoughtQuotes[quotedThoughtId],
+                    now: widget.thoughtNow ?? DateTime.now().toUtc(),
+                    unavailableText: l10n.thought_quote_gone,
+                    mediaLabel: (kind) => switch (kind) {
+                      'video' => l10n.orbit_preview_video(1),
+                      'voice' => l10n.orbit_preview_voice_message,
+                      _ => l10n.orbit_preview_photo(1),
+                    },
+                  );
+            if (quotedThoughtId == null &&
+                !message.isDeleted &&
+                message.quotedMessageId != null) {
               final quoted = messagesById[message.quotedMessageId];
               if (quoted != null) {
                 final quoteDecision =
@@ -1518,6 +1568,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                 transport: message.transport,
                 quotedText: quotedText,
                 isQuoteUnavailable: isQuoteUnavailable,
+                quoteSlot: thoughtQuote,
                 isEdited: message.editedAt != null && !message.isDeleted,
                 isForwarded: message.isForwarded,
                 isDeleted: message.isDeleted,

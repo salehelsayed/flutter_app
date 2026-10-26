@@ -2199,6 +2199,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     await navigator.push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          loadThought: widget.postRepository.getPost,
           contact: contact,
           // 362: resolved from the ONE shared route-authority bundle so this
           // route and every ordinary-navigation route agree by construction.

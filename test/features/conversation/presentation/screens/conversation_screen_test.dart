@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -35,6 +36,8 @@ import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 void main() {
   Widget buildTestWidget({
     List<ConversationMessage> messages = const [],
+    Map<String, ThoughtQuotePreview?> thoughtQuotes = const {},
+    DateTime? thoughtNow,
     Locale locale = const Locale('en'),
     ValueChanged<String>? onSend,
     VoidCallback? onBack,
@@ -117,6 +120,8 @@ void main() {
           mediaViewerBuilder: mediaViewerBuilder,
           backgroundPreference: backgroundPreference,
           onPrivateMediaPolicyChanged: onPrivateMediaPolicyChanged,
+          thoughtQuotes: thoughtQuotes,
+          thoughtNow: thoughtNow,
         ),
       ),
     );
@@ -744,6 +749,99 @@ void main() {
 
       expect(find.text('Original text'), findsWidgets);
       expect(find.text('Message unavailable'), findsOneWidget);
+    });
+
+    testWidgets(
+      'a thought quote shows the live thought, then no longer available',
+      (tester) async {
+        final now = DateTime.utc(2026, 10, 26, 12);
+        final messages = [
+          makeMessage(
+            id: 'reply',
+            text: 'count me in',
+            isIncoming: false,
+            quotedMessageId: 'thought:lake',
+          ),
+        ];
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: messages,
+            initialLoadDone: true,
+            thoughtNow: now,
+            thoughtQuotes: {
+              'lake': ThoughtQuotePreview(
+                text: 'Sunset at the lake?',
+                mediaKind: 'image',
+                expiresAt: now.add(const Duration(hours: 2)),
+              ),
+            },
+          ),
+        );
+        await pumpFrames(tester);
+        final block = find.byKey(const ValueKey('thought-quote-block'));
+        expect(
+          find.descendant(of: block, matching: find.text("Alice's thought")),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: block,
+            matching: find.text('Sunset at the lake?'),
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Message unavailable'), findsNothing);
+
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: messages,
+            initialLoadDone: true,
+            thoughtNow: now.add(const Duration(hours: 3)),
+            thoughtQuotes: {
+              'lake': ThoughtQuotePreview(
+                text: 'Sunset at the lake?',
+                mediaKind: 'image',
+                expiresAt: now.add(const Duration(hours: 2)),
+              ),
+            },
+          ),
+        );
+        await pumpFrames(tester);
+        expect(find.text('Sunset at the lake?'), findsNothing);
+        expect(
+          find.descendant(
+            of: block,
+            matching: find.text('No longer available'),
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets('a lone glyph on a thought reads as a quiet reaction line', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildTestWidget(
+          messages: [
+            makeMessage(id: 'in', text: '🔥', quotedMessageId: 'thought:mine'),
+            makeMessage(
+              id: 'out',
+              text: '❤️',
+              isIncoming: false,
+              quotedMessageId: 'thought:theirs',
+            ),
+            makeMessage(id: 'plain', text: '❤️', isIncoming: false),
+          ],
+          initialLoadDone: true,
+        ),
+      );
+      await pumpFrames(tester);
+
+      expect(find.text('Alice reacted 🔥 to your thought'), findsOneWidget);
+      expect(find.text("You reacted ❤️ to Alice's thought"), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-quote-block')), findsNothing);
+      expect(find.text('❤️', findRichText: true), findsOneWidget);
     });
 
     testWidgets('renders media preview text for quoted media replies', (

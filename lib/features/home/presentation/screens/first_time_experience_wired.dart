@@ -346,6 +346,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       navigator.push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
+            loadThought: widget.postRepository?.getPost,
             directEventFanout:
                 widget.directRouteAuthority.resolvedDirectEventFanout,
             directDeviceTrust:

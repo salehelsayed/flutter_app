@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
@@ -458,6 +460,13 @@ class ConversationWired extends StatefulWidget {
   final List<File>? initialAttachments;
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
+
+  /// A reply typed on a thought card, sent once this chat is ready.
+  final ThoughtReply? initialThoughtReply;
+
+  /// Looks up a quoted thought stored on this phone; null when it is gone.
+  final Future<PostModel?> Function(String postId)? loadThought;
+  final DateTime Function()? thoughtNowProvider;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
 
@@ -599,6 +608,9 @@ class ConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
+    this.initialThoughtReply,
+    this.loadThought,
+    this.thoughtNowProvider,
     this.imageProcessor,
     this.mediaPicker,
     this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
@@ -700,6 +712,9 @@ class _ConversationWiredState extends State<ConversationWired>
   StreamSubscription<void>? _callTimelineChangesSubscription;
   bool _isLoadingMore = false;
   bool _initialLoadDone = false;
+  bool _initialThoughtReplySent = false;
+  final Map<String, ThoughtQuotePreview?> _thoughtQuotes = {};
+  final Set<String> _thoughtQuotesLoading = {};
   bool _isSending = false;
 
   final _composerController = ConversationComposerController();
@@ -3634,6 +3649,13 @@ class _ConversationWiredState extends State<ConversationWired>
   (String?, bool) _resolveActiveQuotePreview() {
     final quoteId = _activeQuoteMessageId;
     if (quoteId == null) return (null, false);
+    final quotedThoughtId = thoughtIdFromQuote(quoteId);
+    if (quotedThoughtId != null) {
+      final preview = _thoughtQuotes[quotedThoughtId];
+      return preview == null || preview.text.trim().isEmpty
+          ? (null, preview == null)
+          : (preview.text.trim(), false);
+    }
 
     final quoted = _messages.where((m) => m.id == quoteId).firstOrNull;
     if (quoted == null) return (null, true);
@@ -8621,8 +8643,60 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  void _loadQuotedThoughts() {
+    final loadThought = widget.loadThought;
+    if (loadThought == null) return;
+    final ids = {
+      for (final message in _messages)
+        ?thoughtIdFromQuote(message.quotedMessageId),
+      ?thoughtIdFromQuote(_activeQuoteMessageId),
+    };
+    for (final postId in ids) {
+      if (_thoughtQuotes.containsKey(postId) ||
+          !_thoughtQuotesLoading.add(postId)) {
+        continue;
+      }
+      unawaited(
+        loadThought(
+          postId,
+        ).then<PostModel?>((post) => post, onError: (_) => null).then((post) {
+          _thoughtQuotesLoading.remove(postId);
+          if (!mounted) return;
+          final expiresAt = DateTime.tryParse(post?.expiresAt ?? '');
+          setState(() {
+            _thoughtQuotes[postId] = post == null || expiresAt == null
+                ? null
+                : ThoughtQuotePreview(
+                    text: post.text,
+                    mediaKind: post.mediaKind,
+                    expiresAt: expiresAt.toUtc(),
+                  );
+          });
+        }),
+      );
+    }
+  }
+
+  void _sendInitialThoughtReplyWhenReady() {
+    final reply = widget.initialThoughtReply;
+    if (reply == null ||
+        _initialThoughtReplySent ||
+        _identity == null ||
+        !_initialLoadDone) {
+      return;
+    }
+    _initialThoughtReplySent = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() => _activeQuoteMessageId = reply.quotedMessageId);
+      unawaited(_onSend(reply.text));
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    _loadQuotedThoughts();
+    _sendInitialThoughtReplyWhenReady();
     final (activeQuoteText, isActiveQuoteUnavailable) =
         _resolveActiveQuotePreview();
     final outgoingCallCapability = widget.outgoingCallCapability;
@@ -8731,6 +8805,8 @@ class _ConversationWiredState extends State<ConversationWired>
           onMakeIntroductions: _onMakeIntroductions,
           onMaybeLater: _onMaybeLater,
           onQuoteReply: _onQuoteReply,
+          thoughtQuotes: _thoughtQuotes,
+          thoughtNow: (widget.thoughtNowProvider ?? DateTime.now)().toUtc(),
           onDeleteMessage: _onDeleteMessage,
           // 231: direct received-media actions — every Save/Share/Info runs
           // through the local controller; Delete stays on the existing

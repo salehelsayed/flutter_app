@@ -1,0 +1,99 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+
+/// The quoted thought at the top of a chat bubble. [preview] null, or past its
+/// lifetime, shows that the thought is gone; nothing of it is kept here.
+class ThoughtQuoteBlock extends StatelessWidget {
+  const ThoughtQuoteBlock({
+    super.key,
+    required this.label,
+    required this.preview,
+    required this.now,
+    required this.unavailableText,
+    required this.mediaLabel,
+  });
+
+  final String label;
+  final ThoughtQuotePreview? preview;
+  final DateTime now;
+  final String unavailableText;
+
+  /// Shown for a thought with no text, from its media kind.
+  final String Function(String mediaKind) mediaLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.backgroundReadableColors;
+    final live = preview != null && preview!.isLiveAt(now) ? preview : null;
+    final body = live == null
+        ? unavailableText
+        : live.text.trim().isNotEmpty
+        ? live.text.trim()
+        : mediaLabel(live.mediaKind);
+    return Container(
+      key: const ValueKey('thought-quote-block'),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.divider),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: colors.divider,
+            ),
+            child: Icon(
+              switch (live?.mediaKind) {
+                'image' => Icons.photo_outlined,
+                'video' => Icons.videocam_outlined,
+                'voice' => Icons.mic_none,
+                _ => Icons.auto_awesome_outlined,
+              },
+              size: 16,
+              color: colors.textMuted,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textMuted,
+                  ),
+                ),
+                Text(
+                  body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textDirection: detectTextDirection(body),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontStyle: live == null
+                        ? FontStyle.italic
+                        : FontStyle.normal,
+                    color: live == null
+                        ? colors.disabledForeground
+                        : colors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

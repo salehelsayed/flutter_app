@@ -84,7 +84,11 @@ const _controllerTestPaths = <String>[
 // 414: ConversationWired gained `documentAttachmentsEnabled` (the build
 // switch for the attach sheet's PDF row, injectable for tests) and the public
 // `attachSheetDocumentKey`. Neither changes an existing handoff.
-const _expectedDirectApiFingerprint = '51d33eef';
+// 407 thought replies: three optional `ConversationWired` fields,
+// `initialThoughtReply`, `loadThought` and `thoughtNowProvider`. A reply typed
+// on a thought card goes through the ordinary send path; the lookups only READ
+// stored thoughts for quotes. No existing handoff changes.
+const _expectedDirectApiFingerprint = '8920a96c';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 const _expectedGroupApiFingerprint = 'fe1ac6ec';
@@ -119,7 +123,9 @@ const _expectedGroupApiFingerprint = 'fe1ac6ec';
 // first proves a missed incoming row is still the contact's newest call (the
 // Calls page rule) and refuses without durable history. The header `onCall`
 // and `onCallRetry` expressions are unchanged and no longer stand in for rows.
-const _expectedDirectHandoffFingerprint = '049cff44';
+// 407 thought replies: the direct handoff adds only `thoughtQuotes` and
+// `thoughtNow`, the stored-thought previews a quoted thought renders from.
+const _expectedDirectHandoffFingerprint = 'e142fc1d';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 const _expectedGroupHandoffFingerprint = '060099cf';

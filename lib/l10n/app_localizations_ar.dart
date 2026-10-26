@@ -478,6 +478,60 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_depth_empty_ring => 'لا توجد خواطر هنا الآن.';
 
   @override
+  String thought_reply_hint(String name) {
+    return 'رُدّ على $name…';
+  }
+
+  @override
+  String get thought_reply_send => 'إرسال الرد';
+
+  @override
+  String get thought_close => 'إغلاق';
+
+  @override
+  String thought_gone_in_hours(int hours) {
+    return 'تختفي بعد $hours س';
+  }
+
+  @override
+  String thought_gone_in_minutes(int minutes) {
+    return 'تختفي بعد $minutes د';
+  }
+
+  @override
+  String get thought_react_love => 'تفاعل بقلب';
+
+  @override
+  String get thought_react_laugh => 'تفاعل بضحكة';
+
+  @override
+  String get thought_react_fire => 'تفاعل بنار';
+
+  @override
+  String get thought_react_applause => 'تفاعل بتصفيق';
+
+  @override
+  String get thought_quote_yours => 'خاطرتك';
+
+  @override
+  String thought_quote_theirs(String name) {
+    return 'خاطرة $name';
+  }
+
+  @override
+  String get thought_quote_gone => 'لم تعد متاحة';
+
+  @override
+  String thought_reaction_incoming(String name, String glyph) {
+    return 'تفاعل $name بـ $glyph مع خاطرتك';
+  }
+
+  @override
+  String thought_reaction_outgoing(String name, String glyph) {
+    return 'تفاعلت بـ $glyph مع خاطرة $name';
+  }
+
+  @override
   String get orbit_view_toggle_to_list => 'عرض كل المحادثات';
 
   @override

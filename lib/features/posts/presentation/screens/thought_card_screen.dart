@@ -3,11 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -15,10 +15,10 @@ import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 
-/// One author's current thought, without the retired Posts engagement controls.
+/// One author's current thought, full screen.
 ///
-/// The host decides whose thought this is: a friend's card offers Message, the
-/// user's own card offers Delete.
+/// The host decides whose thought this is: a friend's card offers reactions
+/// and a reply field, the user's own card offers Delete.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
@@ -26,7 +26,7 @@ class ThoughtCardScreen extends StatefulWidget {
     required this.authorName,
     required this.postRepo,
     required this.loadCurrentThought,
-    required this.onMessage,
+    required this.onReply,
     required this.downloadMedia,
     this.onDelete,
     this.eligibilityChanges,
@@ -39,7 +39,10 @@ class ThoughtCardScreen extends StatefulWidget {
 
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
-  final VoidCallback? onMessage;
+
+  /// Sends [text] to the author, quoting this thought, once the card has
+  /// closed. A reaction arrives as its lone glyph.
+  final void Function(String text, String postId)? onReply;
 
   /// Deletes the displayed thought for everyone. Completes once the local copy
   /// is gone; throws when it could not be deleted.
@@ -77,6 +80,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   bool _closing = false;
   bool _deleting = false;
   int _mediaReadGeneration = 0;
+  final _replyController = TextEditingController();
+  final _replyFocus = FocusNode();
 
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
 
@@ -106,6 +111,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     });
     _armExpiry();
     _requestRefresh();
+    _replyFocus.addListener(() {
+      if (mounted) setState(() {});
+    });
+    _replyController.addListener(() {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -435,140 +446,326 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _eligibilitySubscription?.cancel();
     _expiryTimer?.cancel();
     _ageTimer?.cancel();
+    _replyController.dispose();
+    _replyFocus.dispose();
     super.dispose();
+  }
+
+  void _sendReply(String text) {
+    final onReply = widget.onReply;
+    final trimmed = text.trim();
+    if (onReply == null || trimmed.isEmpty) return;
+    if (!_isLive) {
+      _close();
+      return;
+    }
+    _replyFocus.unfocus();
+    final postId = _post.id;
+    _close(afterClose: () => onReply(trimmed, postId));
   }
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colors = context.backgroundReadableColors;
     final visible = _validated && !_loadFailed && !_closing && _isLive;
-    final onMessage = widget.onMessage;
-    return Scaffold(
-      key: const ValueKey('thought-card-screen'),
-      appBar: AppBar(title: Text(widget.authorName)),
-      body: _closing
-          ? const SizedBox.shrink()
-          : _loadFailed
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(l10n.load_retry_hint),
-                  TextButton(
-                    onPressed: _requestRefresh,
-                    child: Text(l10n.btn_retry),
-                  ),
-                ],
-              ),
-            )
-          : !visible
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _relativeAge(l10n),
-                    key: const ValueKey('thought-age'),
-                    style: TextStyle(color: colors.textMuted),
-                  ),
-                  if (_post.text.isNotEmpty) ...[
-                    const SizedBox(height: 24),
-                    LinkableText(
-                      text: _post.text,
-                      textDirection: detectTextDirection(_post.text),
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(color: colors.textPrimary),
-                    ),
-                  ],
-                  if (_post.mediaKind != 'none' || _media.isNotEmpty) ...[
-                    const SizedBox(height: 24),
-                    _buildMedia(l10n),
-                  ],
-                ],
-              ),
-            ),
-      bottomNavigationBar: !visible
-          ? null
-          : onMessage != null
-          ? _bottomAction(
-              FilledButton.icon(
-                key: const ValueKey('thought-message'),
-                onPressed: () {
-                  if (!_isLive) {
-                    _close();
-                    return;
-                  }
-                  _close(afterClose: onMessage);
-                },
-                icon: const Icon(Icons.chat_bubble_outline),
-                label: Text(l10n.pinned_message(widget.authorName)),
-              ),
-            )
-          : widget.onDelete != null
-          ? _bottomAction(
-              OutlinedButton.icon(
-                key: const ValueKey('thought-delete'),
-                onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
-                icon: const Icon(Icons.delete_outline),
-                label: Text(l10n.thought_delete),
-              ),
-            )
-          : null,
-    );
-  }
-
-  Widget _bottomAction(Widget button) {
-    return SafeArea(
-      child: Padding(padding: const EdgeInsets.all(16), child: button),
-    );
-  }
-
-  Widget _buildMedia(AppLocalizations l10n) {
-    if (_media.isEmpty) {
-      // No attachment rows yet means the media is still on its way (or, for
-      // your own thought, still uploading), not that a download failed.
-      return _mediaLoading || !_mediaLoadFailed
-          ? const Center(child: CircularProgressIndicator())
-          : TextButton(
-              onPressed: () => unawaited(_loadMedia(_post.id)),
-              child: Text(l10n.btn_retry),
-            );
-    }
-    final voice = _media.where((item) => item.kind == 'voice');
     final visual = _media
         .where((item) => item.kind != 'voice')
         .toList(growable: false);
-    return Column(
+    final hasVisual = visual.isNotEmpty || _expectsVisualMedia;
+    final typing = _replyFocus.hasFocus;
+    return Scaffold(
+      key: const ValueKey('thought-card-screen'),
+      backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: true,
+      body: _closing
+          ? const SizedBox.shrink()
+          : _loadFailed
+          ? _failure(l10n)
+          : !visible
+          ? const Center(child: CircularProgressIndicator(color: Colors.white))
+          : Stack(
+              fit: StackFit.expand,
+              children: [
+                DecoratedBox(
+                  decoration: hasVisual
+                      ? const BoxDecoration(color: Colors.black)
+                      : const BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF0F766E), Color(0xFF134E4A)],
+                          ),
+                        ),
+                ),
+                if (hasVisual)
+                  Center(child: _visualMedia(l10n, visual))
+                else
+                  _centeredText(),
+                const _Scrim(top: true),
+                const _Scrim(top: false),
+                AnimatedOpacity(
+                  opacity: typing ? 1 : 0,
+                  duration: const Duration(milliseconds: 180),
+                  child: IgnorePointer(
+                    ignoring: !typing,
+                    child: GestureDetector(
+                      key: const ValueKey('thought-reply-dismiss'),
+                      onTap: _replyFocus.unfocus,
+                      child: const ColoredBox(color: Color(0x61000000)),
+                    ),
+                  ),
+                ),
+                SafeArea(
+                  child: Column(
+                    children: [
+                      _topChrome(l10n),
+                      const Spacer(),
+                      _bottomChrome(l10n, showText: hasVisual, typing: typing),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  bool get _expectsVisualMedia =>
+      _post.mediaKind == 'image' || _post.mediaKind == 'video';
+
+  Widget _failure(AppLocalizations l10n) => Center(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (_mediaLoadFailed)
-          TextButton(
-            onPressed: () => unawaited(_loadMedia(_post.id)),
-            child: Text(l10n.btn_retry),
-          ),
-        for (final attachment in voice)
-          AudioPlayerWidget(
-            key: ValueKey('thought-voice-${attachment.mediaId}'),
-            attachment: attachment.toSharedMediaAttachment(),
-            onRetryUnavailableMedia: () => unawaited(_download(attachment)),
-          ),
-        if (visual.isNotEmpty)
-          MediaGrid(
-            media: visual
-                .map((attachment) => attachment.toSharedMediaAttachment())
-                .toList(growable: false),
-            singleMaxHeight: MediaQuery.sizeOf(context).height * .6,
-            onTap: (index) => unawaited(_openMedia(index)),
-            onRetryUnavailableMedia: (attachment) {
-              final original = visual
-                  .where((item) => item.blobId == attachment.id)
-                  .firstOrNull;
-              if (original != null) unawaited(_download(original));
-            },
-          ),
+        Text(l10n.load_retry_hint, style: const TextStyle(color: Colors.white)),
+        TextButton(onPressed: _requestRefresh, child: Text(l10n.btn_retry)),
       ],
+    ),
+  );
+
+  Widget _centeredText() => Center(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(28, 120, 28, 200),
+      child: SingleChildScrollView(
+        child: DefaultTextStyle.merge(
+          textAlign: TextAlign.center,
+          child: LinkableText(
+            text: _post.text,
+            textDirection: detectTextDirection(_post.text),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              height: 1.25,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _visualMedia(
+    AppLocalizations l10n,
+    List<PostMediaAttachmentModel> visual,
+  ) {
+    final height = MediaQuery.sizeOf(context).height;
+    if (visual.isEmpty) {
+      // Rows not here yet: hold the photo's place instead of a spinner.
+      return _MediaPlaceholder(
+        key: const ValueKey('thought-media-placeholder'),
+        failed: _mediaLoadFailed && !_mediaLoading,
+        onRetry: () => unawaited(_loadMedia(_post.id)),
+        retryLabel: l10n.btn_retry,
+      );
+    }
+    return MediaGrid(
+      media: visual
+          .map((attachment) => attachment.toSharedMediaAttachment())
+          .toList(growable: false),
+      singleMaxHeight: height,
+      onTap: (index) => unawaited(_openMedia(index)),
+      onRetryUnavailableMedia: (attachment) {
+        final original = visual
+            .where((item) => item.blobId == attachment.id)
+            .firstOrNull;
+        if (original != null) unawaited(_download(original));
+      },
+    );
+  }
+
+  Widget _topChrome(AppLocalizations l10n) {
+    final created = DateTime.tryParse(_post.createdAt)?.toUtc();
+    final expiry = DateTime.tryParse(_post.expiresAt)?.toUtc();
+    final total = created != null && expiry != null
+        ? expiry.difference(created)
+        : Duration.zero;
+    final left = expiry?.difference(_now) ?? Duration.zero;
+    final lifeLeft = total.inSeconds <= 0
+        ? 0.0
+        : (left.inSeconds / total.inSeconds).clamp(0.0, 1.0);
+    final goneIn = left.inMinutes >= 60
+        ? l10n.thought_gone_in_hours(left.inHours)
+        : l10n.thought_gone_in_minutes(left.inMinutes.clamp(1, 59));
+    final name = widget.authorName;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                key: const ValueKey('thought-life-bar'),
+                value: lifeLeft,
+                minHeight: 3,
+                color: Colors.white,
+                backgroundColor: Colors.white.withValues(alpha: 0.35),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 17,
+                backgroundColor: const Color(0xFFE9A23B),
+                child: Text(
+                  name.isEmpty ? '?' : name.characters.first.toUpperCase(),
+                  style: const TextStyle(
+                    color: Color(0xFF1B1B1F),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '${_relativeAge(l10n)} · $goneIn',
+                      key: const ValueKey('thought-age'),
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.85),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                key: const ValueKey('thought-close'),
+                tooltip: l10n.thought_close,
+                onPressed: _close,
+                icon: const Icon(Icons.close, color: Colors.white),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bottomChrome(
+    AppLocalizations l10n, {
+    required bool showText,
+    required bool typing,
+  }) {
+    final voice = _media.where((item) => item.kind == 'voice');
+    final onReply = widget.onReply;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (showText && _post.text.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(context).height * 0.3,
+                ),
+                child: SingleChildScrollView(
+                  child: LinkableText(
+                    text: _post.text,
+                    textDirection: detectTextDirection(_post.text),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: typing ? 18 : 21,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                      shadows: const [
+                        Shadow(color: Color(0x59000000), blurRadius: 8),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          for (final attachment in voice)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: AudioPlayerWidget(
+                key: ValueKey('thought-voice-${attachment.mediaId}'),
+                attachment: attachment.toSharedMediaAttachment(),
+                onRetryUnavailableMedia: () => unawaited(_download(attachment)),
+              ),
+            ),
+          if (onReply != null) ...[
+            if (!typing)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    for (final reaction in ThoughtReaction.values) ...[
+                      _ReactionButton(
+                        key: ValueKey('thought-react-${reaction.name}'),
+                        reaction: reaction,
+                        label: switch (reaction) {
+                          ThoughtReaction.love => l10n.thought_react_love,
+                          ThoughtReaction.laugh => l10n.thought_react_laugh,
+                          ThoughtReaction.fire => l10n.thought_react_fire,
+                          ThoughtReaction.applause =>
+                            l10n.thought_react_applause,
+                        },
+                        onPressed: () => _sendReply(reaction.glyph),
+                      ),
+                      const SizedBox(width: 10),
+                    ],
+                  ],
+                ),
+              ),
+            _ReplyField(
+              controller: _replyController,
+              focusNode: _replyFocus,
+              hint: l10n.thought_reply_hint(widget.authorName),
+              sendLabel: l10n.thought_reply_send,
+              onSend: () => _sendReply(_replyController.text),
+            ),
+          ] else if (widget.onDelete != null)
+            OutlinedButton.icon(
+              key: const ValueKey('thought-delete'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.6)),
+                minimumSize: const Size.fromHeight(48),
+              ),
+              onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
+              icon: const Icon(Icons.delete_outline),
+              label: Text(l10n.thought_delete),
+            ),
+        ],
+      ),
     );
   }
 
@@ -579,5 +776,182 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     if (age.inMinutes < 60) return l10n.time_min_ago(age.inMinutes);
     if (age.inHours < 24) return l10n.time_hour_ago(age.inHours);
     return l10n.time_day_ago(age.inDays);
+  }
+}
+
+class _Scrim extends StatelessWidget {
+  const _Scrim({required this.top});
+
+  final bool top;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: Align(
+      alignment: top ? Alignment.topCenter : Alignment.bottomCenter,
+      child: FractionallySizedBox(
+        heightFactor: top ? 0.22 : 0.42,
+        widthFactor: 1,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: top ? Alignment.topCenter : Alignment.bottomCenter,
+              end: top ? Alignment.bottomCenter : Alignment.topCenter,
+              colors: [
+                Colors.black.withValues(alpha: top ? 0.45 : 0.6),
+                Colors.transparent,
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _MediaPlaceholder extends StatelessWidget {
+  const _MediaPlaceholder({
+    super.key,
+    required this.failed,
+    required this.onRetry,
+    required this.retryLabel,
+  });
+
+  final bool failed;
+  final VoidCallback onRetry;
+  final String retryLabel;
+
+  @override
+  Widget build(BuildContext context) => AspectRatio(
+    aspectRatio: 3 / 4,
+    child: DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF2B2F3A), Color(0xFF1A1C22)],
+        ),
+      ),
+      child: failed
+          ? Center(
+              child: TextButton(
+                onPressed: onRetry,
+                style: TextButton.styleFrom(foregroundColor: Colors.white),
+                child: Text(retryLabel),
+              ),
+            )
+          : const Align(
+              alignment: Alignment.bottomCenter,
+              child: LinearProgressIndicator(
+                minHeight: 2,
+                color: Colors.white70,
+                backgroundColor: Colors.transparent,
+              ),
+            ),
+    ),
+  );
+}
+
+class _ReactionButton extends StatelessWidget {
+  const _ReactionButton({
+    super.key,
+    required this.reaction,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final ThoughtReaction reaction;
+  final String label;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: label,
+    excludeSemantics: true,
+    child: Material(
+      color: Colors.white.withValues(alpha: 0.16),
+      shape: CircleBorder(
+        side: BorderSide(color: Colors.white.withValues(alpha: 0.28)),
+      ),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Center(
+            child: Text(reaction.glyph, style: const TextStyle(fontSize: 22)),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _ReplyField extends StatelessWidget {
+  const _ReplyField({
+    required this.controller,
+    required this.focusNode,
+    required this.hint,
+    required this.sendLabel,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String hint;
+  final String sendLabel;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    final canSend = controller.text.trim().isNotEmpty;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: focusNode.hasFocus ? 0.22 : 0.16),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              key: const ValueKey('thought-reply-field'),
+              controller: controller,
+              focusNode: focusNode,
+              minLines: 1,
+              maxLines: 4,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => onSend(),
+              style: const TextStyle(color: Colors.white, fontSize: 15),
+              cursorColor: Colors.white,
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.fromLTRB(18, 13, 8, 13),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(5),
+            child: IconButton.filled(
+              key: const ValueKey('thought-reply-send'),
+              tooltip: sendLabel,
+              onPressed: canSend ? onSend : null,
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFF0F766E),
+                disabledBackgroundColor: Colors.white,
+                foregroundColor: Colors.white,
+                disabledForegroundColor: const Color(0xFF0F766E),
+              ),
+              icon: const Icon(Icons.send_rounded, size: 20),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

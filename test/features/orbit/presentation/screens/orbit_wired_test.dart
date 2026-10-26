@@ -848,14 +848,17 @@ void main() {
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
         expect(
-          find.descendant(of: find.byType(AppBar), matching: find.text('You')),
+          find.descendant(
+            of: find.byType(ThoughtCardScreen),
+            matching: find.text('You'),
+          ),
           findsOneWidget,
         );
         expect(
           find.text('My own live thought', findRichText: true),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+        expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
         expect(posts.focusedIds, isEmpty);
 
         Navigator.of(tester.element(find.byType(ThoughtCardScreen))).pop();
@@ -1099,7 +1102,7 @@ void main() {
     });
 
     testWidgets(
-      'latest note opens current-name card, marks read, and Message and face open ordinary empty chat',
+      'latest note opens current-name card, marks read, a reply lands quoted in chat, and the face opens ordinary chat',
       (tester) async {
         setLargeTestSurface(tester);
         identityRepo.seed(testIdentity);
@@ -1148,13 +1151,31 @@ void main() {
         expect(posts.focusedIds, ['latest-thought']);
         expect((await posts.getPost('latest-thought'))!.isRead, isTrue);
 
-        await tester.tap(find.byKey(const ValueKey('thought-message')));
-        await pumpOrbitFrames(tester, count: 8);
+        await tester.enterText(
+          find.byKey(const ValueKey('thought-reply-field')),
+          'count me in',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await pumpOrbitFrames(tester, count: 12);
         final messageChat = tester.widget<ConversationWired>(
           find.byType(ConversationWired),
         );
         expect(messageChat.contact.peerId, currentContact.peerId);
         expect(messageChat.initialText, isNull);
+        expect(messageChat.initialThoughtReply?.text, 'count me in');
+        expect(
+          messageChat.initialThoughtReply?.quotedMessageId,
+          'thought:latest-thought',
+        );
+        expect(find.text('count me in', findRichText: true), findsOneWidget);
+        expect(
+          find.descendant(
+            of: find.byKey(const ValueKey('thought-quote-block')),
+            matching: find.text('Latest private thought'),
+          ),
+          findsOneWidget,
+        );
         expect(
           find.byType(ThoughtCardScreen, skipOffstage: false),
           findsNothing,
@@ -1401,7 +1422,7 @@ void main() {
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
 
         await tester.pump(const Duration(seconds: 5));
-        expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+        expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
         // Content closes at expiry; allow the ordinary route's reverse
         // transition to dispose its offstage widget before asserting absence.
         await pumpOrbitFrames(tester, count: 8);

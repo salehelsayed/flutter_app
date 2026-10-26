@@ -5,6 +5,7 @@ import 'package:flutter_app/features/call/application/call_redial_controller.dar
 import 'package:flutter_app/features/call/presentation/screens/calls_page.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
@@ -1220,11 +1221,19 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               mediaFileManager: widget.mediaFileManager,
               attachment: attachment,
             ),
-            onMessage: contact == null
+            onReply: contact == null
                 ? null
-                : () {
+                : (text, postId) {
                     if (mounted) {
-                      unawaited(_openConversationForContact(contact));
+                      unawaited(
+                        _openConversationForContact(
+                          contact,
+                          thoughtReply: ThoughtReply(
+                            text: text,
+                            postId: postId,
+                          ),
+                        ),
+                      );
                     }
                   },
             onDelete: !isOwn
@@ -3228,6 +3237,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _openConversationForContact(
     ContactModel contact, {
     String? initialText,
+    ThoughtReply? thoughtReply,
   }) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
@@ -3247,6 +3257,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 widget.directRouteAuthority.resolvedCallTimelineSource,
             contact: contact,
             initialText: initialText,
+            initialThoughtReply: thoughtReply,
+            loadThought: widget.postRepository?.getPost,
+            thoughtNowProvider: widget.thoughtNowProvider,
             identityRepo: widget.identityRepo,
             messageRepo: widget.messageRepo,
             chatMessageListener: widget.chatMessageListener,

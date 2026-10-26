@@ -480,6 +480,60 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_depth_empty_ring => 'Gerade keine Gedanken hier.';
 
   @override
+  String thought_reply_hint(String name) {
+    return '$name antworten…';
+  }
+
+  @override
+  String get thought_reply_send => 'Antwort senden';
+
+  @override
+  String get thought_close => 'Schließen';
+
+  @override
+  String thought_gone_in_hours(int hours) {
+    return 'weg in $hours Std.';
+  }
+
+  @override
+  String thought_gone_in_minutes(int minutes) {
+    return 'weg in $minutes Min.';
+  }
+
+  @override
+  String get thought_react_love => 'Mit Herz reagieren';
+
+  @override
+  String get thought_react_laugh => 'Mit Lachen reagieren';
+
+  @override
+  String get thought_react_fire => 'Mit Feuer reagieren';
+
+  @override
+  String get thought_react_applause => 'Mit Applaus reagieren';
+
+  @override
+  String get thought_quote_yours => 'Dein Gedanke';
+
+  @override
+  String thought_quote_theirs(String name) {
+    return 'Gedanke von $name';
+  }
+
+  @override
+  String get thought_quote_gone => 'Nicht mehr verfügbar';
+
+  @override
+  String thought_reaction_incoming(String name, String glyph) {
+    return '$name hat mit $glyph auf deinen Gedanken reagiert';
+  }
+
+  @override
+  String thought_reaction_outgoing(String name, String glyph) {
+    return 'Du hast mit $glyph auf den Gedanken von $name reagiert';
+  }
+
+  @override
   String get orbit_view_toggle_to_list => 'Alle Chats anzeigen';
 
   @override

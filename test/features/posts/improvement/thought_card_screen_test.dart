@@ -67,7 +67,7 @@ void main() {
     PostModel initialPost, {
     String authorName = 'Alice',
     bool messageable = true,
-    VoidCallback? onMessage,
+    void Function(String text, String postId)? onReply,
     Future<void> Function(String postId)? onDelete,
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
@@ -93,7 +93,7 @@ void main() {
             postRepo: posts,
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
-            onMessage: messageable ? (onMessage ?? () {}) : null,
+            onReply: messageable ? (onReply ?? (_, _) {}) : null,
             onDelete: onDelete,
             downloadMedia:
                 download ??
@@ -133,19 +133,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Alice'), findsOneWidget);
-      expect(find.text('2h ago'), findsOneWidget);
+      expect(find.text('2h ago · gone in 22 h'), findsOneWidget);
       expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
       expect(posts.focusedIds, ['thought-1']);
       expect((await posts.getPost('thought-1'))!.isRead, isTrue);
       expect(find.byType(PostCard), findsNothing);
       expect(find.byIcon(Icons.favorite_border), findsNothing);
       expect(find.byIcon(Icons.comment_outlined), findsNothing);
-      expect(find.byKey(const ValueKey('thought-message')), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
+      expect(find.text('Reply to Alice…'), findsOneWidget);
       await finish(tester);
     },
   );
 
-  testWidgets('an own thought card has no Message button and stays unread', (
+  testWidgets('an own thought card has no reply field and stays unread', (
     tester,
   ) async {
     final mine = _thought(initialNow).copyWith(
@@ -171,9 +172,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('You'), findsOneWidget);
-    expect(find.text('2h ago'), findsOneWidget);
+    expect(find.text('2h ago · gone in 22 h'), findsOneWidget);
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-message')), findsNothing);
+    expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
+    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
     expect(find.byType(FilledButton), findsNothing);
     expect(posts.focusedIds, isEmpty);
     expect((await posts.getPost('thought-1'))!.isRead, isFalse);
@@ -303,46 +305,68 @@ void main() {
   });
 
   testWidgets(
-    'Message removes the card before opening ordinary chat with no thought payload',
+    'a typed reply is sent once, quoting the shown thought, after the card closes',
     (tester) async {
       final thought = _thought(initialNow);
       await posts.savePost(thought);
-      var messageCalls = 0;
-      var closedBeforeMessage = false;
+      final replies = <(String, String)>[];
+      var closedBeforeReply = false;
       await openCard(
         tester,
         thought,
-        onMessage: () {
-          messageCalls++;
-          closedBeforeMessage = navigationObserver.poppedNames.contains(
+        onReply: (text, postId) {
+          replies.add((text, postId));
+          closedBeforeReply = navigationObserver.poppedNames.contains(
             'thought-card',
-          );
-          unawaited(
-            navigator.currentState!.push(
-              MaterialPageRoute<void>(
-                builder: (_) =>
-                    const Scaffold(body: Text('ordinary-chat-empty-composer')),
-              ),
-            ),
           );
         },
       );
 
-      await tester.tap(find.byKey(const ValueKey('thought-message')));
-      await tester.tap(find.byKey(const ValueKey('thought-message')));
+      await tester.tap(find.byKey(const ValueKey('thought-reply-field')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+      await tester.enterText(
+        find.byKey(const ValueKey('thought-reply-field')),
+        '  count me in ',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await tester.tap(
+        find.byKey(const ValueKey('thought-reply-send')),
+        warnIfMissed: false,
+      );
       await tester.pumpAndSettle();
 
-      expect(messageCalls, 1);
-      expect(closedBeforeMessage, isTrue);
+      expect(replies, [('count me in', 'thought-1')]);
+      expect(closedBeforeReply, isTrue);
       expect(find.byType(ThoughtCardScreen, skipOffstage: false), findsNothing);
-      expect(find.text('ordinary-chat-empty-composer'), findsOneWidget);
-      expect(
-        find.text('Quiet thought', findRichText: true, skipOffstage: false),
-        findsNothing,
-      );
       await finish(tester);
     },
   );
+
+  testWidgets('a reaction is one tap and sends its glyph', (tester) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final replies = <(String, String)>[];
+    await openCard(
+      tester,
+      thought,
+      onReply: (text, postId) => replies.add((text, postId)),
+    );
+
+    expect(
+      tester
+          .widget<IconButton>(find.byKey(const ValueKey('thought-reply-send')))
+          .onPressed,
+      isNull,
+    );
+    await tester.tap(find.byKey(const ValueKey('thought-react-fire')));
+    await tester.pumpAndSettle();
+
+    expect(replies, [('🔥', 'thought-1')]);
+    expect(find.byType(ThoughtCardScreen, skipOffstage: false), findsNothing);
+    await finish(tester);
+  });
 
   testWidgets(
     'initial stale item and later arrivals resolve to only the newest thought',
@@ -599,36 +623,40 @@ void main() {
     );
   }
 
-  testWidgets('a portrait video thought keeps its portrait frame on the card', (
-    tester,
-  ) async {
-    final file = _tempFile('portrait.mp4');
-    final thought = _thought(initialNow).copyWith(mediaKind: 'video');
-    await posts.savePost(thought);
-    await posts.savePostMediaAttachment(
-      _attachment('video').copyWith(width: 720, height: 1280),
-    );
-    await openCard(
-      tester,
-      thought,
-      download: (requested) async {
-        await posts.updatePostMediaLocalPath(requested.mediaId, file.path);
-        return requested.copyWith(localPath: file.path, downloadStatus: 'done');
-      },
-    );
-    await tester.pumpAndSettle();
-    final rect = tester.getRect(
-      find
-          .descendant(
-            of: find.byType(MediaGrid),
-            matching: find.byType(AspectRatio),
-          )
-          .first,
-    );
-    expect(rect.height / rect.width, closeTo(16 / 9, .01));
-    expect(rect.height, lessThanOrEqualTo(600 * .6));
-    await finish(tester);
-  });
+  testWidgets(
+    'a portrait video thought keeps its portrait frame, up to full screen',
+    (tester) async {
+      final file = _tempFile('portrait.mp4');
+      final thought = _thought(initialNow).copyWith(mediaKind: 'video');
+      await posts.savePost(thought);
+      await posts.savePostMediaAttachment(
+        _attachment('video').copyWith(width: 720, height: 1280),
+      );
+      await openCard(
+        tester,
+        thought,
+        download: (requested) async {
+          await posts.updatePostMediaLocalPath(requested.mediaId, file.path);
+          return requested.copyWith(
+            localPath: file.path,
+            downloadStatus: 'done',
+          );
+        },
+      );
+      await tester.pumpAndSettle();
+      final rect = tester.getRect(
+        find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byType(AspectRatio),
+            )
+            .first,
+      );
+      expect(rect.height / rect.width, closeTo(16 / 9, .01));
+      expect(rect.height, lessThanOrEqualTo(600));
+      await finish(tester);
+    },
+  );
 
   testWidgets('a failing seen-write keeps the thought on screen', (
     tester,
@@ -641,23 +669,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-message')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
     await finish(tester);
   });
 
-  testWidgets('media still on its way shows a spinner, not a bare Retry', (
-    tester,
-  ) async {
-    final thought = _thought(initialNow).copyWith(mediaKind: 'image');
-    await posts.savePost(thought);
+  testWidgets(
+    'media still on its way holds its place, not a spinner or Retry',
+    (tester) async {
+      final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+      await posts.savePost(thought);
 
-    await openCard(tester, thought);
-    await pumpMediaFrames(tester);
+      await openCard(tester, thought);
+      await pumpMediaFrames(tester);
 
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('Retry'), findsNothing);
-    await finish(tester);
-  });
+      expect(
+        find.byKey(const ValueKey('thought-media-placeholder')),
+        findsOneWidget,
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Retry'), findsNothing);
+      await finish(tester);
+    },
+  );
 
   testWidgets('an Arabic thought reads right to left in an English app', (
     tester,
