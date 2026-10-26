@@ -844,6 +844,47 @@ void main() {
       expect(find.text('❤️', findRichText: true), findsOneWidget);
     });
 
+    testWidgets(
+      'an unsent or failed reaction keeps its ordinary row; a sent one can be deleted',
+      (tester) async {
+        final deleted = <String>[];
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'failed',
+                text: '🔥',
+                isIncoming: false,
+                status: 'failed',
+                quotedMessageId: 'thought:theirs',
+              ),
+              makeMessage(
+                id: 'sent',
+                text: '❤️',
+                isIncoming: false,
+                status: 'delivered',
+                quotedMessageId: 'thought:theirs',
+              ),
+            ],
+            initialLoadDone: true,
+            onDeleteMessage: deleted.add,
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text("You reacted 🔥 to Alice's thought"), findsNothing);
+        expect(
+          find.byKey(const ValueKey('thought-reaction-failed')),
+          findsNothing,
+        );
+        expect(find.text('🔥', findRichText: true), findsOneWidget);
+        await tester.longPress(
+          find.byKey(const ValueKey('thought-reaction-sent')),
+        );
+        expect(deleted, ['sent']);
+      },
+    );
+
     testWidgets('renders media preview text for quoted media replies', (
       tester,
     ) async {

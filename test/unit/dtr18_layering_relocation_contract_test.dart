@@ -245,9 +245,10 @@ const _privacySha256 =
 // Contact notification dialogs join the existing listener's consent queue.
 // Application and resume ownership stay in place.
 // Plan 407 thought replies (owner-approved 10-26): the notification-opened chat
-// gets the same thought lookup as every other chat. No ownership moves.
+// gets the same post repository for thought quotes as every other chat. No
+// ownership moves.
 const _applicationRootNormalizedSha256 =
-    'e057612c2913aca2ffbb741a3728d22593510776374debb59f7e1b827e856443';
+    '351d79a17ed6d624b03102e7353f35dee5987fc38a26dafa3ab02bedc031babb';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

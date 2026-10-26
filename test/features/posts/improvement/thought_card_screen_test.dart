@@ -692,6 +692,24 @@ void main() {
     },
   );
 
+  testWidgets('an uploading multi-photo thought holds its place too', (
+    tester,
+  ) async {
+    final thought = _thought(
+      initialNow,
+    ).copyWith(text: '', mediaKind: 'image_carousel');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await pumpMediaFrames(tester);
+
+    expect(
+      find.byKey(const ValueKey('thought-media-placeholder')),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
+
   testWidgets('an Arabic thought reads right to left in an English app', (
     tester,
   ) async {

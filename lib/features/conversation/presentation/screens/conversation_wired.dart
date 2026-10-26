@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -464,8 +465,9 @@ class ConversationWired extends StatefulWidget {
   /// A reply typed on a thought card, sent once this chat is ready.
   final ThoughtReply? initialThoughtReply;
 
-  /// Looks up a quoted thought stored on this phone; null when it is gone.
-  final Future<PostModel?> Function(String postId)? loadThought;
+  /// The stored thoughts quoted here are read live from this repository and
+  /// re-read when it reports a change, so a deleted thought leaves the chat.
+  final PostRepository? postRepository;
   final DateTime Function()? thoughtNowProvider;
   final ImageProcessor? imageProcessor;
   final MediaPicker? mediaPicker;
@@ -609,7 +611,7 @@ class ConversationWired extends StatefulWidget {
     this.initialPendingMedia,
     this.initialText,
     this.initialThoughtReply,
-    this.loadThought,
+    this.postRepository,
     this.thoughtNowProvider,
     this.imageProcessor,
     this.mediaPicker,
@@ -714,7 +716,9 @@ class _ConversationWiredState extends State<ConversationWired>
   bool _initialLoadDone = false;
   bool _initialThoughtReplySent = false;
   final Map<String, ThoughtQuotePreview?> _thoughtQuotes = {};
-  final Set<String> _thoughtQuotesLoading = {};
+  final Map<String, int> _thoughtQuoteLoads = {};
+  StreamSubscription<String>? _thoughtChanges;
+  Timer? _thoughtExpiryTimer;
   bool _isSending = false;
 
   final _composerController = ConversationComposerController();
@@ -1528,6 +1532,9 @@ class _ConversationWiredState extends State<ConversationWired>
     _startListeningForMessages();
     _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
+    _thoughtChanges = widget.postRepository?.postChanges.listen((postId) {
+      if (_thoughtQuotes.containsKey(postId)) _loadQuotedThought(postId);
+    });
     _startListeningForReactions();
     _checkIntroBanner();
     _checkHasOtherFriends();
@@ -3652,9 +3659,12 @@ class _ConversationWiredState extends State<ConversationWired>
     final quotedThoughtId = thoughtIdFromQuote(quoteId);
     if (quotedThoughtId != null) {
       final preview = _thoughtQuotes[quotedThoughtId];
-      return preview == null || preview.text.trim().isEmpty
-          ? (null, preview == null)
-          : (preview.text.trim(), false);
+      final live = preview != null && preview.isLiveAt(_thoughtNow)
+          ? preview
+          : null;
+      return live == null || live.text.trim().isEmpty
+          ? (null, live == null)
+          : (live.text.trim(), false);
     }
 
     final quoted = _messages.where((m) => m.id == quoteId).firstOrNull;
@@ -8081,6 +8091,8 @@ class _ConversationWiredState extends State<ConversationWired>
 
   @override
   void dispose() {
+    _thoughtChanges?.cancel();
+    _thoughtExpiryTimer?.cancel();
     _outgoingCallStartRequest?.cancel();
     _outgoingCallPreflightTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
@@ -8643,38 +8655,71 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  DateTime get _thoughtNow =>
+      (widget.thoughtNowProvider ?? DateTime.now)().toUtc();
+
   void _loadQuotedThoughts() {
-    final loadThought = widget.loadThought;
-    if (loadThought == null) return;
+    if (widget.postRepository == null) return;
     final ids = {
       for (final message in _messages)
         ?thoughtIdFromQuote(message.quotedMessageId),
       ?thoughtIdFromQuote(_activeQuoteMessageId),
     };
     for (final postId in ids) {
-      if (_thoughtQuotes.containsKey(postId) ||
-          !_thoughtQuotesLoading.add(postId)) {
-        continue;
-      }
-      unawaited(
-        loadThought(
-          postId,
-        ).then<PostModel?>((post) => post, onError: (_) => null).then((post) {
-          _thoughtQuotesLoading.remove(postId);
-          if (!mounted) return;
-          final expiresAt = DateTime.tryParse(post?.expiresAt ?? '');
-          setState(() {
-            _thoughtQuotes[postId] = post == null || expiresAt == null
-                ? null
-                : ThoughtQuotePreview(
-                    text: post.text,
-                    mediaKind: post.mediaKind,
-                    expiresAt: expiresAt.toUtc(),
-                  );
-          });
-        }),
-      );
+      if (!_thoughtQuoteLoads.containsKey(postId)) _loadQuotedThought(postId);
     }
+  }
+
+  /// A later load supersedes an earlier one still in flight.
+  void _loadQuotedThought(String postId) {
+    final repository = widget.postRepository;
+    if (repository == null) return;
+    final load = (_thoughtQuoteLoads[postId] ?? 0) + 1;
+    _thoughtQuoteLoads[postId] = load;
+    unawaited(
+      repository
+          .getPost(postId)
+          .then<PostModel?>((post) => post, onError: (_) => null)
+          .then((post) {
+            if (!mounted || _thoughtQuoteLoads[postId] != load) return;
+            final expiresAt = DateTime.tryParse(post?.expiresAt ?? '');
+            setState(() {
+              _thoughtQuotes[postId] = post == null || expiresAt == null
+                  ? null
+                  : ThoughtQuotePreview(
+                      text: post.text,
+                      mediaKind: post.mediaKind,
+                      expiresAt: expiresAt.toUtc(),
+                    );
+            });
+            _armThoughtExpiry();
+          }),
+    );
+  }
+
+  /// Rebuilds at the next quote expiry so an idle chat drops its text on time.
+  void _armThoughtExpiry() {
+    _thoughtExpiryTimer?.cancel();
+    final now = _thoughtNow;
+    final next = _thoughtQuotes.values
+        .whereType<ThoughtQuotePreview>()
+        .map((preview) => preview.expiresAt)
+        .where((expiresAt) => expiresAt.isAfter(now))
+        .fold<DateTime?>(
+          null,
+          (soonest, expiresAt) => soonest == null || expiresAt.isBefore(soonest)
+              ? expiresAt
+              : soonest,
+        );
+    if (next == null) return;
+    _thoughtExpiryTimer = Timer(
+      next.difference(now) + const Duration(milliseconds: 50),
+      () {
+        if (!mounted) return;
+        setState(() {});
+        _armThoughtExpiry();
+      },
+    );
   }
 
   void _sendInitialThoughtReplyWhenReady() {
@@ -8806,7 +8851,7 @@ class _ConversationWiredState extends State<ConversationWired>
           onMaybeLater: _onMaybeLater,
           onQuoteReply: _onQuoteReply,
           thoughtQuotes: _thoughtQuotes,
-          thoughtNow: (widget.thoughtNowProvider ?? DateTime.now)().toUtc(),
+          thoughtNow: _thoughtNow,
           onDeleteMessage: _onDeleteMessage,
           // 231: direct received-media actions — every Save/Share/Info runs
           // through the local controller; Delete stays on the existing

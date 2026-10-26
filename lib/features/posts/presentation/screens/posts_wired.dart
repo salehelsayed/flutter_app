@@ -1011,7 +1011,7 @@ class _PostsWiredState extends State<PostsWired> {
     await Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
-          loadThought: widget.postRepo.getPost,
+          postRepository: widget.postRepo,
           directEventFanout:
               widget.directRouteAuthority.resolvedDirectEventFanout,
           directDeviceTrust:

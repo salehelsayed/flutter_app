@@ -1806,7 +1806,7 @@ class _FeedWiredState extends State<FeedWired>
     await Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
-          loadThought: widget.postRepository.getPost,
+          postRepository: widget.postRepository,
           directEventFanout:
               widget.directRouteAuthority.resolvedDirectEventFanout,
           directDeviceTrust:
@@ -1857,7 +1857,7 @@ class _FeedWiredState extends State<FeedWired>
         .push(
           buildConversationRoute(
             builder: (_) => ConversationWired(
-              loadThought: widget.postRepository.getPost,
+              postRepository: widget.postRepository,
               directEventFanout:
                   widget.directRouteAuthority.resolvedDirectEventFanout,
               directDeviceTrust:

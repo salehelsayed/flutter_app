@@ -1101,6 +1101,82 @@ void main() {
       await finishThoughtCase(tester);
     });
 
+    Future<void> replyFromCard(
+      WidgetTester tester,
+      _OrbitThoughtPostRepository posts, {
+      required DateTime Function() clock,
+    }) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      await tester.pumpWidget(
+        buildOrbitWired(postRepository: posts, thoughtNowProvider: clock),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.enterText(
+        find.byKey(const ValueKey('thought-reply-field')),
+        'count me in',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await pumpOrbitFrames(tester, count: 12);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('thought-quote-block')),
+          matching: find.text('Sunset at the lake?'),
+        ),
+        findsOneWidget,
+      );
+    }
+
+    Finder quoteGone() => find.descendant(
+      of: find.byKey(const ValueKey('thought-quote-block')),
+      matching: find.text('No longer available'),
+    );
+
+    testWidgets('a quoted thought its author deletes leaves the open chat', (
+      tester,
+    ) async {
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+      await replyFromCard(tester, posts, clock: () => thoughtNow);
+
+      await posts.deletePostCascade('lake');
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(find.text('Sunset at the lake?'), findsNothing);
+      expect(quoteGone(), findsOneWidget);
+      await finishThoughtCase(tester);
+    });
+
+    testWidgets('an idle open chat drops a quoted thought when it expires', (
+      tester,
+    ) async {
+      var clock = thoughtNow;
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought(
+          'lake',
+          text: 'Sunset at the lake?',
+          expiresAt: thoughtNow.add(const Duration(minutes: 5)),
+        ),
+      );
+      await replyFromCard(tester, posts, clock: () => clock);
+      expect(quoteGone(), findsNothing);
+
+      clock = thoughtNow.add(const Duration(minutes: 5, seconds: 1));
+      await tester.pump(const Duration(minutes: 5, seconds: 1));
+      await tester.pump();
+
+      expect(find.text('Sunset at the lake?'), findsNothing);
+      expect(quoteGone(), findsOneWidget);
+      await finishThoughtCase(tester);
+    });
+
     testWidgets(
       'latest note opens current-name card, marks read, a reply lands quoted in chat, and the face opens ordinary chat',
       (tester) async {

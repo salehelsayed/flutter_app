@@ -1124,25 +1124,40 @@ class _ConversationScreenState extends State<ConversationScreen>
             final quotedThoughtId = message.isDeleted
                 ? null
                 : thoughtIdFromQuote(message.quotedMessageId);
+            // An outgoing reaction still sending or failed keeps the ordinary
+            // row, with its status, Retry and Delete.
+            final reactionSettled =
+                message.isIncoming ||
+                (message.status != 'sending' && message.status != 'failed');
             final thoughtReaction =
-                quotedThoughtId == null || message.media.isNotEmpty
+                quotedThoughtId == null ||
+                    message.media.isNotEmpty ||
+                    !reactionSettled
                 ? null
                 : ThoughtReaction.fromText(message.text);
             if (thoughtReaction != null) {
               final reactionL10n = AppLocalizations.of(context)!;
+              final onDeleteMessage = widget.onDeleteMessage;
               return Padding(
                 key: ValueKey('msg-${message.id}'),
                 padding: const EdgeInsets.only(bottom: 16),
-                child: IntroSystemMessage(
-                  text: message.isIncoming
-                      ? reactionL10n.thought_reaction_incoming(
-                          widget.contactUsername,
-                          thoughtReaction.glyph,
-                        )
-                      : reactionL10n.thought_reaction_outgoing(
-                          widget.contactUsername,
-                          thoughtReaction.glyph,
-                        ),
+                child: GestureDetector(
+                  key: ValueKey('thought-reaction-${message.id}'),
+                  behavior: HitTestBehavior.opaque,
+                  onLongPress: onDeleteMessage == null
+                      ? null
+                      : () => onDeleteMessage(message.id),
+                  child: IntroSystemMessage(
+                    text: message.isIncoming
+                        ? reactionL10n.thought_reaction_incoming(
+                            widget.contactUsername,
+                            thoughtReaction.glyph,
+                          )
+                        : reactionL10n.thought_reaction_outgoing(
+                            widget.contactUsername,
+                            thoughtReaction.glyph,
+                          ),
+                  ),
                 ),
               );
             }

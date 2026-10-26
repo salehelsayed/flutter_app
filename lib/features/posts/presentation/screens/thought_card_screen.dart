@@ -530,7 +530,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }
 
   bool get _expectsVisualMedia =>
-      _post.mediaKind == 'image' || _post.mediaKind == 'video';
+      const {'image', 'image_carousel', 'video'}.contains(_post.mediaKind);
 
   Widget _failure(AppLocalizations l10n) => Center(
     child: Column(
