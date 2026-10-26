@@ -219,6 +219,24 @@ void main() {
       expect(media.deletedPostIds, isEmpty);
     });
 
+    test(
+      'a stored thought with an unreadable time does not block a new one',
+      () async {
+        await receive(
+          _thought('bob-1', 'peer-bob', '2026-03-15T09:00:00.000Z'),
+        );
+        final stored = (await posts.getPost('bob-1'))!;
+        await posts.savePost(stored.copyWith(createdAt: 'invalid'));
+
+        final (result, _) = await receive(
+          _thought('bob-2', 'peer-bob', '2026-03-15T10:00:00.000Z'),
+        );
+
+        expect(result, HandleIncomingPostResult.postCreated);
+        expect((await posts.loadFeed()).map((post) => post.id), ['bob-2']);
+      },
+    );
+
     for (final newerFirst in [false, true]) {
       test(
         'same-drain burst keeps only the newest thought (newer first: $newerFirst)',

@@ -34,10 +34,13 @@ Future<List<PostModel>> otherThoughtsBy(
 ];
 
 /// Match the orbit's newest-thought ordering, including equal creation times.
+/// A stored row with an unreadable time never wins and never blocks.
 bool isNewerThought(PostModel candidate, PostModel previous) {
-  final byCreatedAt = DateTime.parse(
-    candidate.createdAt,
-  ).compareTo(DateTime.parse(previous.createdAt));
+  final candidateAt = DateTime.tryParse(candidate.createdAt);
+  if (candidateAt == null) return false;
+  final previousAt = DateTime.tryParse(previous.createdAt);
+  if (previousAt == null) return true;
+  final byCreatedAt = candidateAt.compareTo(previousAt);
   return byCreatedAt > 0 ||
       (byCreatedAt == 0 && candidate.id.compareTo(previous.id) < 0);
 }
