@@ -226,7 +226,7 @@ const _relocations = <String, List<String>>{
   'lib/features/posts/domain/repositories/'
       'post_repository_impl.dart': <String>[
     'lib/features/posts/data/repositories/post_repository_impl.dart',
-    'b24eb65551ed124e9c16455c344ed9e8ec3d568074fe7398581241426faee292',
+    '03861eb24e4f09afbd96b215351ff78b1e4c9eb64a247a194fe81fd3245e919b',
   ],
 };
 
