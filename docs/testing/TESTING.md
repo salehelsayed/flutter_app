@@ -2999,6 +2999,10 @@ offline retry, reciprocal-restart and scanner-closure host controls rather than
 adding an app fault channel. Preparation evidence is retained under
 `.codex-test-logs/next-e2e-20261026/contact-receipt-unit-01.log` and
 `contact-causal-host-01.log`; these remain host evidence, not emulator execution.
+The preparation packets `privacy-e2e-mcp.md` and `introduction-e2e-mcp.md` reuse
+existing native/host oracles and identify the additional manual MCP observations.
+Their new privacy/Pass/OS-notification legs are not cases in the Python receipt
+checker and remain unrun until the execution owner records actual device proof.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
