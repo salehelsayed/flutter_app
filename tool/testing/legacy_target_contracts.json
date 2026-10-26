@@ -4086,7 +4086,7 @@
       ],
       "sources": {
         "integration_test/scripts/run_notification_open_during_other_chat.dart": "89adce3e3159c3a9c577775b2f6fc688c64d80ff6cbdd78cbe3faa6b57ff3bc0",
-        "integration_test/notification_open_during_other_chat_harness.dart": "7b7e90c6e4ac7107375ba46c476648f0b391e2052033797950701ef37e9f8670"
+        "integration_test/notification_open_during_other_chat_harness.dart": "7a2a1baf6f3ff5914c5e80d1462992d94f2695a9ad616e98e559ae70d62443b4"
       },
       "audit": "Audited exact leaf parser and all target-control calls; explicit role injection precedes any preparation. Shared-directory peers use iOS simulators; Android-capable pair transports use USB plus emulator.",
       "owns": [
