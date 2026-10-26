@@ -243,7 +243,10 @@ specific gap covered by the small checkpoint/cut adapter; all UI remains MCP.
    must show a bound, held partial **ciphertext body**, not metadata/header
    bytes. For download also retain the actual nonempty incomplete receiver
    file and its pending row; no `done` or false completed viewer state.
-4. While held, run the limited Android cut helper with exact discovered IDs:
+4. Bind `observations.senderRole` and `receiverRole` to distinct entries in
+   `targets`, including each actual `deviceId` and installed `packageName`.
+   Set each cut's `actorRole` to the sender for upload or receiver for download.
+   While held, run the limited Android cut helper with those exact IDs:
 
    ```sh
    dart run integration_test/scripts/cut_production_media_transfer.dart --probe "$PROBE" --gate-id "$CUT" --attachment-id "$ATTACHMENT" --device "$OWNED_ANDROID_ID" --package "$OWNED_PACKAGE" --output PRIVATE_ATTEMPT/cut.json
@@ -262,9 +265,12 @@ specific gap covered by the small checkpoint/cut adapter; all UI remains MCP.
    with one message/attachment. A preview never supplies full recovery.
 6. Repeat on a fresh item for receiver download. In `observations.cuts` record
    both directions, original IDs/owner/caption/marker, durable row and pending
-   status, before/after gate witnesses, process absence, distinct runtime nonces,
-   receiver partial-file bytes, full file and recipient native/open/count proof
-   as in MEDIA-035. For video set `mediaType=video` and include native duration,
+   status, distinct runtime nonces, receiver partial-file bytes, full file and
+   the bound receiver's native/open/count proof as in MEDIA-035. Preserve a
+   separate helper output per direction and set each cut's `cutProofFile` to its
+   relative path. The host evaluator loads `processCut` from that actual file;
+   its device/package and held upload/download witnesses must match the intended
+   actor. Inline claims cannot replace it. For video set `mediaType=video` and include native duration,
    start/end positions and `markerAndEndObserved`. Host video checking requires
    existing `ffmpeg` and decodes the full stream. Missing prerequisites remain
    incomplete/blocked; no new app hook or app fix belongs in this packet.

@@ -165,9 +165,21 @@ Future<void> main(List<String> arguments) async {
       if (receipt['candidateSource'] != expectedSource) {
         failures.add('candidate source mismatch');
       }
+      final observations = journeyGapMap(receipt['observations']);
+      if (journey == 'MEDIA-018') {
+        final cuts = journeyGapRows(observations['cuts']);
+        for (final cut in cuts) {
+          // Read the actual cut helper output; inline observations cannot
+          // substitute for the device/package that was really stopped.
+          cut['processCut'] = journeyGapMap(
+            jsonDecode(await localFile(cut['cutProofFile']).readAsString()),
+          );
+        }
+        observations['cuts'] = cuts;
+        receipt['observations'] = observations;
+      }
       failures.addAll(validateProductionJourneyGapReceipt(receipt));
       await checkEvidence('mcp-transcript');
-      final observations = journeyGapMap(receipt['observations']);
       final media = journey == 'MEDIA-018'
           ? journeyGapRows(observations['cuts'])
           : journeyGapRows(observations['media']);

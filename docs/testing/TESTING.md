@@ -2379,7 +2379,10 @@ It counts ciphertext body bytes, preserves framed metadata, learns the actual
 transfer size, and leaves unarmed traffic on the production handler.
 `cut_production_media_transfer.dart` verifies the selected partial transfer is
 held through confirmed process death and releases only its own gate; full
-recovery remains a separate MCP assertion. The focused preparation evidence in
+recovery remains a separate MCP assertion. The receipt evaluator reads the
+actual cut helper file and binds its process device/package and transfer direction
+to the declared sender/receiver targets; unbound recipient roles are rejected.
+The focused preparation evidence in
 `.codex-test-logs/journey-gap-preparation-20261026/` includes 39 passing Dart
 contracts (`dart-10.log`), seven passing Go tests plus two subtests with race
 detection (`go-integration-11.log`), and clean analysis (`analyzer-12.log`). These

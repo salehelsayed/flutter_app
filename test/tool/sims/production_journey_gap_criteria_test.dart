@@ -18,16 +18,19 @@ Map<String, Object?> _base(String journey) => {
   'targets': {
     'alice': {
       'deviceId': 'physical-fixture',
+      'packageName': 'com.fixture.app',
       'platform': 'android',
       'artifactSha256': 'b' * 64,
     },
     'bob': {
       'deviceId': 'emulator-5554',
+      'packageName': 'com.fixture.app',
       'platform': 'android',
       'artifactSha256': 'b' * 64,
     },
     'charlie': {
       'deviceId': 'emulator-5556',
+      'packageName': 'com.fixture.app',
       'platform': 'android',
       'artifactSha256': 'b' * 64,
     },
@@ -211,33 +214,46 @@ Map<String, Object?> _complete(String journey) {
         },
       });
     case 'MEDIA-018':
+      observations['senderRole'] = 'alice';
+      observations['receiverRole'] = 'bob';
       observations['cuts'] = [
         for (final direction in ['upload', 'download'])
           {
             ..._media(direction, owner: 'direct'),
             'direction': direction,
+            'actorRole': direction == 'upload' ? 'alice' : 'bob',
+            'cutProofFile': 'cut-$direction.json',
             'durableRowPresent': true,
             'rowStatusAtCut': direction == 'upload'
                 ? 'uploading'
                 : 'downloading',
-            'verifiedProcessAbsent': true,
             'nonceBefore': 'before',
             'nonceAfter': 'after',
             'partialFileBytes': 32,
-            for (final phase in ['gateBeforeKill', 'gateAfterKill'])
-              phase: {
-                'gateId': 'gate-$direction',
-                'direction': direction,
-                'bound': true,
-                'held': true,
-                'released': false,
-                'timedOut': false,
-                'attachmentSha256': sha256
-                    .convert(utf8.encode('attachment-$direction'))
-                    .toString(),
-                'bytesTransferred': 32,
-                'totalBytes': 4096,
-              },
+            'processCut': {
+              'schema': 'mknoon.media-transfer-cut.v1',
+              'status': 'PASS',
+              'deviceId': direction == 'upload'
+                  ? 'physical-fixture'
+                  : 'emulator-5554',
+              'packageName': 'com.fixture.app',
+              'gateId': 'gate-$direction',
+              'verifiedProcessAbsent': true,
+              for (final phase in ['gateBeforeKill', 'gateAfterKill'])
+                phase: {
+                  'gateId': 'gate-$direction',
+                  'direction': direction,
+                  'bound': true,
+                  'held': true,
+                  'released': false,
+                  'timedOut': false,
+                  'attachmentSha256': sha256
+                      .convert(utf8.encode('attachment-$direction'))
+                      .toString(),
+                  'bytesTransferred': 32,
+                  'totalBytes': 4096,
+                },
+            },
           },
       ];
   }
@@ -347,20 +363,36 @@ void main() {
     'gate released before verified death': (
       'MEDIA-018',
       (o) =>
-          (((o['cuts'] as List).first as Map)['gateAfterKill']
+          ((((o['cuts'] as List).first as Map)['processCut']
+                      as Map)['gateAfterKill']
                   as Map)['released'] =
               true,
     ),
     'a different gate cannot witness the same cut': (
       'MEDIA-018',
       (o) =>
-          (((o['cuts'] as List).first as Map)['gateAfterKill']
+          ((((o['cuts'] as List).first as Map)['processCut']
+                      as Map)['gateAfterKill']
                   as Map)['gateId'] =
               'other-gate',
     ),
     'zero-byte progress is not a download cut': (
       'MEDIA-018',
       (o) => ((o['cuts'] as List).last as Map)['partialFileBytes'] = 0,
+    ),
+    'MEDIA-018 rejects an unbound recipient role': (
+      'MEDIA-018',
+      (o) =>
+          ((((o['cuts'] as List).first as Map)['recipients'] as List).single
+                  as Map)['role'] =
+              'unbound-recipient',
+    ),
+    'MEDIA-018 rejects a cut of another package': (
+      'MEDIA-018',
+      (o) =>
+          (((o['cuts'] as List).first as Map)['processCut']
+                  as Map)['packageName'] =
+              'com.other.app',
     ),
   };
   for (final entry in regressions.entries) {
@@ -434,6 +466,72 @@ void main() {
             as Map;
     expect(verdict['failures'], contains('raw evidence digest mismatch'));
     expect(verdict['nativeExecutedByThisCommand'], false);
+  });
+  test('CLI binds MEDIA-018 to the actor in the saved cut proof', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'journey-cut-actor-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final receipt = _complete('MEDIA-018');
+    final raw = utf8.encode('synthetic host MCP fixture; no device actions');
+    await File('${directory.path}/mcp.json').writeAsBytes(raw);
+    ((receipt['evidence'] as List).single as Map)['sha256'] = sha256
+        .convert(raw)
+        .toString();
+    final cuts = (receipt['observations'] as Map)['cuts'] as List;
+    final pixels = image.encodePng(image.Image(width: 128, height: 96));
+    for (final cut in cuts.cast<Map>()) {
+      cut.remove('senderReceiptFile');
+      cut.remove('senderReceiptSha256');
+      await File(
+        '${directory.path}/${cut['cutProofFile']}',
+      ).writeAsString(jsonEncode(cut['processCut']));
+      final recipient = (cut['recipients'] as List).single as Map;
+      await File(
+        '${directory.path}/${recipient['fullFile']}',
+      ).writeAsBytes(pixels);
+    }
+    await File(
+      '${directory.path}/case.json',
+    ).writeAsString(jsonEncode(receipt));
+    Future<Map> evaluate(int expectedExit) async {
+      final result = await Process.run('dart', [
+        'run',
+        'integration_test/scripts/evaluate_production_journey_gap_receipt.dart',
+        '--source',
+        'a' * 40,
+        '--receipt',
+        '${directory.path}/case.json',
+        '--output',
+        '${directory.path}/verdict.json',
+      ]);
+      expect(
+        result.exitCode,
+        expectedExit,
+        reason: '${result.stderr}\n${result.stdout}',
+      );
+      return jsonDecode(
+            await File('${directory.path}/verdict.json').readAsString(),
+          )
+          as Map;
+    }
+
+    expect((await evaluate(0))['status'], 'PASS_RECORDED');
+    final upload = cuts.first as Map;
+    final wrongTargetProof = Map<String, Object?>.from(
+      upload['processCut'] as Map,
+    )..['deviceId'] = 'emulator-5554'; // Receiver killed during sender upload.
+    await File(
+      '${directory.path}/${upload['cutProofFile']}',
+    ).writeAsString(jsonEncode(wrongTargetProof));
+    // Keep the inline proof and all held-transfer facts correct. The actual
+    // helper output, rather than the inline claim, must determine the actor.
+    final wrongTarget = await evaluate(1);
+    expect(
+      wrongTarget['failures'],
+      contains('upload: process cut must match the intended actor'),
+    );
+    expect(wrongTarget['nativeExecutedByThisCommand'], false);
   });
   test(
     'CLI checks processed-source bytes and keeps absent byte proof NOT RUN',

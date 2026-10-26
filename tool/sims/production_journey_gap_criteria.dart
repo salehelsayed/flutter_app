@@ -280,6 +280,16 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
         'calls may start only after 08:30 CET',
       );
     case 'MEDIA-018':
+      final senderRole = observations['senderRole'];
+      final receiverRole = observations['receiverRole'];
+      require(
+        nonempty(senderRole) &&
+            nonempty(receiverRole) &&
+            senderRole != receiverRole &&
+            targets.containsKey(senderRole) &&
+            targets.containsKey(receiverRole),
+        'bound distinct sender and receiver roles',
+      );
       final cuts = journeyGapRows(observations['cuts']);
       require(
         cuts.length == 2 &&
@@ -292,8 +302,34 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
       for (final cut in cuts) {
         final id = cut['attachmentId'];
         final identityHash = sha256.convert(utf8.encode('$id')).toString();
-        final before = journeyGapMap(cut['gateBeforeKill']);
-        final after = journeyGapMap(cut['gateAfterKill']);
+        final actorRole = cut['direction'] == 'upload'
+            ? senderRole
+            : receiverRole;
+        final actor = journeyGapMap(targets[actorRole]);
+        final proof = journeyGapMap(cut['processCut']);
+        final before = journeyGapMap(proof['gateBeforeKill']);
+        final after = journeyGapMap(proof['gateAfterKill']);
+        require(
+          cut['actorRole'] == actorRole &&
+              targets.containsKey(actorRole) &&
+              nonempty(actor['packageName']) &&
+              proof['schema'] == 'mknoon.media-transfer-cut.v1' &&
+              proof['status'] == 'PASS' &&
+              proof['deviceId'] == actor['deviceId'] &&
+              proof['packageName'] == actor['packageName'] &&
+              proof['gateId'] == before['gateId'],
+          '${cut['direction']}: process cut must match the intended actor',
+        );
+        final recipients = journeyGapRows(cut['recipients']);
+        require(
+          recipients.isNotEmpty &&
+              recipients.every(
+                (recipient) =>
+                    recipient['role'] == receiverRole &&
+                    targets.containsKey(recipient['role']),
+              ),
+          '${cut['direction']}: recipient must be the bound receiver',
+        );
         require(
           nonempty(id) &&
               nonempty(cut['messageId']) &&
@@ -304,7 +340,7 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
                 'downloading',
                 'retrying',
               ].contains(cut['rowStatusAtCut']) &&
-              cut['verifiedProcessAbsent'] == true &&
+              proof['verifiedProcessAbsent'] == true &&
               nonempty(cut['nonceBefore']) &&
               nonempty(cut['nonceAfter']) &&
               cut['nonceBefore'] != cut['nonceAfter'] &&
