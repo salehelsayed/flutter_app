@@ -260,14 +260,17 @@ void main() {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
     contacts.addTestContact(_contact('peer-cat', 'Cat'));
 
-    controller.add(_message('peer-cat', 'Cat', postId: 'cat-1'));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    Future<void> receive(String peerId, String name, String postId) async {
+      final emitted = listener.incomingPostStream.first;
+      controller.add(_message(peerId, name, postId: postId));
+      expect((await emitted).id, postId);
+    }
+
+    await receive('peer-cat', 'Cat', 'cat-1');
+    await receive('peer-bob', 'Bob', 'bob-1');
     notifications.cancelled.clear();
     foreground = true;
-    controller.add(_message('peer-bob', 'Bob', postId: 'bob-2'));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await receive('peer-bob', 'Bob', 'bob-2');
 
     expect(notifications.cancelled, ['post:bob-1']);
     expect(notifications.shownThoughts.map((n) => n.payload), [
