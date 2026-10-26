@@ -525,6 +525,22 @@ handleIncomingMessage({
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
+  // The stored signing identity survives the in-memory replay cache. Ignore
+  // the exact declined request before it can change request or wake authority;
+  // a fresh signed request still follows the manual-consent path below.
+  final priorRequest = await requestRepo.getRequest(peerId);
+  if (priorRequest != null &&
+      priorRequest.status == ContactRequestStatus.declined &&
+      priorRequest.publicKey == publicKey &&
+      priorRequest.signature == signature) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CONTACT_REQUEST_DECLINED_REPLAY_IGNORED',
+      details: {},
+    );
+    return (HandleMessageResult.invalidMessage, null, null);
+  }
+
   final consent = await repairRepository?.readConsent(peerId);
   final blocked = existingContact?.isBlocked ?? false;
   // Known withdrawal (deleted or declined) with no current contact.

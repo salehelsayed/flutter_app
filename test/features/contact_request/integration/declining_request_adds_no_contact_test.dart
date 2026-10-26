@@ -534,8 +534,6 @@ void main() {
           ContactRequestStatus.declined,
         );
       },
-      skip:
-          'KNOWN GAP CR-002: ReplayCache is in-memory only and handleIncomingMessage overwrites a declined row back to pending without durable msgId or timestamp ordering, lib/features/contact_request/application/handle_incoming_message_use_case.dart:818-835. Remove when fixed.',
     );
   });
 }

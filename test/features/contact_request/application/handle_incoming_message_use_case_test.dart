@@ -1253,9 +1253,11 @@ void main() {
     // to contactRequest/dialog); the mutation "auto-add WITHOUT the
     // status==declined guard" lets it through and reds this.
     test('declined request is NOT resurrected by auto-add', () async {
-      final declined = ContactRequestModel.fromP2PPayload(
-        _validPayload(),
-      ).copyWith(status: ContactRequestStatus.declined);
+      final declined = ContactRequestModel.fromP2PPayload(_validPayload())
+          .copyWith(
+            signature: 'previousDeclinedSignatureBase64',
+            status: ContactRequestStatus.declined,
+          );
       await requestRepo.addRequest(declined);
 
       final payload = _validPayload();
