@@ -1,6 +1,6 @@
 # Mknoon journey coverage matrix
 
-Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
+Ranked-gap progress refreshed: 2026-10-26T14:45:24Z; source `97e66f64adb5287d837b3767a6d82a400f656929`. Original coverage-audit metadata and scoped updates retained: Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
 295 representative journeys: **45 strong, 245 partial, 4 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
 
@@ -9641,6 +9641,38 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 ## Prioritized test plan
 
 Ranks order the next useful proofs; run only applicable available-target legs. Missing/partial coverage is not an instruction for this host-only agent to execute device work.
+
+<!-- ranked-gap-status:start -->
+Progress as of 2026-10-26T14:45:24Z. `ready` means reviewed preparation waiting for execution; `covered` means the stated existing evidence/runner scope. No status below is a fresh device or signed-candidate PASS. Group B is in preparation. Original requirements and reasons remain below unchanged. Remote test traffic uses Hetzner; owned local fixtures are permitted; AWS is reserved for owner pre-publish lanes.
+
+| Rank | Journey | Status | Date | Evidence / remaining scope |
+| --- | --- | --- | --- | --- |
+| 1 | MEDIA-002 | covered | 2026-10-26 | 10-22 Original/Compressed camera+caption/full image, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:14; not signed-127 proof. |
+| 2 | MEDIA-014 | covered | 2026-10-26 | 10-22 offline camera/caption and automatic full-image catch-up, 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:16; no new device run. |
+| 3 | RG-001 | ready | 2026-10-26 | Reviewed 5a769d256/7354d2942; docs/testing/rg001-store-126-to-127-mcp.md; actual signed store-upgrade proof pending. |
+| 4 | VC-014 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; answered OS-state/audio observations pending; unanswered timing runs do not complete it. |
+| 5 | VC-019 | preparing | 2026-10-26 | Group B in preparation; test/features/call/integration/microphone_command_privacy_test.dart is host command proof, not received content. |
+| 6 | VC-025 | preparing | 2026-10-26 | Group B in preparation; test/features/call/presentation/locked_call_projection_test.dart is rendering proof, not actual locked navigation. |
+| 7 | DC-002 | covered | 2026-10-26 | Existing 100-text/restart runner: integration_test/scripts/run_production_direct_ordered_replay.dart; no new native execution. |
+| 8 | GC-005 | covered | 2026-10-26 | Existing ordered/process-death runners documented in 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md; no new native execution. |
+| 9 | TRANSFER-011 | not_started | 2026-10-26 | Scoped 10-23 simulator PASS retained; audible voice and missing-original recovery remain open; .codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:10. |
+| 10 | VC-026 | preparing | 2026-10-26 | Group B in preparation; test/features/call/integration/process_loss_recovery_decisions_test.dart supplies observations, not actual process death. |
+| 11 | CONTACT-001 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (CONTACT-001); native scanner/permission execution pending. |
+| 12 | MEDIA-010 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-010); native permission/draft/retry execution pending. |
+| 13 | MEDIA-003 | covered | 2026-10-26 | 10-22 reverse camera/caption/full iPhone viewer, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18; not signed-127 proof. |
+| 14 | MEDIA-035 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-035); actual every-recipient full-image execution pending. |
+| 15 | VC-015 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; 10-22 structural calls do not establish intelligible bidirectional audio. |
+| 16 | DC-011 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; historical media component evidence is not exact signed-candidate parity proof. |
+| 17 | CR-009 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; fresh native cross-platform scan/consent/key exchange pending. |
+| 18 | GX-002 | ready | 2026-10-26 | Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; actual mixed-platform full-media/membership execution pending. |
+| 19 | VC-023 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (VC-023); actual selected route/TURN outage/privacy execution pending. |
+| 20 | MEDIA-018 | ready | 2026-10-26 | Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-018), including cut-actor binding; native partial-transfer recovery pending. |
+| 21 | VC-024 | n_a | 2026-10-26 | Owner reports unavailable hardware leg; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024); no sustained-audio certification or Astra discovery. |
+| 22 | GX-001 | n_a | 2026-10-26 | Owner reports eight concurrent targets unavailable; /Volumes/CrucialX9/Kayan/testplan.yaml (GX-001); N/A by available-target policy. |
+| 23 | NAV-006 | blocked | 2026-10-26 | Owner decision on supported Inner-Circle membership/order entry remains pending; docs/testing/journey-coverage-matrix.md (NAV-006). |
+
+DC-013 is outside this rank list; reuse `run_production_contact_delete.dart` (`kx0010`/`kx0011`) per `0d7e4f1f7:docs/testing/privacy-e2e-mcp.md`. No rank or journey rating is added.
+<!-- ranked-gap-status:end -->
 
 1. **MEDIA-002** (e2e): Reproduce actual iPhone camera Original and compressed image+caption to Android over relay-only online path; recipient opens full correct image and exact caption. Record actual MIME/encoded fixture privately, never assume HEIC. Owner-reported stock125 incident is not covered by synthetic-byte or caption-only widget tests.
 2. **MEDIA-014** (e2e): Repeat same camera/quality/caption assertion with Android offline then supported foreground/inbox catch-up, preserving accepted identity and full decode after restart. Offline relay custody/hydration can fail independently from online rendition.

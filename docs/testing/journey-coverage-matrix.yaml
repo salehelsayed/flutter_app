@@ -1,6 +1,12 @@
 header:
-  commit: a502c06bc7b2a87c66e01495d4d2285f6731be3e
-  generated_at: '2026-10-20T14:42:18Z'
+  commit: 97e66f64adb5287d837b3767a6d82a400f656929
+  generated_at: '2026-10-26T14:45:24Z'
+  status_refresh:
+    date: "2026-10-26"
+    source_commit: 97e66f64adb5287d837b3767a6d82a400f656929
+    coverage_audit_commit: a502c06bc7b2a87c66e01495d4d2285f6731be3e
+    coverage_audit_generated_at: '2026-10-20T14:42:18Z'
+    scope: Ranked-gap progress only; existing journey ratings, execution records and requirements preserved.
   commands:
   - git rev-parse HEAD
   - git branch --show-current
@@ -39,6 +45,9 @@ header:
     --output .codex-test-logs/astra-matrix/change-plan-v3
   - git diff --check
   limitations:
+  - "Progress refresh 2026-10-26: only the 23 ranked-gap status fields and refresh metadata changed; original coverage audit a502c06bc7b2a87c66e01495d4d2285f6731be3e and all 295 journey ratings/execution records are retained. ready is reviewed preparation; covered can be scoped historical evidence or an existing runner, never a fresh device/signed-candidate PASS."
+  - "Current test routing: remote test relays use Hetzner; owned local fixtures are allowed; production AWS is restricted to owner pre-publish store-build lanes. No remote relay mutation is authorized."
+  - "DC-013 is outside the 23 ranked gaps: reuse integration_test/scripts/run_production_contact_delete.dart (kx0010/kx0011), documented in 0d7e4f1f7:docs/testing/privacy-e2e-mcp.md; no new rank or native result is added."
   - Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped
     Group C and D device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation.
     No production code or release publication was changed by this update.
@@ -16600,6 +16609,9 @@ gaps:
 - rank: 1
   journey_id: MEDIA-002
   test_type: e2e
+  status: covered
+  status_date: "2026-10-26"
+  status_note: "10-22 Original/Compressed camera+caption/full image, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:14; not signed-127 proof."
   must_verify: Reproduce actual iPhone camera Original and compressed image+caption to Android over relay-only online
     path; recipient opens full correct image and exact caption. Record actual MIME/encoded fixture privately, never
     assume HEIC.
@@ -16607,18 +16619,27 @@ gaps:
 - rank: 2
   journey_id: MEDIA-014
   test_type: e2e
+  status: covered
+  status_date: "2026-10-26"
+  status_note: "10-22 offline camera/caption and automatic full-image catch-up, 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:16; no new device run."
   must_verify: Repeat same camera/quality/caption assertion with Android offline then supported foreground/inbox
     catch-up, preserving accepted identity and full decode after restart.
   why: Offline relay custody/hydration can fail independently from online rendition.
 - rank: 3
   journey_id: RG-001
   test_type: release
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 5a769d256/7354d2942; docs/testing/rg001-store-126-to-127-mcp.md; actual signed store-upgrade proof pending."
   must_verify: Bind actual previous published revision and exact candidate source/configuration/signed artifact;
     execute mandatory-plus-affected preservation and required available-target manual/device legs.
   why: Host/source or a later/debug artifact cannot certify the signed upgrade released to users.
 - rank: 4
   journey_id: VC-014
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; answered OS-state/audio observations pending; unanswered timing runs do not complete it."
   must_verify: Correlate provider acceptance, actual OS wake/system presentation and answered audio in supported
     suspended/process-terminated/locked states on available platforms.
   why: Host admission/journal tests cannot prove platform courier/OS delivery and first-attempt missed ring remains
@@ -16626,30 +16647,45 @@ gaps:
 - rank: 5
   journey_id: VC-019
   test_type: e2e
+  status: preparing
+  status_date: "2026-10-26"
+  status_note: "Group B in preparation; test/features/call/integration/microphone_command_privacy_test.dart is host command proof, not received content."
   must_verify: Use causal received audio/content oracle before answer, while either peer muted and after hangup,
     with positive unmuted controls and lifecycle changes.
   why: Command counters and continuing RTP do not prove microphone content is absent.
 - rank: 6
   journey_id: VC-025
   test_type: e2e
+  status: preparing
+  status_date: "2026-10-26"
+  status_note: "Group B in preparation; test/features/call/presentation/locked_call_projection_test.dart is rendering proof, not actual locked navigation."
   must_verify: Answer through actual locked system surface, attempt allowed/forbidden navigation and inspect visual/touch/accessibility
     history exposure until real unlock.
   why: Semantics-only modal tests and locked no-dial callback prove different boundaries.
 - rank: 7
   journey_id: DC-002
   test_type: e2e
+  status: covered
+  status_date: "2026-10-26"
+  status_note: "Existing 100-text/restart runner: integration_test/scripts/run_production_direct_ordered_replay.dart; no new native execution."
   must_verify: Send100 numbered texts, kill/restart both sides at verified checkpoints, then assert every exact
     logical row/content/order once and later live delivery.
   why: Smaller bursts and unrelated routing criteria cannot prove this100-message restart contract.
 - rank: 8
   journey_id: GC-005
   test_type: e2e
+  status: covered
+  status_date: "2026-10-26"
+  status_note: "Existing ordered/process-death runners documented in 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md; no new native execution."
   must_verify: Kill actual owned sender at verified accepted-text custody checkpoint, reopen and verify same-ID
     delivery once while preserving membership-window authority.
   why: Current verified process-death campaign covers membership add/removal/re-add only.
 - rank: 9
   journey_id: TRANSFER-011
   test_type: e2e
+  status: not_started
+  status_date: "2026-10-26"
+  status_note: "Scoped 10-23 simulator PASS retained; audible voice and missing-original recovery remain open; .codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:10."
   must_verify: Preserve the scoped simulator receiver media-open/relaunch PASS; verify intelligible migrated voice
     content and missing-original recovery on available targets.
   why: Silent voice playback and exact-file preservation do not prove audibility or missing-original recovery. Physical-iPhone
@@ -16657,84 +16693,126 @@ gaps:
 - rank: 10
   journey_id: VC-026
   test_type: e2e
+  status: preparing
+  status_date: "2026-10-26"
+  status_note: "Group B in preparation; test/features/call/integration/process_loss_recovery_decisions_test.dart supplies observations, not actual process death."
   must_verify: Kill actual ringing/active app; inspect owned native capture/call/card release or reconciliation,
     remote deadline and fresh call after restart.
   why: Graceful teardown and supplied native replay cannot stand for hard process loss.
 - rank: 11
   journey_id: CONTACT-001
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (CONTACT-001); native scanner/permission execution pending."
   must_verify: Cancel native scanner before code/result and deny/grant camera permission; assert zero contact/request/egress
     on refusal and one valid request after retry.
   why: Accepted paste/late callback tests do not exercise camera cancellation before result.
 - rank: 12
   journey_id: MEDIA-010
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-010); native permission/draft/retry execution pending."
   must_verify: Deny camera/photo access, grant via supported OS flow and retry without losing draft, duplicate sends
     or false success.
   why: Picker/permission callbacks in host tests bypass OS permission state.
 - rank: 13
   journey_id: MEDIA-003
   test_type: e2e
+  status: covered
+  status_date: "2026-10-26"
+  status_note: "10-22 reverse camera/caption/full iPhone viewer, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18; not signed-127 proof."
   must_verify: Actual Android camera plus caption reaches available iPhone and full image decodes with correct content/caption
     in supported rendition.
   why: Reverse-direction native camera/codec boundary remains untested.
 - rank: 14
   journey_id: MEDIA-035
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-035); actual every-recipient full-image execution pending."
   must_verify: Actual group camera image/caption opens as full correct image on every authorized available member;
     exclude removed member and retain partial failures honestly.
   why: Synthetic fanout and rows/status are not each-recipient decode evidence.
 - rank: 15
   journey_id: VC-015
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; 10-22 structural calls do not establish intelligible bidirectional audio."
   must_verify: Available iPhone/Android each initiate and answer, exchange intelligible audio and clean both native
     owners.
   why: Android-only RTP does not establish mixed-platform audible interoperability.
 - rank: 16
   journey_id: DC-011
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; historical media component evidence is not exact signed-candidate parity proof."
   must_verify: Use actual available iOS/Android signed candidates for bidirectional text and full representative
     media with exact identity/caption/restart assertions.
   why: Shared host logic and single-platform campaigns do not certify parity.
 - rank: 17
   journey_id: CR-009
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; fresh native cross-platform scan/consent/key exchange pending."
   must_verify: Scan/add each platform in both directions, accept/decline and complete reciprocal key exchange then
     first real chat.
   why: Host lookup encryption/bridge substitutes do not establish native cross-platform contact protocol.
 - rank: 18
   journey_id: GX-002
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; actual mixed-platform full-media/membership execution pending."
   must_verify: With available mixed-platform group topology, exchange full text/media and apply add/remove/re-add
     with every entitled receiver checked.
   why: Small single-platform production cases and fake group policies leave full parity incomplete.
 - rank: 19
   journey_id: VC-023
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (VC-023); actual selected route/TURN outage/privacy execution pending."
   must_verify: Enable user always-relay preference, observe actual selected route, remove TURN and prove no direct
     fallback, restore TURN and call again.
   why: Forced-relay build, saved boolean and fake outage policy are separate assertions.
 - rank: 20
   journey_id: MEDIA-018
   test_type: e2e
+  status: ready
+  status_date: "2026-10-26"
+  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-018), including cut-actor binding; native partial-transfer recovery pending."
   must_verify: Kill sender/receiver at durable upload/download cuts and recover full native usable content once,
     preserving original failed attempt.
   why: Fake bridges/object reconstruction and thumbnail visibility are insufficient for native full-content recovery.
 - rank: 21
   journey_id: VC-024
   test_type: e2e
+  status: n_a
+  status_date: "2026-10-26"
+  status_note: "Owner reports unavailable hardware leg; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024); no sustained-audio certification or Astra discovery."
   must_verify: Specify duration/resource thresholds, hold real bidirectional audio and test only actually available
     output accessories with positive audio continuity.
   why: Short RTP/control runs and sampler unit tests cannot prove sustained audio/resource behavior.
 - rank: 22
   journey_id: GX-001
   test_type: e2e
+  status: n_a
+  status_date: "2026-10-26"
+  status_note: "Owner reports eight concurrent targets unavailable; /Volumes/CrucialX9/Kayan/testplan.yaml (GX-001); N/A by available-target policy."
   must_verify: When eight concurrent app targets are actually available, expand role binding and exact every-sender/every-receiver
     dedupe assertions.
   why: Five fake peers and three/four actual actors do not prove eight-member scale; unavailable topology N/A.
 - rank: 23
   journey_id: NAV-006
   test_type: manual
+  status: blocked
+  status_date: "2026-10-26"
+  status_note: "Owner decision on supported Inner-Circle membership/order entry remains pending; docs/testing/journey-coverage-matrix.md (NAV-006)."
   must_verify: Owner identifies concrete supported manual Inner-Circle membership/order entry, or confirms automatic
     recency/sculpt-only policy.
   why: Unknown reachability should be resolved before inventing a shipped missing editor or planned commitment.
