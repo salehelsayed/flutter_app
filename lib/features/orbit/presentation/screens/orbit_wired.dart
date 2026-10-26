@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/core/config/thought_compose_flag.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
@@ -157,6 +158,10 @@ class OrbitWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final PostRepository? postRepository;
   final DateTime Function()? thoughtNowProvider;
+
+  /// Whether the own avatar offers the thought composer; see
+  /// [kThoughtComposeEnabled].
+  final bool thoughtComposeEnabled;
   final MediaAttachmentRepository mediaAttachmentRepo;
 
   /// 409: newest terminal call per contact. Null keeps Orbit message-only,
@@ -255,6 +260,7 @@ class OrbitWired extends StatefulWidget {
     required this.messageRepo,
     this.postRepository,
     this.thoughtNowProvider,
+    this.thoughtComposeEnabled = kThoughtComposeEnabled,
     required this.mediaAttachmentRepo,
     this.callActivitySource,
     required this.chatMessageListener,
@@ -3653,7 +3659,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
-      onComposeThought: widget.postRepository == null || _identity == null
+      onComposeThought:
+          !widget.thoughtComposeEnabled ||
+              widget.postRepository == null ||
+              _identity == null
           ? null
           : () => unawaited(_composeThought()),
       onThoughtsExpired: () => unawaited(_reloadThoughts()),

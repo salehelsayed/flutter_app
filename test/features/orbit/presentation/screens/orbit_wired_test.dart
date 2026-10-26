@@ -328,6 +328,7 @@ void main() {
     PostRepository? postRepository,
     PendingPostTargetStore? pendingPostTargetStore,
     DateTime Function()? thoughtNowProvider,
+    bool thoughtComposeEnabled = true,
     bool wrapInNavigator = false,
     String? initialFilterTab,
     AppShellController? appShellController,
@@ -410,6 +411,7 @@ void main() {
       postRepository: postRepository,
       pendingPostTargetStore: pendingPostTargetStore,
       thoughtNowProvider: thoughtNowProvider,
+      thoughtComposeEnabled: thoughtComposeEnabled,
       feedUnreadCountListenable: feedUnreadCountListenable,
       onEmbeddedExit: onEmbeddedExit,
       onRowActionOpenChanged: onRowActionOpenChanged,
@@ -719,6 +721,33 @@ void main() {
           findsNothing,
         );
         expect(posts.focusedIds, ['depth-first']);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'with sharing switched off the own avatar has no plus and no way into the composer',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(
+          buildOrbitWired(postRepository: posts, thoughtComposeEnabled: false),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byKey(const ValueKey('orbit-self-node')), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('orbit-compose-thought')),
+          findsNothing,
+        );
+
+        await tester.tap(find.byKey(const ValueKey('orbit-self-node')));
+        await pumpOrbitFrames(tester, count: 6);
+        await tester.longPress(find.byKey(const ValueKey('orbit-self-node')));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(ComposePostSheet), findsNothing);
         await finishThoughtCase(tester);
       },
     );
