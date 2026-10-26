@@ -4085,7 +4085,7 @@ class _ConversationWiredState extends State<ConversationWired>
         setState(() => _activeQuoteMessageId = null);
       }
       if (_draftText == submittedDraftText &&
-          sanitizeMessageText(_draftText).trim() == sanitizedText) {
+          sanitizeMessageText(_draftText.trim()) == sanitizedText) {
         _draftText = '';
       }
       _privateMediaPolicy = const PrivateMediaPolicy.ordinary();

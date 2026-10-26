@@ -6088,60 +6088,69 @@ void main() {
       );
     });
 
-    testWidgets(
-      'build-127 composer clears sent padded text and keeps an unsent draft on return',
-      (tester) async {
-        final repository = FakeMessageRepository();
-        await pumpScreen(
-          tester,
-          identityRepo: FakeIdentityRepository(makeIdentity()),
-          messageRepo: repository,
-          chatListener: ChatMessageListener(
-            chatMessageStream: const Stream.empty(),
+    for (final (label, draft) in [
+      ('padded text', '  Keep my unsent draft  '),
+      ('edge control and whitespace', '\u200B Keep my unsent draft  '),
+    ]) {
+      testWidgets(
+        'build-127 composer clears sent $label and keeps an unsent draft on return',
+        (tester) async {
+          final repository = FakeMessageRepository();
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
             messageRepo: repository,
-            contactRepo: FakeContactRepository(),
-          ),
-          sendFn: _instantSuccessSendFn,
-        );
-
-        const draft = '  Keep my unsent draft  ';
-        await tester.enterText(find.byType(TextField), draft);
-        await tester.pump(const Duration(milliseconds: 300));
-        final navigator = Navigator.of(tester.element(find.byType(TextField)));
-        unawaited(
-          navigator.push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => const Scaffold(body: Text('Draft detour')),
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: repository,
+              contactRepo: FakeContactRepository(),
             ),
-          ),
-        );
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
-        navigator.pop();
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
-        for (var frame = 0; frame < 30; frame++) {
-          await tester.pump(const Duration(milliseconds: 16));
-        }
+            sendFn: _instantSuccessSendFn,
+          );
 
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller!.text,
-          draft,
-        );
-        expect(repository.store, isEmpty);
+          await tester.enterText(find.byType(TextField), draft);
+          await tester.pump(const Duration(milliseconds: 300));
+          final navigator = Navigator.of(
+            tester.element(find.byType(TextField)),
+          );
+          unawaited(
+            navigator.push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(body: Text('Draft detour')),
+              ),
+            ),
+          );
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          navigator.pop();
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          for (var frame = 0; frame < 30; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
 
-        final send = find.byIcon(Icons.arrow_upward_rounded).hitTestable();
-        expect(send, findsOneWidget);
-        await tester.tap(send);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        expect(repository.store.values.single.text, draft.trim());
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller!.text,
-          isEmpty,
-        );
-      },
-    );
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            draft,
+          );
+          expect(repository.store, isEmpty);
+
+          final send = find.byIcon(Icons.arrow_upward_rounded).hitTestable();
+          expect(send, findsOneWidget);
+          await tester.tap(send);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 300));
+          expect(
+            repository.store.values.single.text,
+            sanitizeMessageText(draft.trim()),
+          );
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            isEmpty,
+          );
+        },
+      );
+    }
 
     testWidgets('prefills shared text into the composer', (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
