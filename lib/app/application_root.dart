@@ -1142,7 +1142,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<void> _openPushNotificationSettingsSafely() async {
     try {
-      await widget.pushNotificationSettingsGateway.openNotificationSettings();
+      final opened = await widget.pushNotificationSettingsGateway
+          .openNotificationSettings();
+      if (!opened) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_REGISTER_NOTIFICATION_SETTINGS_OPEN_FAILED',
+          details: {'errorType': 'settingsUnavailable'},
+        );
+      }
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -2375,6 +2383,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _prepareNotificationRouteTarget(
     NotificationRouteTarget routeTarget,
   ) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final identity = await widget.repository.loadIdentity();
     await prepareNotificationRouteTarget(
       routeTarget: routeTarget,
@@ -2508,6 +2517,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onDetached() {
+    groupRecoveryGate.invalidateIncomingCompletion();
     if (kDebugMode) {
       debugPrint('[LIFECYCLE] detached — running best-effort teardown');
     }
@@ -2519,6 +2529,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final pauseCallSignaling = widget.pauseCallSignaling;
     if (pauseCallSignaling != null) {
       unawaited(pauseCallSignaling());
@@ -3003,6 +3014,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleForegroundRemotePush(RemoteMessage message) async {
+    groupRecoveryGate.invalidateIncomingCompletion();
     final iosRecoveryMutationScope =
         await _beginIosNotificationCanonicalMutation(source: 'foreground_push');
     var result = ForegroundRemoteMessageResult.drainFailed;
@@ -3529,6 +3541,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 ? routedChild
                 : PushRegistrationHealthSurface(
                     healthListenable: healthNotifier,
+                    dismissalStore: widget.secureKeyStore,
                     onRetry: _retryPushRegistration,
                     onOpenNotificationSettings: _openPushNotificationSettings,
                     child: routedChild,

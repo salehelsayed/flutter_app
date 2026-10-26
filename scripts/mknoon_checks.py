@@ -1569,7 +1569,28 @@ def provider_credential_matches(root, config):
         return False
 
 
+# Owner-approved exception (2026-10-25): these FCM campaigns need the only
+# Firebase client, production's, and may reset the production app only on the
+# one named disposable physical phone. Every other Android pin must be an emulator.
+PRODUCTION_RESET_CHECKS = frozenset({'device-group-mute', 'device-notifications-android'})
+
+
+def production_package_reset_allowed(check, config):
+    override = config.get('production_package_reset')
+    if not isinstance(override, dict):
+        return False
+    serial, allowed = override.get('android_physical'), override.get('checks')
+    devices = config.get('devices', {})
+    android = {k: v for k, v in devices.items() if k.startswith('android')}
+    return (check.get('id') in PRODUCTION_RESET_CHECKS and isinstance(allowed, list) and check.get('id') in allowed and
+            isinstance(serial, str) and bool(serial) and devices.get('android_physical') == serial and
+            all(v == serial or (k.startswith('android_emulator') and str(v).startswith('emulator-'))
+                for k, v in android.items()))
+
+
 def sims_android_package(check, config):
+    if production_package_reset_allowed(check, config):
+        return 'com.mknoon.app'
     fixed = check.get('disposable_android_package')
     if fixed is None and not check.get('requires_disposable_android_package'):
         return None
@@ -1624,6 +1645,10 @@ def sims_environment(config, report, check=None):
         # the production app while the config claims a disposable fixture.
         env.update(ANDROID_APP_PACKAGE=package, SIMS_APP_ID=package,
                    ORG_GRADLE_PROJECT_androidApplicationId=package)
+        # The only Firebase Android client is production's, so a disposable
+        # package that never needs FCM builds without the Google services step.
+        if not (check or {}).get('requires_firebase_android_client'):
+            env['ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof'] = 'true'
     supplied = config.get('full_suite', {})
     bindings = {
         'relay_addresses':['MKNOON_RELAY_ADDRESSES'],

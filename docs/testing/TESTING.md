@@ -2360,6 +2360,38 @@ directory's `007-go-checkpoint-summary.json`. These are host results, not device
 coverage. GC-005 still needs its separate membership process-death companion,
 and call content audio still needs the unapproved test-build audio hook.
 
+The additional journey preparation is documented in
+`docs/testing/priority-e2e-codex-mcp-execution.md`, using the shared camera
+operations in `priority-e2e-camera-permission-mcp.md`. GC-005 reuses the ordered
+text recovery and membership process-death runners together. CONTACT-001,
+MEDIA-010, MEDIA-035, VC-023, and MEDIA-018 use recorded MCP/native observations
+and hashed raw evidence; `evaluate_production_journey_gap_receipt.dart` requires
+an independently pinned candidate and reports `PASS_RECORDED`, not a device
+execution performed by that command. Received images must fully decode and
+videos must pass a full host decode as well as the recorded native viewer
+checks. Equality with the processed encryption input is additional proof and
+remains `NOT RUN` when its existing sender receipt was not captured. Available
+target discovery supports an explicit unavailable-target N/A rather than a pass.
+
+MEDIA-018's test-only `direct_media_transfer_checkpoint_fixture_test.go`
+extends the existing disposable media relay with a bounded, one-shot body gate.
+It counts ciphertext body bytes, preserves framed metadata, learns the actual
+transfer size, and leaves unarmed traffic on the production handler.
+`cut_production_media_transfer.dart` verifies the selected partial transfer is
+held through confirmed process death and releases only its own gate; full
+recovery remains a separate MCP assertion. The receipt evaluator reads the
+actual cut helper file and binds its process device/package and transfer direction
+to the declared sender/receiver targets; unbound recipient roles are rejected.
+The focused preparation evidence in
+`.codex-test-logs/journey-gap-preparation-20261026/` includes 39 passing Dart
+contracts (`dart-10.log`), seven passing Go tests plus two subtests with race
+detection (`go-integration-11.log`), and clean analysis (`analyzer-12.log`). These
+host results do not upgrade catalog device coverage. Both command adapters
+are classified as reliability-discovery support, not additional executable
+scenarios. Omitting those entries blocks the reliability inventory and its
+workflow/SIMS registry contracts (`wrapper-13/` preserves that first failure).
+The initial Dart fixture type failures and analyzer style findings also remain.
+
 Direct text catalog host coverage also includes
 `direct_text_restart_sqlite_test.dart` in `offline-recovery`. DC-002 starts
 100 sends without awaiting each send, injects duplicate live deliveries, and
@@ -2852,6 +2884,40 @@ active negative/fresh controls.
 This host evidence does not cover camera decoding, native crypto, physical scans,
 OS lifecycle, signed release artifacts, or the coordinator's broader lanes.
 
+DC-013 extends the two existing call-history deletion cases in
+`delete_contact_use_case_test.dart` rather than adding a separate harness.
+Both the final atomic purge and split-delete fallback now use a file-backed
+production-schema SQLite database with incoming/outgoing chat rows, completed
+and pending owned media, and an unrelated conversation. The real file manager
+uses a temporary documents root through the path-provider boundary. Deletion
+must remove the selected contact's messages, attachment rows and owned files;
+the other contact's SQL rows and file bytes remain unchanged. The same oracle,
+including the original Calls-page counts and identity assertions, runs again
+after a real database/repository reopen. Evidence is retained under
+`.codex-test-logs/astra-contact-catalog/group1/` (`003-dc013-causal.log` and
+`004-group1-focused.log`). These are host SQL/filesystem proofs; mobile UI,
+native SQLCipher, OS process termination and signed-candidate behavior remain
+separate.
+
+CR-016's QR-storage gap is closed by sanitizing the stored contact-name copy
+with the existing `sanitizeUsername` in `ContactModel.fromQRPayload`, after
+signature verification. The signed payload and signature are unchanged.
+The real signed scanner cases in
+`qr_timestamp_admission_test.dart` accept Arabic-first and English-first mixed
+names containing bidi overrides, verify the original Ed25519 signature, persist
+one contact and queue one outbound request, then require the SQL name to omit
+overrides while preserving Arabic and emoji. Both cases are enabled. The
+original failure was an unsanitized signed `un` copy; its active RED source
+and first failures remain under
+`.codex-test-logs/astra-contact-catalog/group2/002-cr016-red*`, with a second
+causal RED on unchanged production under
+`.codex-test-logs/qr-stored-name-sanitizer-20261025/red-02.log`. The shared
+sanitizer policy is unchanged: safe Arabic direction markers, isolates and
+emoji joins are preserved, with the existing username length bound. Existing request
+model/dialog sanitization and text-direction cases cover that separate display
+boundary. These host cases do not prove contact-screen rendering, native
+camera/crypto or signed-device behavior.
+
 The shared contact-request roundtrip also reverses the initiating logical peer,
 requires the receiver to remain unlinked before explicit acceptance, and uses
 the reciprocal key for exact Unicode/multiline text in both directions. Its QR
@@ -2941,6 +3007,51 @@ envelope/router/negotiation adapters, then ends from the answering side. Both
 native-bound owners close once and both SQLite histories retain the correct
 local/remote terminal reason. This is shared protocol/ownership evidence for
 VC-015, with native WebRTC, transport, authority, crypto and audio still faked.
+
+Priority MCP journeys use `priority-e2e-mcp-execution.md` and the shared
+`priority-e2e-camera-permission-mcp.md` actions. Their host-only receipt checker
+is `scripts/priority_e2e_verdict.py`: `PASS_RECORDED` requires the expected
+candidate revision, artifact/version and platform bindings, every required
+observation and nonempty evidence files inside the private attempt directory.
+It hashes referenced evidence but does not independently interpret screenshots,
+verify installed artifact bytes, or measure audio. Audio/content checks require
+a human/acoustic observer; call observations require timezone-aware starts at
+or after 08:30 Europe/Berlin. Live unavailable-target evidence yields N/A, while
+missing observations remain incomplete. Causal host controls reject false
+completion, wrong candidates/platforms, missing/escaping evidence, structural
+call screens without audibility and early calls; retained host evidence is
+`.codex-test-logs/priority-e2e-20261026/receipt-unit-01.log`. These are preparation
+and receipt checks, not a newly executed phone or signed-candidate pass.
+Emulator contact receipts additionally require Android-emulator role bindings
+and actual MCP observations; a host control cannot complete their UI checks.
+CR-005 explicitly reports `emulator_crossed_requests_ui`, preserving the
+distinction from same-envelope native live/inbox duplication. The shared
+`contact-request-emulator-mcp.md` packet reuses existing consent, pending-shell,
+offline retry, reciprocal-restart and scanner-closure host controls rather than
+adding an app fault channel. Preparation evidence is retained under
+`.codex-test-logs/next-e2e-20261026/contact-receipt-unit-01.log` and
+`contact-causal-host-01.log`; these remain host evidence, not emulator execution.
+The preparation packets `privacy-e2e-mcp.md` and `introduction-e2e-mcp.md` reuse
+existing native/host oracles and identify the additional manual MCP observations.
+Their new privacy/Pass/OS-notification legs are not cases in the Python receipt
+checker and remain unrun until the execution owner records actual device proof.
+`messaging-reliability-e2e-mcp.md` adds the Group A handoff while reusing the
+existing typed native/host oracles. It distinguishes current transport glyphs,
+conditional linked authoring versus persisted authority, emulator-scoped relay
+faults and controlled host retention/rejection proof from unrun native legs.
+The owner's clarified 2026-10-26 relay rule sends remote test traffic to Hetzner;
+owned disposable local relay/coturn fixtures remain allowed. AWS is reserved for
+pre-publish store-build lanes. Stop and report runners/artifacts that cannot use
+the intended test binding, with no AWS fallback or remote relay deployment/
+configuration change. Hermetic host oracles do not contact either remote service.
+`call-privacy-recovery-e2e-mcp.md` prepares Group B (VC-026/019/025/027) with the
+existing local-fixture audio adapter, its bounded manual hold and typed native
+baseline. Additional Appium MCP observations must establish actual process loss,
+locked navigation, received-content/native-capture privacy and each reachable
+terminal path. The separate host Pion oracle and normal RTP/control/cleanup
+report do not establish those remaining boundaries. Existing causal host and
+historical iOS recovery evidence retain their original scope; no Group B device
+or signed-candidate result is claimed by this preparation packet.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
@@ -3395,6 +3506,35 @@ both arrivals in the same drain (in both orders), and prove that deleting the
 newest thought cannot reveal its older copy. A blocked media download must not
 hold the next admission. Original-code failures and corrected-run evidence are
 retained under `.codex-test-logs/thought-ordering-20261025/`.
+
+Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
+`sent: true, acked: false` must attempt the existing inbox fallback and remain
+retryable if that storage fails. `post_follow_on_delivery_test.dart` covers both
+inbox outcomes and the acknowledged-send control without an inbox duplicate.
+`post_follow_on_outbox_repository_test.dart` uses the real repository, SQLite
+cascade, media-file deletion and database close/reopen: the thought, media and
+legacy follow-ons disappear while the retraction event and failed recipients
+survive. Initial enqueue publishes the event and its complete intended recipient
+snapshot in one transaction; a retrier must never settle and retire an earlier
+subset while the rest are being queued. The file-backed interleaving control
+requires a later failed recipient to remain retryable after reopen, and the
+recipient-write failure control requires the whole initial snapshot to roll back.
+Once all recipients settle or the original thought's 24-hour deadline
+expires, the existing delivery/retry owner removes the event and all recipient
+rows in one transaction. The delivery result is computed before retirement;
+recipient writes require their event to still exist in the same transaction,
+so late delivery outcomes cannot recreate orphan rows. Another database
+close/reopen proves physical removal. Merely hiding terminal
+rows from retry selection does not establish cleanup. The original four causal
+failures on `03467e0de` remain under
+`.codex-test-logs/thought-retract-delivery-20261026/`; the two terminal-row REDs
+on `87c713129` and focused cleanup evidence are under
+`.codex-test-logs/thought-retract-retirement-20261026/`; atomic enqueue's
+lost-recipient RED on `47e73886d` and preservation evidence are under
+`.codex-test-logs/thought-retract-atomic-queue-20261026/`. Each two-line repository
+callback binding re-pins only the two bootstrap digests, with the historical
+notification callback and other pins byte-identical. These host contracts do
+not establish installed-device retract latency.
 
 On 2026-10-22 the owner accepted Thoughts completion with the three pre-existing
 skip-only host gaps documented. The original Step 1 affected selection remains
@@ -4627,6 +4767,12 @@ do not count `test(...)` strings as executions. Runner listings took about
   these cases do not prove OS Settings interaction. Astra's original failure
   and focused reproduction/fix receipts are retained in
   `.codex-test-logs/astra-d1/`.
+  Group Take Photo and Record Video use the same notice for generic picker
+  failures. Their wired widget cases inject a camera permission exception,
+  assert visible localized feedback, preserve the text draft and leave the
+  message repository empty. The native picker remains substituted; this is
+  not a device permission proof. Causal failures and corrected receipts are
+  under `.codex-test-logs/notification-followup-media-call-insets-20261025/`.
 - Video preparation has a native `video_compress` call and a composer lifecycle.
   A Dart deadline must request native cancellation, stop its progress listener,
   release the composer, and keep completed siblings. The direct and group wired
@@ -4759,6 +4905,22 @@ do not count `test(...)` strings as executions. Runner listings took about
   `push_registration_health_surface_test.dart` exercises the real coordinator
   with deferred registration, failure/recovery, rapid activation, and notifier
   clear/disposal fencing. Permission denial retains its settings action.
+- The notification health surface consumes the top inset once before its
+  48 logical pixel row and removes that consumed padding from the stable
+  Navigator child. Its standard `Overlay.wrap` supplies the tooltip owner above
+  the Navigator; a tooltip without that owner fails in the production builder
+  composition. Compact English, German and Arabic tests check a 48 by 48 dismiss
+  target, active localized semantics, RTL and a hittable chat Back button.
+  The existing secure store retains only the dismissed reason: a fresh shell
+  suppresses the same reason through startup checking, while reason changes
+  and healthy-to-denied transitions rearm the notice. A deferred-read test
+  prevents an old stored dismissal from hiding a newly rearmed warning.
+  Gateway channel tests preserve Android dispatch and check iOS
+  `permission_handler.openAppSettings` success, false and thrown results.
+  These are host widget, persistence and dispatch assertions; they do not prove
+  an installed iOS Settings launch or native screen-reader behavior. Initial
+  failures and corrected receipts are retained under
+  `.codex-test-logs/notification-permission-banner-20261025/`.
 - The approved UI-25 loading label fits Orbit's existing top-strip reservation;
   skeleton geometry and settled list position are unchanged. Geometry checks
   must advance the existing zero-delay, 400 ms row entrance before comparing
@@ -5196,9 +5358,35 @@ visible and cannot become an ordinary first-attempt PASS.
   notification settlement still waits for initial-open ownership and all
   required drains. `startup_router_recovery_test.dart` holds the empty-native
   FCM lookup pending and checks actual group join/inbox calls before release;
-  settlement remains withheld until the lookup completes. No new timeout or
-  catch-up coalescing is introduced. Host evidence:
+  settlement remains withheld until the lookup completes. The initial repair
+  introduced no timeout or coalescing; its host evidence remains in
   `.codex-test-logs/startup-group-catchup-20261024/`.
+  The later duplicate-pass fix lets only the retrier's debounced initial
+  incoming-group pass consume a successful canonical startup/resume completion.
+  The existing group gate retains one process-local receipt, with no TTL or
+  persistence. Service/account bindings, peer/restart state and the input
+  revision must match. Failed, deferred or keyless rejoins, failed/truncated
+  terminal probes, incomplete drains and known pending key repairs grant no
+  receipt. Independent lifecycle, network, group ingress and local authority
+  input invalidates it; replay through the canonical owner does not. An
+  outstanding node recovery request still runs the existing ACK path.
+  `startup_router_recovery_test.dart` exercises real startup/resume owners and
+  the initial retrier together; `pending_message_retrier_test.dart` preserves
+  outbound/direct/custody/notification callbacks and recurring fresh polls.
+  Causal RED (two all-group passes), GREEN (one), failure and dirty-input
+  controls are retained in
+  `.codex-test-logs/group-catchup-initial-reuse-20261025/`. These host proofs do
+  not certify an installed iPhone build or change the separate tap-target drain.
+  The first tests began online and missed the initial readiness edge during
+  startup's revision capture/record window. That edge incorrectly invalidated
+  the receipt. Each readiness axis now treats its first rise as part of startup;
+  later loss/recovery still invalidates, as do the existing independent inputs.
+  The fake-clock regression captures at +1.2 s, raises readiness at +1.4 s and
+  completes at +3 s, then requires only one incoming pass at +6.8 s while
+  outbound/direct work runs. It also preserves a fresh pass after a real
+  reconnect and the unchanged 30 s continuity sweep. The causal failures and
+  corrected receipts are under `.codex-test-logs/group-catchup-first-online-20261025/`;
+  a new installed-device repeat remains separate evidence.
 
 - **Notification-tap missing group keys:** MyApp passes its durable pending-key
   repository and active repair sender into the shared route preparation;
@@ -7448,6 +7636,10 @@ visible and cannot become an ordinary first-attempt PASS.
   unblock, a fresh text reaches the notification sink and a fresh reaction is
   persisted and admitted. These are host ingress/notification-policy proofs,
   not real blob transfer, OS notification delivery, or device interaction.
+  The fixture owns the chat-input subscription and drains its production
+  handler futures before clearing the notification gate and deleting its
+  temporary directory. The fake's shown count precedes the final dedup-marker
+  write; synchronous listener disposal alone does not wait for that IO.
 - **TURN availability and frozen call policy:** normal (`all`) setup and restart
   may attempt direct media after a five-second credential timeout or a typed
   transient service failure. Preserve the approved STUN entries supplied by the
@@ -8858,12 +9050,32 @@ visible and cannot become an ordinary first-attempt PASS.
   count remained zero is unestablished and may be investigated separately.
   These host proofs do not certify native transport repair, the underlying iOS
   adapter failure, real-device recovery latency or a signed candidate.
+  **Call capability resume reuse:** `CallSignalingComposition.onResume`
+  reports a successful advertisement from this recovery. If it starts or joins
+  graph startup, that successful startup publication also serves the resume;
+  an already started graph still refreshes once on each later resume. The
+  immediate grant backfill reuses only that success, keeps its pending-grant
+  check and fresh retry, and reconciles normally after a failed resume.
+  Independent contact changes still publish through the existing boundary.
+  The two full owner test files pass 192 cases without skips, including cold
+  3-to-1 and warm 2-to-1 host counts for Android/iOS flags, failed-advertisement
+  recovery, later-resume/contact refresh, and one Android publication carrying
+  a rotated fixture token. A separately completed startup and a later resume
+  each retain their publication. Evidence and the five causal RED failures are
+  under `.codex-test-logs/call-capability-reuse-20261026/`; these host counts do
+  not establish device latency or provider delivery.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;
   minimized Back pops ordinary routes and backgrounds at the navigator root.
   The return bar needs its own semantics tap action when child semantics are
   excluded. Remote end clears a minimized bar without opening a terminal modal.
+  The minimized bar and full-screen access card remove their consumed top
+  padding from the stable routed child. With a 44 pixel status inset, their
+  widget tests align the visible AppBar toolbar to the bar/card bottom, retain
+  the same Navigator and restore the normal inset when the notice hides.
+  Baselines reproduced an extra 44 pixels in both surfaces; these host layout
+  proofs are retained under the notification follow-up evidence path above.
   Local Call back actions are untrusted routing hints: resolve the received
   terminal row, reject superseded/duplicate actions, wait for canonical runtime
   and foreground/unlock, then use current contact/authenticated outgoing

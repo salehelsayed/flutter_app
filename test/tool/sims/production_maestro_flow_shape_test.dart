@@ -25,7 +25,7 @@ void main() {
     final prompt = (flow[1] as YamlMap)['extendedWaitUntil'] as YamlMap;
     expect(prompt['visible'], {
       'id':
-          '(com.android|com.google.android).permissioncontroller:id/permission_deny_button',
+          '(com.android|com.google.android).permissioncontroller:id/permission_deny(_and_dont_ask_again)?_button',
     });
     expect((flow[2] as YamlMap)['tapOn'], prompt['visible']);
     expect(

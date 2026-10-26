@@ -93,7 +93,12 @@ void main() {
     alice.start();
     bob.router!.start();
     bob.messageDeletionListener!.start();
-    chat.start();
+    // The notification sink records a show before its dedup marker is written.
+    // Retain the real handler futures so teardown can await that final IO.
+    final chatIngress = <Future<ChatMessageProcessOutcome>>[];
+    final chatInput = bob.router!.chatMessageStream.listen((message) {
+      chatIngress.add(chat.processIncomingMessage(message));
+    });
     reactions.start();
     try {
       final (initialResult, original) = await alice.sendMessage(
@@ -199,6 +204,8 @@ void main() {
       expect(finalRows.where((row) => row.id == fresh!.id), hasLength(1));
       expect(bobMedia.count, 0);
     } finally {
+      await chatInput.cancel();
+      await Future.wait(chatIngress);
       debugSetFlowEventSink(null);
       await subscription.cancel();
       chat.dispose();

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const Duration interactivePostFollowOnBudget = Duration(seconds: 4);
@@ -130,7 +131,7 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
         envelope,
         timeoutMs: interactiveBudget.inMilliseconds,
       );
-      if (sendResult.sent) {
+      if (sendResult.acknowledged) {
         return PostFollowOnRecipientResult(
           recipientPeerId: recipientPeerId,
           deliveryStatus: 'delivered',
@@ -138,7 +139,9 @@ Future<PostFollowOnRecipientResult> _deliverPostFollowOnEnvelope({
           attemptedAt: attemptedAt,
         );
       }
-      directFailureReason = 'direct_send_returned_not_sent';
+      directFailureReason = sendResult.sent
+          ? 'direct_send_unacknowledged'
+          : 'direct_send_returned_not_sent';
     } else {
       directFailureReason = 'direct_connect_unavailable';
     }
@@ -331,17 +334,6 @@ Future<List<PostFollowOnOutboxRecipientDelivery>> queuePostFollowOn({
     recipientPeerIds.where((recipientPeerId) => recipientPeerId.isNotEmpty),
   ).toList(growable: false);
 
-  await postRepo.saveFollowOnOutboxEvent(
-    PostFollowOnOutboxEvent(
-      eventId: eventId,
-      eventType: eventType,
-      postId: postId,
-      senderPeerId: senderPeerId,
-      rawEnvelope: envelope,
-      createdAt: createdAt,
-    ),
-  );
-
   final queuedDeliveries = recipients
       .map(
         (recipientPeerId) => PostFollowOnOutboxRecipientDelivery(
@@ -354,9 +346,17 @@ Future<List<PostFollowOnOutboxRecipientDelivery>> queuePostFollowOn({
         ),
       )
       .toList(growable: false);
-  for (final delivery in queuedDeliveries) {
-    await postRepo.saveFollowOnOutboxRecipientDelivery(delivery);
-  }
+  await postRepo.saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent(
+      eventId: eventId,
+      eventType: eventType,
+      postId: postId,
+      senderPeerId: senderPeerId,
+      rawEnvelope: envelope,
+      createdAt: createdAt,
+    ),
+    queuedDeliveries,
+  );
   return queuedDeliveries;
 }
 
@@ -442,8 +442,15 @@ Future<PostFollowOnDeliveryResult> _loadPersistedPostFollowOnResult(
         ),
       )
       .toList(growable: false);
-  return PostFollowOnDeliveryResult(
+  final result = PostFollowOnDeliveryResult(
     recipientResults: recipientResults,
     settlement: _aggregatePostFollowOnResult(recipientResults),
   );
+  if (result.settlement == PostFollowOnSettlement.fullySettled) {
+    final event = await postRepo.getFollowOnOutboxEvent(eventId);
+    if (event?.eventType == PostRetractEnvelope.type) {
+      await postRepo.deleteFollowOnOutboxEvent(eventId);
+    }
+  }
+  return result;
 }

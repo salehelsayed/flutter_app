@@ -3933,7 +3933,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get push_registration_health_permission_denied =>
-      'Benachrichtigungen für Mknoon sind auf diesem Gerät deaktiviert.';
+      'Benachrichtigungen aus';
 
   @override
   String get call_full_screen_access_title =>
@@ -3950,20 +3950,17 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_full_screen_access_dismiss => 'Nicht jetzt';
 
   @override
-  String get push_registration_health_no_token =>
-      'Dieses Gerät hat noch kein Benachrichtigungs-Token erhalten.';
+  String get push_registration_health_no_token => 'Einrichtung ausstehend';
 
   @override
   String get push_registration_health_registration_failed =>
-      'Mknoon konnte dieses Gerät nicht für Benachrichtigungen registrieren.';
+      'Einrichtung fehlgeschlagen';
 
   @override
-  String get push_registration_health_temporary_problem =>
-      'Beim Einrichten der Benachrichtigungen ist ein vorübergehendes Problem aufgetreten.';
+  String get push_registration_health_temporary_problem => 'Einrichtung prüfen';
 
   @override
-  String get push_registration_health_retry =>
-      'Benachrichtigungen erneut einrichten';
+  String get push_registration_health_retry => 'Erneut versuchen';
 
   @override
   String get push_registration_health_open_notification_settings =>
@@ -4335,7 +4332,7 @@ class AppLocalizationsDe extends AppLocalizations {
       'Sprachanrufe sind derzeit nicht verfügbar';
 
   @override
-  String get push_registration_health_retrying => 'Erneuter Versuch…';
+  String get push_registration_health_retrying => 'Versuche…';
 
   @override
   String get orbit_loading_contacts => 'Kontakte werden geladen…';
@@ -4626,4 +4623,8 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get call_end_permission_settings =>
       'Der Mikrofonzugriff für MKnoon ist aus. Schalte ihn in den Einstellungen ein, um Anrufe zu tätigen und anzunehmen.';
+
+  @override
+  String get push_registration_health_dismiss =>
+      'Benachrichtigungshinweis schließen';
 }

@@ -11,6 +11,7 @@ import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
@@ -28,6 +29,12 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
+import 'package:flutter_app/features/groups/application/reconcile_missed_group_dissolves_use_case.dart';
+import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
@@ -231,6 +238,7 @@ void main() {
   tearDown(() {
     StartupConfig.deferredStartupMode = previousDeferredStartupMode;
     postsPrivacySettingsRepository.dispose();
+    groupRecoveryGate.resetForTest();
   });
 
   Future<void> pumpFrames(WidgetTester tester, {int count = 20}) async {
@@ -252,6 +260,7 @@ void main() {
     List<NavigatorObserver> navigatorObservers = const <NavigatorObserver>[],
     InMemoryGroupRepository? groupRepository,
     InMemoryGroupMessageRepository? groupMessageRepository,
+    GroupMessageListener? groupMessageListener,
     Future<bool> Function(String groupId)? canRejoinForExitIntent,
     Future<void> Function(String groupId)? processExitIntent,
     Future<void> Function()? groupExitIntentRecovery,
@@ -300,6 +309,7 @@ void main() {
         imageProcessor: imageProcessor,
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
+        groupMessageListener: groupMessageListener,
         canRejoinForExitIntent: canRejoinForExitIntent,
         processExitIntent: processExitIntent,
         groupExitIntentRecovery: groupExitIntentRecovery,
@@ -1333,6 +1343,175 @@ void main() {
       ]);
     },
   );
+
+  for (final canonicalOwner in ['startup', 'resume']) {
+    for (final startupOutcome in [
+      'success',
+      'rejoin-failure',
+      'probe-failure',
+      'dirty-input',
+    ]) {
+      testWidgets(
+        startupOutcome == 'success' && canonicalOwner == 'startup'
+            ? 'completed startup avoids a duplicate initial all-group pass'
+            : '$canonicalOwner $startupOutcome initial all-group recovery',
+        (tester) async {
+          const peerId = 'startup-retrier-self';
+          await seedActiveReturningAccount(peerId);
+          final groups = InMemoryGroupRepository();
+          final messages = InMemoryGroupMessageRepository();
+          final createdAt = DateTime.utc(2026, 10, 25);
+          await groups.saveGroup(
+            GroupModel(
+              id: 'startup-retrier-group',
+              name: 'Catch-up',
+              type: GroupType.chat,
+              topicName: 'startup-retrier-topic',
+              createdAt: createdAt,
+              createdBy: peerId,
+              myRole: GroupRole.admin,
+            ),
+          );
+          await groups.saveMember(
+            GroupMember(
+              groupId: 'startup-retrier-group',
+              peerId: peerId,
+              role: MemberRole.admin,
+              publicKey: 'pk-self',
+              mlKemPublicKey: 'kem-self',
+              joinedAt: createdAt,
+            ),
+          );
+          await groups.saveKey(
+            GroupKeyInfo(
+              groupId: 'startup-retrier-group',
+              keyGeneration: 1,
+              encryptedKey: 'key',
+              createdAt: createdAt,
+            ),
+          );
+          bridge.responses['group:join'] = {'ok': true};
+          bridge.responses['group:inboxRetrieveCursor'] = {
+            'ok': true,
+            'messages': <Object>[],
+            'cursor': '',
+          };
+          if (startupOutcome == 'rejoin-failure') {
+            bridge.responseSequences['group:join'] = [
+              {'ok': false},
+            ];
+          }
+          if (startupOutcome == 'probe-failure') {
+            bridge.responseSequences['group:inboxRetrieveCursor'] = [
+              {'ok': false},
+            ];
+          }
+          final listener = GroupMessageListener(
+            groupRepo: groups,
+            msgRepo: messages,
+            bridge: bridge,
+            getSelfPeerId: () async => peerId,
+          );
+          p2pService.emitState(
+            const NodeState(
+              isStarted: true,
+              peerId: peerId,
+              circuitAddresses: ['/relay'],
+            ),
+          );
+          var outbound = 0;
+          var direct = 0;
+          var incomingRetries = 0;
+          final restored = StreamController<void>.broadcast();
+          final retrier = PendingMessageRetrier(
+            p2pService: p2pService,
+            messageRepo: messageRepository,
+            identityRepo: identityRepository,
+            contactRepo: contactRepository,
+            bridge: bridge,
+            networkRestoredSignal: restored.stream,
+            rejoinGroupTopicsFn: () async {
+              incomingRetries++;
+              await rejoinGroupTopics(bridge: bridge, groupRepo: groups);
+              await reconcileMissedGroupDissolves(
+                bridge: bridge,
+                groupRepo: groups,
+                groupMessageListener: listener,
+                selfPeerId: peerId,
+              );
+            },
+            drainGroupOfflineInboxFn: () => drainGroupOfflineInbox(
+              bridge: bridge,
+              groupRepo: groups,
+              msgRepo: messages,
+              groupMessageListener: listener,
+              selfPeerId: peerId,
+            ),
+            retryFailedGroupMessagesFn: () async {
+              outbound++;
+              return 0;
+            },
+            retryFailedMessagesOverride: () async {
+              direct++;
+              return 0;
+            },
+            retryUnackedMessagesOverride: () async => 0,
+          );
+          addTearDown(retrier.dispose);
+          addTearDown(listener.dispose);
+          retrier.start();
+          if (canonicalOwner == 'startup') {
+            await tester.pumpWidget(
+              buildRouterApp(
+                groupRepository: groups,
+                groupMessageRepository: messages,
+                groupMessageListener: listener,
+              ),
+            );
+          } else {
+            await handleAppResumed(
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepo: identityRepository,
+              groupRepo: groups,
+              groupMsgRepo: messages,
+              groupMessageListener: listener,
+            );
+          }
+          await pumpFrames(tester);
+          expect(
+            bridge.commandLog.where((c) => c == 'group:join'),
+            hasLength(1),
+          );
+          expect(
+            bridge.commandLog.where((c) => c == 'group:inboxRetrieveCursor'),
+            hasLength(2),
+          );
+          if (startupOutcome == 'dirty-input') {
+            restored.add(null);
+            await tester.pump();
+          }
+          await tester.pump(const Duration(seconds: 5));
+          await pumpFrames(tester);
+          expect(outbound, 1);
+          expect(direct, 1);
+          final expectedPasses = startupOutcome == 'success' ? 1 : 2;
+          expect(incomingRetries, expectedPasses - 1);
+          expect(
+            bridge.commandLog.where((c) => c == 'group:join'),
+            hasLength(startupOutcome == 'rejoin-failure' ? 1 : expectedPasses),
+          );
+          expect(
+            bridge.commandLog.where((c) => c == 'group:inboxRetrieveCursor'),
+            hasLength(expectedPasses * 2),
+          );
+          retrier.dispose();
+          listener.dispose();
+          await restored.close();
+        },
+      );
+    }
+  }
 
   testWidgets(
     'icon cold start drains groups while the empty-native FCM lookup is pending',

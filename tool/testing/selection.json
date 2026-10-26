@@ -636,7 +636,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -649,7 +650,8 @@
         "scripts/testing_inventory.py",
         "scripts/device_campaign_preflight.py",
         "scripts/full_suite_adapters.py",
-        "scripts/owned_run_retention.py"
+        "scripts/owned_run_retention.py",
+        "scripts/priority_e2e_verdict.py"
       ],
       "runtime_basis": {
         "kind": "measured",
@@ -2088,7 +2090,9 @@
         "test/integration/production_group_removed_reaction_criteria_test.dart",
         "test/integration/production_group_removed_reaction_controls_test.dart",
         "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart",
-        "test/integration/production_call_in_app_identity_test.dart"
+        "test/integration/production_call_in_app_identity_test.dart",
+        "test/tool/sims/production_journey_gap_criteria_test.dart",
+        "test/integration/production_media_transfer_cut_test.dart"
       ],
       "boundary": "Production journey activation, exact observations and native notification behavior, invocation identity, readiness, replay refusal and foreground drain fault isolation",
       "limitations": "Host controls only; actual production startup, UI, notification boundary and two-peer behavior require the additive pilot",
@@ -4959,7 +4963,7 @@
         "-mod=readonly",
         "-tags=integration",
         "-run",
-        "^(TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
+        "^(TestDirectMediaTransferCheckpoint.*|TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
         "-count=1",
         "-timeout=60s",
         "-p=4",
@@ -4970,10 +4974,12 @@
       "cwd": "go-relay-server",
       "paths": [
         "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
-        "go-relay-server/direct_text_send_checkpoint_test.go"
+        "go-relay-server/direct_text_send_checkpoint_test.go",
+        "go-relay-server/direct_media_transfer_checkpoint_fixture_test.go",
+        "go-relay-server/direct_media_transfer_checkpoint_test.go"
       ],
       "success_marker": "--- PASS: TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease",
-      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract",
+      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract and partial media-body hold/release binding",
       "limitations": "Exact integration-tagged host selector only, no device or fixture-process mode, real mobile sender cut or release proof.",
       "timeout_seconds": 180,
       "requirements": [
@@ -5519,7 +5525,9 @@
         "docker-ws/mknoon_checks_host.sh",
         "docker-ws/fetch_codex_artifact.sh",
         "scripts/owned_run_retention.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/priority_e2e_verdict.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "checks": [
         "workflow",
@@ -5757,7 +5765,7 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded CI unit tests execute disposable Python/Git fixtures only and remain covered by the workflow area",
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests execute disposable Python/Git/receipt fixtures only and remain covered by the workflow area",
       "exclude_paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
@@ -5767,7 +5775,8 @@
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
         "scripts/test/mknoon_full_composition_test.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ]
     },
     {
@@ -6366,6 +6375,7 @@
       "patterns": [
         "lib/features/push/application/push_registration_health_notifier.dart",
         "lib/features/push/presentation/widgets/push_registration_health_warning.dart",
+        "lib/features/push/presentation/widgets/push_registration_health_surface.dart",
         "lib/app/application_root.dart",
         "lib/features/orbit/presentation/screens/orbit_screen.dart",
         "lib/features/orbit/presentation/widgets/friend_row.dart",
@@ -6679,7 +6689,12 @@
         "integration_test/support/production_call_in_app_identity.dart",
         "test/integration/production_call_in_app_identity_test.dart",
         "integration_test/scripts/run_production_group_local_media_delete.dart",
-        "test/tool/sims/production_group_local_media_delete_criteria_test.dart"
+        "test/tool/sims/production_group_local_media_delete_criteria_test.dart",
+        "tool/sims/production_journey_gap_criteria.dart",
+        "integration_test/scripts/evaluate_production_journey_gap_receipt.dart",
+        "integration_test/scripts/cut_production_media_transfer.dart",
+        "test/tool/sims/production_journey_gap_criteria_test.dart",
+        "test/integration/production_media_transfer_cut_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6879,7 +6894,8 @@
         "go-relay-server/direct_text_send_checkpoint_test.go",
         "go-relay-server/direct_media_blob_custody_device_fixture_test.go",
         "integration_test/support/direct_text_checkpoint_client.dart",
-        "integration_test/scripts/run_direct_text_send_cut_sims.dart"
+        "integration_test/scripts/run_direct_text_send_cut_sims.dart",
+        "go-relay-server/direct_media_transfer_checkpoint*"
       ],
       "checks": [
         "catalog-direct-text-checkpoint-host",
@@ -7318,7 +7334,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -7352,7 +7369,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "resources": [
         "isolated:full-workflow"

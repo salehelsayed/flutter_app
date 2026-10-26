@@ -89,6 +89,48 @@ void main() {
     expect(find.text('count 1'), findsOne);
   });
 
+  testWidgets('access card removes its consumed top inset from the route', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = FakeViewPadding(top: 44);
+    tester.view.viewPadding = FakeViewPadding(top: 44);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    final controller = FullScreenCallAccessPromptController(
+      gateway: FakeFullScreenCallAccessGateway(denied),
+      clock: () => now,
+    );
+    addTearDown(controller.dispose);
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        builder: (_, child) =>
+            FullScreenCallAccessSurface(controller: controller, child: child!),
+        home: Scaffold(appBar: AppBar(title: const Text('Chat'))),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final retainedNavigator = navigator.currentState;
+    final card = find.byKey(const ValueKey('full-screen-call-access-card'));
+    final toolbar = find.descendant(
+      of: find.byType(AppBar),
+      matching: find.byType(NavigationToolbar),
+    );
+    expect(tester.getTopLeft(toolbar).dy, tester.getBottomLeft(card).dy);
+    expect(tester.getSize(find.byType(AppBar)).height, kToolbarHeight);
+    await tester.tap(
+      find.byKey(const ValueKey('full-screen-call-access-dismiss')),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(toolbar).dy, 44);
+    expect(navigator.currentState, same(retainedNavigator));
+  });
+
   testWidgets('no card without a denied call', (tester) async {
     await pump(
       tester,

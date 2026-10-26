@@ -79,8 +79,14 @@ class PostRepositoryImpl implements PostRepository {
   final Future<void> Function(String eventId)? dbDeletePendingChildEvent;
   final Future<void> Function(Map<String, Object?> row)?
   dbUpsertFollowOnOutboxEvent;
+  final Future<void> Function(
+    Map<String, Object?> event,
+    List<Map<String, Object?>> recipients,
+  )?
+  dbUpsertFollowOnOutboxEventWithRecipients;
   final Future<Map<String, Object?>?> Function(String eventId)?
   dbLoadFollowOnOutboxEvent;
+  final Future<void> Function(String eventId)? dbDeleteFollowOnOutboxEvent;
   final Future<List<Map<String, Object?>>> Function()?
   dbLoadRetryableFollowOnOutboxEvents;
   final Future<void> Function(Map<String, Object?> row)?
@@ -175,7 +181,9 @@ class PostRepositoryImpl implements PostRepository {
     this.dbLoadPendingChildEvents,
     this.dbDeletePendingChildEvent,
     this.dbUpsertFollowOnOutboxEvent,
+    this.dbUpsertFollowOnOutboxEventWithRecipients,
     this.dbLoadFollowOnOutboxEvent,
+    this.dbDeleteFollowOnOutboxEvent,
     this.dbLoadRetryableFollowOnOutboxEvents,
     this.dbUpsertFollowOnOutboxRecipientDelivery,
     this.dbLoadFollowOnOutboxRecipientDeliveries,
@@ -571,6 +579,21 @@ class PostRepositoryImpl implements PostRepository {
   }
 
   @override
+  Future<void> saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent event,
+    List<PostFollowOnOutboxRecipientDelivery> recipients,
+  ) async {
+    final dbSave = _require(
+      dbUpsertFollowOnOutboxEventWithRecipients,
+      'Posts follow-on outbox snapshot is not configured for this repository.',
+    );
+    await dbSave(
+      event.toMap(),
+      recipients.map((delivery) => delivery.toMap()).toList(growable: false),
+    );
+  }
+
+  @override
   Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(
     String eventId,
   ) async {
@@ -580,6 +603,15 @@ class PostRepositoryImpl implements PostRepository {
     );
     final row = await dbLoad(eventId);
     return row == null ? null : PostFollowOnOutboxEvent.fromMap(row);
+  }
+
+  @override
+  Future<void> deleteFollowOnOutboxEvent(String eventId) async {
+    final dbDelete = _require(
+      dbDeleteFollowOnOutboxEvent,
+      'Posts follow-on outbox is not configured for this repository.',
+    );
+    await dbDelete(eventId);
   }
 
   @override

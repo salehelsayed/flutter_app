@@ -1,5 +1,48 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
+
+Future<void> dbUpsertPostFollowOnOutboxEventWithRecipients(
+  Database db,
+  Map<String, Object?> event,
+  List<Map<String, Object?>> recipients,
+) async {
+  await dbWriteTransaction(db, (txn) async {
+    final batch = txn.batch();
+    batch.insert(
+      'post_follow_on_outbox_events',
+      event,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    for (final recipient in recipients) {
+      batch.insert(
+        'post_follow_on_outbox_recipient_deliveries',
+        recipient,
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  });
+}
+
+Future<void> dbDeletePostFollowOnOutboxEvent(
+  Database db,
+  String eventId,
+) async {
+  await dbWriteTransaction(db, (txn) async {
+    await txn.delete(
+      'post_follow_on_outbox_recipient_deliveries',
+      where: 'event_id = ?',
+      whereArgs: <Object?>[eventId],
+    );
+    await txn.delete(
+      'post_follow_on_outbox_events',
+      where: 'event_id = ?',
+      whereArgs: <Object?>[eventId],
+    );
+  });
+}
+
 Future<void> dbUpsertPostFollowOnOutboxEvent(
   Database db,
   Map<String, Object?> row,
@@ -31,11 +74,22 @@ Future<void> dbUpsertPostFollowOnOutboxRecipientDelivery(
   Database db,
   Map<String, Object?> row,
 ) async {
-  await db.insert(
-    'post_follow_on_outbox_recipient_deliveries',
-    row,
-    conflictAlgorithm: ConflictAlgorithm.replace,
-  );
+  await dbWriteTransaction(db, (txn) async {
+    // A late delivery completion must not recreate rows after retirement.
+    final events = await txn.query(
+      'post_follow_on_outbox_events',
+      columns: ['event_id'],
+      where: 'event_id = ?',
+      whereArgs: <Object?>[row['event_id']],
+      limit: 1,
+    );
+    if (events.isEmpty) return;
+    await txn.insert(
+      'post_follow_on_outbox_recipient_deliveries',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  });
 }
 
 Future<List<Map<String, Object?>>> dbLoadPostFollowOnOutboxRecipientDeliveries(

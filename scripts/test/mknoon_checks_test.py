@@ -604,6 +604,29 @@ class EvidenceAndExecutionTest(RepositoryFixture):
             self.assertEqual(env[name], 'com.mknoon.sims.directmedia')
         self.assertEqual(env['RELIABILITY_MULTI_DEVICE_IDS'], 'p,e')
 
+    def test_production_package_reset_is_limited_to_named_phone_and_two_checks(self):
+        check = {'id': 'device-group-mute', 'kind': 'sims', 'capability': 'groups.muted_notification_campaign',
+                 'disposable_android_package': 'com.mknoon.sims.notifications',
+                 'requires_firebase_android_client': True}
+        base = {'devices': {'android_physical': 'pixel', 'android_emulator': 'emulator-5556'},
+                'production_package_reset': {'android_physical': 'pixel',
+                                             'checks': ['device-group-mute', 'device-notifications-android']}}
+        env = checks.sims_environment(base, self.root / 'report.json', check)
+        self.assertEqual(env['ANDROID_APP_PACKAGE'], 'com.mknoon.app')
+        self.assertNotIn('ORG_GRADLE_PROJECT_disableGoogleServicesForDisposableProof', env)
+        refused = [
+            ({**check, 'id': 'device-audio'}, base),
+            (check, {**base, 'production_package_reset': {'android_physical': 'other', 'checks': ['device-group-mute']}}),
+            (check, {**base, 'production_package_reset': {'android_physical': 'pixel', 'checks': ['device-audio']}}),
+            (check, {**base, 'devices': {'android_physical': 'other', 'android_emulator': 'emulator-5556'}}),
+            (check, {**base, 'devices': {'android_physical': 'pixel', 'android_emulator': 'second-phone'}}),
+            (check, {k: v for k, v in base.items() if k != 'production_package_reset'}),
+        ]
+        for c, config in refused:
+            with self.subTest(check=c['id'], config=config):
+                env = checks.sims_environment(config, self.root / 'report.json', c)
+                self.assertEqual(env['ANDROID_APP_PACKAGE'], 'com.mknoon.sims.notifications')
+
     def test_fixed_campaign_package_cannot_be_redirected_by_config(self):
         check = {'kind': 'sims', 'capability': 'android.production_1to1_audio_call',
                  'disposable_android_package': 'com.mknoon.sims.productionaudio'}

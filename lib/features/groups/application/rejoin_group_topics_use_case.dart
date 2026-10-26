@@ -71,6 +71,13 @@ class RejoinGroupTopicsResult {
   ///     we missed live messages for that group, and with a node-wide ack we
   ///     conservatively withhold the whole ack until a later pass clears it.
   bool get canAcknowledgeGroupRecovery => !skipped && errorCount == 0;
+
+  /// Stronger than node-wide ACK eligibility: no recoverable scope was deferred.
+  bool get isComplete =>
+      canAcknowledgeGroupRecovery &&
+      skippedNoKeyCount == 0 &&
+      deferredCount == 0 &&
+      !perGroupOutcomes.containsValue(RejoinOutcome.skippedExitInProgress);
 }
 
 // Finding 05 Phase 3: bounded per-group rejoin retry. A persistently-failing

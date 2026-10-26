@@ -442,7 +442,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                 padding: EdgeInsets.only(
                   top: minimized ? MediaQuery.paddingOf(context).top + 56 : 0,
                 ),
-                child: widget.child,
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: minimized,
+                  child: widget.child,
+                ),
               ),
             ),
           ),

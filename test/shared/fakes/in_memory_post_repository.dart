@@ -496,6 +496,25 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> saveFollowOnOutboxEventWithRecipients(
+    PostFollowOnOutboxEvent event,
+    List<PostFollowOnOutboxRecipientDelivery> recipients,
+  ) async {
+    _followOnOutboxEventsById[event.eventId] = event;
+    final deliveries = _followOnOutboxDeliveriesByEventId.putIfAbsent(
+      event.eventId,
+      () => <PostFollowOnOutboxRecipientDelivery>[],
+    );
+    for (final recipient in recipients) {
+      deliveries.removeWhere(
+        (current) => current.recipientPeerId == recipient.recipientPeerId,
+      );
+      deliveries.add(recipient);
+    }
+    deliveries.sort((a, b) => a.recipientPeerId.compareTo(b.recipientPeerId));
+  }
+
+  @override
   Future<PostFollowOnOutboxEvent?> getFollowOnOutboxEvent(
     String eventId,
   ) async {
@@ -503,9 +522,16 @@ class InMemoryPostRepository implements PostRepository {
   }
 
   @override
+  Future<void> deleteFollowOnOutboxEvent(String eventId) async {
+    _followOnOutboxEventsById.remove(eventId);
+    _followOnOutboxDeliveriesByEventId.remove(eventId);
+  }
+
+  @override
   Future<void> saveFollowOnOutboxRecipientDelivery(
     PostFollowOnOutboxRecipientDelivery delivery,
   ) async {
+    if (!_followOnOutboxEventsById.containsKey(delivery.eventId)) return;
     final deliveries = _followOnOutboxDeliveriesByEventId.putIfAbsent(
       delivery.eventId,
       () => <PostFollowOnOutboxRecipientDelivery>[],

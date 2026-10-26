@@ -138,6 +138,8 @@ Future<bool?> handleAppResumed({
   /// re-prime block so it never adds latency to the resume future.
   String? Function()? activeConversationPeerId,
 }) async {
+  groupRecoveryGate.invalidateIncomingCompletion();
+  final incomingRevision = groupRecoveryGate.incomingRevision;
   final resumeStart = DateTime.now();
   var canonicalInboxDrainsComplete = true;
   final readinessProofRecorder = p2pService is ReadinessProofRecorder
@@ -425,11 +427,30 @@ Future<bool?> handleAppResumed({
     var drainHasMorePages = false;
     var firstGroupDrainSuccessful = true;
     String? continuationSelfPeerId;
+    var incomingPassComplete = false;
+    Object? incomingScope;
+    Future<void> recordIncomingCompletion() async {
+      if (!incomingPassComplete || incomingScope == null) return;
+      await groupRecoveryGate.recordCanonicalIncomingCompletion(
+        scope: incomingScope!,
+        revision: incomingRevision,
+        pendingKeyRepairRepo: pendingKeyRepairRepo,
+      );
+    }
 
     if (resumeGroupRecoveryEnabled &&
         groupRepo != null &&
         groupMsgRepo != null) {
       await runWithGroupRecoveryGate(() async {
+        final state = p2pService.currentState;
+        if (identityRepo != null) {
+          incomingScope = (
+            p2pService,
+            identityRepo,
+            state.peerId,
+            state.watchdogRestartCount,
+          );
+        }
         final needsGroupRecovery =
             p2pService.currentState.needsGroupRecovery ?? false;
         final recoveryMethod = p2pService.lastRecoveryMethod;
@@ -467,13 +488,16 @@ Future<bool?> handleAppResumed({
         // staying live. AFTER rejoin so active groups re-subscribe immediately
         // (the inbox scan must not delay live-message reception — see IR-018).
         final groupMsgListener = groupMessageListener;
+        var terminalProbeComplete = false;
         if (groupMsgListener != null) {
-          await reconcileMissedGroupDissolves(
+          final probeResult = await reconcileMissedGroupDissolves(
             bridge: bridge,
             groupRepo: groupRepo,
             groupMessageListener: groupMsgListener,
             selfPeerId: identity?.peerId,
           );
+          terminalProbeComplete =
+              probeResult.errorCount == 0 && !probeResult.truncated;
         }
 
         final GroupOfflineInboxDrainResult groupDrainResult;
@@ -519,6 +543,11 @@ Future<bool?> handleAppResumed({
             '(errors=${groupDrainResult.errorCount}, took ${groupDrainMs}ms)',
           );
         }
+
+        incomingPassComplete =
+            rejoinResult.isComplete &&
+            terminalProbeComplete &&
+            groupDrainResult.isSuccessful;
 
         // 269: duplicate replay enrichment commits attachment rows during the
         // inbox drain. Run the shared durable download coordinator only after
@@ -574,19 +603,25 @@ Future<bool?> handleAppResumed({
       // behind the gate. Pages it does not reach are drained by a later
       // resume/retrier pass via the same persisted cursor.
       if (drainHasMorePages) {
-        final continuation = drainGroupOfflineInboxContinuation(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          msgRepo: groupMsgRepo,
-          groupMessageListener: groupMessageListener,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          reactionRepo: reactionRepo,
-          pendingReactionRepo: pendingReactionRepo,
-          pendingKeyRepairRepo: pendingKeyRepairRepo,
-          historyGapRepairRepo: historyGapRepairRepo,
-          requestGroupKeyRepair: requestGroupKeyRepair,
-          selfPeerId: continuationSelfPeerId,
-        );
+        final continuation =
+            drainGroupOfflineInboxContinuation(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              msgRepo: groupMsgRepo,
+              groupMessageListener: groupMessageListener,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              reactionRepo: reactionRepo,
+              pendingReactionRepo: pendingReactionRepo,
+              pendingKeyRepairRepo: pendingKeyRepairRepo,
+              historyGapRepairRepo: historyGapRepairRepo,
+              requestGroupKeyRepair: requestGroupKeyRepair,
+              selfPeerId: continuationSelfPeerId,
+            ).then((result) async {
+              if (result.isSuccessful && !result.hasMorePages) {
+                await recordIncomingCompletion();
+              }
+              return result;
+            });
         if (awaitCanonicalInboxDrains) {
           final result = await continuation;
           canonicalInboxDrainsComplete =
@@ -597,6 +632,7 @@ Future<bool?> handleAppResumed({
           unawaited(continuation);
         }
       } else {
+        if (firstGroupDrainSuccessful) await recordIncomingCompletion();
         canonicalInboxDrainsComplete =
             canonicalInboxDrainsComplete && firstGroupDrainSuccessful;
       }

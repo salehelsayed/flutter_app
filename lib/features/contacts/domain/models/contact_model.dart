@@ -1,3 +1,5 @@
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
+
 /// Model representing a contact added via QR code scanning.
 ///
 /// Contains the peer information extracted from a scanned QR payload.
@@ -87,7 +89,7 @@ class ContactModel {
       peerId: json['ns'] as String,
       publicKey: json['pk'] as String,
       rendezvous: json['rv'] as String,
-      username: json['un'] as String? ?? 'Unknown',
+      username: sanitizeUsername(json['un'] as String? ?? 'Unknown'),
       signature: json['sig'] as String,
       scannedAt: DateTime.now().toUtc().toIso8601String(),
       mlKemPublicKey: json['mlkem'] as String?,

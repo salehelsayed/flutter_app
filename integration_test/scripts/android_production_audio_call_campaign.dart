@@ -2215,9 +2215,26 @@ final class SystemAndroidProductionAudioCallCampaignDriver
       );
     }
     final stem = '$stage-$role-${_token('capture')}';
-    final ui = sanitizeAndroidProductionAudioCallDiagnosticText(
-      await _uiDump(deviceId),
-    );
+    // A physical phone may show the notification shade or another app here.
+    // Never capture its screen or view tree unless Mknoon owns the focus.
+    final focusResult = await _run('adb', <String>[
+      '-s',
+      deviceId,
+      'shell',
+      'dumpsys',
+      'window',
+    ]);
+    final focusLine = '${focusResult.stdout}'
+        .split('\n')
+        .firstWhere((l) => l.contains('mCurrentFocus'), orElse: () => '');
+    final mknoonFocused =
+        focusLine.contains('com.mknoon.') &&
+        !focusLine.contains('NotificationShade');
+    final ui = mknoonFocused
+        ? sanitizeAndroidProductionAudioCallDiagnosticText(
+            await _uiDump(deviceId),
+          )
+        : '';
     final logResult = await _run('adb', <String>[
       '-s',
       deviceId,
@@ -2234,6 +2251,19 @@ final class SystemAndroidProductionAudioCallCampaignDriver
     final log = sanitizeAndroidProductionAudioCallDiagnosticText(
       '${logResult.stdout}',
     );
+    if (!mknoonFocused) {
+      final logFile = File('${proofDirectory.path}/$stem-logcat.txt');
+      await logFile.writeAsString(log, flush: true);
+      return <AndroidProductionAudioCallArtifactDigest>[
+        AndroidProductionAudioCallArtifactDigest(
+          role: role,
+          kind: '${stage}Logcat',
+          sha256Digest: sha256.convert(await logFile.readAsBytes()).toString(),
+          bounded: true,
+          redacted: true,
+        ),
+      ];
+    }
     final screenshot = await _screenshot(deviceId);
     if (screenshot.isEmpty || screenshot.length > _maximumScreenshotBytes) {
       throw StateError('Bounded screenshot capture failed for $role.');
