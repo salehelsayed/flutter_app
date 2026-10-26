@@ -1533,7 +1533,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
     _thoughtChanges = widget.postRepository?.postChanges.listen((postId) {
-      if (_thoughtQuotes.containsKey(postId)) _loadQuotedThought(postId);
+      if (_thoughtQuoteLoads.containsKey(postId)) _loadQuotedThought(postId);
     });
     _startListeningForReactions();
     _checkIntroBanner();

@@ -1152,6 +1152,45 @@ void main() {
       await finishThoughtCase(tester);
     });
 
+    testWidgets(
+      'a thought deleted while the chat is still looking it up leaves the chat',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _HeldSnapshotLookupRepository('lake');
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.enterText(
+          find.byKey(const ValueKey('thought-reply-field')),
+          'count me in',
+        );
+        await tester.pump();
+        posts.holding = true;
+        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await pumpOrbitFrames(tester, count: 12);
+        expect(posts.heldCount, greaterThan(0));
+
+        await posts.deletePostCascade('lake');
+        await pumpOrbitFrames(tester, count: 4);
+        posts.releaseAll();
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Sunset at the lake?'), findsNothing);
+        expect(quoteGone(), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('an idle open chat drops a quoted thought when it expires', (
       tester,
     ) async {
@@ -10887,6 +10926,35 @@ class _OrbitThoughtPostRepository extends InMemoryPostRepository {
     // Mirror that existing contract only for these feature integration cases.
     final post = await super.getPost(postId);
     if (post != null) await savePost(post.copyWith(isRead: true));
+  }
+}
+
+/// Holds lookups of [heldPostId] while [holding], each answering with the row
+/// as it was when asked, so a late answer can predate a later change.
+class _HeldSnapshotLookupRepository extends _OrbitThoughtPostRepository {
+  _HeldSnapshotLookupRepository(this.heldPostId);
+
+  final String heldPostId;
+  bool holding = false;
+  final _held = <(Completer<PostModel?>, PostModel?)>[];
+
+  int get heldCount => _held.length;
+
+  @override
+  Future<PostModel?> getPost(String postId) async {
+    final snapshot = await super.getPost(postId);
+    if (!holding || postId != heldPostId) return snapshot;
+    final completer = Completer<PostModel?>();
+    _held.add((completer, snapshot));
+    return completer.future;
+  }
+
+  void releaseAll() {
+    holding = false;
+    for (final (completer, snapshot) in _held) {
+      completer.complete(snapshot);
+    }
+    _held.clear();
   }
 }
 
