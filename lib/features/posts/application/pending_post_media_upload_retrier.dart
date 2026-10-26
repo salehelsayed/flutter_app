@@ -238,7 +238,8 @@ Future<int> retryPendingPostMediaUploads({
 
     if (retryRecipients.isEmpty) {
       final aggregate = aggregatePostDeliveryStatusFromDeliveries(deliveries);
-      if (aggregate.deliveryStatus != prepared.post.deliveryStatus) {
+      if (aggregate.deliveryStatus != prepared.post.deliveryStatus &&
+          await postRepo.getPost(post.id) != null) {
         await postRepo.savePost(
           prepared.post.copyWith(deliveryStatus: aggregate.deliveryStatus),
         );
@@ -386,6 +387,9 @@ Future<void> _persistMissingLocalFileFailure({
     post.id,
     const <PostMediaAttachmentModel>[],
   );
+  // Replacing a thought deletes its files first; savePost would bring the
+  // deleted row back.
+  if (await postRepo.getPost(post.id) == null) return;
   await postRepo.savePost(
     post.copyWith(deliveryStatus: 'failed', media: const []),
   );

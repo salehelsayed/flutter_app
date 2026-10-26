@@ -190,7 +190,9 @@ Future<int> retryPendingPostDeliveries({
         .toList(growable: false);
 
     if (unresolvedDeliveries.isEmpty) {
-      if (aggregate.deliveryStatus != post.deliveryStatus) {
+      // savePost upserts; a thought replaced meanwhile must stay gone.
+      if (aggregate.deliveryStatus != post.deliveryStatus &&
+          await postRepo.getPost(post.id) != null) {
         await postRepo.savePost(
           post.copyWith(deliveryStatus: aggregate.deliveryStatus),
         );

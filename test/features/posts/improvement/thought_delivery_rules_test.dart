@@ -564,6 +564,97 @@ void main() {
       expect(hydrated, isFalse);
     },
   );
+
+  test(
+    'a thought replaced while the delivery retrier reads it is not written back',
+    () async {
+      final replacing = _ReplacedMidRetryRepository();
+      addTearDown(replacing.dispose);
+      final now = DateTime.now().toUtc();
+      await replacing.savePost(_post(now, status: 'partial'));
+      await replacing.saveRecipientDelivery(
+        PostRecipientDelivery(
+          postId: 'thought',
+          recipientPeerId: 'friend',
+          deliveryStatus: 'delivered',
+          lastAttemptAt: now.toIso8601String(),
+          deliveryPath: 'direct',
+          createdAt: now.toIso8601String(),
+          updatedAt: now.toIso8601String(),
+        ),
+      );
+
+      await retryPendingPostDeliveries(
+        postRepo: replacing,
+        contactRepo: contacts,
+        p2pService: service,
+        bridge: bridge,
+      );
+
+      expect(replacing.replaced, isTrue);
+      expect(await replacing.getPost('thought'), isNull);
+    },
+  );
+
+  test(
+    'a thought replaced while media recovery reads it is not written back',
+    () async {
+      final replacing = _ReplacedMidRetryRepository();
+      addTearDown(replacing.dispose);
+      final now = DateTime.now().toUtc();
+      await replacing.savePost(_post(now).copyWith(mediaKind: 'image'));
+      await replacing.replacePostMediaUploadRecoveryItems('thought', [
+        PostMediaUploadRecoveryItem(
+          postId: 'thought',
+          position: 0,
+          localFilePath: '/missing/deleted-with-the-thought.jpg',
+          mime: 'image/jpeg',
+          kind: 'image',
+          createdAt: now.toIso8601String(),
+        ),
+      ]);
+
+      await retryPendingPostMediaUploads(
+        postRepo: replacing,
+        contactRepo: contacts,
+        p2pService: service,
+        secureKeyStore: FakeSecureKeyStore(),
+        imageProcessor: ImageProcessor(),
+        bridge: bridge,
+      );
+
+      expect(replacing.replaced, isTrue);
+      expect(await replacing.getPost('thought'), isNull);
+    },
+  );
+}
+
+class _ReplacedMidRetryRepository extends InMemoryPostRepository {
+  bool replaced = false;
+
+  Future<void> _replaceOnce() async {
+    if (replaced) return;
+    replaced = true;
+    await deletePostCascade('thought');
+  }
+
+  @override
+  Future<List<PostRecipientDelivery>> getRecipientDeliveries(
+    String postId,
+  ) async {
+    final deliveries = await super.getRecipientDeliveries(postId);
+    await _replaceOnce();
+    return deliveries;
+  }
+
+  @override
+  Future<List<PostMediaUploadRecoveryItem>> loadPostMediaUploadRecoveryItems(
+    String postId,
+  ) async {
+    final items = await super.loadPostMediaUploadRecoveryItems(postId);
+    await _replaceOnce();
+    return items;
+  }
 }
 
 class _ContactLookupHook extends InMemoryContactRepository {
