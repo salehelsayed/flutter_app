@@ -931,6 +931,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
     final closed = Completer<void>();
+    ComposePostResult? handedBack;
     try {
       await showModalBottomSheet<void>(
         context: context,
@@ -941,6 +942,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           eligibleContacts: const [],
           initialDraft: _thoughtDraft,
           onClosed: (draft) {
+            handedBack = draft;
             _thoughtDraft = draft;
             closed.complete();
           },
@@ -966,8 +968,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               );
               if (result == SendPostResult.success && local != null) {
                 // The sheet may have been swiped away mid-share and handed
-                // this text back as a draft.
-                _thoughtDraft = null;
+                // this text back; a later composer's draft stays.
+                if (handedBack != null &&
+                    identical(_thoughtDraft, handedBack)) {
+                  _thoughtDraft = null;
+                }
                 unawaited(_deliverThought(repository, local));
                 return ComposePostSubmitOutcome.closeSheet;
               }

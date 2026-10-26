@@ -1029,6 +1029,46 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a late share does not wipe a newer draft written after it was swiped away',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _HeldSavePostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        Future<void> openComposer() async {
+          await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+          await pumpOrbitFrames(tester, count: 6);
+          expect(find.byType(ComposePostSheet), findsOneWidget);
+        }
+
+        await openComposer();
+        await tester.enterText(find.byType(TextField), 'Shared once');
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+        await tester.pump();
+        await tester.binding.handlePopRoute();
+        await pumpOrbitFrames(tester, count: 6);
+        await openComposer();
+        await tester.enterText(find.byType(TextField), 'Not sent yet');
+        await tester.pump();
+        await tester.binding.handlePopRoute();
+        await pumpOrbitFrames(tester, count: 6);
+        posts.release.complete();
+        await pumpOrbitFrames(tester, count: 10);
+        expect((await posts.loadFeed()).single.text, 'Shared once');
+        await openComposer();
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'Not sent yet',
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,
     ) async {
