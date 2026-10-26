@@ -3076,6 +3076,12 @@ bytes/full opening, natural recovery before any active drain, real account
 transfer with cold local opens and fresh peer exchange, and each entitled
 receiver's usable media. Source/fake/local-fixture evidence retains its scope;
 the five additional native journeys remain unrun by Astra.
+`p0-call-resilience-e2e-mcp.md` prepares VC-016/017/018/020/022/009/010 after the
+catalog audit. It retains current timer/glare and authority rules, selected-
+media-path causality, independent microphone/notification permission evidence,
+same-fixture invalid-then-valid controls and separate real iOS background/name
+observations. Existing host fixtures remain scoped; native injection or artifact
+gaps are explicit and no extra device execution is claimed by preparation.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
