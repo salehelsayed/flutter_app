@@ -965,6 +965,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 mediaDrafts: draft.mediaDrafts,
               );
               if (result == SendPostResult.success && local != null) {
+                // The sheet may have been swiped away mid-share and handed
+                // this text back as a draft.
+                _thoughtDraft = null;
                 unawaited(_deliverThought(repository, local));
                 return ComposePostSubmitOutcome.closeSheet;
               }
