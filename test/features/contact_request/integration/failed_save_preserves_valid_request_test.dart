@@ -630,8 +630,6 @@ void main() {
         expect(prompted.single.peerId, _bobId.peerId);
         expect(await aliceContacts.getContact(_bobId.peerId), isNull);
       },
-      skip:
-          'KNOWN GAP CR-020: handleIncomingMessage turns addRequest write failure into invalidMessage so ContactRequestListener confirms ok=true and ProductionCanonicalDirectReplayComposition.replayContactRequest commits custody without saving, lib/features/contact_request/application/handle_incoming_message_use_case.dart:834-842. Remove when fixed.',
     );
   });
 }

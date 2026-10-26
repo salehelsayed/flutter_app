@@ -839,7 +839,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_STORE_ERROR',
       details: {'error': e.toString()},
     );
-    return (HandleMessageResult.invalidMessage, null, null);
+    rethrow;
   }
 
   // 11 (171). One-scan auto-add eligibility. A NEW, recipient-bound (v2)
