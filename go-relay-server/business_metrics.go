@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -97,7 +98,9 @@ func (bm *businessMetrics) RecordMediaUploaded() {
 // Called from the stats ticker every 60 seconds.
 func (bm *businessMetrics) CheckAndResetPeriods() {
 	if bm.thoughts != nil {
-		bm.thoughts.snapshot()
+		if err := bm.thoughts.flush(); err != nil {
+			log.Print("[THOUGHT_METRICS] snapshot unavailable; estimates remain in memory")
+		}
 	}
 	now := time.Now().UTC()
 	day := now.YearDay()

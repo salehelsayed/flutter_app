@@ -25,12 +25,15 @@ type thoughtWeek struct {
 }
 
 type thoughtMetrics struct {
-	mu      sync.Mutex
-	weeks   map[string]thoughtWeek
-	path    string
-	now     func() time.Time
-	dirty   bool
-	healthy bool
+	mu         sync.Mutex
+	flushMu    sync.Mutex
+	weeks      map[string]thoughtWeek
+	path       string
+	now        func() time.Time
+	write      func(string, []byte) error
+	generation uint64
+	saved      uint64
+	healthy    bool
 }
 
 type thoughtWeekDisk struct {
@@ -56,7 +59,7 @@ func thoughtWeekStart(t time.Time) time.Time {
 }
 
 func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, error) {
-	m := &thoughtMetrics{weeks: make(map[string]thoughtWeek), path: path, now: now, healthy: true}
+	m := &thoughtMetrics{weeks: make(map[string]thoughtWeek), path: path, now: now, write: appDiagnosticAtomicWrite, healthy: true}
 	if path == "" || now == nil {
 		return nil, errors.New("thought snapshot path and clock required")
 	}
@@ -100,8 +103,7 @@ func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, erro
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	m.rotateLocked()
-	if err := m.persistLocked(); err != nil {
+	if err := m.flush(); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -124,19 +126,19 @@ func (m *thoughtMetrics) rotateLocked() {
 	for week := range m.weeks {
 		if week < oldest || week > key {
 			delete(m.weeks, week)
-			m.dirty = true
+			m.generation++
 		}
 	}
 	if _, exists := m.weeks[key]; !exists {
 		m.weeks[key] = thoughtWeek{hyperloglog.NewNoSparse(), hyperloglog.NewNoSparse()}
-		m.dirty = true
+		m.generation++
 	}
 }
 
 // Called only after accepted inbox storage. Use authored UTC ISO week, not
 // retry/recipient delivery time, so a late replay cannot create another week.
 // Only existing outer routing metadata is read; no encrypted content is opened.
-func (m *thoughtMetrics) record(entry inboxMessage) error {
+func (m *thoughtMetrics) record(entry inboxMessage) {
 	var envelope struct {
 		Type    string `json:"type"`
 		PostID  string `json:"post_id"`
@@ -145,11 +147,11 @@ func (m *thoughtMetrics) record(entry inboxMessage) error {
 	}
 	if json.Unmarshal([]byte(entry.Message), &envelope) != nil || envelope.Type != "post_create" ||
 		envelope.PostID == "" || entry.From == "" || envelope.Sender != entry.From {
-		return nil
+		return
 	}
 	created, err := time.Parse(time.RFC3339Nano, envelope.Created)
 	if err != nil {
-		return nil
+		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -157,32 +159,42 @@ func (m *thoughtMetrics) record(entry inboxMessage) error {
 	current := thoughtWeekStart(m.now())
 	start := thoughtWeekStart(created)
 	if start.After(current) || start.Before(current.AddDate(0, 0, -7*(thoughtMetricsWeeks-1))) {
-		return m.persistLocked()
+		return
 	}
 	key := start.Format("2006-01-02")
 	week, exists := m.weeks[key]
 	if !exists {
 		week = thoughtWeek{hyperloglog.NewNoSparse(), hyperloglog.NewNoSparse()}
 		m.weeks[key] = week
-		m.dirty = true
 	}
-	beforePosts, _ := week.posts.MarshalBinary()
-	beforePosters, _ := week.posters.MarshalBinary()
 	week.posts.Insert([]byte(envelope.PostID))
 	week.posters.Insert([]byte(entry.From))
-	afterPosts, _ := week.posts.MarshalBinary()
-	afterPosters, _ := week.posters.MarshalBinary()
-	m.dirty = m.dirty || !bytes.Equal(beforePosts, afterPosts) || !bytes.Equal(beforePosters, afterPosters)
-	return m.persistLocked()
+	m.generation++
 }
 
-func (m *thoughtMetrics) persistLocked() error {
-	if !m.dirty {
+// Only the periodic/shutdown path writes. Copy bounded registers under mu, then
+// release it before marshalling or filesystem work: slow storage cannot hold
+// up inbox Store, push, or a scrape. Serialize writers independently of record.
+func (m *thoughtMetrics) flush() error {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
+	m.mu.Lock()
+	m.rotateLocked()
+	if m.generation == m.saved {
+		m.mu.Unlock()
 		return nil
 	}
-	disk := thoughtSnapshot{Version: 1}
-	for _, key := range m.keysLocked() {
+	generation := m.generation
+	keys := m.keysLocked()
+	weeks := make([]thoughtWeek, 0, len(keys))
+	for _, key := range keys {
 		week := m.weeks[key]
+		weeks = append(weeks, thoughtWeek{week.posts.Clone(), week.posters.Clone()})
+	}
+	m.mu.Unlock()
+	disk := thoughtSnapshot{Version: 1}
+	for i, key := range keys {
+		week := weeks[i]
 		posts, _ := week.posts.MarshalBinary()
 		posters, _ := week.posters.MarshalBinary()
 		disk.Weeks = append(disk.Weeks, thoughtWeekDisk{key, posts, posters})
@@ -190,11 +202,14 @@ func (m *thoughtMetrics) persistLocked() error {
 	raw, err := json.Marshal(disk)
 	if err == nil {
 		// Reuse the existing private atomic file/rename + directory-sync writer.
-		err = appDiagnosticAtomicWrite(m.path, raw)
+		err = m.write(m.path, raw)
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.healthy = err == nil
 	if err == nil {
-		m.dirty = false
+		// Updates arriving during I/O remain dirty for the next flush.
+		m.saved = generation
 	}
 	return err
 }
@@ -212,7 +227,6 @@ func (m *thoughtMetrics) snapshot() ([]thoughtEstimate, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.rotateLocked()
-	_ = m.persistLocked() // Exposed separately; never fail accepted message custody.
 	var result []thoughtEstimate
 	for _, key := range m.keysLocked() {
 		start, _ := time.Parse("2006-01-02", key)
@@ -226,7 +240,7 @@ func (m *thoughtMetrics) snapshot() ([]thoughtEstimate, bool) {
 
 var thoughtPostsDesc = prometheus.NewDesc("relay_thoughts_weekly_estimated", "Estimated distinct relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage: direct-only deliveries are unseen; HLL estimates may err in either direction.", []string{"week"}, nil)
 var thoughtPostersDesc = prometheus.NewDesc("relay_thought_posters_weekly_estimated", "Estimated distinct senders of relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage, not verified people or returning posters.", []string{"week"}, nil)
-var thoughtSnapshotDesc = prometheus.NewDesc("relay_thoughts_snapshot_healthy", "Whether the aggregate Thought snapshot is durably saved (1) or a write is pending after failure (0). Missing Thought series mean unavailable, not zero.", nil, nil)
+var thoughtSnapshotDesc = prometheus.NewDesc("relay_thoughts_snapshot_healthy", "Last aggregate snapshot write succeeded (1) or failed (0). New updates are buffered until periodic/shutdown flush. Missing Thought series mean unavailable, not zero.", nil, nil)
 
 func (m *thoughtMetrics) Describe(ch chan<- *prometheus.Desc) {
 	ch <- thoughtPostsDesc

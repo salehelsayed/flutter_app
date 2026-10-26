@@ -130,29 +130,31 @@ func TestThoughtMetricsISOWeekRolloverLateRetryAndRetention(t *testing.T) {
 	now := time.Date(2021, 1, 3, 23, 59, 0, 0, time.UTC)
 	m := newTestThoughtMetrics(t, &now)
 	old := thoughtMetricEntry("before-ISO-year-rollover", "same-author", now)
-	if err := m.record(old); err != nil {
-		t.Fatal(err)
-	}
+	m.record(old)
 	now = now.Add(2 * time.Minute)
 	assertThoughtWeek(t, m, "2021-W01", 0, 0)
-	if err := m.record(old); err != nil {
-		t.Fatal(err)
-	}
+	m.record(old)
 	assertThoughtWeek(t, m, "2020-W53", 1, 1)
 	assertThoughtWeek(t, m, "2021-W01", 0, 0)
-	if err := m.record(thoughtMetricEntry("after-ISO-year-rollover", old.From, now)); err != nil {
-		t.Fatal(err)
-	}
+	m.record(thoughtMetricEntry("after-ISO-year-rollover", old.From, now))
 	assertThoughtWeek(t, m, "2021-W01", 1, 1)
 	for i := 0; i < 7; i++ {
 		now = now.AddDate(0, 0, 7)
-		if err := m.record(thoughtMetricEntry(now.Format(time.RFC3339), old.From, now)); err != nil {
-			t.Fatal(err)
-		}
+		m.record(thoughtMetricEntry(now.Format(time.RFC3339), old.From, now))
 	}
 	values, _ := m.snapshot()
 	if len(values) != 8 || values[0].week != "2021-W01" || values[7].week != "2021-W08" {
 		t.Fatalf("expected current + 7 calendar weeks, got %+v", values)
+	}
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := reloaded.snapshot(); len(got) != 8 {
+		t.Fatal("eight retained weeks did not survive snapshot reload")
 	}
 	// Quiet gaps expire calendar weeks, not merely the eighth nonempty bucket.
 	now = now.AddDate(0, 0, 56)
@@ -173,16 +175,15 @@ func TestThoughtMetricsRestartPersistenceAndPrivacy(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	m := newTestThoughtMetrics(t, &now)
 	entry := thoughtMetricEntry("private-thought-id-never-in-snapshot", "private-author-id-never-in-snapshot", now)
-	if err := m.record(entry); err != nil {
+	m.record(entry)
+	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := restarted.record(entry); err != nil {
-		t.Fatal(err)
-	}
+	restarted.record(entry)
 	assertThoughtWeek(t, restarted, "2026-W44", 1, 1)
 	raw, err := os.ReadFile(m.path)
 	if err != nil {
@@ -225,6 +226,9 @@ func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
 	if status, err := inbox.Store("private-recipient-scrape-fixture", entry); err != nil || status != InboxStoreResultStored {
 		t.Fatalf("metric write failure changed accepted custody: %s %v", status, err)
 	}
+	if err := m.flush(); err == nil {
+		t.Fatal("missing directory did not exercise a snapshot write failure")
+	}
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(m)
 	scrape := func() string {
@@ -251,6 +255,9 @@ func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
 		}
 	}
 	m.path = originalPath
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(scrape(), "relay_thoughts_snapshot_healthy 1") {
 		t.Fatal("pending aggregate write did not recover")
 	}
@@ -259,6 +266,75 @@ func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertThoughtWeek(t, restarted, "2026-W44", 1, 1)
+}
+
+func TestThoughtMetricsBlockedWriterDoesNotDelayStoreOrPush(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	installThoughtMetrics(t, m)
+	m.record(thoughtMetricEntry("before-blocked-snapshot", "author-before-snapshot", now))
+	started, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	write := m.write
+	m.write = func(path string, raw []byte) error {
+		close(started)
+		<-release
+		return write(path, raw)
+	}
+	flushed := make(chan error, 1)
+	go func() { flushed <- m.flush() }()
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("snapshot writer did not enter the controlled delay")
+	}
+	// The writer remains blocked until BOTH accepted Store and real push gateway
+	// invocation finish. No elapsed-time guess or mock Store replaces this path.
+	tokens := newMemoryPushTokenStore()
+	tokens.RegisterToken("owned-thought-recipient", "fixture-push-token", "android")
+	push := NewPushServiceWithBackend(tokens)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	stored := make(chan error, 1)
+	go func() {
+		status, err := inbox.Store("owned-thought-recipient", thoughtMetricEntry("during-blocked-snapshot", "author-during-snapshot", now))
+		if err == nil && status != InboxStoreResultStored {
+			err = errors.New("Store did not accept the fixture")
+		}
+		stored <- err
+	}()
+	select {
+	case err := <-stored:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("accepted inbox Store waited for snapshot I/O")
+	}
+	select {
+	case <-recorder.sentSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("push gateway waited for snapshot I/O")
+	}
+	assertThoughtWeek(t, m, "2026-W44", 2, 2)
+	unblock()
+	if err := <-flushed; err != nil {
+		t.Fatal(err)
+	}
+	m.write = write
+	// The first write captured only the earlier generation. The update accepted
+	// during I/O must remain pending and survive the next flush + restart.
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, restarted, "2026-W44", 2, 2)
 }
 
 func TestThoughtMetricsRejectsInvalidSnapshot(t *testing.T) {
@@ -294,9 +370,7 @@ func TestThoughtMetricsConcurrentRetryAndScrape(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := m.record(entry); err != nil {
-				t.Error(err)
-			}
+			m.record(entry)
 			m.snapshot()
 		}()
 	}

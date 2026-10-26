@@ -2989,11 +2989,7 @@ func (is *InboxStore) recordStoredWithoutPush(toPeerId string, entry inboxMessag
 	if biz != nil {
 		biz.RecordMessageStored()
 		if biz.thoughts != nil {
-			if err := biz.thoughts.record(entry); err != nil {
-				// Metrics failure must never undo accepted message custody. No IDs
-				// or envelope data belong in this diagnostic.
-				log.Print("[THOUGHT_METRICS] snapshot unavailable; estimates remain in memory")
-			}
+			biz.thoughts.record(entry)
 		}
 	}
 

@@ -318,6 +318,11 @@ func main() {
 	if err := h.Close(); err != nil {
 		log.Printf("[NODE] Error during shutdown: %v", err)
 	}
+	if biz.thoughts != nil {
+		if err := biz.thoughts.flush(); err != nil {
+			log.Print("[THOUGHT_METRICS] final snapshot unavailable")
+		}
+	}
 	log.Println("Node stopped.")
 }
 
