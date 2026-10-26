@@ -27,6 +27,7 @@ void main() {
   setUp(() {
     requestRepository = FakeContactRequestRepository();
     contactRepository = FakeContactRepository();
+    requestRepository.contactRepository = contactRepository;
     identityRepository = FakeIdentityRepository();
     p2pService = FakeP2PService();
     bridge = FakeBridge();
@@ -130,6 +131,7 @@ void main() {
     (tester) async {
       final delayed = _DelayedDecisionRepository();
       requestRepository = delayed;
+      delayed.contactRepository = contactRepository;
       addTearDown(() {
         if (!delayed.writeAllowed.isCompleted) delayed.writeAllowed.complete();
       });
@@ -304,6 +306,114 @@ void main() {
     expect(find.text('wants to connect with you'), findsNothing);
     expect(find.textContaining('conversation:'), findsNothing);
   });
+
+  for (final hasPending in [true, false]) {
+    testWidgets(
+      'blocked notification target stays home (pending: $hasPending)',
+      (tester) async {
+        final request = _makeRequest();
+        if (hasPending) requestRepository.seed([request]);
+        contactRepository.seed([request.toContactModel()]);
+        await contactRepository.blockContact(request.peerId);
+        final materializer = buildMaterializer();
+        await tester.pumpWidget(buildHost());
+        await materializer.handleRoute(
+          navigator: navigatorKey.currentState!,
+          peerId: request.peerId,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('home'), findsOneWidget);
+        expect(find.text('wants to connect with you'), findsNothing);
+        expect(find.textContaining('conversation:'), findsNothing);
+        expect(
+          (await contactRepository.getContact(request.peerId))!.isBlocked,
+          isTrue,
+        );
+      },
+    );
+  }
+
+  testWidgets('a dialog cannot accept a request declined elsewhere', (
+    tester,
+  ) async {
+    final request = _makeRequest();
+    requestRepository.seed([request]);
+    final materializer = buildMaterializer();
+    await tester.pumpWidget(buildHost());
+    final routing = materializer.handleRoute(
+      navigator: navigatorKey.currentState!,
+      peerId: request.peerId,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(request.username), findsOneWidget);
+    await requestRepository.updateStatus(
+      request.peerId,
+      ContactRequestStatus.declined,
+    );
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+    await routing;
+    expect(find.textContaining('conversation:'), findsNothing);
+    expect(await contactRepository.contactExists(request.peerId), isFalse);
+    expect(
+      (await requestRepository.getRequest(request.peerId))!.status,
+      ContactRequestStatus.declined,
+    );
+  });
+
+  testWidgets(
+    'a dialog cannot unblock or navigate to a newly blocked contact',
+    (tester) async {
+      final request = _makeRequest();
+      requestRepository.seed([request]);
+      final materializer = buildMaterializer();
+      await tester.pumpWidget(buildHost());
+      final routing = materializer.handleRoute(
+        navigator: navigatorKey.currentState!,
+        peerId: request.peerId,
+      );
+      await tester.pumpAndSettle();
+      await contactRepository.addContact(
+        request.toContactModel().copyWith(mlKemPublicKey: 'current-key'),
+      );
+      await contactRepository.blockContact(request.peerId);
+      await tester.tap(find.text('Accept'));
+      await tester.pumpAndSettle();
+      await routing;
+      expect(find.textContaining('conversation:'), findsNothing);
+      final current = (await contactRepository.getContact(request.peerId))!;
+      expect(current.isBlocked, isTrue);
+      expect(current.mlKemPublicKey, 'current-key');
+    },
+  );
+
+  testWidgets(
+    'a queued request removed before presentation never opens a dialog',
+    (tester) async {
+      final first = _makeRequest(peerId: 'first-peer', username: 'First');
+      final second = _makeRequest(peerId: 'second-peer', username: 'Second');
+      requestRepository.seed([first, second]);
+      final materializer = buildMaterializer();
+      await tester.pumpWidget(buildHost());
+      final firstRoute = materializer.handleRoute(
+        navigator: navigatorKey.currentState!,
+        peerId: first.peerId,
+      );
+      await tester.pumpAndSettle();
+      final secondRoute = materializer.handleRoute(
+        navigator: navigatorKey.currentState!,
+        peerId: second.peerId,
+      );
+      await tester.pumpAndSettle();
+      await requestRepository.deleteRequest(second.peerId);
+      await tester.tap(find.text('Decline'));
+      await tester.pumpAndSettle();
+      await Future.wait([firstRoute, secondRoute]);
+      expect(find.text('Second'), findsNothing);
+      expect(find.textContaining('conversation:'), findsNothing);
+      expect(await contactRepository.contactExists(second.peerId), isFalse);
+    },
+  );
 }
 
 ContactRequestModel _makeRequest({

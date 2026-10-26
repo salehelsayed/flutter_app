@@ -114,6 +114,7 @@ void main() {
     );
     requestRepo = InMemoryContactRequestRepository();
     contactRepo = InMemoryContactRepository();
+    requestRepo.contactRepository = contactRepo;
     identityRepo = FakeIdentityRepository()
       ..seed(
         IdentityModel(
@@ -568,6 +569,7 @@ void main() {
         );
         final aliceRequestRepo = InMemoryContactRequestRepository();
         final aliceContactRepo = InMemoryContactRepository();
+        aliceRequestRepo.contactRepository = aliceContactRepo;
         final aliceIdentityRepo = FakeIdentityRepository()
           ..seed(
             IdentityModel(
@@ -588,6 +590,7 @@ void main() {
 
         final carolRequestRepo = InMemoryContactRequestRepository();
         final carolContactRepo = InMemoryContactRepository();
+        carolRequestRepo.contactRepository = carolContactRepo;
         final carolIdentityRepo = FakeIdentityRepository()
           ..seed(
             IdentityModel(
@@ -700,6 +703,7 @@ void main() {
 
         final carolRequestRepo = InMemoryContactRequestRepository();
         final carolContactRepo = InMemoryContactRepository();
+        carolRequestRepo.contactRepository = carolContactRepo;
         final carolIdentityRepo = FakeIdentityRepository()
           ..seed(
             IdentityModel(
@@ -816,6 +820,7 @@ void main() {
         final carolMessageRepo = InMemoryMessageRepository();
         final carolRequestRepo = InMemoryContactRequestRepository();
         final carolContactRepo = InMemoryContactRepository();
+        carolRequestRepo.contactRepository = carolContactRepo;
         final carolIdentityRepo = FakeIdentityRepository()
           ..seed(
             IdentityModel(

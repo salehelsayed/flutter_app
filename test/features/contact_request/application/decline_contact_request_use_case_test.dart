@@ -71,7 +71,7 @@ void main() {
       expect(result, DeclineContactRequestResult.updateError);
     });
 
-    test('works for already-accepted requests (still declines)', () async {
+    test('preserves an already-accepted decision', () async {
       requestRepo.seed([
         _pendingRequest.copyWith(status: ContactRequestStatus.accepted),
       ]);
@@ -81,11 +81,10 @@ void main() {
         peerId: _pendingRequest.peerId,
       );
 
-      // The use case does not check current status -- it just updates
-      expect(result, DeclineContactRequestResult.success);
+      expect(result, DeclineContactRequestResult.notPending);
 
       final updated = await requestRepo.getRequest(_pendingRequest.peerId);
-      expect(updated!.status, ContactRequestStatus.declined);
+      expect(updated!.status, ContactRequestStatus.accepted);
     });
   });
 }

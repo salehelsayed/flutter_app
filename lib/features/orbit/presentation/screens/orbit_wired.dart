@@ -2967,6 +2967,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       requestRepo: widget.contactRequestRepo,
       contactRepo: widget.contactRepo,
       peerId: request.peerId,
+      expectedRequest: request,
       p2pService: widget.p2pService,
       identityRepo: widget.identityRepo,
       bridge: widget.bridge,
@@ -2977,15 +2978,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
     if (!mounted) return;
     if (result == AcceptContactRequestResult.success ||
-        result == AcceptContactRequestResult.notPending) {
+        result == AcceptContactRequestResult.alreadyAccepted) {
       _markContactChanged(request.peerId);
       await _refreshOrbitFriend(request.peerId);
       // 215: mirror the notification-tap accept — drop straight into the 1:1
       // chat for the newly-accepted peer so "say hi" is one tap, not three.
-      final contact =
-          await widget.contactRepo.getContact(request.peerId) ??
-          request.toContactModel();
-      if (!mounted) return;
+      final contact = await widget.contactRepo.getContact(request.peerId);
+      if (!mounted || contact == null || contact.isBlocked) return;
       unawaited(_openConversationForContact(contact));
     }
   }
@@ -2998,6 +2997,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     await declineContactRequest(
       requestRepo: widget.contactRequestRepo,
       peerId: request.peerId,
+      expectedRequest: request,
     );
   }
 

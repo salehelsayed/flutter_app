@@ -246,6 +246,7 @@ void main() {
   setUp(() {
     requestRepo = InMemoryContactRequestRepository();
     contactRepo = InMemoryContactRepository();
+    requestRepo.contactRepository = contactRepo;
     identityRepo = _FakeIdentityRepo()..identity = _testIdentity;
     bridge = _FakeBridge();
     p2pService = _FakeP2PService();

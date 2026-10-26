@@ -98,7 +98,9 @@ void main() {
     () async {
       // --- A: already has B as a contact (A scanned B) ---
       final aContacts = InMemoryContactRepository();
-      final aRequests = InMemoryContactRequestRepository();
+      final aRequests = InMemoryContactRequestRepository(
+        contactRepository: aContacts,
+      );
       aContacts.addTestContact(
         ContactModel(
           peerId: _bPeerId,
@@ -114,7 +116,9 @@ void main() {
 
       // --- B: cold, knows nobody ---
       final bContacts = InMemoryContactRepository();
-      final bRequests = InMemoryContactRequestRepository();
+      final bRequests = InMemoryContactRequestRepository(
+        contactRepository: bContacts,
+      );
       // B's bridge decrypts A's (initial) payload.
       final bBridge = _StaticDecryptBridge(_payloadFor(_aPeerId));
 

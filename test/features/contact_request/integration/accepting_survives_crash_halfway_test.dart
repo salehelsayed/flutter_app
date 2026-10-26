@@ -8,6 +8,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -71,6 +72,9 @@ IdentityRepositoryImpl _buildIdentityRepo(
 ContactRepositoryImpl _buildContactRepo(
   Database db, {
   void Function()? onLoadContactCompleted,
+  DirectReactionNotificationProjection? projection,
+  Future<List<String>> Function(String peerId)? authorizedTransports,
+  void Function()? onPushEligibilityChanged,
 }) => ContactRepositoryImpl(
   dbLoadAllContacts: () => dbLoadAllContacts(db),
   dbLoadContact: (peerId) async {
@@ -91,6 +95,9 @@ ContactRepositoryImpl _buildContactRepo(
   dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
   dbSetIntrosSentAt: (peerId, timestamp) =>
       dbSetIntrosSentAt(db, peerId, timestamp),
+  directReactionProjection: projection,
+  loadDirectNotificationAuthorizedTransports: authorizedTransports,
+  onPushEligibilityChanged: onPushEligibilityChanged,
 );
 
 void main() {
@@ -121,23 +128,47 @@ void main() {
 
   group('CR-013 accepting survives a crash halfway through', () {
     test(
-      'crash between adding the contact and marking the request accepted leaves one contact and does not re-prompt on restart',
+      'a failed SQL decision rolls back the contact, and retry survives restart without re-prompting',
       () async {
-        var crashOnStatusUpdate = true;
-        var aliceContacts = _buildContactRepo(aliceDb);
+        final projection = DirectReactionNotificationProjection(
+          store: FakeSecureKeyStore(),
+        );
+        await projection.replaceLocalIdentity(accountPeerId: _aliceId.peerId);
+        var eligibilityChanges = 0;
+        var publishedAfterCommit = false;
+        List<String>? authorityAtStatus;
+        var aliceContacts = _buildContactRepo(
+          aliceDb,
+          projection: projection,
+          authorizedTransports: (peerId) async {
+            publishedAfterCommit =
+                (await dbLoadRequest(aliceDb, peerId))?['status'] == 'accepted';
+            return ['current-transport'];
+          },
+          onPushEligibilityChanged: () {
+            eligibilityChanges++;
+          },
+        );
         var aliceRequests = ContactRequestRepositoryImpl(
           dbLoadPendingRequests: () => dbLoadPendingRequests(aliceDb),
           dbLoadRequest: (peerId) => dbLoadRequest(aliceDb, peerId),
           dbUpsertRequest: (row) => dbUpsertRequest(aliceDb, row),
-          dbUpdateRequestStatus: (peerId, status) async {
-            if (crashOnStatusUpdate) {
-              throw StateError(
-                'simulated crash after contactRepo.addContact and before requestRepo.updateStatus',
-              );
-            }
-            await dbUpdateRequestStatus(aliceDb, peerId, status);
-          },
+          dbUpdateRequestStatus: (peerId, status) =>
+              dbUpdateRequestStatus(aliceDb, peerId, status),
           dbDeleteRequest: (peerId) => dbDeleteRequest(aliceDb, peerId),
+          dbDecideRequest: (expected, accept, existingOnly, before) =>
+              dbDecideContactRequest(
+                aliceDb,
+                expected,
+                accept,
+                existingOnly,
+                before,
+                beforeCreateContact: () => aliceContacts.prepareContactCreation(
+                  expected['peer_id'] as String,
+                ),
+              ),
+          onContactAccepted: (peerId) =>
+              aliceContacts.publishCommittedContact(peerId),
           dbRequestExists: (peerId) => dbRequestExists(aliceDb, peerId),
         );
 
@@ -197,12 +228,69 @@ void main() {
         await firstPromptBarrier.future;
         expect(initialPrompts, hasLength(1));
 
-        // 2. Alice accepts, and the process crashes between adding the contact
-        // and updating the request status to accepted.
-        await acceptContactRequest(
+        final pendingForProjection = (await aliceRequests.getRequest(
+          _bobId.peerId,
+        ))!;
+        await projection.upsertContact(pendingForProjection.toContactModel());
+        await projection.replaceContactTransportAuthority(
+          peerId: _bobId.peerId,
+          authorizedTransportPeerIds: ['orphaned-transport'],
+        );
+        expect(
+          (await projection
+              .readContacts())[_bobId.peerId]?['authorizedTransportPeerIds'],
+          ['orphaned-transport'],
+        );
+
+        // Fail the actual SQL status write after the transaction has inserted
+        // the contact and reached the durable-retry hook.
+        await aliceDb.execute(
+          "CREATE TRIGGER cr013_status_failure BEFORE UPDATE OF status "
+          "ON contact_requests WHEN NEW.status = 'accepted' "
+          "BEGIN SELECT RAISE(ABORT, 'cr013_status_failure'); END",
+        );
+        final displayed = (await aliceRequests.getRequest(_bobId.peerId))!;
+        var reachedStatusCommit = false;
+        final failed = await acceptContactRequest(
           requestRepo: aliceRequests,
           contactRepo: aliceContacts,
           peerId: _bobId.peerId,
+          expectedRequest: displayed,
+          beforeMarkAccepted: () async {
+            reachedStatusCommit = true;
+            authorityAtStatus = List<String>.from(
+              (await projection.readContacts())[_bobId
+                          .peerId]?['authorizedTransportPeerIds']
+                      as List? ??
+                  const [],
+            );
+          },
+        );
+        expect(reachedStatusCommit, isTrue);
+        expect(authorityAtStatus, isEmpty);
+        expect(eligibilityChanges, 0);
+        expect(failed, AcceptContactRequestResult.updateStatusError);
+        expect(await aliceContacts.getContactCount(), 0);
+        expect(
+          (await aliceRequests.getRequest(_bobId.peerId))!.status,
+          ContactRequestStatus.pending,
+        );
+        await aliceDb.execute('DROP TRIGGER cr013_status_failure');
+        expect(
+          await acceptContactRequest(
+            requestRepo: aliceRequests,
+            contactRepo: aliceContacts,
+            peerId: _bobId.peerId,
+            expectedRequest: displayed,
+          ),
+          AcceptContactRequestResult.success,
+        );
+        expect(publishedAfterCommit, isTrue);
+        expect(eligibilityChanges, 1);
+        expect(
+          (await projection
+              .readContacts())[_bobId.peerId]?['authorizedTransportPeerIds'],
+          ['current-transport'],
         );
 
         // 3. Simulate app restart on the same SQLite database file.
@@ -211,7 +299,6 @@ void main() {
         aliceP2p.dispose();
         await aliceDb.close();
 
-        crashOnStatusUpdate = false;
         aliceDb = await _openDb(aliceDbPath);
         final attachReplayBarrier = Completer<void>();
         aliceContacts = _buildContactRepo(
@@ -235,6 +322,14 @@ void main() {
           dbUpdateRequestStatus: (peerId, status) =>
               dbUpdateRequestStatus(aliceDb, peerId, status),
           dbDeleteRequest: (peerId) => dbDeleteRequest(aliceDb, peerId),
+          dbDecideRequest: (expected, accept, existingOnly, before) =>
+              dbDecideContactRequest(
+                aliceDb,
+                expected,
+                accept,
+                existingOnly,
+                before,
+              ),
           dbRequestExists: (peerId) => dbRequestExists(aliceDb, peerId),
         );
         aliceP2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
@@ -263,28 +358,27 @@ void main() {
               'A request whose contact was already added before a crash must not re-prompt on restart',
         );
       },
-      skip:
-          'KNOWN GAP CR-013: acceptContactRequest writes contact and request status non-atomically so a crash after addContact leaves the request pending and re-prompts on attach, lib/features/contact_request/application/accept_contact_request_use_case.dart:70-82. Remove when fixed.',
     );
 
     test(
-      'repeated accept after a mid-accept crash preserves rotated ML-KEM key, archive, and block state on the existing contact',
+      'repeated accept of a legacy persisted half-state preserves rotated ML-KEM key, archive, and block state',
       () async {
-        var crashOnStatusUpdate = true;
         final aliceContacts = _buildContactRepo(aliceDb);
         final aliceRequests = ContactRequestRepositoryImpl(
           dbLoadPendingRequests: () => dbLoadPendingRequests(aliceDb),
           dbLoadRequest: (peerId) => dbLoadRequest(aliceDb, peerId),
           dbUpsertRequest: (row) => dbUpsertRequest(aliceDb, row),
-          dbUpdateRequestStatus: (peerId, status) async {
-            if (crashOnStatusUpdate) {
-              throw StateError(
-                'simulated crash after contactRepo.addContact and before requestRepo.updateStatus',
-              );
-            }
-            await dbUpdateRequestStatus(aliceDb, peerId, status);
-          },
+          dbUpdateRequestStatus: (peerId, status) =>
+              dbUpdateRequestStatus(aliceDb, peerId, status),
           dbDeleteRequest: (peerId) => dbDeleteRequest(aliceDb, peerId),
+          dbDecideRequest: (expected, accept, existingOnly, before) =>
+              dbDecideContactRequest(
+                aliceDb,
+                expected,
+                accept,
+                existingOnly,
+                before,
+              ),
           dbRequestExists: (peerId) => dbRequestExists(aliceDb, peerId),
         );
 
@@ -339,13 +433,10 @@ void main() {
         );
         await firstPromptBarrier.future;
 
-        // First accept crashes after adding the contact and before marking the
-        // request row accepted.
-        await acceptContactRequest(
-          requestRepo: aliceRequests,
-          contactRepo: aliceContacts,
-          peerId: _bobId.peerId,
-        );
+        // Recreate the legacy persisted half-state from an older release:
+        // its contact write committed before its request-status write.
+        final legacyRequest = (await aliceRequests.getRequest(_bobId.peerId))!;
+        await aliceContacts.addContact(legacyRequest.toContactModel());
         expect(await aliceContacts.getContactCount(), 1);
         expect(
           (await aliceRequests.getRequest(_bobId.peerId))?.status,
@@ -355,7 +446,6 @@ void main() {
         // Update Bob's contact state (rotated ML-KEM key, archived, blocked)
         // and run a repeated accept: it must not clobber the contact's current
         // key, archive, or block state.
-        crashOnStatusUpdate = false;
         final currentBob = (await aliceContacts.getContact(_bobId.peerId))!;
         await aliceContacts.addContact(
           currentBob.copyWith(
@@ -384,8 +474,6 @@ void main() {
           ContactRequestStatus.accepted,
         );
       },
-      skip:
-          'KNOWN GAP CR-013: repeated acceptContactRequest on a leftover pending row overwrites an existing contact via request.toContactModel() with default flags and older key, lib/features/contact_request/application/accept_contact_request_use_case.dart:68-70. Remove when fixed.',
     );
   });
 }

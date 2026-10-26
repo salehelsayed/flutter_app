@@ -13,7 +13,6 @@ import 'package:flutter_app/features/contact_request/application/recover_intro_c
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -69,13 +68,22 @@ class _MockBridge extends Bridge {
   }
 }
 
-class _FakeContactRequestRepository implements ContactRequestRepository {
+class _FakeContactRequestRepository extends InMemoryContactRequestRepository {
   ContactRequestModel? existingRequest;
   ContactRequestModel? lastAdded;
 
   @override
-  Future<ContactRequestModel?> getRequest(String peerId) async =>
-      (existingRequest?.peerId == peerId) ? existingRequest : null;
+  Future<ContactRequestModel?> getRequest(String peerId) async {
+    if (existingRequest?.peerId == peerId) return existingRequest;
+    for (final request in pendingRequests) {
+      if (request.peerId == peerId) {
+        return request.copyWith(
+          status: statusUpdates[peerId] ?? request.status,
+        );
+      }
+    }
+    return null;
+  }
 
   @override
   Future<void> addRequest(ContactRequestModel request) async {
@@ -117,6 +125,9 @@ class _FakeContactRequestRepository implements ContactRequestRepository {
   @override
   Future<void> updateStatus(String peerId, ContactRequestStatus status) async {
     statusUpdates[peerId] = status;
+    if (existingRequest?.peerId == peerId) {
+      existingRequest = existingRequest!.copyWith(status: status);
+    }
   }
 }
 
@@ -276,6 +287,7 @@ void main() {
     bridge = _MockBridge();
     requestRepo = _FakeContactRequestRepository();
     contactRepo = _FakeContactRepository();
+    requestRepo.contactRepository = contactRepo;
 
     listener = ContactRequestListener(
       contactRequestStream: streamController.stream,

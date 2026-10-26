@@ -10,6 +10,9 @@ enum DeclineContactRequestResult {
   /// Request not found.
   notFound,
 
+  /// The displayed request is no longer the current pending decision.
+  notPending,
+
   /// Failed to update request status.
   updateError,
 }
@@ -22,6 +25,7 @@ enum DeclineContactRequestResult {
 Future<DeclineContactRequestResult> declineContactRequest({
   required ContactRequestRepository requestRepo,
   required String peerId,
+  ContactRequestModel? expectedRequest,
 }) async {
   final peerIdPrefix = peerId.length > 10 ? peerId.substring(0, 10) : peerId;
 
@@ -32,8 +36,8 @@ Future<DeclineContactRequestResult> declineContactRequest({
   );
 
   // 1. Check if request exists
-  final request = await requestRepo.getRequest(peerId);
-  if (request == null) {
+  final request = expectedRequest ?? await requestRepo.getRequest(peerId);
+  if (request == null || request.peerId != peerId) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_DECLINE_NOT_FOUND',
@@ -44,7 +48,20 @@ Future<DeclineContactRequestResult> declineContactRequest({
 
   // 2. Update status to declined
   try {
-    await requestRepo.updateStatus(peerId, ContactRequestStatus.declined);
+    final decision = await requestRepo.decideRequest(
+      expectedRequest: request,
+      accept: false,
+    );
+    if (decision == ContactRequestDecisionResult.notFound) {
+      return DeclineContactRequestResult.notFound;
+    }
+    if (decision == ContactRequestDecisionResult.addContactError ||
+        decision == ContactRequestDecisionResult.updateStatusError) {
+      return DeclineContactRequestResult.updateError;
+    }
+    if (decision != ContactRequestDecisionResult.declined) {
+      return DeclineContactRequestResult.notPending;
+    }
 
     emitFlowEvent(
       layer: 'FL',

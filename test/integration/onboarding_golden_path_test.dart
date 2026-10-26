@@ -131,6 +131,7 @@ void main() {
         network: network,
         bridge: bridge,
       );
+      requestRepo.contactRepository = alice.contactRepo;
       final bob = TestUser.create(
         peerId: _bobPeerId,
         username: 'Bob',

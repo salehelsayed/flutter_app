@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/resolve_contact_request_notification_target_use_case.dart';
@@ -16,6 +18,7 @@ void main() {
   setUp(() {
     requestRepository = FakeContactRequestRepository();
     contactRepository = FakeContactRepository();
+    requestRepository.contactRepository = contactRepository;
   });
 
   test('returns pending request when the request is still pending', () async {
@@ -38,6 +41,11 @@ void main() {
     expect(result.state, ContactRequestNotificationTargetState.pendingRequest);
     expect(result.request, request);
     expect(result.contact, isNull);
+    expect(
+      (await requestRepository.getRequest(request.peerId))!.status,
+      ContactRequestStatus.pending,
+    );
+    expect(await contactRepository.contactExists(request.peerId), isFalse);
   });
 
   test(
@@ -165,4 +173,98 @@ void main() {
       expect(result.contact?.peerId, peerId);
     },
   );
+
+  for (final hasPending in [true, false]) {
+    test(
+      'blocked contact never routes (pending request: $hasPending)',
+      () async {
+        if (hasPending) requestRepository.seed([_routeRequest]);
+        contactRepository.seed([_routeRequest.toContactModel()]);
+        await contactRepository.blockContact(_routeRequest.peerId);
+        final result = await resolveContactRequestNotificationTarget(
+          peerId: _routeRequest.peerId,
+          requestRepository: requestRepository,
+          contactRepository: contactRepository,
+        );
+        expect(result.state, ContactRequestNotificationTargetState.missing);
+        expect(
+          (await contactRepository.getContact(_routeRequest.peerId))!.isBlocked,
+          isTrue,
+        );
+      },
+    );
+  }
+
+  for (final change in ['removed', 'replaced', 'blocked']) {
+    test('rechecks $change authority after an awaited request read', () async {
+      final held = _HeldRequestRepository()
+        ..contactRepository = contactRepository
+        ..seed([_routeRequest]);
+      requestRepository = held;
+      final resolving = resolveContactRequestNotificationTarget(
+        peerId: _routeRequest.peerId,
+        requestRepository: held,
+        contactRepository: contactRepository,
+      );
+      addTearDown(() {
+        if (!held.releaseRead.isCompleted) held.releaseRead.complete();
+      });
+      await held.readStarted.future;
+      switch (change) {
+        case 'removed':
+          await held.deleteRequest(_routeRequest.peerId);
+          break;
+        case 'replaced':
+          await held.addRequest(
+            _routeRequest.copyWith(
+              signature: 'newer-signed-request',
+              receivedAt: '2026-04-03T10:01:00.000Z',
+            ),
+          );
+          break;
+        case 'blocked':
+          contactRepository.seed([_routeRequest.toContactModel()]);
+          await contactRepository.blockContact(_routeRequest.peerId);
+          break;
+      }
+      held.releaseRead.complete();
+      final result = await resolving;
+      expect(result.state, ContactRequestNotificationTargetState.missing);
+      if (change == 'replaced') {
+        final newer = (await held.getRequest(_routeRequest.peerId))!;
+        expect(newer.signature, 'newer-signed-request');
+        expect(newer.status, ContactRequestStatus.pending);
+        expect(
+          await contactRepository.contactExists(_routeRequest.peerId),
+          isFalse,
+        );
+      }
+    });
+  }
+}
+
+const _routeRequest = ContactRequestModel(
+  peerId: 'peer-request-123',
+  publicKey: 'public-key',
+  rendezvous: '/dns4/example.com/tcp/4001',
+  username: 'Alice',
+  signature: 'signature',
+  receivedAt: '2026-04-03T10:00:00.000Z',
+);
+
+class _HeldRequestRepository extends FakeContactRequestRepository {
+  final readStarted = Completer<void>();
+  final releaseRead = Completer<void>();
+  bool _holdRead = true;
+
+  @override
+  Future<ContactRequestModel?> getRequest(String peerId) async {
+    final request = await super.getRequest(peerId);
+    if (_holdRead) {
+      _holdRead = false;
+      readStarted.complete();
+      await releaseRead.future;
+    }
+    return request;
+  }
 }

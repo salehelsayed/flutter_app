@@ -257,6 +257,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       requestRepo: widget.contactRequestRepository,
       contactRepo: widget.contactRepository,
       peerId: request.peerId,
+      expectedRequest: request,
       p2pService: widget.p2pService,
       identityRepo: widget.repository,
       bridge: widget.bridge,
@@ -268,10 +269,9 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
 
     if (!mounted) return;
 
-    // success or notPending (already accepted from a prior tap) both mean
-    // the contact exists — navigate to feed.
+    // Both accepted outcomes still require the current unblocked contact.
     if (result == AcceptContactRequestResult.success ||
-        result == AcceptContactRequestResult.notPending) {
+        result == AcceptContactRequestResult.alreadyAccepted) {
       final navigator = Navigator.of(context);
       final postRepository = widget.postRepository;
       final appShellController = widget.appShellController;
@@ -279,10 +279,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       // 215: resolve the accepted contact BEFORE navigating so the 1:1 chat can
       // ride on top of the Feed shell (capture navigator first; re-check
       // mounted after the await).
-      final contact =
-          await widget.contactRepository.getContact(request.peerId) ??
-          request.toContactModel();
-      if (!mounted) return;
+      final contact = await widget.contactRepository.getContact(request.peerId);
+      if (!mounted || contact == null || contact.isBlocked) return;
       navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
@@ -407,6 +405,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     await declineContactRequest(
       requestRepo: widget.contactRequestRepository,
       peerId: request.peerId,
+      expectedRequest: request,
     );
   }
 

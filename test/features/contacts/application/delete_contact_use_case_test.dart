@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +19,6 @@ import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordina
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
@@ -404,7 +404,7 @@ class ReconcilingFakeReactionRepository extends FakeReactionRepository
   }
 }
 
-class FakeContactRequestRepository implements ContactRequestRepository {
+class FakeContactRequestRepository extends InMemoryContactRequestRepository {
   final List<String> deletedPeerIds = [];
   final List<String>? operations;
 

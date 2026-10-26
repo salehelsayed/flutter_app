@@ -1518,6 +1518,7 @@ class _FeedWiredState extends State<FeedWired>
       requestRepo: widget.contactRequestRepository,
       contactRepo: widget.contactRepository,
       peerId: request.peerId,
+      expectedRequest: request,
       p2pService: widget.p2pService,
       identityRepo: widget.repository,
       bridge: widget.bridge,
@@ -1530,8 +1531,9 @@ class _FeedWiredState extends State<FeedWired>
     if (!mounted) return;
 
     if (result == AcceptContactRequestResult.success ||
-        result == AcceptContactRequestResult.notPending) {
-      final contact = request.toContactModel();
+        result == AcceptContactRequestResult.alreadyAccepted) {
+      final contact = await widget.contactRepository.getContact(request.peerId);
+      if (!mounted || contact == null || contact.isBlocked) return;
       final alreadyExists = _feedItems.any(
         (item) =>
             item is ConnectionFeedItem && item.contactPeerId == contact.peerId,
@@ -1543,11 +1545,8 @@ class _FeedWiredState extends State<FeedWired>
       // 215: mirror the notification-tap accept — open the 1:1 chat for the
       // newly-accepted peer. Popping back reveals the connection card upserted
       // above, so the Feed presence is preserved.
-      final openContact =
-          await widget.contactRepository.getContact(request.peerId) ?? contact;
-      if (!mounted) return;
-      widget.chatMessageListener.emitContactUpdate(openContact);
-      unawaited(_openConversationForContact(openContact));
+      widget.chatMessageListener.emitContactUpdate(contact);
+      unawaited(_openConversationForContact(contact));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -1568,6 +1567,7 @@ class _FeedWiredState extends State<FeedWired>
     await declineContactRequest(
       requestRepo: widget.contactRequestRepository,
       peerId: request.peerId,
+      expectedRequest: request,
     );
   }
 

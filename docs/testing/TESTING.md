@@ -2965,6 +2965,44 @@ the actual Go 1.27.1 verification helper: canonical, CR/LF, filler-bit and combi
 aliases verify, while a tab does not. This is a host helper probe, not a signed
 mobile-binary proof.
 
+CR-013/017 decisions use one transaction on the existing contact/request tables.
+The displayed request's public key, signature and local `receivedAt` bind the
+stored row; `receivedAt` is not authenticated sender-time ordering. A new contact
+and that row's accepted status commit together. An SQL status-update trigger
+aborts after insertion and the durable ML-KEM marker callback, proving rollback
+leaves no contact and keeps the request pending; removing the trigger permits
+the exact retry, including SQLite reopen. Existing legacy contact/pending
+half-states settle without replacing current archive/block flags or newer keys.
+Stale displayed actions cannot accept or decline a replacement row, concurrent
+accept/decline cannot downgrade accepted, and accepted retries remain idempotent.
+The five original CR-013/017 gap cases are enabled. Keep the durable key marker
+before accepted status, with network/profile work outside the transaction.
+Projection controls require orphan transport authority retired before a new
+contact write and current committed authority/eligibility published afterward.
+
+Feed, Orbit, FTE and notification consent pass the displayed request through
+that decision boundary. Success requires a real current unblocked contact;
+generic `notPending` cannot fabricate one or open a conversation. CR-008 routing
+checks blocked authority before choosing a request or conversation and rechecks
+the current pending decision before presentation. Blocked pending rows remain
+pending during passive replay. Resolver/materializer controls cover blocked
+peers with/without requests, removal/replacement during awaits and blocking or
+deletion before reciprocal/profile work. Notification sender-name copy is unchanged.
+These cases and the receive, reciprocal-key, onboarding and shell preservation
+controls passed 252 host tests with zero failures/skips in
+`.codex-test-logs/contact-request-decisions-20261026/focused-ad-final.log`.
+The separate 14-case shell probe also passed. This is host UI/SQLite evidence,
+not native delivery or signed-artifact certification.
+
+Widget SQL fixtures must execute multi-await transactions in their captured
+real async zone. Pump the existing UI frames before awaiting a decision/dialog
+Future with `runAsync`; otherwise the widget's paused fake clock can retain a
+transaction or route completion. The shell helper yields a real zero-duration
+event turn between its existing frames, without extending the 45-second case
+deadlines. Retain the initial causal failures and resource-aborted final attempt
+in the same artifact directory; `focused-ad-preservation-final` exited 75 after
+the swap-out limit and is not a pass. The quiet-window runs kept swap-outs flat.
+
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release

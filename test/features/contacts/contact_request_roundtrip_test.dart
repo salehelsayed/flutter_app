@@ -120,6 +120,7 @@ class _RoundtripUser {
        contactRepo = InMemoryContactRepository(),
        messageRepo = InMemoryMessageRepository(),
        identityRepo = FakeIdentityRepository() {
+    requestRepo.contactRepository = contactRepo;
     identityRepo.seed(
       IdentityModel(
         peerId: peerId,

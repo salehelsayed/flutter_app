@@ -43,19 +43,29 @@ resolveContactRequestNotificationTarget({
   required ContactRequestRepository requestRepository,
   required ContactRepository contactRepository,
 }) async {
-  final contact = await contactRepository.getContact(peerId);
   final request = await requestRepository.getRequest(peerId);
-  // An unblocked contact outranks a pending row: the peer was added another
-  // way after the request arrived, so the request is settled, not presentable.
-  if (request != null &&
-      request.status == ContactRequestStatus.pending &&
-      (contact == null || contact.isBlocked)) {
-    return ContactRequestNotificationTarget.pendingRequest(request);
+  final contact = await contactRepository.getContact(peerId);
+  if (contact?.isBlocked == true) {
+    return const ContactRequestNotificationTarget.missing();
   }
-
   if (contact != null) {
     return ContactRequestNotificationTarget.conversation(contact);
   }
-
+  if (request != null && request.status == ContactRequestStatus.pending) {
+    final decision = await requestRepository.decideRequest(
+      expectedRequest: request,
+      accept: true,
+      existingContactOnly: true,
+    );
+    if (decision == ContactRequestDecisionResult.pending) {
+      return ContactRequestNotificationTarget.pendingRequest(request);
+    }
+    if (decision == ContactRequestDecisionResult.alreadyAccepted) {
+      final currentContact = await contactRepository.getContact(peerId);
+      if (currentContact != null && !currentContact.isBlocked) {
+        return ContactRequestNotificationTarget.conversation(currentContact);
+      }
+    }
+  }
   return const ContactRequestNotificationTarget.missing();
 }

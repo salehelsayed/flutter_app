@@ -237,6 +237,7 @@ void main() {
         );
         expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
         await tester.tap(find.text('Decline'));
+        await _frames(tester);
         await tester.runAsync(() => routed);
         await _frames(tester);
         expect(routeCompleted, isTrue);
@@ -281,6 +282,7 @@ void main() {
         'Bob',
       );
       await tester.tap(find.text('Decline'));
+      await _frames(tester);
       await tester.runAsync(h.requests.getPendingRequests);
       await _frames(tester);
       expect(_dialogs, findsOneWidget);
@@ -290,6 +292,7 @@ void main() {
       );
       expect(routeCompleted, isFalse);
       await tester.tap(find.text('Decline'));
+      await _frames(tester);
       await tester.runAsync(() => routed);
       await _frames(tester);
       expect(routeCompleted, isTrue);
@@ -313,12 +316,14 @@ void main() {
       (request) => request.peerId == wire.from,
     );
     h.gate.release(wire.from);
+    await _frames(tester);
     await tester.runAsync(() => replayed);
     await _frames(tester);
     expect(_dialogs, findsOneWidget);
     expect(await tester.runAsync(h.requests.getPendingRequests), hasLength(1));
     expect(await tester.runAsync(h.contacts.getAllContacts), isEmpty);
     await tester.tap(find.text('Decline'));
+    await _frames(tester);
     expect(await tester.runAsync(h.requests.getPendingRequests), isEmpty);
     await _frames(tester);
     expect(_dialogs, findsNothing);
@@ -687,8 +692,10 @@ Future<void> _mountFirstTime(WidgetTester tester, _Shell h) async {
 }
 
 Future<void> _frames(WidgetTester tester) async {
-  // Widget animation frames, never a wall-clock wait or a replacement production queue.
+  // Flush real SQL work between fake widget frames, without sleeping or
+  // replacing the production queue.
   for (var i = 0; i < 6; i++) {
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     await tester.pump(const Duration(milliseconds: 100));
   }
 }

@@ -454,6 +454,14 @@ void main() {
           dbUpdateRequestStatus: (peerId, status) =>
               dbUpdateRequestStatus(aliceDb, peerId, status),
           dbDeleteRequest: (peerId) => dbDeleteRequest(aliceDb, peerId),
+          dbDecideRequest: (expected, accept, existingOnly, before) =>
+              dbDecideContactRequest(
+                aliceDb,
+                expected,
+                accept,
+                existingOnly,
+                before,
+              ),
           dbRequestExists: (peerId) => dbRequestExists(aliceDb, peerId),
         );
 

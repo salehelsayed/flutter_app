@@ -102,6 +102,7 @@ final class _Phone {
             : null,
       );
     };
+    requests.contactRepository = contacts;
     p2p.messageStream.listen(received.add);
     listener.start();
   }

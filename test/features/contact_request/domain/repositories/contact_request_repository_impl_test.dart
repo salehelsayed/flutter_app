@@ -68,6 +68,8 @@ void main() {
         deleteCalls.add(peerId);
         store.remove(peerId);
       },
+      dbDecideRequest: (expected, accept, existingOnly, before) async =>
+          throw UnimplementedError(),
       dbRequestExists: (peerId) async {
         return store.containsKey(peerId);
       },

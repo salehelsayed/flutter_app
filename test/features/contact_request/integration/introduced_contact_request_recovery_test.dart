@@ -294,6 +294,14 @@ void main() {
           dbUpdateRequestStatus: (id, status) =>
               dbUpdateRequestStatus(db, id, status),
           dbDeleteRequest: (id) => dbDeleteRequest(db, id),
+          dbDecideRequest: (expected, accept, existingOnly, before) =>
+              dbDecideContactRequest(
+                db,
+                expected,
+                accept,
+                existingOnly,
+                before,
+              ),
           dbRequestExists: (id) => dbRequestExists(db, id),
         );
         final network = FakeP2PNetwork();

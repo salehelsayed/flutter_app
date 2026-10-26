@@ -145,7 +145,13 @@ class ContactRequestListener {
   final _presentations =
       <String, ({Completer<void> completion, bool allowSuppressed})>{};
   final _presentationQueue =
-      Queue<({String peerId, Future<void> Function() present})>();
+      Queue<
+        ({
+          String peerId,
+          ContactRequestModel request,
+          Future<void> Function() present,
+        })
+      >();
   bool _presenting = false;
   int _presentationGeneration = 0;
   bool _disposed = false;
@@ -219,7 +225,11 @@ class ContactRequestListener {
       completion: completion,
       allowSuppressed: allowSuppressed,
     );
-    _presentationQueue.add((peerId: request.peerId, present: present));
+    _presentationQueue.add((
+      peerId: request.peerId,
+      request: request,
+      present: present,
+    ));
     if (!_presenting) unawaited(_drainPresentations());
     return completion.future;
   }
@@ -235,7 +245,18 @@ class ContactRequestListener {
         try {
           if (_presentations[next.peerId]?.allowSuppressed == true ||
               !_isPresentationSuppressed(next.peerId)) {
-            await next.present();
+            final decision = await requestRepo.decideRequest(
+              expectedRequest: next.request,
+              accept: true,
+              existingContactOnly: true,
+            );
+            if (decision == ContactRequestDecisionResult.pending &&
+                !_disposed &&
+                generation == _presentationGeneration &&
+                (_presentations[next.peerId]?.allowSuppressed == true ||
+                    !_isPresentationSuppressed(next.peerId))) {
+              await next.present();
+            }
           }
         } catch (error) {
           emitFlowEvent(
@@ -613,18 +634,15 @@ class ContactRequestListener {
           details: {'count': pending.length},
         );
         for (final request in pending) {
-          final contact = await contactRepo.getContact(request.peerId);
-          if (contact?.isBlocked == true) {
-            continue;
-          }
-          if (contact != null) {
-            // The receive path only stores a request while the peer is not a
-            // contact, so this row outlived a contact added another way (their
-            // QR, an intro). A friend never gets a "wants to connect" dialog.
-            await requestRepo.updateStatus(
-              request.peerId,
-              ContactRequestStatus.accepted,
-            );
+          final decision = await requestRepo.decideRequest(
+            expectedRequest: request,
+            accept: true,
+            existingContactOnly: true,
+          );
+          if (decision == ContactRequestDecisionResult.pending && !_disposed) {
+            _routeToDialog(request);
+          } else if (decision == ContactRequestDecisionResult.accepted ||
+              decision == ContactRequestDecisionResult.alreadyAccepted) {
             emitFlowEvent(
               layer: 'FL',
               event:
@@ -635,9 +653,7 @@ class ContactRequestListener {
                     : request.peerId,
               },
             );
-            continue;
           }
-          _routeToDialog(request);
         }
       } catch (e) {
         emitFlowEvent(

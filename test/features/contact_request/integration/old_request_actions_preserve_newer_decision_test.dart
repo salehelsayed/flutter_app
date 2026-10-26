@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -10,6 +12,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
+import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_notification_materializer.dart';
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
@@ -89,16 +92,39 @@ ContactRepositoryImpl _buildContactRepo(Database db) => ContactRepositoryImpl(
       dbSetIntrosSentAt(db, peerId, timestamp),
 );
 
-ContactRequestRepositoryImpl _buildRequestRepo(Database db) =>
-    ContactRequestRepositoryImpl(
-      dbLoadPendingRequests: () => dbLoadPendingRequests(db),
-      dbLoadRequest: (peerId) => dbLoadRequest(db, peerId),
-      dbUpsertRequest: (row) => dbUpsertRequest(db, row),
-      dbUpdateRequestStatus: (peerId, status) =>
-          dbUpdateRequestStatus(db, peerId, status),
-      dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
-      dbRequestExists: (peerId) => dbRequestExists(db, peerId),
-    );
+ContactRequestRepositoryImpl _buildRequestRepo(
+  Database db, {
+  void Function(bool accept)? onDecision,
+  Future<void> Function(String peerId)? onContactAccepted,
+}) => ContactRequestRepositoryImpl(
+  dbLoadPendingRequests: () => dbLoadPendingRequests(db),
+  dbLoadRequest: (peerId) => dbLoadRequest(db, peerId),
+  dbUpsertRequest: (row) => dbUpsertRequest(db, row),
+  dbUpdateRequestStatus: (peerId, status) =>
+      dbUpdateRequestStatus(db, peerId, status),
+  dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
+  dbDecideRequest: (expected, accept, existingOnly, before) {
+    onDecision?.call(accept);
+    return dbDecideContactRequest(db, expected, accept, existingOnly, before);
+  },
+  dbRequestExists: (peerId) => dbRequestExists(db, peerId),
+  onContactAccepted: onContactAccepted,
+);
+
+ContactRequestModel _requestAt(String timestamp) {
+  final payload = SplayTreeMap<String, dynamic>.from({
+    'pk': _bobId.publicKey,
+    'ns': _bobId.peerId,
+    'rv': 'rv-bob',
+    'ts': timestamp,
+    'un': 'Bob',
+    'mlkem': 'mlkem-$timestamp',
+  });
+  return ContactRequestModel.fromP2PPayload({
+    ...payload,
+    'sig': _bobId.signBase64(jsonEncode(payload)),
+  }).copyWith(receivedAt: timestamp);
+}
 
 void main() {
   late Directory tempDir;
@@ -239,8 +265,6 @@ void main() {
         );
         expect(await aliceContacts.getContact(_bobId.peerId), isNull);
       },
-      skip:
-          'KNOWN GAP CR-017: ContactRequestNotificationMaterializer.acceptRequest treats notPending on a declined request as success and opens a synthesized contact when no contact row exists, lib/features/contact_request/application/contact_request_notification_materializer.dart:103-108. Remove when fixed.',
     );
 
     test(
@@ -325,8 +349,6 @@ void main() {
               'A stale decline action must not turn an already-accepted request into declined',
         );
       },
-      skip:
-          'KNOWN GAP CR-017: declineContactRequest updates any existing request row by peerId without checking that its status is still pending, lib/features/contact_request/application/decline_contact_request_use_case.dart:45-47. Remove when fixed.',
     );
 
     test(
@@ -415,8 +437,173 @@ void main() {
         expect(bobAfterStaleAccept.isBlocked, isTrue);
         expect(bobAfterStaleAccept.mlKemPublicKey, 'mlkem-bob-newer');
       },
-      skip:
-          'KNOWN GAP CR-017: acceptContactRequest checks only that the request row is pending and overwrites an existing blocked contact with default flags and the stale request key, lib/features/contact_request/application/accept_contact_request_use_case.dart:47-70. Remove when fixed.',
     );
+
+    test('an old displayed request cannot decide a newer signed row', () async {
+      final contacts = _buildContactRepo(aliceDb);
+      final requests = _buildRequestRepo(aliceDb);
+      final displayed = _requestAt('2026-10-26T10:00:00.000Z');
+      final newer = _requestAt('2026-10-26T10:01:00.000Z');
+      await requests.addRequest(displayed);
+      await requests.addRequest(newer);
+      var queuedRetry = false;
+      expect(
+        await acceptContactRequest(
+          requestRepo: requests,
+          contactRepo: contacts,
+          peerId: displayed.peerId,
+          expectedRequest: displayed,
+          beforeMarkAccepted: () async {
+            queuedRetry = true;
+          },
+        ),
+        AcceptContactRequestResult.notPending,
+      );
+      expect(
+        await declineContactRequest(
+          requestRepo: requests,
+          peerId: displayed.peerId,
+          expectedRequest: displayed,
+        ),
+        DeclineContactRequestResult.notPending,
+      );
+      expect(queuedRetry, isFalse);
+      expect(await contacts.getContactCount(), 0);
+      final current = (await requests.getRequest(newer.peerId))!;
+      expect(current.signature, newer.signature);
+      expect(current.status, ContactRequestStatus.pending);
+      expect(
+        await acceptContactRequest(
+          requestRepo: requests,
+          contactRepo: contacts,
+          peerId: newer.peerId,
+          expectedRequest: newer,
+        ),
+        AcceptContactRequestResult.success,
+      );
+      expect(
+        (await contacts.getContact(newer.peerId))!.mlKemPublicKey,
+        newer.mlKemPublicKey,
+      );
+    });
+
+    test(
+      'concurrent decline cannot overwrite an accept committing the same request',
+      () async {
+        final contacts = _buildContactRepo(aliceDb);
+        final declineEntered = Completer<void>();
+        final requests = _buildRequestRepo(
+          aliceDb,
+          onDecision: (accept) {
+            if (!accept && !declineEntered.isCompleted) {
+              declineEntered.complete();
+            }
+          },
+        );
+        final request = _requestAt('2026-10-26T11:00:00.000Z');
+        await requests.addRequest(request);
+        final beforeCommit = Completer<void>();
+        final releaseCommit = Completer<void>();
+        addTearDown(() {
+          if (!releaseCommit.isCompleted) releaseCommit.complete();
+        });
+        final accepting = acceptContactRequest(
+          requestRepo: requests,
+          contactRepo: contacts,
+          peerId: request.peerId,
+          expectedRequest: request,
+          beforeMarkAccepted: () async {
+            beforeCommit.complete();
+            await releaseCommit.future;
+          },
+        );
+        await beforeCommit.future;
+        final declining = declineContactRequest(
+          requestRepo: requests,
+          peerId: request.peerId,
+          expectedRequest: request,
+        );
+        await declineEntered.future;
+        releaseCommit.complete();
+        expect(await accepting, AcceptContactRequestResult.success);
+        expect(await declining, DeclineContactRequestResult.notPending);
+        expect(
+          (await requests.getRequest(request.peerId))!.status,
+          ContactRequestStatus.accepted,
+        );
+        expect(await contacts.getContactCount(), 1);
+        var duplicateRetry = false;
+        expect(
+          await acceptContactRequest(
+            requestRepo: requests,
+            contactRepo: contacts,
+            peerId: request.peerId,
+            expectedRequest: request,
+            beforeMarkAccepted: () async {
+              duplicateRetry = true;
+            },
+          ),
+          AcceptContactRequestResult.alreadyAccepted,
+        );
+        expect(duplicateRetry, isFalse);
+        expect(await contacts.getContactCount(), 1);
+      },
+    );
+
+    for (final change in ['blocked', 'removed']) {
+      test(
+        'accept rechecks a contact $change during postcommit work',
+        () async {
+          final contacts = _buildContactRepo(aliceDb);
+          final request = _requestAt('2026-10-26T12:00:00.000Z');
+          final requests = _buildRequestRepo(
+            aliceDb,
+            onContactAccepted: (peerId) async {
+              if (change == 'blocked') {
+                await contacts.blockContact(peerId);
+              } else {
+                await contacts.deleteContact(peerId);
+              }
+            },
+          );
+          await requests.addRequest(request);
+          final p2p = FakeP2PService(peerId: _aliceId.peerId, network: network);
+          addTearDown(p2p.dispose);
+          var profileDownloads = 0;
+          final result = await acceptAndReciprocateContactRequest(
+            requestRepo: requests,
+            contactRepo: contacts,
+            peerId: request.peerId,
+            expectedRequest: request,
+            p2pService: p2p,
+            identityRepo: _buildIdentityRepo(aliceDb, FakeSecureKeyStore()),
+            bridge: Ed25519ContactRequestBridge(_cryptoBus),
+            downloadProfilePictureFn:
+                ({
+                  required bridge,
+                  required contactRepo,
+                  required ownerPeerId,
+                  required avatarVersion,
+                  bool retryPendingRequest = false,
+                }) async {
+                  profileDownloads++;
+                  return request.toContactModel();
+                },
+          );
+          expect(result, AcceptContactRequestResult.notPending);
+          expect(profileDownloads, 0);
+          expect(
+            (await requests.getRequest(request.peerId))!.status,
+            ContactRequestStatus.accepted,
+          );
+          final current = await contacts.getContact(request.peerId);
+          if (change == 'blocked') {
+            expect(current!.isBlocked, isTrue);
+          } else {
+            expect(current, isNull);
+          }
+        },
+      );
+    }
   });
 }

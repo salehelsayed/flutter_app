@@ -88,7 +88,9 @@ class ContactRequestNotificationMaterializer {
         );
         return;
       case ContactRequestNotificationTargetState.conversation:
-        await openConversation(navigator: navigator, contact: target.contact!);
+        final contact = await contactRepository.getContact(peerId);
+        if (!navigator.mounted || contact == null || contact.isBlocked) return;
+        await openConversation(navigator: navigator, contact: contact);
         return;
       case ContactRequestNotificationTargetState.missing:
         return;
@@ -103,6 +105,7 @@ class ContactRequestNotificationMaterializer {
       requestRepo: requestRepository,
       contactRepo: contactRepository,
       peerId: request.peerId,
+      expectedRequest: request,
       p2pService: p2pService,
       identityRepo: identityRepository,
       bridge: bridge,
@@ -113,10 +116,9 @@ class ContactRequestNotificationMaterializer {
     );
 
     if (result == AcceptContactRequestResult.success ||
-        result == AcceptContactRequestResult.notPending) {
-      final contact =
-          await contactRepository.getContact(request.peerId) ??
-          request.toContactModel();
+        result == AcceptContactRequestResult.alreadyAccepted) {
+      final contact = await contactRepository.getContact(request.peerId);
+      if (!navigator.mounted || contact == null || contact.isBlocked) return;
       await openConversation(navigator: navigator, contact: contact);
       return;
     }
@@ -131,6 +133,7 @@ class ContactRequestNotificationMaterializer {
     await declineContactRequest(
       requestRepo: requestRepository,
       peerId: request.peerId,
+      expectedRequest: request,
     );
   }
 

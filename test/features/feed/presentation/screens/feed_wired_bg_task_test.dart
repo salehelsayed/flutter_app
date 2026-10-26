@@ -1,4 +1,5 @@
 // test/features/feed/presentation/screens/feed_wired_bg_task_test.dart
+import '../../../../shared/fakes/in_memory_contact_request_repository.dart';
 //
 // Phase 2 Unit 2C — Step 3.5
 // RED tests: verify that FeedWired _onInlineSend calls bg:begin before
@@ -18,7 +19,6 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -168,7 +168,7 @@ class _FakeContactRepository implements ContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
-class _FakeContactRequestRepository implements ContactRequestRepository {
+class _FakeContactRequestRepository extends InMemoryContactRequestRepository {
   @override
   Future<void> addRequest(ContactRequestModel r) async {}
   @override

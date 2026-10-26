@@ -1,10 +1,11 @@
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import '../../../../shared/fakes/in_memory_contact_request_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 
 /// In-memory [ContactRequestRepository] for tests.
 ///
 /// Stores requests in a map, tracks call counts and last arguments.
-class FakeContactRequestRepository implements ContactRequestRepository {
+class FakeContactRequestRepository extends InMemoryContactRequestRepository {
   final Map<String, ContactRequestModel> _requests = {};
 
   // Call tracking
@@ -36,7 +37,9 @@ class FakeContactRequestRepository implements ContactRequestRepository {
   Future<void> addRequest(ContactRequestModel request) async {
     addRequestCallCount++;
     lastAddedRequest = request;
-    if (throwOnAddRequest) throw Exception('FakeContactRequestRepository: addRequest error');
+    if (throwOnAddRequest) {
+      throw Exception('FakeContactRequestRepository: addRequest error');
+    }
     _requests[request.peerId] = request;
   }
 
@@ -60,7 +63,9 @@ class FakeContactRequestRepository implements ContactRequestRepository {
     updateStatusCallCount++;
     lastUpdateStatusPeerId = peerId;
     lastUpdateStatus = status;
-    if (throwOnUpdateStatus) throw Exception('FakeContactRequestRepository: updateStatus error');
+    if (throwOnUpdateStatus) {
+      throw Exception('FakeContactRequestRepository: updateStatus error');
+    }
     final existing = _requests[peerId];
     if (existing != null) {
       _requests[peerId] = existing.copyWith(status: status);

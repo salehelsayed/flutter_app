@@ -24,6 +24,7 @@ void main() {
   setUp(() {
     requestRepo = FakeContactRequestRepository();
     contactRepo = FakeContactRepository();
+    requestRepo.contactRepository = contactRepo;
   });
 
   group('acceptContactRequest', () {
@@ -126,8 +127,8 @@ void main() {
         );
 
         expect(result, AcceptContactRequestResult.updateStatusError);
-        // Contact should still have been added before the status update failed
         expect(contactRepo.addContactCallCount, 1);
+        expect(await contactRepo.contactExists(testRequest.peerId), isFalse);
       },
     );
 

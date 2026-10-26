@@ -133,9 +133,13 @@ void main() {
       );
 
       final scannerContacts = InMemoryContactRepository();
-      final scannerRequests = InMemoryContactRequestRepository();
+      final scannerRequests = InMemoryContactRequestRepository(
+        contactRepository: scannerContacts,
+      );
       final scannedContacts = InMemoryContactRepository();
-      final scannedRequests = InMemoryContactRequestRepository();
+      final scannedRequests = InMemoryContactRequestRepository(
+        contactRepository: scannedContacts,
+      );
       final receivedCallWakeHandles = InMemoryReceivedCallWakeHandleStore();
 
       // A compact QR installs only the scanned account's ordinary public key.

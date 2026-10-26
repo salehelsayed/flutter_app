@@ -225,7 +225,10 @@ buildProductionCanonicalInboxProjectionComposition({
     ).allowsAccountNetworkSideEffects;
 
     final contactRepository = _buildContactRepository(database);
-    final contactRequestRepository = _buildContactRequestRepository(database);
+    final contactRequestRepository = _buildContactRequestRepository(
+      database,
+      contactRepository,
+    );
     late final Future<int> Function(String peerId)
     projectDirectConversationRead;
     final messageRepository = _buildMessageRepository(
@@ -955,6 +958,7 @@ ContactRepositoryImpl _buildContactRepository(Database database) =>
 
 ContactRequestRepositoryImpl _buildContactRequestRepository(
   Database database,
+  ContactRepositoryImpl contactRepository,
 ) => ContactRequestRepositoryImpl(
   dbLoadPendingRequests: () => dbLoadPendingRequests(database),
   dbLoadRequest: (peerId) => dbLoadRequest(database, peerId),
@@ -962,7 +966,19 @@ ContactRequestRepositoryImpl _buildContactRequestRepository(
   dbUpdateRequestStatus: (peerId, status) =>
       dbUpdateRequestStatus(database, peerId, status),
   dbDeleteRequest: (peerId) => dbDeleteRequest(database, peerId),
+  dbDecideRequest: (expected, accept, existingOnly, before) =>
+      dbDecideContactRequest(
+        database,
+        expected,
+        accept,
+        existingOnly,
+        before,
+        beforeCreateContact: () => contactRepository.prepareContactCreation(
+          expected['peer_id'] as String,
+        ),
+      ),
   dbRequestExists: (peerId) => dbRequestExists(database, peerId),
+  onContactAccepted: contactRepository.publishCommittedContact,
 );
 
 MessageRepositoryImpl _buildMessageRepository(

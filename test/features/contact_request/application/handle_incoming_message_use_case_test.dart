@@ -1,10 +1,10 @@
 import 'dart:convert';
+import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
-import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -116,7 +116,7 @@ class _FakeBridge extends Bridge {
   }
 }
 
-class _FakeContactRequestRepo implements ContactRequestRepository {
+class _FakeContactRequestRepo extends InMemoryContactRequestRepository {
   final Map<String, ContactRequestModel> _requests = {};
 
   @override

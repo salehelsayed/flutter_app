@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -145,13 +147,27 @@ MessageRepositoryImpl buildWidgetMessageRepository(Database db) =>
           ),
     );
 
-ContactRequestRepositoryImpl buildWidgetRequestRepository(Database db) =>
-    ContactRequestRepositoryImpl(
-      dbLoadPendingRequests: () => dbLoadPendingRequests(db),
-      dbLoadRequest: (peerId) => dbLoadRequest(db, peerId),
-      dbUpsertRequest: (row) => dbUpsertRequest(db, row),
-      dbUpdateRequestStatus: (peerId, status) =>
-          dbUpdateRequestStatus(db, peerId, status),
-      dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
-      dbRequestExists: (peerId) => dbRequestExists(db, peerId),
-    );
+ContactRequestRepositoryImpl buildWidgetRequestRepository(Database db) {
+  // The fixture is created in runAsync. Keep multi-step SQL transactions in
+  // that zone while the widget test's fake clock may be paused on a SQL wait.
+  final databaseZone = Zone.current;
+  return ContactRequestRepositoryImpl(
+    dbLoadPendingRequests: () => dbLoadPendingRequests(db),
+    dbLoadRequest: (peerId) => dbLoadRequest(db, peerId),
+    dbUpsertRequest: (row) => dbUpsertRequest(db, row),
+    dbUpdateRequestStatus: (peerId, status) =>
+        dbUpdateRequestStatus(db, peerId, status),
+    dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
+    dbDecideRequest: (expected, accept, existingOnly, before) =>
+        databaseZone.run(
+          () => dbDecideContactRequest(
+            db,
+            expected,
+            accept,
+            existingOnly,
+            before,
+          ),
+        ),
+    dbRequestExists: (peerId) => dbRequestExists(db, peerId),
+  );
+}

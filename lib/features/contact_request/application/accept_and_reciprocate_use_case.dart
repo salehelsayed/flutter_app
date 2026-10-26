@@ -6,6 +6,7 @@ import 'package:flutter_app/features/contact_request/application/accept_contact_
 import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -24,6 +25,7 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
   required ContactRequestRepository requestRepo,
   required ContactRepository contactRepo,
   required String peerId,
+  ContactRequestModel? expectedRequest,
   required P2PService p2pService,
   required IdentityRepository identityRepo,
   required Bridge bridge,
@@ -41,6 +43,7 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
     requestRepo: requestRepo,
     contactRepo: contactRepo,
     peerId: peerId,
+    expectedRequest: expectedRequest,
     beforeMarkAccepted: secureKeyStore == null
         ? null
         : () => queueMlKemReannouncePeer(secureKeyStore, peerId),

@@ -8,6 +8,9 @@ enum AcceptContactRequestResult {
   /// Successfully accepted and added contact.
   success,
 
+  /// This exact request was already accepted and still has a current contact.
+  alreadyAccepted,
+
   /// Request not found.
   notFound,
 
@@ -25,15 +28,15 @@ enum AcceptContactRequestResult {
 ///
 /// This function:
 /// 1. Loads the request
-/// 2. Converts it to a ContactModel
-/// 3. Adds to contacts, unless the peer is already an unblocked contact
-/// 4. Updates request status to accepted
+/// 2. Rechecks the exact request and current contact in one transaction
+/// 3. Commits a new contact and accepted status together, preserving existing contacts
 ///
 /// Returns the result of the operation.
 Future<AcceptContactRequestResult> acceptContactRequest({
   required ContactRequestRepository requestRepo,
   required ContactRepository contactRepo,
   required String peerId,
+  ContactRequestModel? expectedRequest,
   Future<void> Function()? beforeMarkAccepted,
 }) async {
   final peerIdPrefix = peerId.length > 10 ? peerId.substring(0, 10) : peerId;
@@ -44,9 +47,8 @@ Future<AcceptContactRequestResult> acceptContactRequest({
     details: {'peerId': peerIdPrefix},
   );
 
-  // 1. Load the request
-  final request = await requestRepo.getRequest(peerId);
-  if (request == null) {
+  final request = expectedRequest ?? await requestRepo.getRequest(peerId);
+  if (request == null || request.peerId != peerId) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_ACCEPT_NOT_FOUND',
@@ -55,52 +57,56 @@ Future<AcceptContactRequestResult> acceptContactRequest({
     return AcceptContactRequestResult.notFound;
   }
 
-  // 2. Verify status is pending
-  if (request.status != ContactRequestStatus.pending) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CONTACT_REQUEST_ACCEPT_NOT_PENDING',
-      details: {'peerId': peerIdPrefix, 'status': request.status.name},
-    );
-    return AcceptContactRequestResult.notPending;
-  }
-
-  // 3. Convert to contact and add. The contacts table replaces on conflict,
-  //    and a current contact row carries state the request lacks (avatar,
-  //    archive flag, key timestamps), so an unblocked contact row is kept.
-  final contact = request.toContactModel();
   try {
-    final existing = await contactRepo.getContact(peerId);
-    if (existing == null || existing.isBlocked) {
-      await contactRepo.addContact(contact);
+    final decision = await requestRepo.decideRequest(
+      expectedRequest: request,
+      accept: true,
+      beforeMarkAccepted: beforeMarkAccepted,
+    );
+    var result = switch (decision) {
+      ContactRequestDecisionResult.accepted =>
+        AcceptContactRequestResult.success,
+      ContactRequestDecisionResult.alreadyAccepted =>
+        AcceptContactRequestResult.alreadyAccepted,
+      ContactRequestDecisionResult.notFound =>
+        AcceptContactRequestResult.notFound,
+      ContactRequestDecisionResult.addContactError =>
+        AcceptContactRequestResult.addContactError,
+      ContactRequestDecisionResult.updateStatusError =>
+        AcceptContactRequestResult.updateStatusError,
+      _ => AcceptContactRequestResult.notPending,
+    };
+    if (result == AcceptContactRequestResult.success ||
+        result == AcceptContactRequestResult.alreadyAccepted) {
+      final current = await contactRepo.getContact(peerId);
+      if (current == null || current.isBlocked) {
+        result = AcceptContactRequestResult.notPending;
+      }
     }
-  } catch (e) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'CONTACT_REQUEST_ACCEPT_ADD_ERROR',
-      details: {'peerId': peerIdPrefix, 'error': e.toString()},
+      event: switch (result) {
+        AcceptContactRequestResult.success ||
+        AcceptContactRequestResult.alreadyAccepted =>
+          'CONTACT_REQUEST_ACCEPT_SUCCESS',
+        AcceptContactRequestResult.notFound =>
+          'CONTACT_REQUEST_ACCEPT_NOT_FOUND',
+        AcceptContactRequestResult.notPending =>
+          'CONTACT_REQUEST_ACCEPT_NOT_PENDING',
+        AcceptContactRequestResult.addContactError =>
+          'CONTACT_REQUEST_ACCEPT_ADD_ERROR',
+        AcceptContactRequestResult.updateStatusError =>
+          'CONTACT_REQUEST_ACCEPT_STATUS_ERROR',
+      },
+      details: {'peerId': peerIdPrefix, 'result': result.name},
     );
-    return AcceptContactRequestResult.addContactError;
-  }
-
-  // 4. Update request status to accepted
-  try {
-    await beforeMarkAccepted?.call();
-    await requestRepo.updateStatus(peerId, ContactRequestStatus.accepted);
-  } catch (e) {
+    return result;
+  } catch (error) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_ACCEPT_STATUS_ERROR',
-      details: {'peerId': peerIdPrefix, 'error': e.toString()},
+      details: {'peerId': peerIdPrefix, 'error': error.toString()},
     );
     return AcceptContactRequestResult.updateStatusError;
   }
-
-  emitFlowEvent(
-    layer: 'FL',
-    event: 'CONTACT_REQUEST_ACCEPT_SUCCESS',
-    details: {'peerId': peerIdPrefix, 'username': contact.username},
-  );
-
-  return AcceptContactRequestResult.success;
 }

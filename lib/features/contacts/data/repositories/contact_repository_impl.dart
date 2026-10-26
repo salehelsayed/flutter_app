@@ -122,6 +122,26 @@ class ContactRepositoryImpl
     return ContactModel.fromMap(row);
   }
 
+  /// Retires orphaned notification authority before a new contact SQL write.
+  Future<void> prepareContactCreation(String peerId) async {
+    await directReactionProjection?.retireContactTransportAuthority(peerId);
+  }
+
+  /// Mirrors a contact accepted by the request repository's atomic SQL write.
+  Future<void> publishCommittedContact(String peerId) async {
+    await _mirrorContactForPush(peerId);
+    try {
+      await _republishCommittedTransportAuthority(peerId);
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACTS_REPO_ACCEPT_PROJECTION_ERROR',
+        details: {'error': error.toString()},
+      );
+    }
+    _notifyPushEligibilityChanged();
+  }
+
   @override
   Future<List<ContactModel>> getAllContacts() async {
     final rows = await dbLoadAllContacts();

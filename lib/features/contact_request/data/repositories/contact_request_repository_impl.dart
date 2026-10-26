@@ -8,17 +8,28 @@ class ContactRequestRepositoryImpl implements ContactRequestRepository {
   final Future<List<Map<String, Object?>>> Function() dbLoadPendingRequests;
   final Future<Map<String, Object?>?> Function(String peerId) dbLoadRequest;
   final Future<void> Function(Map<String, Object?> row) dbUpsertRequest;
-  final Future<void> Function(String peerId, String status) dbUpdateRequestStatus;
+  final Future<void> Function(String peerId, String status)
+  dbUpdateRequestStatus;
+  final Future<ContactRequestDecisionResult> Function(
+    Map<String, Object?> expected,
+    bool accept,
+    bool existingContactOnly,
+    Future<void> Function()? beforeMarkAccepted,
+  )
+  dbDecideRequest;
   final Future<void> Function(String peerId) dbDeleteRequest;
   final Future<bool> Function(String peerId) dbRequestExists;
+  final Future<void> Function(String peerId)? onContactAccepted;
 
   ContactRequestRepositoryImpl({
     required this.dbLoadPendingRequests,
     required this.dbLoadRequest,
     required this.dbUpsertRequest,
     required this.dbUpdateRequestStatus,
+    required this.dbDecideRequest,
     required this.dbDeleteRequest,
     required this.dbRequestExists,
+    this.onContactAccepted,
   });
 
   @override
@@ -68,6 +79,26 @@ class ContactRequestRepositoryImpl implements ContactRequestRepository {
   Future<void> updateStatus(String peerId, ContactRequestStatus status) async {
     final statusString = _statusToString(status);
     await dbUpdateRequestStatus(peerId, statusString);
+  }
+
+  @override
+  Future<ContactRequestDecisionResult> decideRequest({
+    required ContactRequestModel expectedRequest,
+    required bool accept,
+    bool existingContactOnly = false,
+    Future<void> Function()? beforeMarkAccepted,
+  }) async {
+    final result = await dbDecideRequest(
+      expectedRequest.toMap(),
+      accept,
+      existingContactOnly,
+      beforeMarkAccepted,
+    );
+    if (result == ContactRequestDecisionResult.accepted ||
+        result == ContactRequestDecisionResult.alreadyAccepted) {
+      await onContactAccepted?.call(expectedRequest.peerId);
+    }
+    return result;
   }
 
   @override

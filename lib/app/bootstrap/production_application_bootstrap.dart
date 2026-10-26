@@ -1085,7 +1085,19 @@ final class ProductionApplicationBootstrap
       dbUpdateRequestStatus: (peerId, status) =>
           dbUpdateRequestStatus(db, peerId, status),
       dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
+      dbDecideRequest: (expected, accept, existingOnly, before) =>
+          dbDecideContactRequest(
+            db,
+            expected,
+            accept,
+            existingOnly,
+            before,
+            beforeCreateContact: () => contactRepository.prepareContactCreation(
+              expected['peer_id'] as String,
+            ),
+          ),
       dbRequestExists: (peerId) => dbRequestExists(db, peerId),
+      onContactAccepted: contactRepository.publishCommittedContact,
     );
 
     // v107 direct notification durability is production-owned from the first
