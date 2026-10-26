@@ -2939,6 +2939,21 @@ does not certify a physical iPhone/Android fresh add. Preserve the existing
 physical pairing; the [Group C device runbook](astra-group-c-device-runbook.md)
 defines a separate disposable available-simulator leg after UI-Update lands.
 
+CR-002's SQLite-backed decline cases keep the original envelope rejected after
+reopening the database with an empty in-memory replay cache. The authenticated
+public key and signature identify the persisted declined request; a genuinely
+different signed request still requires manual consent. Unit fixtures for that
+fresh path must use a different old signature rather than the same constant
+signature for both requests. CR-020 keeps a valid request retryable when its SQL
+save fails: the storage exception reaches the existing negative-confirmation
+and canonical replay paths, and the failed request stays out of ReplayCache.
+Recovery retains the exact-request retry and no-duplicate-notification controls.
+The two re-enabled integration cases, active fresh-request control and receive
+preservation suites passed 89 host cases with zero failures/skips in
+`.codex-test-logs/contact-request-fixes-20261026/focused-bc-rebased.log`.
+This is signed host/SQLite evidence; native delivery and release artifacts are
+separate proof obligations.
+
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release
