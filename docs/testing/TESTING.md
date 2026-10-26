@@ -2360,6 +2360,35 @@ directory's `007-go-checkpoint-summary.json`. These are host results, not device
 coverage. GC-005 still needs its separate membership process-death companion,
 and call content audio still needs the unapproved test-build audio hook.
 
+The additional journey preparation is documented in
+`docs/testing/priority-e2e-codex-mcp-execution.md`, using the shared camera
+operations in `priority-e2e-camera-permission-mcp.md`. GC-005 reuses the ordered
+text recovery and membership process-death runners together. CONTACT-001,
+MEDIA-010, MEDIA-035, VC-023, and MEDIA-018 use recorded MCP/native observations
+and hashed raw evidence; `evaluate_production_journey_gap_receipt.dart` requires
+an independently pinned candidate and reports `PASS_RECORDED`, not a device
+execution performed by that command. Received images must fully decode and
+videos must pass a full host decode as well as the recorded native viewer
+checks. Equality with the processed encryption input is additional proof and
+remains `NOT RUN` when its existing sender receipt was not captured. Available
+target discovery supports an explicit unavailable-target N/A rather than a pass.
+
+MEDIA-018's test-only `direct_media_transfer_checkpoint_fixture_test.go`
+extends the existing disposable media relay with a bounded, one-shot body gate.
+It counts ciphertext body bytes, preserves framed metadata, learns the actual
+transfer size, and leaves unarmed traffic on the production handler.
+`cut_production_media_transfer.dart` verifies the selected partial transfer is
+held through confirmed process death and releases only its own gate; full
+recovery remains a separate MCP assertion. The focused preparation evidence in
+`.codex-test-logs/journey-gap-preparation-20261026/` includes 39 passing Dart
+contracts (`dart-10.log`), seven passing Go tests plus two subtests with race
+detection (`go-integration-11.log`), and clean analysis (`analyzer-12.log`). These
+host results do not upgrade catalog device coverage. Both command adapters
+are classified as reliability-discovery support, not additional executable
+scenarios. Omitting those entries blocks the reliability inventory and its
+workflow/SIMS registry contracts (`wrapper-13/` preserves that first failure).
+The initial Dart fixture type failures and analyzer style findings also remain.
+
 Direct text catalog host coverage also includes
 `direct_text_restart_sqlite_test.dart` in `offline-recovery`. DC-002 starts
 100 sends without awaiting each send, injects duplicate live deliveries, and

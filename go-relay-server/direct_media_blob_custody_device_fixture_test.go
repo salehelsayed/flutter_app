@@ -29,6 +29,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	relayv2 "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
@@ -111,6 +112,7 @@ type directMediaDeviceFixture struct {
 	media               *MediaStore
 	faults              *directMediaFixtureFaults
 	textCheckpoint      *directTextSendCheckpoint
+	transferCheckpoint  *directMediaTransferCheckpoint
 	redis               *miniredis.Miniredis
 	probe               *http.Server
 	probeLn             net.Listener
@@ -524,6 +526,7 @@ func startDirectMediaDeviceFixture(
 	}
 	fixture.media = media
 	fixture.faults = newDirectMediaFixtureFaults(media)
+	fixture.transferCheckpoint = newDirectMediaTransferCheckpoint(ctx, 45*time.Second)
 	media.StartCleanup(ctx)
 	probeURL, err := fixture.startProbe(advertisedHost)
 	if err != nil {
@@ -557,6 +560,9 @@ func startDirectMediaDeviceFixture(
 		CallControl:     stores.CallControl,
 		Media:           media,
 		Profile:         profile,
+	})
+	h.SetStreamHandler(MediaProtocol, func(stream network.Stream) {
+		fixture.transferCheckpoint.handle(stream, media, profile)
 	})
 
 	port, err := directMediaFixtureTCPPort(h)
@@ -755,6 +761,9 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 	}
 	if fixture.textCheckpoint != nil {
 		mux.HandleFunc(path+"/send-checkpoint", fixture.textCheckpoint.serve)
+	}
+	if fixture.transferCheckpoint != nil {
+		mux.HandleFunc(path+"/transfer-checkpoint", fixture.transferCheckpoint.serve)
 	}
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	fixture.probe = server

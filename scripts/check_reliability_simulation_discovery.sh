@@ -461,6 +461,11 @@ classify_path() {
       record "support" "$path" "support" "external existing ephemeral Redis fixture wrapper around the manifest-owned Catalog P0 direct-text cut"
       return
       ;;
+    integration_test/scripts/evaluate_production_journey_gap_receipt.dart|\
+    integration_test/scripts/cut_production_media_transfer.dart)
+      record "support" "$path" "support" "recorded MCP journey verdict and owned partial-media cut helpers; no additional automatic device scenario"
+      return
+      ;;
     integration_test/scripts/run_production_routing.dart)
       record "support" "$path" "support" "manifest-owned production-bootstrap routing with 27 original direct/group criteria and production-owned protocol controls; original routes retained"
       return

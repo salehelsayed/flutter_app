@@ -2090,7 +2090,9 @@
         "test/integration/production_group_removed_reaction_criteria_test.dart",
         "test/integration/production_group_removed_reaction_controls_test.dart",
         "test/features/groups/presentation/widgets/group_member_remove_accessibility_test.dart",
-        "test/integration/production_call_in_app_identity_test.dart"
+        "test/integration/production_call_in_app_identity_test.dart",
+        "test/tool/sims/production_journey_gap_criteria_test.dart",
+        "test/integration/production_media_transfer_cut_test.dart"
       ],
       "boundary": "Production journey activation, exact observations and native notification behavior, invocation identity, readiness, replay refusal and foreground drain fault isolation",
       "limitations": "Host controls only; actual production startup, UI, notification boundary and two-peer behavior require the additive pilot",
@@ -4961,7 +4963,7 @@
         "-mod=readonly",
         "-tags=integration",
         "-run",
-        "^(TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
+        "^(TestDirectMediaTransferCheckpoint.*|TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease|TestDirectTextCheckpointCancellationCannotUndoCommittedCustody|TestDirectMediaBlobCustodyDeviceFixtureContract)$",
         "-count=1",
         "-timeout=60s",
         "-p=4",
@@ -4972,10 +4974,12 @@
       "cwd": "go-relay-server",
       "paths": [
         "go-relay-server/direct_text_send_checkpoint_fixture_test.go",
-        "go-relay-server/direct_text_send_checkpoint_test.go"
+        "go-relay-server/direct_text_send_checkpoint_test.go",
+        "go-relay-server/direct_media_transfer_checkpoint_fixture_test.go",
+        "go-relay-server/direct_media_transfer_checkpoint_test.go"
       ],
       "success_marker": "--- PASS: TestDirectTextCheckpointHoldsCommittedRedisCustodyUntilRelease",
-      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract",
+      "boundary": "Host-only real Redis protected custody remains committed while the optional test-fixture acknowledgement gate holds/releases/cancels; preserve the existing default fixture contract and partial media-body hold/release binding",
       "limitations": "Exact integration-tagged host selector only, no device or fixture-process mode, real mobile sender cut or release proof.",
       "timeout_seconds": 180,
       "requirements": [
@@ -6685,7 +6689,12 @@
         "integration_test/support/production_call_in_app_identity.dart",
         "test/integration/production_call_in_app_identity_test.dart",
         "integration_test/scripts/run_production_group_local_media_delete.dart",
-        "test/tool/sims/production_group_local_media_delete_criteria_test.dart"
+        "test/tool/sims/production_group_local_media_delete_criteria_test.dart",
+        "tool/sims/production_journey_gap_criteria.dart",
+        "integration_test/scripts/evaluate_production_journey_gap_receipt.dart",
+        "integration_test/scripts/cut_production_media_transfer.dart",
+        "test/tool/sims/production_journey_gap_criteria_test.dart",
+        "test/integration/production_media_transfer_cut_test.dart"
       ],
       "checks": [
         "production-journey-contracts",
@@ -6885,7 +6894,8 @@
         "go-relay-server/direct_text_send_checkpoint_test.go",
         "go-relay-server/direct_media_blob_custody_device_fixture_test.go",
         "integration_test/support/direct_text_checkpoint_client.dart",
-        "integration_test/scripts/run_direct_text_send_cut_sims.dart"
+        "integration_test/scripts/run_direct_text_send_cut_sims.dart",
+        "go-relay-server/direct_media_transfer_checkpoint*"
       ],
       "checks": [
         "catalog-direct-text-checkpoint-host",
