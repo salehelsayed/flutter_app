@@ -636,7 +636,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -649,7 +650,8 @@
         "scripts/testing_inventory.py",
         "scripts/device_campaign_preflight.py",
         "scripts/full_suite_adapters.py",
-        "scripts/owned_run_retention.py"
+        "scripts/owned_run_retention.py",
+        "scripts/priority_e2e_verdict.py"
       ],
       "runtime_basis": {
         "kind": "measured",
@@ -5519,7 +5521,9 @@
         "docker-ws/mknoon_checks_host.sh",
         "docker-ws/fetch_codex_artifact.sh",
         "scripts/owned_run_retention.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/priority_e2e_verdict.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "checks": [
         "workflow",
@@ -5757,7 +5761,7 @@
         "workflow",
         "provider-schema"
       ],
-      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded CI unit tests execute disposable Python/Git fixtures only and remain covered by the workflow area",
+      "why": "Runner/fixture changes need host consumers; changed device tests require current SIMS or explicit new mapping review; the exact excluded host unit tests execute disposable Python/Git/receipt fixtures only and remain covered by the workflow area",
       "exclude_paths": [
         "scripts/test/mknoon_checks_test.py",
         "scripts/test/mknoon_ci_checks_test.py",
@@ -5767,7 +5771,8 @@
         "scripts/test/mknoon_full_checks_test.py",
         "scripts/test/mknoon_full_review_regression_test.py",
         "scripts/test/mknoon_full_composition_test.py",
-        "scripts/test/sims_native_xctest_receipts_test.py"
+        "scripts/test/sims_native_xctest_receipts_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ]
     },
     {
@@ -7319,7 +7324,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "boundary": "Selector, inventory, runner safety and candidate-bound CI acceptance contracts",
       "timeout_seconds": 360,
@@ -7353,7 +7359,8 @@
         "scripts/test/sims_native_xctest_receipts_test.py",
         "scripts/test/safe_sims_launcher_test.py",
         "scripts/test/legacy_device_helpers_test.py",
-        "scripts/test/owned_run_retention_test.py"
+        "scripts/test/owned_run_retention_test.py",
+        "scripts/test/priority_e2e_verdict_test.py"
       ],
       "resources": [
         "isolated:full-workflow"

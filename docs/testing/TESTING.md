@@ -2976,6 +2976,21 @@ native-bound owners close once and both SQLite histories retain the correct
 local/remote terminal reason. This is shared protocol/ownership evidence for
 VC-015, with native WebRTC, transport, authority, crypto and audio still faked.
 
+Priority MCP journeys use `priority-e2e-mcp-execution.md` and the shared
+`priority-e2e-camera-permission-mcp.md` actions. Their host-only receipt checker
+is `scripts/priority_e2e_verdict.py`: `PASS_RECORDED` requires the expected
+candidate revision, artifact/version and platform bindings, every required
+observation and nonempty evidence files inside the private attempt directory.
+It hashes referenced evidence but does not independently interpret screenshots,
+verify installed artifact bytes, or measure audio. Audio/content checks require
+a human/acoustic observer; call observations require timezone-aware starts at
+or after 08:30 Europe/Berlin. Live unavailable-target evidence yields N/A, while
+missing observations remain incomplete. Causal host controls reject false
+completion, wrong candidates/platforms, missing/escaping evidence, structural
+call screens without audibility and early calls; retained host evidence is
+`.codex-test-logs/priority-e2e-20261026/receipt-unit-01.log`. These are preparation
+and receipt checks, not a newly executed phone or signed-candidate pass.
+
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
 created three ignored wrapper files; the next build therefore had a different
