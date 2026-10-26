@@ -3044,6 +3044,14 @@ owned disposable local relay/coturn fixtures remain allowed. AWS is reserved for
 pre-publish store-build lanes. Stop and report runners/artifacts that cannot use
 the intended test binding, with no AWS fallback or remote relay deployment/
 configuration change. Hermetic host oracles do not contact either remote service.
+`call-privacy-recovery-e2e-mcp.md` prepares Group B (VC-026/019/025/027) with the
+existing local-fixture audio adapter, its bounded manual hold and typed native
+baseline. Additional Appium MCP observations must establish actual process loss,
+locked navigation, received-content/native-capture privacy and each reachable
+terminal path. The separate host Pion oracle and normal RTP/control/cleanup
+report do not establish those remaining boundaries. Existing causal host and
+historical iOS recovery evidence retain their original scope; no Group B device
+or signed-candidate result is claimed by this preparation packet.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
