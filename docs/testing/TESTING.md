@@ -3065,6 +3065,13 @@ terminal path. The separate host Pion oracle and normal RTP/control/cleanup
 report do not establish those remaining boundaries. Existing causal host and
 historical iOS recovery evidence retain their original scope; no Group B device
 or signed-candidate result is claimed by this preparation packet.
+`p0-messaging-continuity-e2e-mcp.md` adds the catalog-audit follow-up for
+DC-008/014/019 and GC-003/006. It reuses existing custody, group-media,
+migration and renderer controls, while requiring actual accepted-rendition
+bytes/full opening, natural recovery before any active drain, real account
+transfer with cold local opens and fresh peer exchange, and each entitled
+receiver's usable media. Source/fake/local-fixture evidence retains its scope;
+the five additional native journeys remain unrun by Astra.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
