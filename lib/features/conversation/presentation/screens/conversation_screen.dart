@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_quote_block.dart';
 import 'package:flutter/services.dart';
@@ -1121,7 +1122,10 @@ class _ConversationScreenState extends State<ConversationScreen>
                 child: IntroSystemMessage(text: message.text),
               );
             }
-            final quotedThoughtId = message.isDeleted
+            final quotesThought =
+                thoughtIdFromQuote(message.quotedMessageId) != null;
+            // With thoughts switched off a reply to one reads as plain text.
+            final quotedThoughtId = message.isDeleted || !thoughtsEnabled
                 ? null
                 : thoughtIdFromQuote(message.quotedMessageId);
             // An outgoing reaction still sending or failed keeps the ordinary
@@ -1184,7 +1188,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                       _ => l10n.orbit_preview_photo(1),
                     },
                   );
-            if (quotedThoughtId == null &&
+            if (!quotesThought &&
                 !message.isDeleted &&
                 message.quotedMessageId != null) {
               final quoted = messagesById[message.quotedMessageId];

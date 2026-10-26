@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -815,6 +816,48 @@ void main() {
           ),
           findsOneWidget,
         );
+      },
+    );
+
+    testWidgets(
+      'store build: with thoughts switched off a thought reply or reaction is a plain message',
+      (tester) async {
+        debugThoughtsEnabledOverride = false;
+        final now = DateTime.utc(2026, 10, 26, 12);
+        await tester.pumpWidget(
+          buildTestWidget(
+            messages: [
+              makeMessage(
+                id: 'reply',
+                text: 'count me in',
+                isIncoming: false,
+                quotedMessageId: 'thought:lake',
+              ),
+              makeMessage(
+                id: 'in',
+                text: '🔥',
+                quotedMessageId: 'thought:mine',
+              ),
+            ],
+            initialLoadDone: true,
+            thoughtNow: now,
+            thoughtQuotes: {
+              'lake': ThoughtQuotePreview(
+                text: 'Sunset at the lake?',
+                mediaKind: 'image',
+                expiresAt: now.add(const Duration(hours: 2)),
+              ),
+            },
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('count me in', findRichText: true), findsOneWidget);
+        expect(find.text('🔥', findRichText: true), findsOneWidget);
+        expect(find.byKey(const ValueKey('thought-quote-block')), findsNothing);
+        expect(find.text('Sunset at the lake?'), findsNothing);
+        expect(find.text('Message unavailable'), findsNothing);
+        expect(find.text('Alice reacted 🔥 to your thought'), findsNothing);
       },
     );
 

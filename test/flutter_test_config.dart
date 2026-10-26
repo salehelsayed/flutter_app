@@ -37,12 +37,17 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   var counter = 0;
   setUp(() {
+    // Tests cover the features as dev builds run them; a test that proves the
+    // store build switches them off itself.
+    debugThoughtsEnabledOverride = true;
+    debugOrbitDepthEnabledOverride = true;
     final stamp = '${DateTime.now().microsecondsSinceEpoch}_${counter++}';
     final remotePath =
         '${Directory.systemTemp.path}/mknoon_remote_gate_$stamp.json';

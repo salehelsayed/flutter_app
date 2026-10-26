@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
@@ -1532,7 +1533,7 @@ class _ConversationWiredState extends State<ConversationWired>
     _startListeningForMessages();
     _startListeningForOutgoingMessageChanges();
     _startListeningForContactUpdates();
-    _thoughtChanges = widget.postRepository?.postChanges.listen((postId) {
+    _thoughtChanges = _thoughtPosts?.postChanges.listen((postId) {
       if (_thoughtQuoteLoads.containsKey(postId)) _loadQuotedThought(postId);
     });
     _startListeningForReactions();
@@ -3658,6 +3659,7 @@ class _ConversationWiredState extends State<ConversationWired>
     if (quoteId == null) return (null, false);
     final quotedThoughtId = thoughtIdFromQuote(quoteId);
     if (quotedThoughtId != null) {
+      if (!thoughtsEnabled) return (null, false);
       final preview = _thoughtQuotes[quotedThoughtId];
       final live = preview != null && preview.isLiveAt(_thoughtNow)
           ? preview
@@ -8659,11 +8661,15 @@ class _ConversationWiredState extends State<ConversationWired>
     }
   }
 
+  /// Quoted thoughts are looked up only while thoughts are switched on.
+  PostRepository? get _thoughtPosts =>
+      thoughtsEnabled ? widget.postRepository : null;
+
   DateTime get _thoughtNow =>
       (widget.thoughtNowProvider ?? DateTime.now)().toUtc();
 
   void _loadQuotedThoughts() {
-    if (widget.postRepository == null) return;
+    if (_thoughtPosts == null) return;
     final ids = {
       for (final message in _messages)
         ?thoughtIdFromQuote(message.quotedMessageId),
@@ -8676,7 +8682,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   /// A later load supersedes an earlier one still in flight.
   void _loadQuotedThought(String postId) {
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     if (repository == null) return;
     final load = (_thoughtQuoteLoads[postId] ?? 0) + 1;
     _thoughtQuoteLoads[postId] = load;

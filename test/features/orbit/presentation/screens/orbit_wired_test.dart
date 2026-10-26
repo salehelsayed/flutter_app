@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -328,7 +329,6 @@ void main() {
     PostRepository? postRepository,
     PendingPostTargetStore? pendingPostTargetStore,
     DateTime Function()? thoughtNowProvider,
-    bool thoughtComposeEnabled = true,
     bool wrapInNavigator = false,
     String? initialFilterTab,
     AppShellController? appShellController,
@@ -411,7 +411,6 @@ void main() {
       postRepository: postRepository,
       pendingPostTargetStore: pendingPostTargetStore,
       thoughtNowProvider: thoughtNowProvider,
-      thoughtComposeEnabled: thoughtComposeEnabled,
       feedUnreadCountListenable: feedUnreadCountListenable,
       onEmbeddedExit: onEmbeddedExit,
       onRowActionOpenChanged: onRowActionOpenChanged,
@@ -726,28 +725,83 @@ void main() {
     );
 
     testWidgets(
-      'with sharing switched off the own avatar has no plus and no way into the composer',
+      'store build: with thoughts and 3D switched off a friend thought shows nowhere and nothing opens',
       (tester) async {
+        debugThoughtsEnabledOverride = false;
+        debugOrbitDepthEnabledOverride = false;
         setLargeTestSurface(tester);
         identityRepo.seed(testIdentity);
         contactRepo.seed([testContact]);
-        final posts = InMemoryPostRepository();
+        final posts = _OrbitThoughtPostRepository();
+        final pending = PendingPostTargetStore()
+          ..setTarget(const PostRouteTarget(postId: 'lake'));
         addTearDown(posts.dispose);
+        addTearDown(pending.dispose);
+        await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
         await tester.pumpWidget(
-          buildOrbitWired(postRepository: posts, thoughtComposeEnabled: false),
+          buildOrbitWired(
+            postRepository: posts,
+            pendingPostTargetStore: pending,
+            thoughtNowProvider: () => thoughtNow,
+          ),
         );
-        await pumpOrbitFrames(tester, count: 6);
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(OrbitDepthSurface), findsNothing);
         expect(find.byKey(const ValueKey('orbit-self-node')), findsOneWidget);
         expect(
           find.byKey(const ValueKey('orbit-compose-thought')),
           findsNothing,
         );
+        expect(
+          find.byKey(const ValueKey('orbit-thought-tap-lake')),
+          findsNothing,
+        );
+        expect(find.text('Sunset at the lake?'), findsNothing);
 
         await tester.tap(find.byKey(const ValueKey('orbit-self-node')));
         await pumpOrbitFrames(tester, count: 6);
         await tester.longPress(find.byKey(const ValueKey('orbit-self-node')));
         await pumpOrbitFrames(tester, count: 6);
+        await tester.timedDrag(
+          find.byKey(const ValueKey('orbit-self-node')),
+          const Offset(0, -260),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 20);
         expect(find.byType(ComposePostSheet), findsNothing);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(OrbitDepthSurface), findsNothing);
+        expect(posts.focusedIds, isEmpty);
+        expect((await posts.getPost('lake'))?.text, 'Sunset at the lake?');
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'with only 3D switched off friend notes still show and Orbit stays flat',
+      (tester) async {
+        debugOrbitDepthEnabledOverride = false;
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(
+          find.byKey(const ValueKey('orbit-thought-tap-lake')),
+          findsOneWidget,
+        );
+        expect(find.byType(OrbitDepthSurface), findsNothing);
         await finishThoughtCase(tester);
       },
     );

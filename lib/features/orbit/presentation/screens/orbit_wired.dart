@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:flutter_app/core/config/thought_compose_flag.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
 import 'package:flutter_app/features/call/application/call_redial_controller.dart';
@@ -159,9 +159,6 @@ class OrbitWired extends StatefulWidget {
   final PostRepository? postRepository;
   final DateTime Function()? thoughtNowProvider;
 
-  /// Whether the own avatar offers the thought composer; see
-  /// [kThoughtComposeEnabled].
-  final bool thoughtComposeEnabled;
   final MediaAttachmentRepository mediaAttachmentRepo;
 
   /// 409: newest terminal call per contact. Null keeps Orbit message-only,
@@ -260,7 +257,6 @@ class OrbitWired extends StatefulWidget {
     required this.messageRepo,
     this.postRepository,
     this.thoughtNowProvider,
-    this.thoughtComposeEnabled = kThoughtComposeEnabled,
     required this.mediaAttachmentRepo,
     this.callActivitySource,
     required this.chatMessageListener,
@@ -922,7 +918,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   void _bindThoughtChanges() {
     _thoughtSubscription?.cancel();
-    _thoughtSubscription = widget.postRepository?.postChanges.listen(
+    _thoughtSubscription = _thoughtPosts?.postChanges.listen(
       (_) => unawaited(_reloadThoughts()),
       onError: (Object error) => _reportThoughtFailure(error),
     );
@@ -933,7 +929,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   ComposePostResult? _thoughtDraft;
 
   Future<void> _composeThought() async {
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     final identity = _identity;
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
@@ -1033,10 +1029,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         nowProvider: widget.thoughtNowProvider,
       );
 
+  /// Every thought surface here reads through this, so with thoughts
+  /// switched off Orbit has no notes, card or "+".
+  PostRepository? get _thoughtPosts =>
+      thoughtsEnabled ? widget.postRepository : null;
+
   Future<void> _reloadThoughts() async {
     if (!mounted) return;
     final revision = ++_thoughtLoadRevision;
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     final identity = _identity;
     if (repository == null || identity == null) {
       if (mounted && _thoughtsByPeerId.isNotEmpty) {
@@ -1071,7 +1072,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<void> _markDepthThoughtSeen(String postId) async {
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     final identity = _identity;
     if (repository == null ||
         identity == null ||
@@ -1115,7 +1116,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   Future<List<PostMediaAttachmentModel>> _loadDepthMedia(String postId) async {
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     if (repository == null ||
         !_depthThoughtsByPeerId.values.any((post) => post.id == postId)) {
       return const [];
@@ -1138,7 +1139,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     if (!_thoughtEligibilityChanges.isClosed) {
       _thoughtEligibilityChanges.add(null);
     }
-    if (widget.postRepository != null) unawaited(_reloadThoughts());
+    if (_thoughtPosts != null) unawaited(_reloadThoughts());
   }
 
   void _onPendingThoughtTargetChanged() {
@@ -1153,7 +1154,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     String postId, {
     PendingPostTargetStore? notificationStore,
   }) async {
-    final repository = widget.postRepository;
+    final repository = _thoughtPosts;
     final identity = _identity;
     if (!mounted || repository == null || identity == null) return;
     if (_thoughtCardOpen) {
@@ -3264,7 +3265,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
-            postRepository: widget.postRepository,
+            postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
             identityRepo: widget.identityRepo,
             messageRepo: widget.messageRepo,
@@ -3469,7 +3470,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               contactRequestRepository: widget.contactRequestRepo,
               contactRequestListener: widget.contactRequestListener,
               messageRepository: widget.messageRepo,
-              postRepository: widget.postRepository,
+              postRepository: _thoughtPosts,
               mediaAttachmentRepository: widget.mediaAttachmentRepo,
               chatMessageListener: widget.chatMessageListener,
               identityRepository: widget.identityRepo,
@@ -3650,19 +3651,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onDepthThoughtDeparted: (postId) =>
           unawaited(_markDepthThoughtSeen(postId)),
       loadDepthMedia: _loadDepthMedia,
-      downloadDepthMedia: widget.postRepository == null
+      downloadDepthMedia: _thoughtPosts == null
           ? null
           : (attachment) => downloadPostMedia(
               bridge: widget.bridge,
-              postRepo: widget.postRepository!,
+              postRepo: _thoughtPosts!,
               mediaFileManager: widget.mediaFileManager,
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
-      onComposeThought:
-          !widget.thoughtComposeEnabled ||
-              widget.postRepository == null ||
-              _identity == null
+      onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),
       onThoughtsExpired: () => unawaited(_reloadThoughts()),

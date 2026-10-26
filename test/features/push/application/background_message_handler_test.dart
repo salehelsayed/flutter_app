@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/database/helpers/group_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
@@ -6367,6 +6368,65 @@ void main() {
             isTrue,
             reason: 'PostListener consumes this mark instead of a second card',
           );
+        },
+      );
+
+      test(
+        'store build: with thoughts switched off a thought push shows nothing',
+        () async {
+          debugThoughtsEnabledOverride = false;
+          mockNotificationsPlugin();
+          final directory = Directory.systemTemp.createTempSync(
+            'background-thought-hidden-',
+          );
+          addTearDown(() {
+            if (directory.existsSync()) directory.deleteSync(recursive: true);
+          });
+          final registry = DurableConversationNotificationIdRegistry(
+            directory: directory,
+          );
+          debugSetBackgroundConversationNotificationIdRegistryResolver(
+            () async => registry,
+          );
+          debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+            return BackgroundDirectMessageLocalState(
+              previewContext: DirectMessageNotificationContext(
+                senderPeerId: 'peer-alice',
+                senderUsername: 'Trusted Alice',
+                expectedMessageId: message.data['message_id'] as String?,
+              ),
+              mlKemSecretKeys: const <String>['current-key'],
+            );
+          });
+          var decrypts = 0;
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(cryptoChannel, (MethodCall call) async {
+                decrypts++;
+                return jsonEncode(<String, Object?>{
+                  'ok': true,
+                  'plaintext': jsonEncode(<String, Object?>{
+                    'post_id': 'post-1',
+                    'snapshot': <String, Object?>{
+                      'post_id': 'post-1',
+                      'author_peer_id': 'peer-alice',
+                      'author_username': 'Alice',
+                      'text': 'Coffee on the roof tonight?',
+                      'media_kind': 'none',
+                      'media': <Object?>[],
+                    },
+                  }),
+                });
+              });
+
+          await firebaseMessagingBackgroundHandler(
+            const RemoteMessage(
+              messageId: 'provider-thought-hidden',
+              data: thoughtData,
+            ),
+          );
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(decrypts, 0);
         },
       );
 

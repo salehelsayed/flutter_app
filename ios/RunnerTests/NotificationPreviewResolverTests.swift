@@ -3411,6 +3411,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
     let resolver = NotificationPreviewResolver(
       keyReader: MemoryPushKeyReader([
         PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+        PushSharedKeyNames.thoughtsEnabled: "1",
       ]),
       decryptor: decryptor,
       dedupeStore: dedupe,
@@ -3504,6 +3505,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
       let resolver = NotificationPreviewResolver(
         keyReader: MemoryPushKeyReader([
           PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+          PushSharedKeyNames.thoughtsEnabled: "1",
           PushSharedKeyNames.directReactionContacts:
             try ordinaryDirectContactsJSON(),
         ]),
@@ -3523,6 +3525,43 @@ final class NotificationPreviewResolverTests: XCTestCase {
       XCTAssertEqual(result.title, item.title, item.locale)
       XCTAssertEqual(result.body, item.body, item.locale)
       XCTAssertNil(result.recoveryIdentity, item.locale)
+    }
+  }
+
+  /// A build with thoughts switched off never wrote "1": the card names the
+  /// friend, says nothing of the thought, and is quiet.
+  func testThoughtTextStaysHiddenWhenThoughtsAreSwitchedOff() throws {
+    for flag in [nil, "0"] as [String?] {
+      var values: [String: String] = [
+        PushSharedKeyNames.directReactionContacts: try ordinaryDirectContactsJSON(),
+        PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+      ]
+      if let flag { values[PushSharedKeyNames.thoughtsEnabled] = flag }
+      let decryptor = MemoryPushDecryptor(
+        chatPlaintext: try thoughtPlaintextJSON(postId: "post-hidden")
+      )
+      let dedupe = MemoryPushDedupeStore()
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader(values),
+        decryptor: decryptor,
+        dedupeStore: dedupe,
+        eventEmitter: MemoryPushPreviewEventEmitter()
+      )
+
+      let result = resolver.resolve(
+        userInfo: thoughtRoute(postId: "post-hidden"),
+        fallbackTitle: "FORGED TITLE",
+        fallbackBody: "FORGED BODY"
+      )
+
+      let label = flag ?? "absent"
+      XCTAssertTrue(result.suppress, label)
+      XCTAssertFalse(result.didDecrypt, label)
+      XCTAssertEqual(result.reason, "thoughts_hidden", label)
+      XCTAssertEqual(result.title, "Trusted Alice", label)
+      XCTAssertEqual(result.body, "New thought", label)
+      XCTAssertEqual(decryptor.chatCalls, 0, label)
+      XCTAssertTrue(dedupe.claims.isEmpty, label)
     }
   }
 
@@ -3610,6 +3649,7 @@ final class NotificationPreviewResolverTests: XCTestCase {
     for item in cases {
       var values: [String: String] = [
         PushSharedKeyNames.directReactionContacts: item.contacts,
+        PushSharedKeyNames.thoughtsEnabled: "1",
       ]
       if let secret = item.secret {
         values[PushSharedKeyNames.identityMlKemSecretKey] = secret

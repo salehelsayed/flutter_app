@@ -29,6 +29,8 @@ enum PushSharedKeyNames {
   static let groupReactionAuthoredTargets =
     "group_reaction_authored_targets_v1"
   static let groupReactionLatestStates = "group_reaction_latest_states_v1"
+  /// "1" when the app build shows thoughts (Dart iosThoughtsSwitchKey).
+  static let thoughtsEnabled = "thoughts_enabled_v1"
 
   static func groupKey(groupId: String, keyEpoch: Int) -> String {
     "group_key:\(groupId):\(keyEpoch)"
@@ -800,6 +802,12 @@ final class NotificationPreviewResolver {
         eventKind: "thought",
         eventDetails: details
       )
+    }
+
+    // A build with thoughts switched off shows only who shared one, quietly.
+    guard keyReader.readString(key: PushSharedKeyNames.thoughtsEnabled) == "1"
+    else {
+      return suppress("thoughts_hidden")
     }
 
     guard let postId = data.exactString("post_id", aliases: "postId") else {

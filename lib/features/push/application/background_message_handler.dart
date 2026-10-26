@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:background_push_crypto/background_push_crypto.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
@@ -805,6 +806,16 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     // natively; iOS also drains pending custody on its next active runtime.
     return;
   }
+  if (!thoughtsEnabled && message.data['type'] == 'post_create') {
+    // Thoughts are switched off: no card. The relay keeps the thought until
+    // the app drains its inbox, so it is still stored.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'PUSH_BACKGROUND_THOUGHT_HIDDEN',
+      details: const {},
+    );
+    return;
+  }
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
     // A background FlutterEngine has its own module globals. Reinstall the iOS
     // App Group-backed gate here so its marks and the NSE sidecar live in the
@@ -1439,7 +1450,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         fallback.title,
         fallback.body,
         groupInviteAndroidTag != null
-            ? mknoonGenericNotificationDetails(androidTag: groupInviteAndroidTag)
+            ? mknoonGenericNotificationDetails(
+                androidTag: groupInviteAndroidTag,
+              )
             : routeTarget?.kind == NotificationRouteTargetKind.post
             ? mknoonThoughtsNotificationDetails
             : mknoonConversationNotificationDetails(

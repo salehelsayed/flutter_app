@@ -1,5 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/features/posts/application/ios_thoughts_switch.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -72,6 +76,13 @@ class PostListener {
 
   void start() {
     if (_subscription != null) return;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+      unawaited(
+        publishThoughtsSwitchForIos(
+          FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup),
+        ),
+      );
+    }
     _subscription = postCreateStream.listen(_onMessage);
     _retractSubscription = postRetractStream.listen(_onRetract);
   }
@@ -184,7 +195,8 @@ class PostListener {
   }
 
   /// Shows the friend's card for a thought just stored, unless the app is in
-  /// the foreground, the sender is archived, a push already announced it, or
+  /// the foreground, thoughts are switched off, the sender is archived, a push
+  /// already announced it, or
   /// a newer thought from the friend holds the card. Claiming the card retires
   /// the friend's older one either way. A card that cannot be shown must not
   /// stop the media download that follows.
@@ -196,6 +208,7 @@ class PostListener {
           !post.isIncoming ||
           await _claimFriendsCard(post.senderPeerId, cardKey);
       final showsCard =
+          thoughtsEnabled &&
           current &&
           sender != null &&
           !sender.isArchived &&

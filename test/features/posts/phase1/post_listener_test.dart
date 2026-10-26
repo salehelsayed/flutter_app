@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import '../../../core/secure_storage/fake_secure_key_store.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/features/posts/application/ios_thoughts_switch.dart';
 import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
@@ -209,7 +212,7 @@ void main() {
       controller.add(
         _message('peer-bob', 'ATTACKER CLAIMED NAME', text: 'x' * 200),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await _until(() => notifications.shownThoughts.isNotEmpty);
 
       final shown = notifications.shownThoughts.single;
       expect(shown.title, 'Bob shared a thought');
@@ -242,6 +245,32 @@ void main() {
       notifications.shownThoughts.single.expiresAt,
       ThoughtLifetime.expiresAt(created),
     );
+  });
+
+  test(
+    'store build: with thoughts switched off it stores the thought and posts no card',
+    () async {
+      debugThoughtsEnabledOverride = false;
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final emitted = listener.incomingPostStream.first;
+
+      controller.add(_message('peer-bob', 'Bob'));
+
+      expect((await emitted).id, 'post-peer-bob');
+      expect(notifications.shownThoughts, isEmpty);
+      expect(notifications.shownGeneric, isEmpty);
+      expect(await posts.loadFeed(), hasLength(1));
+    },
+  );
+
+  test('the iOS extension sees the switch the app runs with', () async {
+    final store = FakeSecureKeyStore();
+    await publishThoughtsSwitchForIos(store);
+    expect(await store.read(iosThoughtsSwitchKey), '1');
+
+    debugThoughtsEnabledOverride = false;
+    await publishThoughtsSwitchForIos(store);
+    expect(await store.containsKey(iosThoughtsSwitchKey), isFalse);
   });
 
   test('posts no notification while the app is in the foreground', () async {
@@ -497,7 +526,7 @@ void main() {
       retracts.add(_retract('peer-mallory', 'bob-1'));
       await pumpEventQueue();
       controller.add(_message('peer-bob', 'Bob', postId: 'bob-1'));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await _until(() => notifications.shownThoughts.isNotEmpty);
 
       expect((await posts.getPost('bob-1'))?.id, 'bob-1');
       expect(notifications.shownThoughts.map((n) => n.payload), ['post:bob-1']);
@@ -652,4 +681,11 @@ void main() {
       expect(bridge.calledCommands, isEmpty);
     });
   });
+}
+
+/// Waits for [done] instead of a fixed sleep, which is too short under load.
+Future<void> _until(bool Function() done) async {
+  for (var i = 0; i < 500 && !done(); i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
 }

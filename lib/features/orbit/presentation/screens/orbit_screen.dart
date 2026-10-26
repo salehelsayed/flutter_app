@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
@@ -1192,6 +1193,9 @@ class _OrbitScreenView extends StatelessWidget {
           nowProvider: thoughtNowProvider,
           bottomClearance: _innerCircleBottomClearance(context),
         );
+        // The depth surface owns every way into 3D, so leaving it out keeps
+        // Orbit flat.
+        if (!orbitDepthEnabled) return flatChild;
         return ValueListenableBuilder<bool>(
           valueListenable: ringsFindOpenListenable,
           builder: (context, findOpen, child) => OrbitDepthSurface(
