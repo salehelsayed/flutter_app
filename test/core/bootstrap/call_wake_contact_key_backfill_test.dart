@@ -38,16 +38,17 @@ void main() {
   }
 
   test(
-    'resume recovery drains call signaling before reconciling pending grants',
+    'resume recovery reuses successful advertisement before pending grants',
     () async {
       final order = <String>[];
 
       final completed = await resumeCallSignalingAndBackfillCallWake(
         resumeCallSignaling: () async {
           order.add('resume');
+          return true;
         },
         reconcileCallWakeEligibility: () async {
-          order.add('reconcile');
+          fail('successful resume must supply this reconciliation');
         },
         hasPendingCallWakeDistribution: () async {
           order.add('pending');
@@ -63,7 +64,6 @@ void main() {
       expect(completed, isTrue);
       expect(order, <String>[
         'resume',
-        'reconcile',
         'pending',
         'retry:$callWakeResumeReconcileTrigger:fresh=true',
       ]);
@@ -128,7 +128,7 @@ void main() {
     'resume recovery reports when reconciliation finds no pending grant',
     () async {
       final completed = await resumeCallSignalingAndBackfillCallWake(
-        resumeCallSignaling: () async {},
+        resumeCallSignaling: () async => true,
         reconcileCallWakeEligibility: () async {},
         hasPendingCallWakeDistribution: () async => false,
         retryCallWakeDistribution:
@@ -153,7 +153,7 @@ void main() {
 
   test('resume recovery reports a contained retry failure', () async {
     final completed = await resumeCallSignalingAndBackfillCallWake(
-      resumeCallSignaling: () async {},
+      resumeCallSignaling: () async => true,
       reconcileCallWakeEligibility: () async {},
       hasPendingCallWakeDistribution: () async => true,
       retryCallWakeDistribution:

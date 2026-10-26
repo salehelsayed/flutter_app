@@ -8961,6 +8961,20 @@ visible and cannot become an ordinary first-attempt PASS.
   count remained zero is unestablished and may be investigated separately.
   These host proofs do not certify native transport repair, the underlying iOS
   adapter failure, real-device recovery latency or a signed candidate.
+  **Call capability resume reuse:** `CallSignalingComposition.onResume`
+  reports a successful advertisement from this recovery. If it starts or joins
+  graph startup, that successful startup publication also serves the resume;
+  an already started graph still refreshes once on each later resume. The
+  immediate grant backfill reuses only that success, keeps its pending-grant
+  check and fresh retry, and reconciles normally after a failed resume.
+  Independent contact changes still publish through the existing boundary.
+  The two full owner test files pass 192 cases without skips, including cold
+  3-to-1 and warm 2-to-1 host counts for Android/iOS flags, failed-advertisement
+  recovery, later-resume/contact refresh, and one Android publication carrying
+  a rotated fixture token. A separately completed startup and a later resume
+  each retain their publication. Evidence and the five causal RED failures are
+  under `.codex-test-logs/call-capability-reuse-20261026/`; these host counts do
+  not establish device latency or provider delivery.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

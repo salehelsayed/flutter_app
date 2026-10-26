@@ -8,7 +8,7 @@ typedef ReconcileCallWakeEligibility = Future<void> Function();
 typedef HasPendingCallWakeDistribution = Future<bool> Function();
 typedef RetryCallWakeDistribution =
     Future<int> Function({required String trigger, required bool requireFresh});
-typedef ResumeCallSignaling = Future<void> Function();
+typedef ResumeCallSignaling = Future<bool> Function();
 typedef CallWakeDistributionRetryDelay =
     Future<void> Function(Duration duration);
 typedef RequestReceivedCallWakeHandleRecovery =
@@ -288,8 +288,9 @@ Future<_CallWakeBackfillOutcome> _backfillCallWakeAfterContactKeyUpdate({
   required RetryCallWakeDistribution retryCallWakeDistribution,
   required String trigger,
   required bool requireFreshRetry,
+  bool eligibilityAlreadyReconciled = false,
 }) async {
-  var reconciliationCompleted = false;
+  var reconciliationCompleted = eligibilityAlreadyReconciled;
   var pendingCheckCompleted = false;
   var pendingDistribution = false;
   var retryAttempted = false;
@@ -297,8 +298,10 @@ Future<_CallWakeBackfillOutcome> _backfillCallWakeAfterContactKeyUpdate({
   var sentCount = 0;
 
   try {
-    await reconcileCallWakeEligibility();
-    reconciliationCompleted = true;
+    if (!reconciliationCompleted) {
+      await reconcileCallWakeEligibility();
+      reconciliationCompleted = true;
+    }
     pendingDistribution = await hasPendingCallWakeDistribution();
     pendingCheckCompleted = true;
     if (!pendingDistribution) {
@@ -353,8 +356,9 @@ Future<bool> resumeCallSignalingAndBackfillCallWake({
   required RetryCallWakeDistribution retryCallWakeDistribution,
 }) async {
   var resumeCompleted = true;
+  var resumeAdvertisementSucceeded = false;
   try {
-    await resumeCallSignaling();
+    resumeAdvertisementSucceeded = await resumeCallSignaling();
   } catch (_) {
     resumeCompleted = false;
   }
@@ -365,6 +369,7 @@ Future<bool> resumeCallSignalingAndBackfillCallWake({
     retryCallWakeDistribution: retryCallWakeDistribution,
     trigger: callWakeResumeReconcileTrigger,
     requireFreshRetry: true,
+    eligibilityAlreadyReconciled: resumeAdvertisementSucceeded,
   );
   final completed = resumeCompleted && backfillOutcome.completed;
   _emitResumeReconcileResult(

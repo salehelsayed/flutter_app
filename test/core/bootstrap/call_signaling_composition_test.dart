@@ -10,6 +10,7 @@ import 'package:flutter_app/features/call/application/call_negotiation_effect_ex
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
+import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
@@ -456,6 +457,100 @@ Future<void> _pumpCallLifecycle(
 }
 
 void main() {
+  for (final platform in [
+    CallEndpointPlatform.android,
+    CallEndpointPlatform.ios,
+  ]) {
+    for (final warm in [false, true]) {
+      test(
+        'resume pipeline advertises once (${platform.name}, warm=$warm)',
+        () async {
+          final events = <String>[];
+          final graph = _Graph(events);
+          final composition = CallSignalingComposition(
+            featureFlags: _enabledFlags(),
+            platform: platform,
+            awaitReadiness: () async {},
+            buildGraph: () async => graph,
+            isForeground: () => true,
+          );
+          addTearDown(composition.shutdown);
+          var pendingChecks = 0;
+          var retries = 0;
+          Future<bool> resumeWithBackfill() =>
+              resumeCallSignalingAndBackfillCallWake(
+                resumeCallSignaling: composition.onResume,
+                reconcileCallWakeEligibility:
+                    composition.onContactEligibilityChanged,
+                hasPendingCallWakeDistribution: () async {
+                  pendingChecks++;
+                  return true;
+                },
+                retryCallWakeDistribution:
+                    ({required trigger, required requireFresh}) async {
+                      expect(requireFresh, isTrue);
+                      retries++;
+                      return 1;
+                    },
+              );
+          if (warm) await composition.start();
+          events.clear();
+
+          expect(await resumeWithBackfill(), isTrue);
+          expect(events.where((event) => event == 'advertise'), hasLength(1));
+          expect(composition.isStarted, isTrue);
+          expect(pendingChecks, 1);
+          expect(retries, 1);
+
+          events.clear();
+          expect(await resumeWithBackfill(), isTrue);
+          expect(events.where((event) => event == 'advertise'), hasLength(1));
+          expect(pendingChecks, 2);
+          expect(retries, 2);
+
+          await composition.onContactEligibilityChanged();
+          expect(events.where((event) => event == 'advertise'), hasLength(2));
+        },
+      );
+    }
+  }
+
+  test('failed resume advertisement still reconciles', () async {
+    final events = <String>[];
+    final graph = _Graph(events, advertisementResults: [true, false, true]);
+    final composition = CallSignalingComposition(
+      featureFlags: _enabledFlags(),
+      platform: CallEndpointPlatform.android,
+      awaitReadiness: () async {},
+      buildGraph: () async => graph,
+      isForeground: () => true,
+    );
+    addTearDown(composition.shutdown);
+    await composition.start();
+    graph.emitForeground(_projection(state: CallState.connected));
+    events.clear();
+    var retries = 0;
+
+    expect(
+      await resumeCallSignalingAndBackfillCallWake(
+        resumeCallSignaling: composition.onResume,
+        reconcileCallWakeEligibility: composition.onContactEligibilityChanged,
+        hasPendingCallWakeDistribution: () async => true,
+        retryCallWakeDistribution:
+            ({required trigger, required requireFresh}) async {
+              retries++;
+              return 1;
+            },
+      ),
+      isTrue,
+    );
+
+    expect(events.where((event) => event == 'advertise'), hasLength(2));
+    expect(events, isNot(contains('call_shutdown')));
+    expect(composition.isStarted, isTrue);
+    expect(retries, 1);
+  });
+
   test('production graph feeds path epochs to the active call and lets the '
       'source go on shutdown', () async {
     final outcomes = StreamController<NetworkPathOutcome>.broadcast(sync: true);
@@ -4636,7 +4731,8 @@ void main() {
       );
       final callWakeStores = _newCallWakeStores();
       final tokenOutcomes = <String>[];
-      final tokenRead = Completer<String>();
+      var tokenValue = 'fcm-token-fixture';
+      final tokenRead = Completer<void>();
       final composition = createProductionCallSignalingComposition(
         secureKeyStore: FakeSecureKeyStore(),
         featureFlags: _enabledFlags(),
@@ -4681,7 +4777,10 @@ void main() {
             }) => AndroidCallTokenCoordinator(
               authorityClient: authorityClient,
               clock: clock,
-              readToken: () => tokenRead.future,
+              readToken: () async {
+                await tokenRead.future;
+                return tokenValue;
+              },
               tokenRefreshes: const Stream<String>.empty(),
               publicationAllowed: publicationAllowed,
               onResult: tokenOutcomes.add,
@@ -4710,7 +4809,7 @@ void main() {
       expect(bridge.commands, isNot(contains('call_token_set_v1')));
       expect(bridge.commands, isNot(contains('call_endpoint_set_v1')));
 
-      tokenRead.complete('fcm-token-fixture');
+      tokenRead.complete();
       await resumed;
 
       expect(
@@ -4741,6 +4840,34 @@ void main() {
         tokenOutcomes.skip(1),
         everyElement('published'),
         reason: 'every later advertisement renews the token on the relay',
+      );
+
+      final tokenSetsBefore = bridge.requests
+          .where((request) => request['cmd'] == 'call_token_set_v1')
+          .length;
+      final endpointSetsBefore = bridge.commands
+          .where((command) => command == 'call_endpoint_set_v1')
+          .length;
+      tokenValue = 'rotated-fcm-token-fixture';
+      await resumeCallSignalingAndBackfillCallWake(
+        resumeCallSignaling: composition.onResume,
+        reconcileCallWakeEligibility: composition.onContactEligibilityChanged,
+        hasPendingCallWakeDistribution: () async => false,
+        retryCallWakeDistribution:
+            ({required trigger, required requireFresh}) async => 0,
+      );
+      final refreshedTokens = bridge.requests
+          .where((request) => request['cmd'] == 'call_token_set_v1')
+          .skip(tokenSetsBefore)
+          .toList();
+      expect(refreshedTokens, hasLength(1));
+      expect(
+        refreshedTokens.single['payload'],
+        containsPair('token', tokenValue),
+      );
+      expect(
+        bridge.commands.where((command) => command == 'call_endpoint_set_v1'),
+        hasLength(endpointSetsBefore + 1),
       );
 
       await composition.shutdown();

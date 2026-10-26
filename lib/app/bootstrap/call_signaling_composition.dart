@@ -823,34 +823,35 @@ final class CallSignalingComposition
     }
   }
 
-  /// Drains only the ephemeral call mailbox. It is intentionally independent
-  /// of chat inbox/outbox/retrier resume work.
-  Future<void> onResume() async {
+  /// Drains the call mailbox and returns whether this recovery advertised
+  /// successfully, through startup or resume. Chat recovery stays independent.
+  Future<bool> onResume() async {
     var outcome = 'failed';
     Object? failure;
     StackTrace? failureStack;
     try {
       if (!isEnabled) {
         outcome = 'disabled';
-        return;
+        return false;
       }
       if (_terminal) {
         outcome = 'terminal';
-        return;
+        return false;
       }
       _foregroundAllowed = true;
       _foregroundStartRetryInvalidated = false;
+      final priorStartedGraph = _started ? _graph : null;
       await start();
       final graph = _graph;
       if (!_started || graph == null || _terminal) {
         outcome = _terminal ? 'terminal' : 'start_unavailable';
-        return;
+        return false;
       }
       try {
         await graph.onResume();
         if (_terminal || !identical(_graph, graph)) {
           outcome = _terminal ? 'terminal' : 'graph_replaced';
-          return;
+          return false;
         }
         // Restore a live call surface before any relay round trip.
         _acceptForegroundProjection(
@@ -858,17 +859,19 @@ final class CallSignalingComposition
           _foregroundGraph?.current,
           _foregroundGeneration,
         );
-        if (!await graph.advertiseCapability()) {
+        // A graph started by this resume has already advertised successfully.
+        if (identical(graph, priorStartedGraph) &&
+            !await graph.advertiseCapability()) {
           if (_hasLiveForegroundCall) {
             // Never tear down a live call over a failed advertisement; the
             // next resume retries it.
             _publishOutgoingCallAvailability();
             outcome = 'advertisement_deferred';
-            return;
+            return false;
           }
           await _withdrawGraph(graph);
           outcome = 'advertisement_unavailable';
-          return;
+          return false;
         }
         final distribution = graph is CallWakeHandleDistributionLifecycle
             ? graph as CallWakeHandleDistributionLifecycle
@@ -877,7 +880,7 @@ final class CallSignalingComposition
           await _rearmCallWakeDistributionOnce(graph, distribution);
           if (_terminal || !identical(_graph, graph)) {
             outcome = _terminal ? 'terminal' : 'graph_replaced';
-            return;
+            return false;
           }
         }
         if (!_terminal && identical(_graph, graph)) {
@@ -888,7 +891,7 @@ final class CallSignalingComposition
           );
           _publishOutgoingCallAvailability();
           outcome = 'ready';
-          return;
+          return true;
         }
         outcome = _terminal ? 'terminal' : 'graph_replaced';
       } catch (error, stackTrace) {
@@ -896,7 +899,7 @@ final class CallSignalingComposition
         failureStack = stackTrace;
         if (_hasLiveForegroundCall) {
           outcome = 'resume_failed_live_call_retained';
-          return;
+          return false;
         }
         await _withdrawGraph(graph);
         outcome = 'failed';
@@ -912,6 +915,7 @@ final class CallSignalingComposition
         stackTrace: failureStack,
       );
     }
+    return false;
   }
 
   Future<bool> _rearmCallWakeDistributionOnce(
