@@ -173,7 +173,16 @@ final class Ed25519ContactRequestBridge extends Bridge {
   static bool _verify(String publicKey, String data, String signature) {
     try {
       final key = base64Decode(publicKey);
-      final sig = base64Decode(signature);
+      // Match Go's base64.StdEncoding signature decoder, including CR/LF.
+      var encoded = signature.replaceAll('\r', '').replaceAll('\n', '');
+      if (!RegExp(r'^[A-Za-z0-9+/]{86}==$').hasMatch(encoded)) return false;
+      // Go ignores filler bits; Dart's decoder requires them to be zero.
+      const alphabet =
+          'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+      final last = alphabet.indexOf(encoded[encoded.length - 3]) & ~15;
+      encoded =
+          '${encoded.substring(0, encoded.length - 3)}${alphabet[last]}==';
+      final sig = base64Decode(encoded);
       if (key.length != nacl.VerifyKey.keyLength ||
           sig.length != nacl.Signature.signatureLength) {
         return false;

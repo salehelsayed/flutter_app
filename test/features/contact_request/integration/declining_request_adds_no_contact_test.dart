@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -21,6 +22,8 @@ import 'package:flutter_app/features/contacts/data/repositories/contact_reposito
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
 import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -412,9 +415,10 @@ void main() {
     );
 
     test(
-      'an old envelope replayed after restart does not overwrite a declined decision or re-prompt the decliner',
+      'old and CR/LF signature alias envelopes after restart preserve declined consent and wake authority',
       () async {
         final bobKeyStore = FakeSecureKeyStore();
+        final wakeTokens = _RecordingWakeTokenStore();
         var aliceContacts = _buildContactRepo(aliceDb);
         var aliceRequests = _buildRequestRepo(aliceDb);
         final bobIdentities = _buildIdentityRepo(bobDb, bobKeyStore);
@@ -440,6 +444,7 @@ void main() {
           bridge: aliceBridge,
           getOwnPeerId: () => _aliceId.peerId,
           getOwnPrivateKey: () async => _aliceId.privateKey,
+          receivedWakeTokenStore: wakeTokens,
           getOwnPublicKey: () async => _aliceId.publicKey,
           downloadProfilePictureFn: _settledAvatar,
         );
@@ -467,12 +472,16 @@ void main() {
             bridge: bobBridge,
             targetPeerId: _aliceId.peerId,
             recipientPublicKey: _aliceId.publicKey,
+            resolveWakeToken: (_) async => 'signed-wake-token',
           ),
           SendContactRequestResult.success,
         );
         final oldEnvelope = await firstWireFuture;
         await firstPromptBarrier.future;
         expect(alicePrompted, hasLength(1));
+        expect(wakeTokens.writes, 1);
+        await wakeTokens.clear();
+        final wakeWritesBeforeReplay = wakeTokens.writes;
 
         expect(
           await declineContactRequest(
@@ -512,6 +521,7 @@ void main() {
           bridge: aliceBridge,
           getOwnPeerId: () => _aliceId.peerId,
           getOwnPrivateKey: () async => _aliceId.privateKey,
+          receivedWakeTokenStore: wakeTokens,
           getOwnPublicKey: () async => _aliceId.publicKey,
           downloadProfilePictureFn: _settledAvatar,
         );
@@ -522,6 +532,61 @@ void main() {
         await Future<void>(() {});
 
         await aliceListener.processIncomingMessage(oldEnvelope);
+
+        final originalPayload = bobBridge.encrypts.single.payload;
+        final signature = originalPayload['sig'] as String;
+        expect(signature.endsWith('=='), isTrue);
+        const alphabet =
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+        final last = alphabet.indexOf(signature[signature.length - 3]);
+        final paddingAlias = signature.replaceRange(
+          signature.length - 3,
+          signature.length - 2,
+          alphabet[last | 1],
+        );
+        for (final encoded in [signature, paddingAlias]) {
+          final alias =
+              '${encoded.substring(0, 32)}\r\n${encoded.substring(32)}';
+          final outer = jsonDecode(oldEnvelope.content) as Map<String, dynamic>;
+          final encrypted = await callEncryptContactRequest(
+            bridge: bobBridge,
+            recipientPublicKey: _aliceId.publicKey,
+            signedPayloadJson: jsonEncode({...originalPayload, 'sig': alias}),
+            msgId: outer['msgId'] as String,
+            ts: outer['ts'] as String,
+          );
+          expect(encrypted['ok'], isTrue);
+          final verifiedBeforeAlias = aliceBridge.verifiedData.length;
+          final aliasResult = await aliceListener.processIncomingMessage(
+            ChatMessage(
+              from: oldEnvelope.from,
+              to: oldEnvelope.to,
+              timestamp: oldEnvelope.timestamp,
+              isIncoming: true,
+              content: jsonEncode({
+                ...outer,
+                'encrypted': {
+                  'ephemeralPublicKey': encrypted['ephemeralPublicKey'],
+                  'ciphertext': encrypted['ciphertext'],
+                  'nonce': encrypted['nonce'],
+                },
+              }),
+            ),
+          );
+          await Future<void>(() {});
+          expect(
+            aliceBridge.verifiedData.length,
+            verifiedBeforeAlias + 1,
+            reason: 'The CR/LF alias must pass real signature verification',
+          );
+          expect(
+            wakeTokens.writes,
+            wakeWritesBeforeReplay,
+            reason: 'A declined alias must not restore cleared wake authority',
+          );
+          expect(await wakeTokens.readTokenFor(_bobId.peerId), isNull);
+          expect(aliasResult, HandleMessageResult.invalidMessage);
+        }
 
         expect(
           alicePrompted,
@@ -536,4 +601,29 @@ void main() {
       },
     );
   });
+}
+
+class _RecordingWakeTokenStore implements ReceivedWakeTokenStore {
+  final tokens = <String, Map<String, String>>{};
+  int writes = 0;
+
+  @override
+  Future<Map<String, String>?> readTokenFor(String peerId) async =>
+      tokens[peerId];
+
+  @override
+  Future<void> writeTokenFor(String peerId, String token, String ts) async {
+    writes++;
+    tokens[peerId] = {'tok': token, 'ts': ts};
+  }
+
+  @override
+  Future<void> removeTokenFor(String peerId) async {
+    tokens.remove(peerId);
+  }
+
+  @override
+  Future<void> clear() async {
+    tokens.clear();
+  }
 }

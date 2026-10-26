@@ -2941,7 +2941,7 @@ defines a separate disposable available-simulator leg after UI-Update lands.
 
 CR-002's SQLite-backed decline cases keep the original envelope rejected after
 reopening the database with an empty in-memory replay cache. The authenticated
-public key and signature identify the persisted declined request; a genuinely
+public key and decoded signature bytes identify the persisted declined request; a genuinely
 different signed request still requires manual consent. Unit fixtures for that
 fresh path must use a different old signature rather than the same constant
 signature for both requests. CR-020 keeps a valid request retryable when its SQL
@@ -2953,6 +2953,17 @@ preservation suites passed 89 host cases with zero failures/skips in
 `.codex-test-logs/contact-request-fixes-20261026/focused-bc-rebased.log`.
 This is signed host/SQLite evidence; native delivery and release artifacts are
 separate proof obligations.
+CR/LF and unused base64 padding-bit aliases must preserve that same declined
+identity. The verifier fixture follows Go's accepted standard-base64 rules;
+Dart's decoder additionally needs those unused bits normalized. The cold replay
+control first proves a signed wake token was stored, clears it, and requires
+authenticated aliases to leave it absent without another prompt or request write.
+Its causal failure and the 89-case preservation pass are retained in
+`declined-signature-alias-internal-red.log` and `declined-signature-alias-green.log`
+under the same artifact directory. `signature-go-decoder-probe-cached.log` checks
+the actual Go 1.27.1 verification helper: canonical, CR/LF, filler-bit and combined
+aliases verify, while a tab does not. This is a host helper probe, not a signed
+mobile-binary proof.
 
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.

@@ -532,7 +532,7 @@ handleIncomingMessage({
   if (priorRequest != null &&
       priorRequest.status == ContactRequestStatus.declined &&
       priorRequest.publicKey == publicKey &&
-      priorRequest.signature == signature) {
+      _sameContactRequestSignatureBytes(priorRequest.signature, signature)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CONTACT_REQUEST_DECLINED_REPLAY_IGNORED',
@@ -908,5 +908,34 @@ String _fingerprintOrEmpty(String? base64PublicKey) {
     return ed25519AuthorityFingerprint(base64PublicKey);
   } on FormatException {
     return '';
+  }
+}
+
+// Go's StdEncoding ignores CR/LF and unused padding bits. Dart rejects the
+// latter, so normalize those bits before comparing the authenticated bytes.
+bool _sameContactRequestSignatureBytes(String stored, String incoming) {
+  List<int> decodeSignature(String value) {
+    var encoded = value.replaceAll('\r', '').replaceAll('\n', '');
+    // A verified 64-byte Ed25519 signature has 86 alphabet characters + ==.
+    if (!RegExp(r'^[A-Za-z0-9+/]{86}==$').hasMatch(encoded)) {
+      throw const FormatException('Invalid Ed25519 signature encoding');
+    }
+    const alphabet =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    final last = alphabet.indexOf(encoded[85]) & 0x30;
+    encoded = '${encoded.substring(0, 85)}${alphabet[last]}==';
+    return base64Decode(encoded);
+  }
+
+  try {
+    final left = decodeSignature(stored);
+    final right = decodeSignature(incoming);
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] != right[i]) return false;
+    }
+    return true;
+  } on FormatException {
+    return false;
   }
 }
