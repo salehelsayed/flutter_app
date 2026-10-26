@@ -2990,6 +2990,15 @@ completion, wrong candidates/platforms, missing/escaping evidence, structural
 call screens without audibility and early calls; retained host evidence is
 `.codex-test-logs/priority-e2e-20261026/receipt-unit-01.log`. These are preparation
 and receipt checks, not a newly executed phone or signed-candidate pass.
+Emulator contact receipts additionally require Android-emulator role bindings
+and actual MCP observations; a host control cannot complete their UI checks.
+CR-005 explicitly reports `emulator_crossed_requests_ui`, preserving the
+distinction from same-envelope native live/inbox duplication. The shared
+`contact-request-emulator-mcp.md` packet reuses existing consent, pending-shell,
+offline retry, reciprocal-restart and scanner-closure host controls rather than
+adding an app fault channel. Preparation evidence is retained under
+`.codex-test-logs/next-e2e-20261026/contact-receipt-unit-01.log` and
+`contact-causal-host-01.log`; these remain host evidence, not emulator execution.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build

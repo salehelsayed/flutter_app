@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from priority_e2e_verdict import main, template, validate
+from priority_e2e_verdict import EMULATOR_CONTACT_CASES, main, template, validate
 
 
 SOURCE = "a" * 40
@@ -29,7 +29,8 @@ class PriorityE2EReceiptTest(unittest.TestCase):
             artifact.update(sha256="b" * 64, version="test-candidate")
         for check in receipt["checks"].values():
             check.update(status="PASS", evidence=["mcp.txt"],
-                         observed_by="human", started_at="2026-10-26T08:30:00+01:00")
+                         observed_by="mcp" if case in EMULATOR_CONTACT_CASES else "human",
+                         started_at="2026-10-26T08:30:00+01:00")
         return receipt
 
     def result(self, receipt, source=SOURCE):
@@ -129,6 +130,34 @@ class PriorityE2EReceiptTest(unittest.TestCase):
                 code = main()
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(output.getvalue())["status"], "INCOMPLETE")
+
+    def test_contact_templates_use_emulators_and_require_actual_consent(self):
+        receipt = self.completed("CR-001")
+        self.assertEqual(self.result(receipt)["status"], "PASS_RECORDED")
+        del receipt["checks"]["explicit_accept_and_reciprocal_keys"]
+        self.assertEqual(self.result(receipt)["status"], "INCOMPLETE")
+
+    def test_physical_or_ios_roles_cannot_supply_emulator_case(self):
+        for field, value in [("target_kind", "android_physical"), ("platform", "ios")]:
+            with self.subTest(field=field):
+                receipt = self.completed("CR-001")
+                receipt["artifacts"]["A"][field] = value
+                self.assertEqual(self.result(receipt)["status"], "INCOMPLETE")
+
+    def test_post_restart_chat_does_not_replace_failed_reciprocal_evidence(self):
+        receipt = self.completed("CR-018")
+        del receipt["checks"]["failed_reciprocal_retained"]
+        self.assertEqual(self.result(receipt)["status"], "INCOMPLETE")
+
+    def test_host_only_control_does_not_complete_emulator_observation(self):
+        receipt = self.completed("CR-003")
+        receipt["checks"]["blocked_pending_sender_not_presented"]["observed_by"] = "host"
+        self.assertEqual(self.result(receipt)["status"], "INCOMPLETE")
+
+    def test_crossed_request_verdict_keeps_its_specific_scope(self):
+        result = self.result(self.completed("CR-005"))
+        self.assertEqual(result["status"], "PASS_RECORDED")
+        self.assertEqual(result["scope"], "emulator_crossed_requests_ui")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,42 @@ from zoneinfo import ZoneInfo
 
 
 CHECKS = {
+    "CR-001": (
+        "real_entry_and_one_pending_request", "receiver_unlinked_before_accept",
+        "explicit_accept_and_reciprocal_keys", "one_contact_each_and_chat_both_ways",
+    ),
+    "CR-002": (
+        "explicit_decline_no_receiver_contact", "decline_survives_restart",
+        "fresh_request_requires_new_consent", "no_automatic_readd",
+    ),
+    "CR-003": (
+        "request_arrives_while_ui_unavailable", "pending_visible_without_resend",
+        "notification_open_recovers_pending", "pending_waits_for_answer",
+        "blocked_pending_sender_not_presented",
+    ),
+    "CR-005": (
+        "both_explicit_scan_intents", "crossed_requests_observed",
+        "one_link_each_no_duplicate_ui", "restart_no_reprompt_or_reciprocal_loop",
+    ),
+    "CR-006": (
+        "receiver_offline_less_than_24h", "request_has_relay_custody",
+        "automatic_cold_start_catchup_once", "explicit_accept_and_chat_both_ways",
+    ),
+    "CR-012": (
+        "scanner_offline_send_cannot_complete", "same_local_intent_retained",
+        "automatic_retry_after_reconnect_without_rescan",
+        "one_pending_request_then_explicit_accept", "chat_both_ways",
+    ),
+    "CR-018": (
+        "acceptor_offline_local_acceptance", "failed_reciprocal_retained",
+        "acceptor_restart_same_identity", "automatic_reciprocal_recovery",
+        "no_second_consent_duplicate_or_rescan", "chat_both_ways",
+    ),
+    "CR-021": (
+        "camera_deny_no_contact_or_request", "camera_cancel_no_contact_or_request",
+        "permission_granted_valid_scan_once", "paste_valid_payload_handoff",
+        "invalid_payload_no_effects", "close_during_verification_success_only",
+    ),
     "RG-002": (
         "fresh_unseeded_install", "onboarding_ui", "real_contact_acceptance",
         "reciprocal_keys", "first_direct_both_ways", "first_group_all_members",
@@ -44,6 +80,9 @@ CHECKS = {
         "supported_process_termination", "no_stale_or_duplicate_call",
     ),
 }
+EMULATOR_CONTACT_CASES = frozenset({
+    "CR-001", "CR-002", "CR-003", "CR-005", "CR-006", "CR-012", "CR-018", "CR-021",
+})
 AUDIO_CHECKS = {
     "video_content_both_ways", "voice_content_both_ways",
     "ios_origin_audio_both_ways", "android_origin_audio_both_ways",
@@ -53,7 +92,7 @@ AUDIO_CHECKS = {
 
 
 def template(case, source):
-    platforms = ["android", "android"] if case == "RG-002" else ["ios", "android"]
+    platforms = ["android", "android"] if case == "RG-002" or case in EMULATOR_CONTACT_CASES else ["ios", "android"]
     if case == "GX-002":
         platforms.append("android")
     return {
@@ -62,7 +101,8 @@ def template(case, source):
         "availability_evidence": [],
         "artifacts": {
             chr(65 + i): {"platform": platform, "source_revision": source,
-                          "sha256": "", "version": ""}
+                          "sha256": "", "version": "",
+                          **({"target_kind": "android_emulator"} if case in EMULATOR_CONTACT_CASES else {})}
             for i, platform in enumerate(platforms)
         },
         "checks": {key: {"status": "NOT_RUN", "evidence": [],
@@ -123,10 +163,12 @@ def validate(receipt, source, root):
             require(isinstance(platform, str) and platform in {"android", "ios"}, f"{role}: invalid platform")
             if isinstance(platform, str):
                 platforms.add(platform)
+            if case in EMULATOR_CONTACT_CASES:
+                require(platform == "android" and artifact.get("target_kind") == "android_emulator", f"{role}: this case requires an available Android emulator")
             require(artifact.get("source_revision") == source, f"{role}: artifact source mismatch")
             require(isinstance(artifact.get("sha256"), str) and bool(re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"])), f"{role}: artifact SHA-256 required")
             require(isinstance(artifact.get("version"), str) and bool(artifact["version"].strip()), f"{role}: artifact version required")
-        if case != "RG-002":
+        if case != "RG-002" and case not in EMULATOR_CONTACT_CASES:
             require({"android", "ios"} <= platforms, "actual Android and iOS roles required")
         checks = receipt.get("checks")
         checks = checks if isinstance(checks, dict) else {}
@@ -141,6 +183,8 @@ def validate(receipt, source, root):
             else:
                 require(status == "PASS", f"{key}: not passed")
             evidence(check.get("evidence"), key)
+            if case in EMULATOR_CONTACT_CASES and status == "PASS":
+                require(check.get("observed_by") == "mcp", f"{key}: emulator MCP observation required; host controls are separate")
             if key in AUDIO_CHECKS and status == "PASS":
                 require(check.get("observed_by") in {"human", "acoustic"}, f"{key}: content/audio observer required")
             if case.startswith("VC-") and status == "PASS":
@@ -153,7 +197,10 @@ def validate(receipt, source, root):
                 except (TypeError, ValueError):
                     errors.append(f"{key}: timezone-aware call start required")
     status = "INCOMPLETE" if errors else ("N/A_TARGET_UNAVAILABLE" if availability == "target_unavailable" else "PASS_RECORDED")
-    return {"case": case, "run_id": receipt.get("run_id"), "source_revision": source,
+    scope = "recorded_observations"
+    if valid_case and case in EMULATOR_CONTACT_CASES:
+        scope = "emulator_crossed_requests_ui" if case == "CR-005" else "emulator_contact_ui"
+    return {"case": case, "run_id": receipt.get("run_id"), "source_revision": source, "scope": scope,
             "status": status, "problems": errors, "evidence_sha256": hashes}
 
 
