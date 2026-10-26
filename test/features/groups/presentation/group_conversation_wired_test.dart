@@ -2028,6 +2028,54 @@ void main() {
       );
     }
 
+    testWidgets(
+      'build-127 composer clears sent padded text and keeps an unsent draft on return',
+      (tester) async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        await tester.pumpWidget(buildWidget(group: group));
+        await pumpFrames(tester, count: 20);
+
+        const draft = '  Keep my unsent group draft  ';
+        await tester.enterText(find.byType(TextField), draft);
+        await pumpFrames(tester);
+        final navigator = Navigator.of(tester.element(find.byType(TextField)));
+        unawaited(
+          navigator.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => const Scaffold(body: Text('Draft detour')),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        navigator.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          draft,
+        );
+        expect(await msgRepo.getMessagesPage(group.id), isEmpty);
+
+        final send = find.byIcon(Icons.arrow_upward_rounded).hitTestable();
+        expect(send, findsOneWidget);
+        await tester.tap(send);
+        await pumpFrames(tester, count: 20);
+        expect(
+          (await msgRepo.getMessagesPage(group.id)).single.text,
+          draft.trim(),
+        );
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty,
+        );
+      },
+    );
+
     for (final action in ['Take Photo', 'Record Video']) {
       testWidgets('camera $action refusal shows notice and preserves draft', (
         tester,
@@ -7753,7 +7801,7 @@ void main() {
 
       expect(find.text('Incoming parent'), findsWidgets);
 
-      await tester.enterText(find.byType(TextField), 'Reply to parent');
+      await tester.enterText(find.byType(TextField), '  Reply to parent  ');
       await pumpFrames(tester);
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await pumpFrames(tester, count: 20);
@@ -7769,6 +7817,10 @@ void main() {
       final sent = savedMessages.firstWhere((m) => m.text == 'Reply to parent');
       expect(sent.quotedMessageId, 'msg-parent');
       expect(find.text('Incoming parent'), findsWidgets);
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
     });
 
     testWidgets(

@@ -6088,6 +6088,61 @@ void main() {
       );
     });
 
+    testWidgets(
+      'build-127 composer clears sent padded text and keeps an unsent draft on return',
+      (tester) async {
+        final repository = FakeMessageRepository();
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: repository,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: repository,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+        );
+
+        const draft = '  Keep my unsent draft  ';
+        await tester.enterText(find.byType(TextField), draft);
+        await tester.pump(const Duration(milliseconds: 300));
+        final navigator = Navigator.of(tester.element(find.byType(TextField)));
+        unawaited(
+          navigator.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => const Scaffold(body: Text('Draft detour')),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        navigator.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        for (var frame = 0; frame < 30; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          draft,
+        );
+        expect(repository.store, isEmpty);
+
+        final send = find.byIcon(Icons.arrow_upward_rounded).hitTestable();
+        expect(send, findsOneWidget);
+        await tester.tap(send);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(repository.store.values.single.text, draft.trim());
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          isEmpty,
+        );
+      },
+    );
+
     testWidgets('prefills shared text into the composer', (tester) async {
       final identityRepo = FakeIdentityRepository(makeIdentity());
       final messageRepo = FakeMessageRepository();
@@ -6332,11 +6387,19 @@ void main() {
       );
     }
 
-    for (final scenario in [0, 1, 2]) {
+    for (final scenario in [0, 1, 2, 3]) {
       final admitted = scenario != 0;
-      final edited = scenario == 2;
+      final edited = scenario >= 2;
+      final updatedDraft = scenario == 3
+          ? 'durable authored text '
+          : 'new draft';
+      final editDescription = scenario == 3
+          ? 'keeps whitespace edits'
+          : edited
+          ? 'keeps new typing'
+          : '';
       testWidgets(
-        'authored text ${edited ? 'keeps new typing' : ''} ${admitted ? 'commits before draft release and bg:begin' : 'write refusal retains draft without bubble'}',
+        'authored text $editDescription ${admitted ? 'commits before draft release and bg:begin' : 'write refusal retains draft without bubble'}',
         (tester) async {
           final repository = _IntentMessageRepository();
           final bridge = _HeldTextBeginBridge();
@@ -6374,7 +6437,7 @@ void main() {
             isEmpty,
           );
           if (edited) {
-            await tester.enterText(find.byType(TextField), 'new draft');
+            await tester.enterText(find.byType(TextField), updatedDraft);
             await tester.pump();
           }
           repository.admission.complete(admitted);
@@ -6385,7 +6448,7 @@ void main() {
           expect(
             tester.widget<TextField>(find.byType(TextField)).controller!.text,
             edited
-                ? 'new draft'
+                ? updatedDraft
                 : admitted
                 ? ''
                 : 'durable authored text',
@@ -12173,7 +12236,7 @@ void main() {
       expect(find.text('Replying to'), findsOneWidget);
       expect(find.text('Original incoming'), findsWidgets);
 
-      await tester.enterText(find.byType(TextField), 'Quoted response');
+      await tester.enterText(find.byType(TextField), '  Quoted response  ');
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
       await tester.pump(const Duration(milliseconds: 50));
@@ -12185,6 +12248,10 @@ void main() {
           .where((message) => message.text == 'Quoted response')
           .first;
       expect(saved.quotedMessageId, 'incoming-1');
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        isEmpty,
+      );
     });
 
     testWidgets(

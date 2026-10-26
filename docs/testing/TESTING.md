@@ -2418,6 +2418,17 @@ The controlled Conversation composer also coalesces sends for one frame:
 deferring its clear without that guard let two immediate taps dispatch twice.
 The existing rapid-tap tests and the full focused UI preservation run verify
 that correction without holding the composer through network completion.
+Draft release must use the same trimmed, sanitized body as ComposeArea's Send
+callback. Capture the raw submitted draft before admission and require it to
+remain unchanged, so even whitespace edits during the write stay editable.
+Padded ordinary and quoted direct sends reproduce an uncleared field without
+that normalization; group controls already clear. The wired controls also
+leave and return with an unsent draft, then require a hit-testable Send after
+the route settles. Refused writes, newer typing and explicit draft rehydration
+retain their existing controls. The causal direct failures and group controls
+are in `.codex-test-logs/composer-clear-20261026/padded-composer-red-5.log`;
+`composer-green-focused.log` in that directory has 48 passes and no skips.
+These are host widget/transport-fake results, not signed-device evidence.
 Voice saves its parent before the attachment because real pending-attachment
 preparation requires that parent. The Conversation screen withholds voice
 row-change events while those saves are pending and publishes its bubble only

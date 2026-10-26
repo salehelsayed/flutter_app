@@ -3722,6 +3722,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
     final hasAttachments = _composerController.pendingAttachments.isNotEmpty;
     final sanitizedText = sanitizeMessageText(text);
+    final submittedDraftText = _draftText;
     final editingMessage = _editingMessageId == null
         ? null
         : _messages.where((m) => m.id == _editingMessageId).firstOrNull;
@@ -4083,7 +4084,10 @@ class _ConversationWiredState extends State<ConversationWired>
           mounted) {
         setState(() => _activeQuoteMessageId = null);
       }
-      if (sanitizeMessageText(_draftText) == sanitizedText) _draftText = '';
+      if (_draftText == submittedDraftText &&
+          sanitizeMessageText(_draftText).trim() == sanitizedText) {
+        _draftText = '';
+      }
       _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
       _updateComposerState(
         pendingAttachments: const [],
