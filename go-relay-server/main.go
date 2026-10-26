@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -164,6 +166,15 @@ func main() {
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
+	thoughts, thoughtsErr := newThoughtMetrics(filepath.Join(storageCfg.RootDir, "thoughts-metrics.json"), time.Now)
+	if thoughtsErr != nil {
+		// Missing series mean unavailable, never a fabricated zero. Analytics
+		// storage failure must not prevent the relay from serving messages.
+		log.Print("[THOUGHT_METRICS] disabled: aggregate snapshot unavailable")
+	} else {
+		biz.thoughts = thoughts
+		prometheus.MustRegister(thoughts)
+	}
 
 	// FDC-08: shared per-peer presence store backing the additive `presence_get`
 	// read (and FDC-09's future `presence_set` write). Seeded by the

@@ -1,0 +1,305 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/axiomhq/hyperloglog"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+func newTestThoughtMetrics(t *testing.T, now *time.Time) *thoughtMetrics {
+	t.Helper()
+	m, err := newThoughtMetrics(filepath.Join(t.TempDir(), "thoughts-metrics.json"), func() time.Time { return *now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func thoughtMetricEntry(id, sender string, created time.Time) inboxMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"type": "post_create", "version": "2", "post_id": id,
+		"event_id": "event-" + id, "sender_peer_id": sender,
+		"created_at": created.UTC().Format(time.RFC3339Nano),
+		"encrypted":  map[string]string{"kem": "fixture-kem", "ciphertext": "private-fixture-content", "nonce": "fixture-nonce"},
+	})
+	return inboxMessage{From: sender, Message: string(raw), Timestamp: created.UnixMilli()}
+}
+
+func assertThoughtWeek(t *testing.T, m *thoughtMetrics, week string, posts, posters uint64) {
+	t.Helper()
+	values, healthy := m.snapshot()
+	if !healthy {
+		t.Fatal("snapshot is not durable")
+	}
+	for _, value := range values {
+		if value.week == week {
+			if value.posts != posts || value.posters != posters {
+				t.Fatalf("%s: posts/posters = %d/%d, want %d/%d", week, value.posts, value.posters, posts, posters)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing week %s", week)
+}
+
+func installThoughtMetrics(t *testing.T, m *thoughtMetrics) {
+	t.Helper()
+	prior := biz
+	biz = newBusinessMetrics()
+	biz.thoughts = m
+	t.Cleanup(func() { biz = prior })
+}
+
+func TestThoughtMetricsInboxFanoutRetryDedup(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	installThoughtMetrics(t, m)
+	inbox := NewInboxStore(nil)
+	entry := thoughtMetricEntry("thought-shared-across-fanout", "author-one-synthetic", now)
+	for _, recipient := range []string{"recipient-one", "recipient-two", "recipient-three"} {
+		for i := 0; i < 2; i++ {
+			if _, err := inbox.Store(recipient, entry); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	assertThoughtWeek(t, m, "2026-W44", 1, 1)
+	// After custody is consumed, another accepted replay must still deduplicate.
+	inbox.Retrieve("recipient-one", 100)
+	if _, err := inbox.Store("recipient-one", entry); err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, m, "2026-W44", 1, 1)
+	for _, next := range []inboxMessage{
+		thoughtMetricEntry("thought-second-same-author", entry.From, now),
+		thoughtMetricEntry("thought-third-other-author", "author-two-synthetic", now),
+	} {
+		if _, err := inbox.Store("recipient-one", next); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertThoughtWeek(t, m, "2026-W44", 3, 2)
+}
+
+type thoughtFailingInboxBackend struct{ InboxBackend }
+
+func (b thoughtFailingInboxBackend) Store(string, inboxMessage) (InboxStoreResult, error) {
+	return "", errors.New("owned storage failure")
+}
+
+func TestThoughtMetricsIgnoresUnrelatedMalformedAndUncommitted(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	installThoughtMetrics(t, m)
+	inbox := NewInboxStore(nil)
+	valid := thoughtMetricEntry("valid-shape-uncommitted-thought", "synthetic-author", now)
+	for _, raw := range []string{
+		`{"type":"chat_message","post_id":"unrelated"}`,
+		`{"type":"post_retract","post_id":"unrelated"}`,
+		`{invalid`,
+		`{"type":"post_create","sender_peer_id":"synthetic-author","created_at":"2026-10-26T12:00:00Z"}`,
+		strings.Replace(valid.Message, "synthetic-author", "spoofed-author", 1),
+		strings.Replace(valid.Message, "2026-10-26T12:00:00Z", "invalid-time", 1),
+		thoughtMetricEntry("too-old", valid.From, now.AddDate(0, 0, -56)).Message,
+		thoughtMetricEntry("future-week", valid.From, now.AddDate(0, 0, 7)).Message,
+	} {
+		if _, err := inbox.Store("owned-recipient", inboxMessage{From: valid.From, Message: raw, Timestamp: now.UnixMilli()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed := NewInboxStoreWithBackend(thoughtFailingInboxBackend{newMemoryInboxBackend()}, nil)
+	if _, err := failed.Store("owned-recipient", valid); err == nil {
+		t.Fatal("failure control did not reach the backend")
+	}
+	assertThoughtWeek(t, m, "2026-W44", 0, 0)
+}
+
+func TestThoughtMetricsISOWeekRolloverLateRetryAndRetention(t *testing.T) {
+	now := time.Date(2021, 1, 3, 23, 59, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	old := thoughtMetricEntry("before-ISO-year-rollover", "same-author", now)
+	if err := m.record(old); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(2 * time.Minute)
+	assertThoughtWeek(t, m, "2021-W01", 0, 0)
+	if err := m.record(old); err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, m, "2020-W53", 1, 1)
+	assertThoughtWeek(t, m, "2021-W01", 0, 0)
+	if err := m.record(thoughtMetricEntry("after-ISO-year-rollover", old.From, now)); err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, m, "2021-W01", 1, 1)
+	for i := 0; i < 7; i++ {
+		now = now.AddDate(0, 0, 7)
+		if err := m.record(thoughtMetricEntry(now.Format(time.RFC3339), old.From, now)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	values, _ := m.snapshot()
+	if len(values) != 8 || values[0].week != "2021-W01" || values[7].week != "2021-W08" {
+		t.Fatalf("expected current + 7 calendar weeks, got %+v", values)
+	}
+	// Quiet gaps expire calendar weeks, not merely the eighth nonempty bucket.
+	now = now.AddDate(0, 0, 56)
+	biz := newBusinessMetrics()
+	biz.thoughts = m
+	biz.CheckAndResetPeriods()
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, _ = restarted.snapshot()
+	if len(values) != 1 || values[0].posts != 0 || values[0].posters != 0 {
+		t.Fatalf("expired calendar buckets survived cleanup/restart: %+v", values)
+	}
+}
+
+func TestThoughtMetricsRestartPersistenceAndPrivacy(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	entry := thoughtMetricEntry("private-thought-id-never-in-snapshot", "private-author-id-never-in-snapshot", now)
+	if err := m.record(entry); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.record(entry); err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, restarted, "2026-W44", 1, 1)
+	raw, err := os.ReadFile(m.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{entry.From, "private-thought-id-never-in-snapshot", "private-fixture-content", "post_id", "sender_peer_id", "encrypted", "recipient"} {
+		if bytes.Contains(raw, []byte(forbidden)) {
+			t.Fatalf("aggregate file retained forbidden data category %q", forbidden)
+		}
+	}
+	var disk thoughtSnapshot
+	if err := json.Unmarshal(raw, &disk); err != nil {
+		t.Fatal(err)
+	}
+	for _, week := range disk.Weeks {
+		for _, sketch := range [][]byte{week.Posts, week.Posters} {
+			if len(sketch) != 8+(1<<14) || sketch[3] != 0 {
+				t.Fatal("retained a sparse/per-input representation instead of dense registers")
+			}
+		}
+	}
+	info, _ := os.Stat(m.path)
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("snapshot permissions = %o, want 600", info.Mode().Perm())
+	}
+	files, _ := os.ReadDir(filepath.Dir(m.path))
+	if len(files) != 1 {
+		t.Fatal("unexpected retained temporary files")
+	}
+}
+
+func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	installThoughtMetrics(t, m)
+	inbox := NewInboxStore(nil)
+	originalPath := m.path
+	m.path = filepath.Join(filepath.Dir(m.path), "missing-owned-directory", "thoughts.json")
+	entry := thoughtMetricEntry("private-thought-scrape-fixture", "private-author-scrape-fixture", now)
+	if status, err := inbox.Store("private-recipient-scrape-fixture", entry); err != nil || status != InboxStoreResultStored {
+		t.Fatalf("metric write failure changed accepted custody: %s %v", status, err)
+	}
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(m)
+	scrape := func() string {
+		rec := httptest.NewRecorder()
+		promhttp.HandlerFor(registry, promhttp.HandlerOpts{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("scrape status = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	body := scrape()
+	for _, want := range []string{
+		`relay_thoughts_weekly_estimated{week="2026-W44"} 1`,
+		`relay_thought_posters_weekly_estimated{week="2026-W44"} 1`,
+		"relay_thoughts_snapshot_healthy 0", "Lower-bound coverage", "direct-only", "Estimated",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing scrape contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{entry.From, "private-thought-scrape-fixture", "private-recipient-scrape-fixture", "private-fixture-content"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatal("private metadata leaked in metric output")
+		}
+	}
+	m.path = originalPath
+	if !strings.Contains(scrape(), "relay_thoughts_snapshot_healthy 1") {
+		t.Fatal("pending aggregate write did not recover")
+	}
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, restarted, "2026-W44", 1, 1)
+}
+
+func TestThoughtMetricsRejectsInvalidSnapshot(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	dense, _ := hyperloglog.NewNoSparse().MarshalBinary()
+	for _, raw := range [][]byte{
+		[]byte(`{"version":1,"weeks":[],"peer_ids":["must-not-load"]}`),
+		[]byte(`{"version":1,"weeks":[]} {"extra":true}`),
+		[]byte(`{"version":999,"weeks":[]}`),
+		[]byte(strings.Repeat(" ", thoughtSnapshotLimit+1)),
+	} {
+		if err := os.WriteFile(m.path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := newThoughtMetrics(m.path, func() time.Time { return now }); err == nil {
+			t.Fatal("invalid snapshot accepted")
+		}
+	}
+	for _, bad := range [][]byte{{1}, dense[:len(dense)-1], append([]byte{99}, dense[1:]...)} {
+		if _, err := loadThoughtSketch(bad); err == nil {
+			t.Fatal("malformed dense sketch accepted")
+		}
+	}
+}
+
+func TestThoughtMetricsConcurrentRetryAndScrape(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	entry := thoughtMetricEntry("same-concurrent-thought", "same-concurrent-author", now)
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := m.record(entry); err != nil {
+				t.Error(err)
+			}
+			m.snapshot()
+		}()
+	}
+	wg.Wait()
+	assertThoughtWeek(t, m, "2026-W44", 1, 1)
+}

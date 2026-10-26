@@ -42,6 +42,8 @@ func (r *hllRegister) Reset() {
 // No peer IDs are stored. All metrics are either HLL sketches
 // (irreversible hashes) or simple numeric counters.
 type businessMetrics struct {
+	thoughts *thoughtMetrics
+
 	dailyHLL   *hllRegister
 	weeklyHLL  *hllRegister
 	monthlyHLL *hllRegister
@@ -94,6 +96,9 @@ func (bm *businessMetrics) RecordMediaUploaded() {
 // when a time boundary (day/week/month) has been crossed.
 // Called from the stats ticker every 60 seconds.
 func (bm *businessMetrics) CheckAndResetPeriods() {
+	if bm.thoughts != nil {
+		bm.thoughts.snapshot()
+	}
 	now := time.Now().UTC()
 	day := now.YearDay()
 	_, week := now.ISOWeek()
