@@ -240,6 +240,7 @@ Future<void> main(List<String> arguments) async {
       payload: {...journey.provenance(), ...proof, 'status': 'PASS'},
     );
   } catch (error, stack) {
+    stderr.writeln('FIRST_FAILURE: $error');
     if (output != null) {
       await File(
         '${output.path}/first-failure.txt',
