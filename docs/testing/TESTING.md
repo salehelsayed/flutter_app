@@ -2152,8 +2152,14 @@ receipts. Evidence: `production-bootstrap-migration-20260927/`
 and `wave2-flow-identity-causal-001.log`. This repair does not certify the
 remaining routing scenarios or change any original harness.
 
-Keyboard dismissal now intentionally drops composer focus. Direct and batch
-send flows must re-tap the composer before `inputText`. A `deviceInfo` error
+Keyboard dismissal intentionally drops composer focus; flows that dismiss it
+must re-tap the composer before `inputText`. The five-message direct batch stays
+in the chat, with one composer tap before each entry and no keyboard dismissal
+or Back. In the retained `dc002-hetzner-20261027T0105Z/`
+`campaigns-run-20261027T045612Z/` trace, the app requested IME show, but the flow
+started dismissing it 185 ms later while show was pending and returned to Orbit. The
+`maestro-flow-contracts` host guard preserves all five sends and paired text
+assertions; it does not establish a passing device rerun. A `deviceInfo` error
 can occur after a send: retry driver startup only when the attempt contains
 no command-execution markers, retaining the original failure otherwise.
 Keyboard cleanup must use a nested `finally` so app-state restoration is

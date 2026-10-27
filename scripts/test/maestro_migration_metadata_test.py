@@ -1,5 +1,6 @@
 """Additive contracts for Maestro inventory ownership and proof boundaries."""
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -9,6 +10,20 @@ import testing_inventory as inventory
 
 
 class MaestroMigrationMetadataTest(unittest.TestCase):
+    def test_direct_batch_stays_in_chat_for_all_five_sends(self):
+        # The IME can still be opening after a successful composer tap.
+        # Dismissing it then can navigate Back out of the conversation.
+        flow = (Path(__file__).resolve().parents[2] /
+                'integration_test/maestro/production_direct_send_batch5.yaml').read_text()
+        self.assertNotRegex(flow, r'(?m)^\s*-\s+(?:hideKeyboard|back)\b')
+        self.assertEqual(re.findall(r'(?m)^- inputText: (.+)$', flow),
+                         [f'${{MESSAGE_{index}}}' for index in range(1, 6)])
+        self.assertEqual(len(re.findall(
+            r'(?m)^- tapOn:\n    id: chat_composer\n- inputText:', flow)), 5)
+        self.assertEqual(flow.count('    id: chat_send'), 5)
+        for index in range(1, 6):
+            self.assertEqual(flow.count(f'${{MESSAGE_PATTERN_{index}}}'), 2)
+
     def check(self, **updates):
         return {
             'kind': 'sims',
