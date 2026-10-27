@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 123);
+      expect(currentIdentityDatabaseVersion, 124);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,

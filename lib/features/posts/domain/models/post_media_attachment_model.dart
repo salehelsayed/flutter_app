@@ -24,6 +24,10 @@ class PostMediaAttachmentModel {
   final String? contentHash;
   final bool isEncrypted;
 
+  /// A tiny encoded copy of a photo, shown blurred until the photo itself is
+  /// here. It travels only inside the encrypted per-media entry.
+  final String? previewBase64;
+
   const PostMediaAttachmentModel({
     required this.mediaId,
     required this.postId,
@@ -45,6 +49,7 @@ class PostMediaAttachmentModel {
     this.encryptionScheme,
     this.contentHash,
     this.isEncrypted = false,
+    this.previewBase64,
   });
 
   factory PostMediaAttachmentModel.fromMap(Map<String, Object?> map) {
@@ -69,6 +74,7 @@ class PostMediaAttachmentModel {
       encryptionScheme: map['encryption_scheme'] as String?,
       contentHash: map['content_hash'] as String?,
       isEncrypted: (map['is_encrypted'] as int?) == 1,
+      previewBase64: map['preview_base64'] as String?,
     );
   }
 
@@ -131,6 +137,8 @@ class PostMediaAttachmentModel {
       'encryption_scheme': encryptionScheme,
       'content_hash': contentHash,
       'is_encrypted': isEncrypted ? 1 : 0,
+      // Written only when present, so rows keep fitting schemas before v124.
+      if (previewBase64 != null) 'preview_base64': previewBase64,
     };
   }
 
@@ -192,6 +200,7 @@ class PostMediaAttachmentModel {
     String? encryptionScheme,
     String? contentHash,
     bool? isEncrypted,
+    String? previewBase64,
   }) {
     return PostMediaAttachmentModel(
       mediaId: mediaId ?? this.mediaId,
@@ -214,6 +223,7 @@ class PostMediaAttachmentModel {
       encryptionScheme: encryptionScheme ?? this.encryptionScheme,
       contentHash: contentHash ?? this.contentHash,
       isEncrypted: isEncrypted ?? this.isEncrypted,
+      previewBase64: previewBase64 ?? this.previewBase64,
     );
   }
 

@@ -70,7 +70,7 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 123);
+      expect(currentIdentityDatabaseVersion, 124);
       expect(await _userVersion(upgraded), currentIdentityDatabaseVersion);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
@@ -237,7 +237,7 @@ void main() {
         // The assertion itself is unchanged; only its position moved.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 17].version, $historicalVersion);',
+          'expect(registry[registry.length - 18].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

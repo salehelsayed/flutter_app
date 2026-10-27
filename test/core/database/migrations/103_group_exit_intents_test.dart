@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 123);
+      expect(currentIdentityDatabaseVersion, 124);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -114,12 +114,12 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 12]
+        productionCreateMigrations[productionCreateMigrations.length - 13]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 12]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 13]
             .version,
         112,
       );
@@ -137,7 +137,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '123_authored_direct_text_intents',
+        '124_thought_photo_previews_and_view_receipts',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

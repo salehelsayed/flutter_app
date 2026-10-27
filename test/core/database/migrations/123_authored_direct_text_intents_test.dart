@@ -46,7 +46,7 @@ void main() {
         }
         final db = await open(currentIdentityDatabaseVersion);
         addTearDown(db.close);
-        expect(await db.getVersion(), 123);
+        expect(await db.getVersion(), currentIdentityDatabaseVersion);
         expect(
           (await db.rawQuery(
             'PRAGMA table_info(authored_direct_text_intents)',

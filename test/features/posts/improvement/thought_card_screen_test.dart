@@ -744,6 +744,52 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets(
+    "a photo on its way shows the sender's preview blurred, then the photo",
+    (tester) async {
+      final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+      await posts.savePost(thought);
+      final preview = base64Encode(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        ),
+      );
+      await posts.savePostMediaAttachment(
+        _attachment(
+          'image',
+        ).copyWith(width: 800, height: 600, previewBase64: preview),
+      );
+      final download = Completer<PostMediaAttachmentModel>();
+
+      await openCard(tester, thought, download: (_) => download.future);
+      await pumpMediaFrames(tester);
+
+      final placeholder = find.byKey(
+        const ValueKey('thought-media-placeholder'),
+      );
+      expect(
+        find.descendant(
+          of: placeholder,
+          matching: find.byKey(const ValueKey('thought-photo-preview')),
+        ),
+        findsOneWidget,
+      );
+      final fill = tester.widget<Image>(
+        find.byKey(const ValueKey('thought-photo-fill')),
+      );
+      expect(
+        (fill.image as ResizeImage).imageProvider,
+        isA<MemoryImage>().having(
+          (image) => base64Encode(image.bytes),
+          'bytes',
+          preview,
+        ),
+      );
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await finish(tester);
+    },
+  );
+
   testWidgets('an uploading multi-photo thought holds its place too', (
     tester,
   ) async {

@@ -73,7 +73,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 123);
+      expect(currentIdentityDatabaseVersion, 124);
       expect(
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         currentIdentityDatabaseVersion,

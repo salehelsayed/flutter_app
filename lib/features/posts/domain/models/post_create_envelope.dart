@@ -99,6 +99,7 @@ class PostCreateEnvelope {
         blobId: attachment.blobId,
         scheme: attachment.encryptionScheme,
         contentHash: attachment.contentHash,
+        preview: attachment.previewBase64,
       );
     }
     return entries.isEmpty ? null : entries;

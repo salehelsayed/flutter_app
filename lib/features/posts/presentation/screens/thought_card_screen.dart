@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -499,7 +501,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                         ),
                 ),
                 if (_localPhoto(visual) case final photo?)
-                  _BlurredFill(path: photo),
+                  _BlurredFill(image: FileImage(File(photo)))
+                else if (_pendingPreview(visual) case final preview?)
+                  _BlurredFill(image: MemoryImage(preview)),
                 if (hasVisual)
                   Center(child: _visualMedia(l10n, visual))
                 else
@@ -543,6 +547,18 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       return null;
     }
     return MediaFileManager.resolveStoredPathSync(localPath);
+  }
+
+  /// The sender's tiny preview of a one-photo thought still on its way.
+  Uint8List? _pendingPreview(List<PostMediaAttachmentModel> visual) {
+    if (visual.length != 1 || _localPhoto(visual) != null) return null;
+    final preview = visual.single.previewBase64;
+    if (visual.single.kind != 'image' || preview == null) return null;
+    try {
+      return base64Decode(preview);
+    } on FormatException {
+      return null;
+    }
   }
 
   bool get _expectsVisualMedia =>
@@ -597,6 +613,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       final height = single?.height ?? 0;
       return _MediaPlaceholder(
         key: const ValueKey('thought-media-placeholder'),
+        preview: _pendingPreview(visual),
         aspectRatio: width > 0 && height > 0
             ? (width / height).clamp(9 / 16, 16 / 9).toDouble()
             : 3 / 4,
@@ -838,9 +855,9 @@ class _Scrim extends StatelessWidget {
 
 /// The photo itself, blurred and dimmed, filling the screen behind it.
 class _BlurredFill extends StatelessWidget {
-  const _BlurredFill({required this.path});
+  const _BlurredFill({required this.image});
 
-  final String path;
+  final ImageProvider image;
 
   @override
   Widget build(BuildContext context) => IgnorePointer(
@@ -852,11 +869,10 @@ class _BlurredFill extends StatelessWidget {
             Color(0x66000000),
             BlendMode.darken,
           ),
-          child: Image.file(
-            File(path),
+          child: Image(
+            image: ResizeImage.resizeIfNeeded(120, null, image),
             key: const ValueKey('thought-photo-fill'),
             fit: BoxFit.cover,
-            cacheWidth: 120,
             errorBuilder: (_, _, _) => const SizedBox.shrink(),
           ),
         ),
@@ -868,12 +884,15 @@ class _BlurredFill extends StatelessWidget {
 class _MediaPlaceholder extends StatelessWidget {
   const _MediaPlaceholder({
     super.key,
+    this.preview,
     required this.aspectRatio,
     required this.failed,
     required this.onRetry,
     required this.retryLabel,
   });
 
+  /// The sender's tiny preview, shown blurred until the photo arrives.
+  final Uint8List? preview;
   final double aspectRatio;
   final bool failed;
   final VoidCallback onRetry;
@@ -890,15 +909,32 @@ class _MediaPlaceholder extends StatelessWidget {
           colors: [Color(0xFF2B2F3A), Color(0xFF1A1C22)],
         ),
       ),
-      child: failed
-          ? Center(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (preview case final preview?)
+            ClipRect(
+              child: ImageFiltered(
+                imageFilter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                child: Image.memory(
+                  preview,
+                  key: const ValueKey('thought-photo-preview'),
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          if (failed)
+            Center(
               child: TextButton(
                 onPressed: onRetry,
                 style: TextButton.styleFrom(foregroundColor: Colors.white),
                 child: Text(retryLabel),
               ),
             )
-          : const Align(
+          else
+            const Align(
               alignment: Alignment.bottomCenter,
               child: LinearProgressIndicator(
                 minHeight: 2,
@@ -906,6 +942,8 @@ class _MediaPlaceholder extends StatelessWidget {
                 backgroundColor: Colors.transparent,
               ),
             ),
+        ],
+      ),
     ),
   );
 }

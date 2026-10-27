@@ -104,6 +104,7 @@ void main() {
 
   Future<List<PostMediaAttachmentModel>> attachAndDeliver({
     required List<_EncryptedPostUser> recipients,
+    Future<String?> Function(String photoPath)? photoPreview,
   }) async {
     final source = File('${tempDir.path}/alice-source.jpg')
       ..writeAsBytesSync(plaintextBytes(), flush: true);
@@ -148,6 +149,7 @@ void main() {
       ],
       mediaFileManager: author.mediaFileManager,
       bridge: author.bridge,
+      photoPreview: photoPreview,
     );
     expect(attachResult, AttachPostMediaResult.success);
 
@@ -221,6 +223,28 @@ void main() {
         ),
         hasLength(1),
       );
+    },
+  );
+
+  test(
+    'a photo preview reaches the friend inside the encrypted entry',
+    () async {
+      final previewPaths = <String>[];
+      final attachments = await attachAndDeliver(
+        recipients: <_EncryptedPostUser>[recipient1],
+        photoPreview: (path) async {
+          previewPaths.add(path);
+          return 'cHJldmlldw==';
+        },
+      );
+      expect(previewPaths, hasLength(1));
+      expect(attachments.single.previewBase64, 'cHJldmlldw==');
+
+      await recipient1.waitForDownloadedMedia('post-1');
+      final received = (await recipient1.postRepo.loadPostMediaAttachments(
+        'post-1',
+      )).single;
+      expect(received.previewBase64, 'cHJldmlldw==');
     },
   );
 

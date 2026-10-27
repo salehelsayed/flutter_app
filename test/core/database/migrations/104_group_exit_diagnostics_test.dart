@@ -103,26 +103,29 @@ void main() {
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         104,
       );
-      expect(currentIdentityDatabaseVersion, 123);
+      expect(currentIdentityDatabaseVersion, 124);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '123_authored_direct_text_intents');
-        expect(registry[registry.length - 8].version, 116);
-        expect(registry[registry.length - 9].version, 115);
-        expect(registry[registry.length - 10].version, 114);
-        expect(registry[registry.length - 11].version, 113);
-        expect(registry[registry.length - 12].version, 112);
-        expect(registry[registry.length - 13].version, 111);
-        expect(registry[registry.length - 14].version, 110);
-        expect(registry[registry.length - 15].version, 109);
-        expect(registry[registry.length - 16].version, 108);
-        expect(registry[registry.length - 17].version, 107);
-        expect(registry[registry.length - 18].version, 106);
-        expect(registry[registry.length - 19].version, 105);
+        expect(
+          registry.last.name,
+          '124_thought_photo_previews_and_view_receipts',
+        );
+        expect(registry[registry.length - 9].version, 116);
+        expect(registry[registry.length - 10].version, 115);
+        expect(registry[registry.length - 11].version, 114);
+        expect(registry[registry.length - 12].version, 113);
+        expect(registry[registry.length - 13].version, 112);
+        expect(registry[registry.length - 14].version, 111);
+        expect(registry[registry.length - 15].version, 110);
+        expect(registry[registry.length - 16].version, 109);
+        expect(registry[registry.length - 17].version, 108);
+        expect(registry[registry.length - 18].version, 107);
+        expect(registry[registry.length - 19].version, 106);
+        expect(registry[registry.length - 20].version, 105);
       }
 
       expect(await db.query('group_exit_diagnostics'), isEmpty);

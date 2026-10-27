@@ -5,6 +5,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_create_envelope.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -34,9 +35,7 @@ void main() {
     );
   }
 
-  PostCreateEnvelope envelope({
-    Map<String, PostMediaCryptoEntry>? mediaKeys,
-  }) {
+  PostCreateEnvelope envelope({Map<String, PostMediaCryptoEntry>? mediaKeys}) {
     return PostCreateEnvelope(
       eventId: 'evt-1',
       createdAt: createdAt,
@@ -88,65 +87,153 @@ void main() {
     },
   );
 
-  test('fromEncryptedJson without media_keys parses with mediaKeys == null',
-      () async {
-    final inner = envelope().toInnerJson();
-    final wire = PostCreateEnvelope.buildEncryptedEnvelope(
-      eventId: 'evt-1',
-      createdAt: createdAt,
-      senderPeerId: 'peer-alice',
-      postId: 'post-1',
-      kem: 'fake-kem',
-      ciphertext: inner,
-      nonce: 'fake-nonce',
-    );
+  test(
+    'a photo preview rides only inside the encrypted entry and parses back',
+    () async {
+      final withPreview = PostCreateEnvelope.fromPost(
+        PostModel(
+          id: 'post-1',
+          eventId: 'evt-1',
+          senderPeerId: 'peer-alice',
+          authorPeerId: 'peer-alice',
+          authorUsername: 'Alice',
+          text: 'hello',
+          audience: PostAudience.allFriends(),
+          createdAt: createdAt,
+          visibleAt: createdAt,
+          expiresAt: '2026-06-15T10:00:00.000Z',
+          mediaKind: 'image',
+          media: [
+            attachment().copyWith(
+              encryptionKeyBase64: 'key-b64',
+              encryptionNonce: 'nonce-b64',
+              previewBase64: 'UFJFVklFVw==',
+            ),
+          ],
+        ),
+      );
 
-    final parsed = await PostCreateEnvelope.fromEncryptedJson(
-      jsonString: wire,
-      bridge: PassthroughCryptoBridge(),
-      ownMlKemSecretKey: 'own-sk',
-    );
+      expect(withPreview.toJson(), isNot(contains('UFJFVklFVw==')));
+      expect(withPreview.toJson(), isNot(contains('preview')));
+      final inner = withPreview.toInnerJson();
+      final innerKeys =
+          (jsonDecode(inner) as Map<String, dynamic>)['media_keys']
+              as Map<String, dynamic>;
+      expect(
+        (innerKeys['media-1'] as Map<String, dynamic>)['preview'],
+        'UFJFVklFVw==',
+      );
+      final snapshotMedia =
+          ((jsonDecode(inner) as Map<String, dynamic>)['snapshot']
+                  as Map<String, dynamic>)['media']
+              as List<dynamic>;
+      expect((snapshotMedia.single as Map).containsKey('preview'), isFalse);
 
-    expect(parsed, isNotNull);
-    expect(parsed!.mediaKeys, isNull);
-  });
+      final parsed = await PostCreateEnvelope.fromEncryptedJson(
+        jsonString: PostCreateEnvelope.buildEncryptedEnvelope(
+          eventId: 'evt-1',
+          createdAt: createdAt,
+          senderPeerId: 'peer-alice',
+          postId: 'post-1',
+          kem: 'fake-kem',
+          ciphertext: inner,
+          nonce: 'fake-nonce',
+        ),
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'own-sk',
+      );
+      expect(parsed!.mediaKeys!['media-1']!.preview, 'UFJFVklFVw==');
+    },
+  );
 
-  test('toInnerJson serializes media_keys; v1 toJson NEVER emits media_keys',
-      () {
-    final withKeys = envelope(
-      mediaKeys: <String, PostMediaCryptoEntry>{'media-1': cryptoEntry()},
-    );
-
-    final innerPayload =
-        jsonDecode(withKeys.toInnerJson()) as Map<String, dynamic>;
-    final innerKeys = innerPayload['media_keys'] as Map<String, dynamic>?;
-    expect(innerKeys, isNotNull);
-    final innerEntry = innerKeys!['media-1'] as Map<String, dynamic>;
-    expect(innerEntry['key_base64'], 'key-b64');
-    expect(innerEntry['nonce'], 'nonce-b64');
-    expect(innerEntry['blob_id'], 'blob-1');
+  test('a preview that is not a short string is dropped on receipt', () {
+    Map<String, dynamic> entry(Object? preview) => {
+      'key_base64': 'k',
+      'nonce': 'n',
+      'blob_id': 'b',
+      'preview': preview,
+    };
+    expect(PostMediaCryptoEntry.fromJson(entry('QUJD'))!.preview, 'QUJD');
+    expect(PostMediaCryptoEntry.fromJson(entry(42))!.preview, isNull);
+    expect(PostMediaCryptoEntry.fromJson(entry(''))!.preview, isNull);
     expect(
-      innerEntry['scheme'],
-      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      PostMediaCryptoEntry.fromJson(
+        entry('A' * (PostMediaCryptoEntry.maxPreviewLength + 1)),
+      )!.preview,
+      isNull,
     );
-    expect(innerEntry['content_hash'], 'f' * 64);
-
-    // KC-P3 structural-leak guard: keys must never appear ANYWHERE in the
-    // v1 plaintext wire form, regardless of fail-closed gates upstream.
-    final v1Wire = withKeys.toJson(
-      recipientPeerIds: const <String>['peer-bob'],
+    expect(
+      PostMediaCryptoEntry.fromJson({
+        'key_base64': 'k',
+        'nonce': 'n',
+        'blob_id': 'b',
+      })!.preview,
+      isNull,
     );
-    expect(v1Wire, isNot(contains('media_keys')));
-    expect(v1Wire, isNot(contains('key-b64')));
-    expect(v1Wire, isNot(contains('nonce-b64')));
   });
+
+  test(
+    'fromEncryptedJson without media_keys parses with mediaKeys == null',
+    () async {
+      final inner = envelope().toInnerJson();
+      final wire = PostCreateEnvelope.buildEncryptedEnvelope(
+        eventId: 'evt-1',
+        createdAt: createdAt,
+        senderPeerId: 'peer-alice',
+        postId: 'post-1',
+        kem: 'fake-kem',
+        ciphertext: inner,
+        nonce: 'fake-nonce',
+      );
+
+      final parsed = await PostCreateEnvelope.fromEncryptedJson(
+        jsonString: wire,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'own-sk',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.mediaKeys, isNull);
+    },
+  );
+
+  test(
+    'toInnerJson serializes media_keys; v1 toJson NEVER emits media_keys',
+    () {
+      final withKeys = envelope(
+        mediaKeys: <String, PostMediaCryptoEntry>{'media-1': cryptoEntry()},
+      );
+
+      final innerPayload =
+          jsonDecode(withKeys.toInnerJson()) as Map<String, dynamic>;
+      final innerKeys = innerPayload['media_keys'] as Map<String, dynamic>?;
+      expect(innerKeys, isNotNull);
+      final innerEntry = innerKeys!['media-1'] as Map<String, dynamic>;
+      expect(innerEntry['key_base64'], 'key-b64');
+      expect(innerEntry['nonce'], 'nonce-b64');
+      expect(innerEntry['blob_id'], 'blob-1');
+      expect(
+        innerEntry['scheme'],
+        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      expect(innerEntry['content_hash'], 'f' * 64);
+
+      // KC-P3 structural-leak guard: keys must never appear ANYWHERE in the
+      // v1 plaintext wire form, regardless of fail-closed gates upstream.
+      final v1Wire = withKeys.toJson(
+        recipientPeerIds: const <String>['peer-bob'],
+      );
+      expect(v1Wire, isNot(contains('media_keys')));
+      expect(v1Wire, isNot(contains('key-b64')));
+      expect(v1Wire, isNot(contains('nonce-b64')));
+    },
+  );
 
   test(
     'v1 plaintext post_create carrying media_keys parses with mediaKeys == null — keys join only from the v2 decrypt path',
     () {
       final v1 = jsonDecode(envelope().toJson()) as Map<String, dynamic>;
-      (v1['payload'] as Map<String, dynamic>)['media_keys'] =
-          <String, Object?>{
+      (v1['payload'] as Map<String, dynamic>)['media_keys'] = <String, Object?>{
         'media-1': cryptoEntry().toJson(),
       };
 
@@ -157,38 +244,44 @@ void main() {
     },
   );
 
-  test('PostMediaCryptoEntry round-trips scheme + content_hash and ignores unknown fields',
-      () {
-    final json = cryptoEntry().toJson();
-    expect(json['scheme'], kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
-    expect(json['content_hash'], 'f' * 64);
+  test(
+    'PostMediaCryptoEntry round-trips scheme + content_hash and ignores unknown fields',
+    () {
+      final json = cryptoEntry().toJson();
+      expect(json['scheme'], kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
+      expect(json['content_hash'], 'f' * 64);
 
-    final withUnknown = Map<String, dynamic>.from(json)
-      ..['future_field'] = 'ignored';
-    final restored = PostMediaCryptoEntry.fromJson(withUnknown);
-    expect(restored, isNotNull);
-    expect(restored!.keyBase64, 'key-b64');
-    expect(restored.scheme, kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
-    expect(restored.contentHash, 'f' * 64);
+      final withUnknown = Map<String, dynamic>.from(json)
+        ..['future_field'] = 'ignored';
+      final restored = PostMediaCryptoEntry.fromJson(withUnknown);
+      expect(restored, isNotNull);
+      expect(restored!.keyBase64, 'key-b64');
+      expect(restored.scheme, kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
+      expect(restored.contentHash, 'f' * 64);
 
-    // Deployed-receiver wire compat: legacy entries without the new fields
-    // still parse (shipped pass senders never write scheme/hash).
-    final legacy = PostMediaCryptoEntry.fromJson(<String, dynamic>{
-      'key_base64': 'k',
-      'nonce': 'n',
-      'blob_id': 'b',
-    });
-    expect(legacy, isNotNull);
-    expect(legacy!.scheme, isNull);
-    expect(legacy.contentHash, isNull);
-  });
+      // Deployed-receiver wire compat: legacy entries without the new fields
+      // still parse (shipped pass senders never write scheme/hash).
+      final legacy = PostMediaCryptoEntry.fromJson(<String, dynamic>{
+        'key_base64': 'k',
+        'nonce': 'n',
+        'blob_id': 'b',
+      });
+      expect(legacy, isNotNull);
+      expect(legacy!.scheme, isNull);
+      expect(legacy.contentHash, isNull);
+    },
+  );
 
   test('snapshot media entries still carry no key material', () {
-    final innerPayload = jsonDecode(
-      envelope(
-        mediaKeys: <String, PostMediaCryptoEntry>{'media-1': cryptoEntry()},
-      ).toInnerJson(),
-    ) as Map<String, dynamic>;
+    final innerPayload =
+        jsonDecode(
+              envelope(
+                mediaKeys: <String, PostMediaCryptoEntry>{
+                  'media-1': cryptoEntry(),
+                },
+              ).toInnerJson(),
+            )
+            as Map<String, dynamic>;
     final snapshotMedia =
         ((innerPayload['snapshot'] as Map<String, dynamic>)['media']
                 as List<dynamic>)

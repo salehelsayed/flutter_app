@@ -236,6 +236,73 @@ void main() {
     );
   });
 
+  group('thought photo preview', () {
+    late Directory directory;
+    setUp(() async {
+      directory = await Directory.systemTemp.createTemp('photo-preview-');
+    });
+    tearDown(() => directory.delete(recursive: true));
+
+    test('asks the encoder for a tiny copy and returns it as base64', () async {
+      final calls = <(String, int, bool, int, int)>[];
+      final tiny = File('${directory.path}/tiny.jpg');
+      final processor = ImageProcessor(
+        compressFile:
+            ({
+              required path,
+              required quality,
+              required keepExif,
+              minWidth = 1920,
+              minHeight = 1080,
+            }) async {
+              calls.add((path, quality, keepExif, minWidth, minHeight));
+              tiny.writeAsBytesSync([1, 2, 3, 4]);
+              return XFile(tiny.path);
+            },
+      );
+
+      final preview = await processor.photoPreview(
+        '/photos/lake.jpg',
+        maxBase64Length: 100,
+      );
+
+      expect(preview, 'AQIDBA==');
+      expect(calls, [('/photos/lake.jpg', 40, false, 24, 24)]);
+      expect(tiny.existsSync(), isFalse);
+    });
+
+    test(
+      'gives no preview when the encoder fails or the result is too big',
+      () async {
+        final big = File('${directory.path}/big.jpg');
+        Future<String?> previewWith(Future<XFile?> Function() result) =>
+            ImageProcessor(
+              compressFile:
+                  ({
+                    required path,
+                    required quality,
+                    required keepExif,
+                    minWidth = 1920,
+                    minHeight = 1080,
+                  }) => result(),
+            ).photoPreview('/photos/lake.jpg', maxBase64Length: 8);
+
+        expect(await previewWith(() async => null), isNull);
+        expect(
+          await previewWith(() async => throw StateError('encoder down')),
+          isNull,
+        );
+        expect(
+          await previewWith(() async {
+            big.writeAsBytesSync(List.filled(64, 7));
+            return XFile(big.path);
+          }),
+          isNull,
+        );
+      },
+    );
+  });
+
   group('isProcessableImage', () {
     late ImageProcessor processor;
 

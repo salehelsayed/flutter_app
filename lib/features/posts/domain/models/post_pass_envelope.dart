@@ -47,12 +47,20 @@ class PostMediaCryptoEntry {
   /// SHA-256 hex of the ENCRYPTED blob (MIG-012: never of decrypted bytes).
   final String? contentHash;
 
+  /// A photo's tiny blurred-preview bytes, base64. Rides here because these
+  /// entries only ever travel encrypted; builds before 128 ignore the key.
+  final String? preview;
+
+  /// Larger is dropped on receipt rather than stored.
+  static const maxPreviewLength = 4096;
+
   const PostMediaCryptoEntry({
     required this.keyBase64,
     required this.nonce,
     required this.blobId,
     this.scheme,
     this.contentHash,
+    this.preview,
   });
 
   Map<String, Object?> toJson() => {
@@ -61,6 +69,7 @@ class PostMediaCryptoEntry {
     'blob_id': blobId,
     if (scheme != null) 'scheme': scheme,
     if (contentHash != null) 'content_hash': contentHash,
+    if (preview != null) 'preview': preview,
   };
 
   static PostMediaCryptoEntry? fromJson(Map<String, dynamic> json) {
@@ -76,6 +85,12 @@ class PostMediaCryptoEntry {
       blobId: blobId,
       scheme: json['scheme'] as String?,
       contentHash: json['content_hash'] as String?,
+      preview: switch (json['preview']) {
+        final String preview
+            when preview.isNotEmpty && preview.length <= maxPreviewLength =>
+          preview,
+        _ => null,
+      },
     );
   }
 }

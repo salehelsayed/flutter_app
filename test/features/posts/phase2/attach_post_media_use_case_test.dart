@@ -108,7 +108,8 @@ void main() {
       );
 
       expect(result, AttachPostMediaResult.success);
-      expect(compressedQualities, [100]);
+      // The photo at the stored quality, then its tiny thought preview.
+      expect(compressedQualities, [100, 40]);
       expect(attachments, hasLength(1));
       expect(
         uploadCalls.single['localFilePath'],

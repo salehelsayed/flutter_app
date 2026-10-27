@@ -359,6 +359,7 @@ Future<List<PostMediaAttachmentModel>> _storeIncomingMedia({
       encryptionScheme: cryptoEntry?.scheme,
       contentHash: cryptoEntry?.contentHash,
       isEncrypted: cryptoEntry != null ? true : null,
+      previewBase64: attachment.kind == 'image' ? cryptoEntry?.preview : null,
     );
     await postRepo.savePostMediaAttachment(pendingAttachment);
     pendingAttachments.add(pendingAttachment);

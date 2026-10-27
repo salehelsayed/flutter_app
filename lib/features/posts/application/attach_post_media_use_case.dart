@@ -16,6 +16,7 @@ import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_pass_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 
@@ -56,6 +57,7 @@ attachPostMedia({
   UploadPostMediaFn? uploadPostMediaFn,
   Bridge? bridge,
   DateTime Function()? nowProvider,
+  Future<String?> Function(String photoPath)? photoPreview,
 }) async {
   final post = await postRepo.getPost(postId);
   if (post == null) {
@@ -169,6 +171,13 @@ attachPostMedia({
       durationMs: prepared.durationMs,
       waveform: prepared.waveform,
     );
+    final preview = uploaded != null && drafts[index].kind == 'image'
+        ? await (photoPreview ??
+              (path) => imageProcessor.photoPreview(
+                path,
+                maxBase64Length: PostMediaCryptoEntry.maxPreviewLength,
+              ))(prepared.localFilePath)
+        : null;
     // Temp hygiene (doc-112 parity): the processed plaintext temp is only
     // an upload input — the draft SOURCE stays (recovery replay re-reads
     // it). Voice passes through _prepareDraft unchanged, hence the guard.
@@ -186,7 +195,11 @@ attachPostMedia({
         const <PostMediaAttachmentModel>[],
       );
     }
-    final positioned = uploaded.copyWith(position: index, postId: postId);
+    final positioned = uploaded.copyWith(
+      position: index,
+      postId: postId,
+      previewBase64: preview,
+    );
     attachments.add(positioned);
   }
 

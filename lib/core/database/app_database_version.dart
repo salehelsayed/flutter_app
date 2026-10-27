@@ -86,4 +86,5 @@
 // effective clock. Historical deletions are not reconstructed.
 // 407: DB v122 removes all legacy Posts data before Thoughts starts.
 // v123 retains authored direct text until the atomic encrypted custody commit.
-const int currentIdentityDatabaseVersion = 123;
+// v124 adds thought photo previews and first-view receipts (407, build 128).
+const int currentIdentityDatabaseVersion = 124;

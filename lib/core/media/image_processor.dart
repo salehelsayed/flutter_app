@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -116,6 +117,40 @@ class ImageProcessor {
        _compressVideo = compressVideo,
        _cancelVideoCompression =
            cancelVideoCompression ?? _cancelDefaultVideoCompression;
+
+  /// Longest side, roughly, of a thought photo preview. Shown blurred, so
+  /// detail is pointless and every byte rides in each friend's copy.
+  static const photoPreviewMinSide = 24;
+
+  /// Base64 of a tiny JPEG of [path], or null when none of at most
+  /// [maxBase64Length] characters can be made. The native encoder does the
+  /// work; only its few-KB result is read here.
+  Future<String?> photoPreview(
+    String path, {
+    required int maxBase64Length,
+  }) async {
+    try {
+      final small = await _compressFile(
+        path: path,
+        quality: 40,
+        keepExif: false,
+        minWidth: photoPreviewMinSide,
+        minHeight: photoPreviewMinSide,
+      );
+      if (small == null) return null;
+      final file = File(small.path);
+      if (!file.existsSync()) return null;
+      final bytes = file.readAsBytesSync();
+      try {
+        file.deleteSync();
+      } catch (_) {}
+      if (bytes.isEmpty) return null;
+      final encoded = base64Encode(bytes);
+      return encoded.length <= maxBase64Length ? encoded : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Process image for sending: strip metadata; Original preserves JPEG coding.
   /// Other formats and unsupported JPEG variants use the native encoder at
