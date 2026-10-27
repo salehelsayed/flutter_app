@@ -356,6 +356,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     OrbitDepthSeat? selected,
     bool markDeparture = true,
     double verticalVelocity = 0,
+    double rotationVelocity = 0,
   }) async {
     final generation = ++_settleGeneration;
     final landing = (
@@ -375,6 +376,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _frontPeer = front?.friend.peerId;
     _gesture = OrbitDepthGesture.idle;
     if (target != OrbitDepthLayer.flat) _publish(true);
+    // As in the mockup, the card opens while the orbit glides to its friend,
+    // not after the spring has fully come to rest. Read-marking still waits
+    // for the landing.
+    if (!_reduceMotion && target != OrbitDepthLayer.flat) {
+      unawaited(_fold.reverse());
+    }
     setState(() {});
     try {
       await Future.wait([
@@ -390,6 +397,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               ? _rotation.value
               : orbitDepthRotationFor(front, _rotation.value),
           const SpringDescription(mass: 1, stiffness: 90, damping: 15),
+          velocity: rotationVelocity,
         ),
       ]);
       _completeLanding(landing);
@@ -600,7 +608,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         if (turned.abs() > .2 * distance(candidates.first))
           next = candidates.first;
       }
-      unawaited(_settle(_layer, selected: next));
+      unawaited(
+        _settle(
+          _layer,
+          selected: next,
+          rotationVelocity: (_rtl ? 1 : -1) * dx / (128 * _scale),
+        ),
+      );
     }
   }
 

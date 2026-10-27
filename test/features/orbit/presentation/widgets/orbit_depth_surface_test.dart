@@ -689,6 +689,39 @@ void main() {
       },
     );
 
+    testWidgets(
+      'after a turn the next card opens while the orbit still glides',
+      (tester) async {
+        reduceMotion = false;
+        await mount(tester);
+        await swipe(tester, const Offset(0, -220));
+        await tester.pump(const Duration(seconds: 3));
+        expect(card(1), findsOneWidget);
+
+        final gesture = await tester.startGesture(const Offset(195, 300));
+        await gesture.moveBy(const Offset(-20, 0));
+        await gesture.moveBy(const Offset(-70, 0));
+        await tester.pump();
+        await gesture.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
+        final early = slot.evaluate().isEmpty
+            ? 0.0
+            : tester
+                  .widget<Opacity>(
+                    find
+                        .descendant(of: slot, matching: find.byType(Opacity))
+                        .first,
+                  )
+                  .opacity;
+        await tester.pump(const Duration(seconds: 3));
+        await finish(tester);
+
+        expect(early, greaterThan(.9));
+      },
+    );
+
     testWidgets('the card fades out while swiping back, not all at once', (
       tester,
     ) async {
