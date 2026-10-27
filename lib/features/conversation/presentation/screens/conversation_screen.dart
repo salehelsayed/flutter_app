@@ -337,6 +337,9 @@ class ConversationScreen extends StatefulWidget {
   /// Thoughts quoted by messages here, by post id; null when not stored here.
   final Map<String, ThoughtQuotePreview?> thoughtQuotes;
   final DateTime? thoughtNow;
+
+  /// Opens a quoted thought, by post id, while it still lives.
+  final ValueChanged<String>? onOpenThought;
   final ValueChanged<String>? onRetryFailedMessage;
   final ValueChanged<String>? onRetryFailedMedia;
   final ValueChanged<String>? onDeleteFailedMedia;
@@ -449,6 +452,7 @@ class ConversationScreen extends StatefulWidget {
     this.onQuoteReply,
     this.thoughtQuotes = const {},
     this.thoughtNow,
+    this.onOpenThought,
     this.onRetryFailedMessage,
     this.onRetryFailedMedia,
     this.onDeleteFailedMedia,
@@ -1173,20 +1177,39 @@ class _ConversationScreenState extends State<ConversationScreen>
             // Resolve quoted message text
             String? quotedText;
             bool isQuoteUnavailable = false;
-            final thoughtQuote = quotedThoughtId == null
+            final thoughtNow = widget.thoughtNow ?? DateTime.now().toUtc();
+            final openThought = widget.onOpenThought;
+            final thoughtIsLive =
+                widget.thoughtQuotes[quotedThoughtId]?.isLiveAt(thoughtNow) ??
+                false;
+            final thoughtQuoteBlock = quotedThoughtId == null
                 ? null
                 : ThoughtQuoteBlock(
                     label: message.isIncoming
                         ? l10n.thought_quote_yours
                         : l10n.thought_quote_theirs(widget.contactUsername),
                     preview: widget.thoughtQuotes[quotedThoughtId],
-                    now: widget.thoughtNow ?? DateTime.now().toUtc(),
+                    now: thoughtNow,
                     unavailableText: l10n.thought_quote_gone,
                     mediaLabel: (kind) => switch (kind) {
                       'video' => l10n.orbit_preview_video(1),
                       'voice' => l10n.orbit_preview_voice_message,
                       _ => l10n.orbit_preview_photo(1),
                     },
+                  );
+            final thoughtQuote =
+                thoughtQuoteBlock == null ||
+                    openThought == null ||
+                    !thoughtIsLive
+                ? thoughtQuoteBlock
+                : Semantics(
+                    button: true,
+                    child: InkWell(
+                      key: const ValueKey('thought-quote-open'),
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => openThought(quotedThoughtId!),
+                      child: thoughtQuoteBlock,
+                    ),
                   );
             if (!quotesThought &&
                 !message.isDeleted &&

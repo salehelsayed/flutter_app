@@ -1395,6 +1395,61 @@ void main() {
       },
     );
 
+    testWidgets(
+      'tapping a live quote reopens the thought and a reply stays in this chat',
+      (tester) async {
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+        await replyFromCard(tester, posts, clock: () => thoughtNow);
+
+        await tester.tap(find.byKey(const ValueKey('thought-quote-open')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+
+        await tester.enterText(
+          find.byKey(const ValueKey('thought-reply-field')),
+          'bringing snacks',
+        );
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await pumpOrbitFrames(tester, count: 12);
+
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('thought-quote-block')),
+          findsNWidgets(2),
+        );
+        expect(find.text('bringing snacks'), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets('a quote whose thought is gone does not open anything', (
+      tester,
+    ) async {
+      var now = thoughtNow;
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought(
+          'lake',
+          text: 'Sunset at the lake?',
+          expiresAt: thoughtNow.add(const Duration(minutes: 5)),
+        ),
+      );
+      await replyFromCard(tester, posts, clock: () => now);
+
+      now = thoughtNow.add(const Duration(minutes: 6));
+      await tester.pump(const Duration(minutes: 6));
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(quoteGone(), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-quote-open')), findsNothing);
+      await finishThoughtCase(tester);
+    });
+
     testWidgets('a quoted thought its author deletes leaves the open chat', (
       tester,
     ) async {

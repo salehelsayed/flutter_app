@@ -1150,9 +1150,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  /// [replyInChat] is set when the card opens from a chat quote: a reply goes
+  /// back to that chat instead of opening another one.
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
+    void Function(ThoughtReply reply)? replyInChat,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1231,14 +1234,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             onReply: contact == null
                 ? null
                 : (text, postId) {
-                    if (mounted) {
+                    final reply = ThoughtReply(text: text, postId: postId);
+                    if (replyInChat != null) {
+                      replyInChat(reply);
+                    } else if (mounted) {
                       unawaited(
                         _openConversationForContact(
                           contact,
-                          thoughtReply: ThoughtReply(
-                            text: text,
-                            postId: postId,
-                          ),
+                          thoughtReply: reply,
                         ),
                       );
                     }
@@ -3265,6 +3268,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
+            onOpenThought: (postId, replyHere) =>
+                _openThought(postId, replyInChat: replyHere),
             postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
             identityRepo: widget.identityRepo,

@@ -466,6 +466,14 @@ class ConversationWired extends StatefulWidget {
   /// A reply typed on a thought card, sent once this chat is ready.
   final ThoughtReply? initialThoughtReply;
 
+  /// Opens a quoted thought's card over this chat. A reply typed there is
+  /// handed back to [replyHere] and sent in this chat.
+  final Future<void> Function(
+    String postId,
+    void Function(ThoughtReply reply) replyHere,
+  )?
+  onOpenThought;
+
   /// The stored thoughts quoted here are read live from this repository and
   /// re-read when it reports a change, so a deleted thought leaves the chat.
   final PostRepository? postRepository;
@@ -612,6 +620,7 @@ class ConversationWired extends StatefulWidget {
     this.initialPendingMedia,
     this.initialText,
     this.initialThoughtReply,
+    this.onOpenThought,
     this.postRepository,
     this.thoughtNowProvider,
     this.imageProcessor,
@@ -8761,6 +8770,12 @@ class _ConversationWiredState extends State<ConversationWired>
     );
   }
 
+  void _sendThoughtReplyHere(ThoughtReply reply) {
+    if (!mounted) return;
+    setState(() => _activeQuoteMessageId = reply.quotedMessageId);
+    unawaited(_onSend(reply.text));
+  }
+
   void _sendInitialThoughtReplyWhenReady() {
     final reply = widget.initialThoughtReply;
     if (reply == null ||
@@ -8770,11 +8785,9 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
     _initialThoughtReplySent = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      setState(() => _activeQuoteMessageId = reply.quotedMessageId);
-      unawaited(_onSend(reply.text));
-    });
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _sendThoughtReplyHere(reply),
+    );
   }
 
   @override
@@ -8891,6 +8904,11 @@ class _ConversationWiredState extends State<ConversationWired>
           onQuoteReply: _onQuoteReply,
           thoughtQuotes: _thoughtQuotes,
           thoughtNow: _thoughtNow,
+          onOpenThought: widget.onOpenThought == null || _thoughtPosts == null
+              ? null
+              : (postId) => unawaited(
+                  widget.onOpenThought!(postId, _sendThoughtReplyHere),
+                ),
           onDeleteMessage: _onDeleteMessage,
           // 231: direct received-media actions — every Save/Share/Info runs
           // through the local controller; Delete stays on the existing
