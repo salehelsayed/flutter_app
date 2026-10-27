@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -184,6 +185,9 @@ class OrbitWired extends StatefulWidget {
   final FeedClearedRepository feedClearedRepository;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
+
+  /// Asks for the microphone before a voice reply on a thought card.
+  final MicPermissionGateway micPermissionGateway;
   final ReactionRepository? reactionRepository;
   final ReactionListener? reactionListener;
   final GroupRepository? groupRepository;
@@ -276,6 +280,7 @@ class OrbitWired extends StatefulWidget {
     required this.feedClearedRepository,
     this.conversationTracker,
     this.audioRecorderService,
+    this.micPermissionGateway = const PermissionHandlerMicGateway(),
     this.reactionRepository,
     this.reactionListener,
     this.groupRepository,
@@ -1372,6 +1377,28 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                       unawaited(_openConversationForContact(contact));
                     }
                   },
+            // A card opened from a chat quote has no way back into that chat
+            // for a recording yet, so it offers text replies only.
+            onVoiceReply:
+                contact == null ||
+                    replyInChat != null ||
+                    !widget
+                        .directRouteAuthority
+                        .resolvedModalityGate
+                        .allowsVoiceAuthoring
+                ? null
+                : (reply) {
+                    if (mounted) {
+                      unawaited(
+                        _openConversationForContact(
+                          contact,
+                          thoughtVoiceReply: reply,
+                        ),
+                      );
+                    }
+                  },
+            audioRecorderService: widget.audioRecorderService,
+            micPermissionGateway: widget.micPermissionGateway,
             retryPosting: isOwn ? widget.retryThoughtPosting : null,
             onShown: isOwn
                 ? null
@@ -3396,6 +3423,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     ContactModel contact, {
     String? initialText,
     ThoughtReply? thoughtReply,
+    ThoughtVoiceReply? thoughtVoiceReply,
   }) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
@@ -3416,6 +3444,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
+            initialThoughtVoiceReply: thoughtVoiceReply,
             onOpenThought: (postId, replyHere) =>
                 _openThought(postId, replyInChat: replyHere),
             postRepository: _thoughtPosts,

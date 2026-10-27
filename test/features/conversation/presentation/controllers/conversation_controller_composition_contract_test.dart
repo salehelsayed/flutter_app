@@ -95,7 +95,11 @@ const _controllerTestPaths = <String>[
 // 407 128-D: `onOpenThought`'s reply callback becomes async and returns a
 // `ThoughtReplyStatus`, so a reply typed on the card can show Sent or Retry in
 // place. It still sends through the chat's ordinary path.
-const _expectedDirectApiFingerprint = '995a374c';
+// 407 128 voice reply: one optional `ConversationWired` field,
+// `initialThoughtVoiceReply`. A voice reply recorded on a thought card is
+// sent once the chat is ready, through the chat's own voice path, quoting the
+// thought. No existing handoff changes.
+const _expectedDirectApiFingerprint = '18779f59';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 const _expectedGroupApiFingerprint = 'fe1ac6ec';

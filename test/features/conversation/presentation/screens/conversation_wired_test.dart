@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'dart:io';
@@ -2050,6 +2051,7 @@ void main() {
     bool documentAttachmentsEnabled = false,
     DownloadMediaFn? downloadMediaFn,
     String? initialText,
+    ThoughtVoiceReply? initialThoughtVoiceReply,
     List<File>? initialAttachments,
     List<PendingComposerMedia>? initialPendingMedia,
     List<ConversationMessage>? initialMessages,
@@ -2128,6 +2130,7 @@ void main() {
           qualityPreference: qualityPreference,
           videoQualityPreference: videoQualityPreference,
           initialText: initialText,
+          initialThoughtVoiceReply: initialThoughtVoiceReply,
           initialMessages: initialMessages,
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
@@ -13916,6 +13919,88 @@ void main() {
           .firstWhere((message) => !message.isIncoming);
       expect(saved.quotedMessageId, 'incoming-voice-1');
     });
+
+    testWidgets(
+      'a voice reply from a thought card is sent quoting the thought',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
+        final voiceFile = File(
+          '${Directory.systemTemp.createTempSync('thought-voice-').path}/v.m4a',
+        )..writeAsBytesSync(List<int>.filled(2048, 1));
+        String? capturedQuotedMessageId;
+        AudioRecording? capturedRecording;
+
+        Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String senderPeerId,
+          required String senderUsername,
+          required AudioRecording recording,
+          required Bridge bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          String? text,
+          String? quotedMessageId,
+          List<double>? waveform,
+          String? messageId,
+          String? timestamp,
+          String? blobId,
+          preparedArtifact,
+          mediaAdmission,
+        }) async {
+          capturedQuotedMessageId = quotedMessageId;
+          capturedRecording = recording;
+          final delivered = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text ?? '',
+            timestamp: timestamp!,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: timestamp,
+            quotedMessageId: quotedMessageId,
+          );
+          await messageRepo.saveMessage(delivered);
+          return (SendVoiceMessageResult.success, delivered);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
+          sendVoiceMessageFn: sendVoiceFn,
+          initialThoughtVoiceReply: ThoughtVoiceReply(
+            recording: AudioRecording(
+              filePath: voiceFile.path,
+              durationMs: 1800,
+              sizeBytes: 2048,
+            ),
+            waveform: const [0.2, 0.6],
+            postId: 'thought-7',
+          ),
+        );
+        await pumpUntil(tester, () => capturedQuotedMessageId != null);
+
+        expect(capturedQuotedMessageId, 'thought:thought-7');
+        expect(capturedRecording!.durationMs, 1800);
+        final saved = messageRepo.store.values.single;
+        expect(saved.quotedMessageId, 'thought:thought-7');
+        expect(saved.isIncoming, isFalse);
+      },
+    );
 
     // Regression: the sender could not play their own voice message right
     // after sending it. The send use case returns the attachment with its

@@ -6,6 +6,9 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -20,6 +23,7 @@ import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/conversation/conversation_voice_capture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:uuid/uuid.dart';
 
@@ -44,6 +48,9 @@ class ThoughtCardScreen extends StatefulWidget {
     this.loadActivity,
     this.eligibilityChanges,
     this.nowProvider,
+    this.onVoiceReply,
+    this.audioRecorderService,
+    this.micPermissionGateway = const PermissionHandlerMicGateway(),
   });
 
   final PostModel initialPost;
@@ -68,6 +75,12 @@ class ThoughtCardScreen extends StatefulWidget {
   downloadMedia;
   final Stream<void>? eligibilityChanges;
   final DateTime Function()? nowProvider;
+
+  /// Takes a recorded voice reply to the author's chat, which sends it. Null
+  /// hides the mic.
+  final ValueChanged<ThoughtVoiceReply>? onVoiceReply;
+  final AudioRecorderService? audioRecorderService;
+  final MicPermissionGateway micPermissionGateway;
 
   @override
   State<ThoughtCardScreen> createState() => _ThoughtCardScreenState();
@@ -105,6 +118,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   /// The photo alone, with every control hidden, after a tap on it.
   bool _immersive = false;
+
+  late final _voice = ConversationVoiceCaptureController(
+    onAutoStopOutcome: (outcome) => _handOffVoice(outcome, autoStopped: true),
+    // An incoming call takes the microphone; the cut recording is dropped.
+    onCallInterruptionOutcome: (_) {},
+  )..addListener(_onVoiceChanged);
   String? _replyPostId;
   ThoughtReplyStatus? _replyStatus;
   bool _sendingReply = false;
@@ -582,7 +601,69 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _ageTimer?.cancel();
     _replyController.dispose();
     _replyFocus.dispose();
+    _voice
+      ..removeListener(_onVoiceChanged)
+      ..dispose();
     super.dispose();
+  }
+
+  void _onVoiceChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool get _canRecordVoice =>
+      widget.onVoiceReply != null &&
+      widget.audioRecorderService != null &&
+      !_sendingReply;
+
+  Future<void> _startVoice() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder == null || _closing || _voice.state.isActive) return;
+    final result = await _voice.start(
+      recorder: recorder,
+      requestPermission: widget.micPermissionGateway.request,
+    );
+    if (!mounted) return;
+    if (result.status == ConversationVoiceCaptureStartStatus.permissionDenied &&
+        result.permissionStatus == MicPermissionStatus.permanentlyDenied) {
+      await showMicPermissionDeniedPrompt(
+        context,
+        gateway: widget.micPermissionGateway,
+      );
+    }
+  }
+
+  Future<void> _stopVoice() async {
+    if (!_voice.state.isActive) return;
+    final outcome = await _voice.stop();
+    if (outcome != null) _handOffVoice(outcome);
+  }
+
+  /// A finished recording goes to the author's chat, quoting this thought,
+  /// the way a typed reply opens that chat after it is sent.
+  void _handOffVoice(
+    ConversationVoiceCaptureOutcome outcome, {
+    bool autoStopped = false,
+  }) {
+    final recording = outcome.recording;
+    final onVoiceReply = widget.onVoiceReply;
+    if (!mounted ||
+        !_voice.isCurrentOutcome(outcome) ||
+        recording == null ||
+        onVoiceReply == null) {
+      return;
+    }
+    if (!_isLive) {
+      _close();
+      return;
+    }
+    final reply = ThoughtVoiceReply(
+      recording: recording,
+      waveform: outcome.waveform,
+      postId: _post.id,
+      autoStopped: autoStopped,
+    );
+    _close(afterClose: () => onVoiceReply(reply));
   }
 
   Future<void> _sendReply(
@@ -969,6 +1050,24 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             clearOnSend: false,
             isSending: _sendingReply,
             onSend: (text) => unawaited(_sendReply(text, openChat: true)),
+            onRecordStart: _canRecordVoice
+                ? () => unawaited(_startVoice())
+                : null,
+            onRecordStop: _canRecordVoice
+                ? () => unawaited(_stopVoice())
+                : null,
+            onRecordCancel: () => unawaited(_voice.cancel()),
+            recordingState: switch (_voice.state.phase) {
+              ConversationVoiceCapturePhase.idle => VoiceRecordingState.idle,
+              ConversationVoiceCapturePhase.arming =>
+                VoiceRecordingState.arming,
+              ConversationVoiceCapturePhase.recording =>
+                VoiceRecordingState.recording,
+              ConversationVoiceCapturePhase.stopping =>
+                VoiceRecordingState.stopping,
+            },
+            recordingDuration: _voice.state.duration,
+            amplitudeValues: _voice.state.amplitudeValues,
           ),
           if (_replyStatus case final status?)
             Row(

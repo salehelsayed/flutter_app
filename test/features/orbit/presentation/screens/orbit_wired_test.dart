@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -105,6 +108,8 @@ import 'package:flutter_app/features/posts/presentation/widgets/compose_post_she
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
+import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
+import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/fake_group_dissolve_preflight.dart';
@@ -353,6 +358,8 @@ void main() {
     DeleteSelfRemovedGroupShellCallback? deleteSelfRemovedGroupShell,
     Key? orbitKey,
     Locale locale = const Locale('en'),
+    AudioRecorderService? audioRecorderService,
+    MicPermissionGateway? micPermissionGateway,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
     final effectiveMessageRepo = messageRepository ?? messageRepo;
@@ -421,6 +428,9 @@ void main() {
       postRepository: postRepository,
       pendingPostTargetStore: pendingPostTargetStore,
       thoughtNowProvider: thoughtNowProvider,
+      audioRecorderService: audioRecorderService,
+      micPermissionGateway:
+          micPermissionGateway ?? const PermissionHandlerMicGateway(),
       feedUnreadCountListenable: feedUnreadCountListenable,
       onEmbeddedExit: onEmbeddedExit,
       onRowActionOpenChanged: onRowActionOpenChanged,
@@ -2125,6 +2135,55 @@ void main() {
           findsNothing,
         );
         expect(posts.focusedIds, ['latest-thought']);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'a voice reply recorded on the card opens the chat that sends it',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('voice-thought', text: 'Say it out loud'));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1500
+          ..fakeOutputPath = '/tmp/orbit-thought-voice.m4a';
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+            audioRecorderService: recorder,
+            micPermissionGateway: FakeMicPermissionGateway(),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-thought-tap-voice-thought')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final mic = find.descendant(
+          of: find.byKey(const ValueKey('thought-reply-composer')),
+          matching: find.byType(VoiceRecordButton),
+        );
+        await tester.tap(mic);
+        await pumpOrbitFrames(tester, count: 4);
+        await tester.tap(mic);
+        await pumpOrbitFrames(tester, count: 12);
+
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        final chat = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(chat.contact.peerId, testContact.peerId);
+        expect(chat.initialThoughtVoiceReply!.postId, 'voice-thought');
+        expect(
+          chat.initialThoughtVoiceReply!.recording.filePath,
+          '/tmp/orbit-thought-voice.m4a',
+        );
         await finishThoughtCase(tester);
       },
     );

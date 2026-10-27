@@ -1,3 +1,5 @@
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+
 /// A chat message points at a thought through its quoted-message id, as
 /// `thought:<postId>`. Nothing of the thought is copied into the message: each
 /// side looks it up live, so it still disappears everywhere after 24 h.
@@ -66,6 +68,24 @@ class ThoughtReply {
 
   final String text;
   final String postId;
+
+  String get quotedMessageId => thoughtQuoteId(postId);
+}
+
+/// A voice reply recorded on a friend's thought card, sent when its chat
+/// opens. [autoStopped] recordings wait in the chat for Send or Discard.
+class ThoughtVoiceReply {
+  const ThoughtVoiceReply({
+    required this.recording,
+    required this.waveform,
+    required this.postId,
+    this.autoStopped = false,
+  });
+
+  final AudioRecording recording;
+  final List<double> waveform;
+  final String postId;
+  final bool autoStopped;
 
   String get quotedMessageId => thoughtQuoteId(postId);
 }

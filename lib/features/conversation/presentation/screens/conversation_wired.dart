@@ -468,6 +468,9 @@ class ConversationWired extends StatefulWidget {
   /// A reply typed on a thought card, sent once this chat is ready.
   final ThoughtReply? initialThoughtReply;
 
+  /// A voice reply recorded on a thought card, sent once this chat is ready.
+  final ThoughtVoiceReply? initialThoughtVoiceReply;
+
   /// Opens a quoted thought's card over this chat. Its async sender reports
   /// the ordinary send result while keeping the card in place.
   final Future<void> Function(String postId, ThoughtReplySender replyHere)?
@@ -619,6 +622,7 @@ class ConversationWired extends StatefulWidget {
     this.initialPendingMedia,
     this.initialText,
     this.initialThoughtReply,
+    this.initialThoughtVoiceReply,
     this.onOpenThought,
     this.postRepository,
     this.thoughtNowProvider,
@@ -8804,16 +8808,28 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _sendInitialThoughtReplyWhenReady() {
     final reply = widget.initialThoughtReply;
-    if (reply == null ||
+    final voice = widget.initialThoughtVoiceReply;
+    if ((reply == null && voice == null) ||
         _initialThoughtReplySent ||
         _identity == null ||
         !_initialLoadDone) {
       return;
     }
     _initialThoughtReplySent = true;
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => _sendThoughtReplyHere(reply),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (reply != null) _sendThoughtReplyHere(reply);
+      if (voice != null) _sendThoughtVoiceReplyHere(voice);
+    });
+  }
+
+  void _sendThoughtVoiceReplyHere(ThoughtVoiceReply reply) {
+    if (!mounted) return;
+    setState(() => _activeQuoteMessageId = reply.quotedMessageId);
+    if (reply.autoStopped) {
+      _restoreVoiceReviewHoldAfterRefusal(reply.recording, reply.waveform);
+    } else {
+      unawaited(_sendVoiceRecording(reply.recording, reply.waveform));
+    }
   }
 
   @override

@@ -6,6 +6,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter_app/core/media/audio_recorder_service.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
@@ -25,6 +27,8 @@ import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
+import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
@@ -83,6 +87,8 @@ void main() {
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
+    ValueChanged<ThoughtVoiceReply>? onVoiceReply,
+    AudioRecorderService? recorder,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -122,6 +128,9 @@ void main() {
                 (_) async => throw StateError('Unexpected media download'),
             eligibilityChanges: eligibility.stream,
             nowProvider: () => now,
+            onVoiceReply: onVoiceReply,
+            audioRecorderService: recorder,
+            micPermissionGateway: FakeMicPermissionGateway(),
           ),
         ),
       ),
@@ -1033,6 +1042,69 @@ void main() {
     await openCard(tester, thought, onReply: (_, _) {});
     await pumpMediaFrames(tester);
   }
+
+  testWidgets('the mic records a voice reply that goes to the chat', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final recorder = FakeAudioRecorderService()
+      ..fakeDurationMs = 1500
+      ..fakeOutputPath = '/tmp/thought-reply.m4a';
+    final voiceReplies = <ThoughtVoiceReply>[];
+    await openCard(
+      tester,
+      thought,
+      onReply: (_, _) {},
+      onVoiceReply: voiceReplies.add,
+      recorder: recorder,
+    );
+
+    final mic = find.descendant(
+      of: find.byKey(const ValueKey('thought-reply-composer')),
+      matching: find.byType(VoiceRecordButton),
+    );
+    expect(mic, findsOneWidget);
+    await tester.tap(mic);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(recorder.startCallCount, 1);
+    expect(voiceReplies, isEmpty);
+    await tester.tap(mic);
+    await tester.pumpAndSettle();
+
+    expect(voiceReplies, hasLength(1));
+    expect(voiceReplies.single.postId, 'thought-1');
+    expect(voiceReplies.single.quotedMessageId, 'thought:thought-1');
+    expect(voiceReplies.single.recording.filePath, '/tmp/thought-reply.m4a');
+    expect(voiceReplies.single.autoStopped, isFalse);
+    expect(find.byType(ThoughtCardScreen), findsNothing);
+    expect(find.text('orbit-home'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('typing swaps the mic for Send, and no recorder means no mic', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    await openCard(
+      tester,
+      thought,
+      onReply: (_, _) {},
+      onVoiceReply: (_) {},
+      recorder: FakeAudioRecorderService(),
+    );
+    expect(find.byType(VoiceRecordButton), findsOneWidget);
+    await tester.enterText(_replyField, 'hi');
+    await tester.pump();
+    expect(find.byType(VoiceRecordButton), findsNothing);
+    await finish(tester);
+
+    await openCard(tester, thought, onReply: (_, _) {});
+    expect(find.byType(VoiceRecordButton), findsNothing);
+    await finish(tester);
+  });
 
   testWidgets('the reply box is the chat composer without its +', (
     tester,
