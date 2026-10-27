@@ -430,11 +430,11 @@ abstract class AppLocalizations {
   /// **'Yesterday'**
   String get posts_time_yesterday;
 
-  /// No description provided for @thought_compose_title.
+  /// Title in the middle of the Thought composer header, between Cancel and Share.
   ///
   /// In en, this message translates to:
-  /// **'Share a thought'**
-  String get thought_compose_title;
+  /// **'New thought'**
+  String get thought_compose_header;
 
   /// No description provided for @thought_compose_share.
   ///

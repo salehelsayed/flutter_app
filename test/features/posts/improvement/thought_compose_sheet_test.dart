@@ -162,7 +162,7 @@ void main() {
             },
           ),
         );
-        await tester.tap(find.text('Media'));
+        await tester.tap(find.byTooltip('Media'));
         await finishPick(tester);
         expect(share(tester).onPressed, isNotNull);
         await tapVisible(
@@ -192,7 +192,7 @@ void main() {
         submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
       ),
     );
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
     await tapVisible(
@@ -238,7 +238,7 @@ void main() {
           },
         ),
       );
-      await tester.tap(find.text('Voice'));
+      await tester.tap(find.byTooltip('Voice'));
       await tester.pump();
       expect(share(tester).onPressed, isNull);
       recorder.emitAmplitude(0.5);
@@ -325,7 +325,7 @@ void main() {
         ),
       );
       await tester.enterText(find.byType(TextField), 'Lake at dusk');
-      await tester.tap(find.text('Media'));
+      await tester.tap(find.byTooltip('Media'));
       await finishPick(tester);
 
       expect(shownPaths(tester), ['/tmp/one.jpg']);
@@ -350,6 +350,61 @@ void main() {
     },
   );
 
+  testWidgets('on a small phone with the keyboard up, Share and the toolbar '
+      'stay in view', (tester) async {
+    tester.view.physicalSize = const Size(320, 568) * 3;
+    tester.view.devicePixelRatio = 3;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 260 * 3);
+    addTearDown(tester.view.reset);
+    const keyboardTop = 568.0 - 260;
+    var shared = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Material(
+          color: Colors.black,
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: ComposePostSheet(
+              thoughtsOnly: true,
+              eligibleContacts: const [],
+              onSubmitWithOutcome: (_) async {
+                shared++;
+                return ComposePostSubmitOutcome.keepSheetOpen;
+              },
+              onPickMedia: () async =>
+                  (drafts: const [photoOne], leftOut: false),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'Lake at dusk');
+    await tester.tap(find.byTooltip('Media'));
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/one.jpg']);
+
+    final shareButton = find.byKey(const ValueKey('thought-composer-share'));
+    final shareRect = tester.getRect(shareButton);
+    expect(shareRect.top, greaterThanOrEqualTo(0));
+    expect(shareRect.bottom, lessThanOrEqualTo(keyboardTop));
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey('thought-composer-toolbar')))
+          .bottom,
+      moreOrLessEquals(keyboardTop, epsilon: 1),
+    );
+    expect(
+      tester.getRect(find.byTooltip('Voice')).bottom,
+      lessThanOrEqualTo(keyboardTop),
+    );
+
+    await tester.tap(shareButton);
+    await tester.pump();
+    expect(shared, 1);
+  });
+
   testWidgets('a mixed photo and video pick keeps photos and says so', (
     tester,
   ) async {
@@ -360,7 +415,7 @@ void main() {
       ),
     );
     expect(find.text(leftOutLine), findsNothing);
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
@@ -375,7 +430,7 @@ void main() {
         submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
       ),
     );
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
@@ -395,13 +450,13 @@ void main() {
         submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
       ),
     );
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
     expect(find.text(leftOutLine), findsNothing);
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(shownPaths(tester), ['/tmp/clip.mp4']);
   });
@@ -417,12 +472,12 @@ void main() {
     );
     await tester.enterText(find.byType(TextField), 'Still here');
     await tester.pump();
-    await tester.tap(find.text('Media'));
+    await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
     expect(find.text("Couldn't add your media. Try again."), findsOneWidget);
     expect(find.text('Send failed'), findsNothing);
     expect(find.text('Still here'), findsOneWidget);
-    expect(find.text('Media'), findsOneWidget);
+    expect(find.byTooltip('Media'), findsOneWidget);
   });
 
   testWidgets('a failed share is explained inside the sheet, keeps text', (
@@ -463,7 +518,7 @@ void main() {
         },
       ),
     );
-    await tester.tap(find.text('Voice'));
+    await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     recorder.emitAmplitude(0.4);
     await recorder.triggerAutoStop();
@@ -489,7 +544,7 @@ void main() {
         submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
       ),
     );
-    await tester.tap(find.text('Voice'));
+    await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(
       find.text(
@@ -511,7 +566,7 @@ void main() {
       ),
     );
     const busyLine = 'The microphone is busy right now. Try again in a moment.';
-    await tester.tap(find.text('Voice'));
+    await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(find.text(busyLine), findsOneWidget);
     callLease.release();
@@ -525,7 +580,7 @@ void main() {
       ),
     );
     expect(find.text(busyLine), findsNothing);
-    await tester.tap(find.text('Voice'));
+    await tester.tap(find.byTooltip('Voice'));
     await tester.pump();
     expect(find.text(busyLine), findsOneWidget);
   });
@@ -544,7 +599,7 @@ void main() {
         scene(submit: keep, media: () async => [photo], onClosed: closed.add),
       );
       await tester.enterText(find.byType(TextField), 'Half a thought');
-      await tester.tap(find.text('Media'));
+      await tester.tap(find.byTooltip('Media'));
       await finishPick(tester);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(closed, hasLength(1));

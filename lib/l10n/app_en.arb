@@ -62,7 +62,10 @@
   "posts_time_now": "Right now",
   "posts_time_earlier": "Earlier today",
   "posts_time_yesterday": "Yesterday",
-  "thought_compose_title": "Share a thought",
+  "thought_compose_header": "New thought",
+  "@thought_compose_header": {
+    "description": "Title in the middle of the Thought composer header, between Cancel and Share."
+  },
   "thought_compose_share": "Share",
   "thought_compose_lifetime": "All your friends see this for 24 hours",
   "thought_compose_replaces": "Sharing replaces the thought you have up now",

@@ -145,7 +145,7 @@ void main() {
       );
       await focusField(tester);
 
-      await tester.tap(find.text('Media'));
+      await tester.tap(find.byTooltip('Media'));
       await tester.pump();
 
       expect(attached, 1);

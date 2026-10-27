@@ -187,7 +187,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get posts_time_yesterday => 'Yesterday';
 
   @override
-  String get thought_compose_title => 'Share a thought';
+  String get thought_compose_header => 'New thought';
 
   @override
   String get thought_compose_share => 'Share';

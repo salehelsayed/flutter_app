@@ -597,6 +597,381 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         .where((contact) => !contact.isArchived && !contact.isBlocked)
         .toList(growable: false);
 
+    final body = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!widget.thoughtsOnly)
+          Text(
+            AppLocalizations.of(context)!.compose_title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        if (!widget.thoughtsOnly && widget.activePinCount > 0) ...[
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1E26),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: const Color.fromRGBO(143, 214, 181, 0.25),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.bookmark_border,
+                  color: Color(0xFF8FD6B5),
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.activePinCount == 1
+                        ? AppLocalizations.of(context)!.compose_pinned_1
+                        : AppLocalizations.of(
+                            context,
+                          )!.compose_pinned_n(widget.activePinCount),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                if (widget.onManagePins != null)
+                  TextButton(
+                    onPressed: widget.onManagePins,
+                    child: Text(AppLocalizations.of(context)!.compose_manage),
+                  ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        TextField(
+          controller: _textController,
+          textDirection: _inputDirection,
+          maxLines: widget.thoughtsOnly ? 6 : 5,
+          minLines: widget.thoughtsOnly ? 2 : 4,
+          maxLength: widget.thoughtsOnly ? _thoughtMaxLength : null,
+          // A Thought shows its count on the toolbar instead.
+          buildCounter: widget.thoughtsOnly ? _noCounter : null,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            hintText: AppLocalizations.of(context)!.compose_hint,
+            hintStyle: const TextStyle(
+              color: Color.fromRGBO(255, 255, 255, 0.35),
+            ),
+            filled: !widget.thoughtsOnly,
+            fillColor: const Color(0xFF1A1E26),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(20),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          style: const TextStyle(color: Colors.white),
+        ),
+        const SizedBox(height: 16),
+        if (!widget.thoughtsOnly)
+          Wrap(
+            spacing: 10,
+            children: [
+              ChoiceChip(
+                label: Text(AppLocalizations.of(context)!.compose_audience_all),
+                selected: _audienceKind == PostAudienceKind.allFriends,
+                onSelected: (_) {
+                  setState(() {
+                    _audienceKind = PostAudienceKind.allFriends;
+                    _selectedPeerIds.clear();
+                  });
+                },
+              ),
+              ChoiceChip(
+                label: Text(
+                  AppLocalizations.of(context)!.compose_audience_nearby,
+                ),
+                selected: _audienceKind == PostAudienceKind.peopleNearby,
+                onSelected: (_) {
+                  setState(() {
+                    _audienceKind = PostAudienceKind.peopleNearby;
+                    _selectedPeerIds.clear();
+                  });
+                },
+              ),
+              ChoiceChip(
+                label: Text(
+                  AppLocalizations.of(context)!.compose_audience_pick,
+                ),
+                selected: _audienceKind == PostAudienceKind.pickPeople,
+                onSelected: (_) {
+                  setState(() {
+                    _audienceKind = PostAudienceKind.pickPeople;
+                  });
+                },
+              ),
+            ],
+          ),
+        if (!widget.thoughtsOnly &&
+            _audienceKind == PostAudienceKind.peopleNearby) ...[
+          const SizedBox(height: 16),
+          Text(
+            AppLocalizations.of(context)!.compose_radius,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 10,
+            children: <int>[500, 1000, 2000]
+                .map((radiusM) {
+                  final l10n = AppLocalizations.of(context)!;
+                  final label = switch (radiusM) {
+                    500 => l10n.compose_radius_500,
+                    1000 => l10n.compose_radius_1k,
+                    _ => l10n.compose_radius_2k,
+                  };
+                  return ChoiceChip(
+                    label: Text(label),
+                    selected: _nearbyRadiusM == radiusM,
+                    onSelected: (_) {
+                      setState(() => _nearbyRadiusM = radiusM);
+                    },
+                  );
+                })
+                .toList(growable: false),
+          ),
+        ],
+        if (!widget.thoughtsOnly && _nearbyAvailability != null) ...[
+          const SizedBox(height: 16),
+          _NearbyComposeAvailabilityCard(
+            availability: _nearbyAvailability!,
+            isRefreshing: _isRefreshingNearby,
+            onRefresh: widget.onRefreshNearby == null ? null : _refreshNearby,
+            onOpenSettings: widget.onOpenNearbySettings == null
+                ? null
+                : _openNearbySettings,
+          ),
+        ],
+        if (!widget.thoughtsOnly) ...[
+          const SizedBox(height: 16),
+          // Media and voice belong to the field: tapping them keeps
+          // the keyboard.
+          TextFieldTapRegion(
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed:
+                      (widget.onAttachMedia == null &&
+                              widget.onPickMedia == null) ||
+                          _isRecording
+                      ? null
+                      : _attachMedia,
+                  icon: const Icon(Icons.photo_library_outlined, size: 18),
+                  label: Text(
+                    _isAttaching
+                        ? AppLocalizations.of(context)!.compose_media_adding
+                        : AppLocalizations.of(context)!.compose_media,
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed:
+                      (widget.onAttachVoice == null &&
+                          widget.audioRecorderService == null)
+                      ? null
+                      : _attachVoice,
+                  icon: const Icon(Icons.mic_none_rounded, size: 18),
+                  label: Text(AppLocalizations.of(context)!.compose_voice),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (_isRecording) ...[
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: RecordingOverlay(
+                  elapsed: _recordingDuration,
+                  amplitudeValues: _recordingAmplitudes,
+                  onCancel: () {
+                    unawaited(_cancelVoiceRecording());
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.icon(
+                onPressed: _stopVoiceRecording,
+                icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                label: Text(AppLocalizations.of(context)!.compose_voice_stop),
+              ),
+            ],
+          ),
+        ],
+        if (widget.thoughtsOnly &&
+            _mediaDrafts.isNotEmpty &&
+            _mediaDrafts.every((draft) => draft.kind == 'image')) ...[
+          const SizedBox(height: 12),
+          ThoughtPhotoDraftPreview(
+            paths: [for (final draft in _mediaDrafts) draft.localFilePath],
+            onRemove: (index) => setState(
+              () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+            ),
+          ),
+        ] else if (_mediaDrafts.isNotEmpty &&
+            _mediaDrafts.first.kind != 'voice') ...[
+          const SizedBox(height: 12),
+          AttachmentPreviewStrip(
+            attachments: [
+              for (final draft in _mediaDrafts) File(draft.localFilePath),
+            ],
+            onRemove: (index) => setState(
+              () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+            ),
+          ),
+        ],
+        if (_mediaDrafts.isNotEmpty && _mediaDrafts.first.kind == 'voice') ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1A1E26),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _mediaDrafts.first.kind == 'voice'
+                        ? AppLocalizations.of(context)!.compose_voice_attached
+                        : AppLocalizations.of(
+                            context,
+                          )!.compose_attachments(_mediaDrafts.length),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: _clearDrafts,
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (!widget.thoughtsOnly &&
+            _audienceKind == PostAudienceKind.pickPeople) ...[
+          const SizedBox(height: 16),
+          Text(
+            AppLocalizations.of(context)!.compose_pick_people,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: contacts.length,
+              separatorBuilder: (_, _) => const Divider(
+                color: Color.fromRGBO(255, 255, 255, 0.06),
+                height: 1,
+              ),
+              itemBuilder: (context, index) {
+                final contact = contacts[index];
+                final isSelected = _selectedPeerIds.contains(contact.peerId);
+                return CheckboxListTile(
+                  value: isSelected,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.trailing,
+                  title: Text(
+                    contact.username,
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                  subtitle: Text(
+                    contact.peerId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color.fromRGBO(255, 255, 255, 0.45),
+                      fontSize: 12,
+                    ),
+                  ),
+                  onChanged: (_) {
+                    setState(() {
+                      if (isSelected) {
+                        _selectedPeerIds.remove(contact.peerId);
+                      } else {
+                        _selectedPeerIds.add(contact.peerId);
+                      }
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+        const SizedBox(height: 20),
+        if (widget.thoughtsOnly) ...[
+          Text(
+            AppLocalizations.of(context)!.thought_compose_lifetime,
+            key: const ValueKey('thought-composer-lifetime'),
+            style: const TextStyle(color: Colors.white70),
+          ),
+          if (widget.replacesCurrentThought) ...[
+            const SizedBox(height: 4),
+            Text(
+              AppLocalizations.of(context)!.thought_compose_replaces,
+              key: const ValueKey('thought-composer-replaces'),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+        ],
+        if (_notice case final notice?) ...[
+          Text(
+            _noticeText(AppLocalizations.of(context)!, notice),
+            style: const TextStyle(color: Color(0xFFFFB4A9)),
+          ),
+          const SizedBox(height: 12),
+        ],
+        if (!widget.thoughtsOnly)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _canSubmit ? _submit : null,
+              child: Text(
+                _isSubmitting
+                    ? AppLocalizations.of(context)!.compose_posting
+                    : AppLocalizations.of(context)!.compose_post,
+              ),
+            ),
+          ),
+      ],
+    );
+    if (widget.thoughtsOnly) return _thoughtSheet(context, body);
     return SafeArea(
       child: Padding(
         padding: EdgeInsets.only(
@@ -610,428 +985,166 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           borderRadius: BorderRadius.circular(28),
           child: Padding(
             padding: const EdgeInsets.all(20),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    widget.thoughtsOnly
-                        ? AppLocalizations.of(context)!.thought_compose_title
-                        : AppLocalizations.of(context)!.compose_title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (!widget.thoughtsOnly && widget.activePinCount > 0) ...[
-                    const SizedBox(height: 14),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1A1E26),
-                        borderRadius: BorderRadius.circular(18),
-                        border: Border.all(
-                          color: const Color.fromRGBO(143, 214, 181, 0.25),
-                        ),
+            child: SingleChildScrollView(child: body),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// A Thought keeps Share in the header and its photo and mic on a toolbar
+  /// that rides just above the keyboard, so neither scrolls out of reach.
+  Widget _thoughtSheet(BuildContext context, Widget body) {
+    final l10n = AppLocalizations.of(context)!;
+    final counter = _thoughtCounter(
+      context,
+      currentLength: _textController.text.length,
+      isFocused: false,
+      maxLength: _thoughtMaxLength,
+    );
+    return Padding(
+      padding: EdgeInsets.only(
+        top: MediaQuery.paddingOf(context).top + 12,
+        bottom: MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Material(
+        color: const Color(0xFF111318),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 6, 12, 2),
+                child: Row(
+                  children: [
+                    TextButton(
+                      key: const ValueKey('thought-composer-cancel'),
+                      onPressed: () => Navigator.of(context).maybePop(),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white70,
                       ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.bookmark_border,
-                            color: Color(0xFF8FD6B5),
-                            size: 18,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              widget.activePinCount == 1
-                                  ? AppLocalizations.of(
-                                      context,
-                                    )!.compose_pinned_1
-                                  : AppLocalizations.of(
-                                      context,
-                                    )!.compose_pinned_n(widget.activePinCount),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          if (widget.onManagePins != null)
-                            TextButton(
-                              onPressed: widget.onManagePins,
-                              child: Text(
-                                AppLocalizations.of(context)!.compose_manage,
-                              ),
-                            ),
-                        ],
-                      ),
+                      child: Text(l10n.btn_cancel),
                     ),
-                  ],
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _textController,
-                    textDirection: _inputDirection,
-                    maxLines: 5,
-                    minLines: 4,
-                    maxLength: widget.thoughtsOnly ? _thoughtMaxLength : null,
-                    buildCounter: widget.thoughtsOnly ? _thoughtCounter : null,
-                    onChanged: (_) => setState(() {}),
-                    decoration: InputDecoration(
-                      hintText: AppLocalizations.of(context)!.compose_hint,
-                      hintStyle: const TextStyle(
-                        color: Color.fromRGBO(255, 255, 255, 0.35),
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xFF1A1E26),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  const SizedBox(height: 16),
-                  if (!widget.thoughtsOnly)
-                    Wrap(
-                      spacing: 10,
-                      children: [
-                        ChoiceChip(
-                          label: Text(
-                            AppLocalizations.of(context)!.compose_audience_all,
-                          ),
-                          selected:
-                              _audienceKind == PostAudienceKind.allFriends,
-                          onSelected: (_) {
-                            setState(() {
-                              _audienceKind = PostAudienceKind.allFriends;
-                              _selectedPeerIds.clear();
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: Text(
-                            AppLocalizations.of(
-                              context,
-                            )!.compose_audience_nearby,
-                          ),
-                          selected:
-                              _audienceKind == PostAudienceKind.peopleNearby,
-                          onSelected: (_) {
-                            setState(() {
-                              _audienceKind = PostAudienceKind.peopleNearby;
-                              _selectedPeerIds.clear();
-                            });
-                          },
-                        ),
-                        ChoiceChip(
-                          label: Text(
-                            AppLocalizations.of(context)!.compose_audience_pick,
-                          ),
-                          selected:
-                              _audienceKind == PostAudienceKind.pickPeople,
-                          onSelected: (_) {
-                            setState(() {
-                              _audienceKind = PostAudienceKind.pickPeople;
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  if (!widget.thoughtsOnly &&
-                      _audienceKind == PostAudienceKind.peopleNearby) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      AppLocalizations.of(context)!.compose_radius,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 10,
-                      children: <int>[500, 1000, 2000]
-                          .map((radiusM) {
-                            final l10n = AppLocalizations.of(context)!;
-                            final label = switch (radiusM) {
-                              500 => l10n.compose_radius_500,
-                              1000 => l10n.compose_radius_1k,
-                              _ => l10n.compose_radius_2k,
-                            };
-                            return ChoiceChip(
-                              label: Text(label),
-                              selected: _nearbyRadiusM == radiusM,
-                              onSelected: (_) {
-                                setState(() => _nearbyRadiusM = radiusM);
-                              },
-                            );
-                          })
-                          .toList(growable: false),
-                    ),
-                  ],
-                  if (!widget.thoughtsOnly && _nearbyAvailability != null) ...[
-                    const SizedBox(height: 16),
-                    _NearbyComposeAvailabilityCard(
-                      availability: _nearbyAvailability!,
-                      isRefreshing: _isRefreshingNearby,
-                      onRefresh: widget.onRefreshNearby == null
-                          ? null
-                          : _refreshNearby,
-                      onOpenSettings: widget.onOpenNearbySettings == null
-                          ? null
-                          : _openNearbySettings,
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  // Media and voice belong to the field: tapping them keeps
-                  // the keyboard.
-                  TextFieldTapRegion(
-                    child: Wrap(
-                      spacing: 10,
-                      runSpacing: 8,
-                      children: [
-                        OutlinedButton.icon(
-                          onPressed:
-                              (widget.onAttachMedia == null &&
-                                      widget.onPickMedia == null) ||
-                                  _isRecording
-                              ? null
-                              : _attachMedia,
-                          icon: const Icon(
-                            Icons.photo_library_outlined,
-                            size: 18,
-                          ),
-                          label: Text(
-                            _isAttaching
-                                ? AppLocalizations.of(
-                                    context,
-                                  )!.compose_media_adding
-                                : AppLocalizations.of(context)!.compose_media,
-                          ),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed:
-                              (widget.onAttachVoice == null &&
-                                  widget.audioRecorderService == null)
-                              ? null
-                              : _attachVoice,
-                          icon: const Icon(Icons.mic_none_rounded, size: 18),
-                          label: Text(
-                            AppLocalizations.of(context)!.compose_voice,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_isRecording) ...[
-                    const SizedBox(height: 12),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: RecordingOverlay(
-                            elapsed: _recordingDuration,
-                            amplitudeValues: _recordingAmplitudes,
-                            onCancel: () {
-                              unawaited(_cancelVoiceRecording());
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        FilledButton.icon(
-                          onPressed: _stopVoiceRecording,
-                          icon: const Icon(
-                            Icons.stop_circle_outlined,
-                            size: 18,
-                          ),
-                          label: Text(
-                            AppLocalizations.of(context)!.compose_voice_stop,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                  if (widget.thoughtsOnly &&
-                      _mediaDrafts.isNotEmpty &&
-                      _mediaDrafts.every((draft) => draft.kind == 'image')) ...[
-                    const SizedBox(height: 12),
-                    ThoughtPhotoDraftPreview(
-                      paths: [
-                        for (final draft in _mediaDrafts) draft.localFilePath,
-                      ],
-                      onRemove: (index) => setState(
-                        () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
-                      ),
-                    ),
-                  ] else if (_mediaDrafts.isNotEmpty &&
-                      _mediaDrafts.first.kind != 'voice') ...[
-                    const SizedBox(height: 12),
-                    AttachmentPreviewStrip(
-                      attachments: [
-                        for (final draft in _mediaDrafts)
-                          File(draft.localFilePath),
-                      ],
-                      onRemove: (index) => setState(
-                        () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
-                      ),
-                    ),
-                  ],
-                  if (_mediaDrafts.isNotEmpty &&
-                      _mediaDrafts.first.kind == 'voice') ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1A1E26),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _mediaDrafts.first.kind == 'voice'
-                                  ? AppLocalizations.of(
-                                      context,
-                                    )!.compose_voice_attached
-                                  : AppLocalizations.of(
-                                      context,
-                                    )!.compose_attachments(_mediaDrafts.length),
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: _clearDrafts,
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              color: Colors.white70,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (!widget.thoughtsOnly &&
-                      _audienceKind == PostAudienceKind.pickPeople) ...[
-                    const SizedBox(height: 16),
-                    Text(
-                      AppLocalizations.of(context)!.compose_pick_people,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: contacts.length,
-                        separatorBuilder: (_, _) => const Divider(
-                          color: Color.fromRGBO(255, 255, 255, 0.06),
-                          height: 1,
-                        ),
-                        itemBuilder: (context, index) {
-                          final contact = contacts[index];
-                          final isSelected = _selectedPeerIds.contains(
-                            contact.peerId,
-                          );
-                          return CheckboxListTile(
-                            value: isSelected,
-                            dense: true,
-                            contentPadding: EdgeInsets.zero,
-                            controlAffinity: ListTileControlAffinity.trailing,
-                            title: Text(
-                              contact.username,
-                              style: const TextStyle(color: Colors.white),
-                            ),
-                            subtitle: Text(
-                              contact.peerId,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color.fromRGBO(255, 255, 255, 0.45),
-                                fontSize: 12,
-                              ),
-                            ),
-                            onChanged: (_) {
-                              setState(() {
-                                if (isSelected) {
-                                  _selectedPeerIds.remove(contact.peerId);
-                                } else {
-                                  _selectedPeerIds.add(contact.peerId);
-                                }
-                              });
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 20),
-                  if (widget.thoughtsOnly) ...[
-                    Text(
-                      AppLocalizations.of(context)!.thought_compose_lifetime,
-                      key: const ValueKey('thought-composer-lifetime'),
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    if (widget.replacesCurrentThought) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        AppLocalizations.of(context)!.thought_compose_replaces,
-                        key: const ValueKey('thought-composer-replaces'),
+                    Expanded(
+                      child: Text(
+                        l10n.thought_compose_header,
+                        textAlign: TextAlign.center,
                         style: const TextStyle(
                           color: Colors.white,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 12),
-                  ],
-                  if (_notice case final notice?) ...[
-                    Text(
-                      _noticeText(AppLocalizations.of(context)!, notice),
-                      style: const TextStyle(color: Color(0xFFFFB4A9)),
                     ),
-                    const SizedBox(height: 12),
-                  ],
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      key: widget.thoughtsOnly
-                          ? const ValueKey('thought-composer-share')
-                          : null,
+                    ElevatedButton(
+                      key: const ValueKey('thought-composer-share'),
                       onPressed: _canSubmit ? _submit : null,
-                      child: Text(
-                        widget.thoughtsOnly
-                            ? AppLocalizations.of(
-                                context,
-                              )!.thought_compose_share
-                            : _isSubmitting
-                            ? AppLocalizations.of(context)!.compose_posting
-                            : AppLocalizations.of(context)!.compose_post,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F766E),
+                        foregroundColor: Colors.white,
+                        shape: const StadiumBorder(),
+                        minimumSize: const Size(72, 36),
                       ),
+                      child: Text(l10n.thought_compose_share),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                  child: body,
+                ),
+              ),
+              // Photo and mic belong to the field: tapping them keeps the
+              // keyboard.
+              TextFieldTapRegion(
+                child: Container(
+                  key: const ValueKey('thought-composer-toolbar'),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: const BoxDecoration(
+                    border: Border(top: BorderSide(color: Color(0x1FFFFFFF))),
+                  ),
+                  child: Row(
+                    children: [
+                      _ToolButton(
+                        key: const ValueKey('thought-composer-media'),
+                        icon: Icons.photo_library_outlined,
+                        label: _isAttaching
+                            ? l10n.compose_media_adding
+                            : l10n.compose_media,
+                        onPressed:
+                            (widget.onAttachMedia == null &&
+                                    widget.onPickMedia == null) ||
+                                _isRecording
+                            ? null
+                            : _attachMedia,
+                      ),
+                      const SizedBox(width: 12),
+                      _ToolButton(
+                        key: const ValueKey('thought-composer-voice'),
+                        icon: Icons.mic_none_rounded,
+                        label: l10n.compose_voice,
+                        onPressed:
+                            widget.onAttachVoice == null &&
+                                widget.audioRecorderService == null
+                            ? null
+                            : _attachVoice,
+                      ),
+                      const Spacer(),
+                      ?counter,
+                      const SizedBox(width: 6),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 }
+
+/// A round outlined photo or mic button on the Thought toolbar.
+class _ToolButton extends StatelessWidget {
+  const _ToolButton({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => IconButton.outlined(
+    tooltip: label,
+    onPressed: onPressed,
+    style: IconButton.styleFrom(
+      foregroundColor: const Color(0xFF7FD8CC),
+      side: BorderSide(
+        color: onPressed == null ? Colors.white24 : const Color(0xFF7FD8CC),
+        width: 1.4,
+      ),
+    ),
+    icon: Icon(icon, size: 22),
+  );
+}
+
+Widget? _noCounter(
+  BuildContext context, {
+  required int currentLength,
+  required bool isFocused,
+  required int? maxLength,
+}) => null;
 
 Widget? _thoughtCounter(
   BuildContext context, {
