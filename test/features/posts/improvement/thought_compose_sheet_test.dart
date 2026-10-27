@@ -653,6 +653,25 @@ void main() {
     expect(closed, [null]);
   });
 
+  testWidgets('emoji count as one character each on the toolbar', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      scene(submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen),
+    );
+    await tester.enterText(find.byType(TextField), '😀' * 449);
+    await tester.pump();
+    expect(find.text('449/500'), findsNothing);
+    expect(find.text('898/500'), findsNothing);
+    await tester.enterText(find.byType(TextField), '😀' * 460);
+    await tester.pump();
+    expect(find.text('460/500'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '😀' * 500);
+    await tester.pump();
+    expect(find.text('500/500'), findsOneWidget);
+    expect(share(tester).onPressed, isNotNull);
+  });
+
   testWidgets(
     'a thought stops at 500 characters, counts only near the end, and Share refuses more',
     (tester) async {

@@ -998,7 +998,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final l10n = AppLocalizations.of(context)!;
     final counter = _thoughtCounter(
       context,
-      currentLength: _textController.text.length,
+      currentLength: _textController.text.characters.length,
       isFocused: false,
       maxLength: _thoughtMaxLength,
     );

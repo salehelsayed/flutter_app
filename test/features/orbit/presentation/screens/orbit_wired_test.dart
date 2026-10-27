@@ -1728,6 +1728,45 @@ void main() {
       },
     );
 
+    testWidgets('the thought composer header stays below the status bar', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(320, 568) * 3;
+      tester.view.devicePixelRatio = 3;
+      tester.view.padding = const FakeViewPadding(top: 47 * 3);
+      addTearDown(tester.view.reset);
+      identityRepo.seed(testIdentity);
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
+      await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+      await pumpOrbitFrames(tester, count: 6);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 330 * 3);
+      await tester.enterText(find.byType(TextField), 'a line\n' * 12);
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('thought-composer-cancel')))
+            .top,
+        greaterThanOrEqualTo(47),
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('thought-composer-share')))
+            .top,
+        greaterThanOrEqualTo(47),
+      );
+      expect(
+        tester
+            .getRect(find.byKey(const ValueKey('thought-composer-toolbar')))
+            .bottom,
+        lessThanOrEqualTo(568.0 - 330 + .5),
+      );
+      await finishThoughtCase(tester);
+    });
+
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,
     ) async {

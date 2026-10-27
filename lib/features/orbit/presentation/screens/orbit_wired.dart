@@ -1052,6 +1052,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
+        // The composer's header can reach the top; keep it below the notch.
+        useSafeArea: true,
         backgroundColor: Colors.transparent,
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
