@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
+import 'package:flutter_app/shared/widgets/tap_outside_hides_keyboard.dart';
 
 typedef ApplicationBootstrapFactory = ApplicationBootstrap Function();
 
@@ -58,7 +59,7 @@ final class FlutterApplicationHost
 
   @override
   void launch(Widget rootWidget) {
-    runApp(rootWidget);
+    runApp(TapOutsideHidesKeyboard(child: rootWidget));
   }
 
   @override

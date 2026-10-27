@@ -464,165 +464,96 @@ class _ComposeAreaState extends State<ComposeArea>
     final readableColors = context.backgroundReadableColors;
     final isLightSurface = readableColors.isLightSurface;
 
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-        child: Container(
-          padding: EdgeInsets.fromLTRB(
-            16,
-            widget.compact ? 4 : 12,
-            16,
-            (widget.compact ? 4 : 12) + bottomPadding,
-          ),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Colors.transparent, readableColors.composerBarColor],
-              stops: const [0.0, 0.2],
+    // The whole bar counts as the field's own area: send, attach, voice and
+    // quote controls keep the keyboard up.
+    return TextFieldTapRegion(
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              widget.compact ? 4 : 12,
+              16,
+              (widget.compact ? 4 : 12) + bottomPadding,
             ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!widget.compact &&
-                  widget.privateMediaEligibility.allowsNewPrivateMedia &&
-                  widget.onPrivateMediaPolicyChanged != null)
-                _buildPrivateMediaSelector(context),
-              if (showQuotePreview && !widget.compact)
-                QuotePreviewBar(
-                  text: quotePreviewText!,
-                  onDismiss: widget.onClearQuote,
-                ),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  // Attachment button
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 3),
-                    child: ActionSemantics(
-                      identifier: 'chat_attach',
-                      label: AppLocalizations.of(
-                        context,
-                      )!.action_add_attachment,
-                      enabled:
-                          !widget.isProcessing &&
-                          !_isRecording &&
-                          widget.onAttach != null,
-                      child: GestureDetector(
-                        onTap: widget.isProcessing || _isRecording
-                            ? null
-                            : widget.onAttach,
-                        behavior: HitTestBehavior.opaque,
-                        child: Container(
-                          key: const ValueKey('composer-attach-button'),
-                          // Match the VoiceRecordButton / send button (48x48) so
-                          // the "+" is on the same accessible tap-target baseline
-                          // as the other composer action buttons (204 BUG-2).
-                          width: 48,
-                          height: 48,
-                          decoration: BoxDecoration(
-                            color: widget.isProcessing
-                                ? (isLightSurface
-                                      ? readableColors.composerInputFill
-                                            .withValues(alpha: 0.55)
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.04,
-                                        ))
-                                : (isLightSurface
-                                      ? readableColors.composerInputFill
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.08,
-                                        )),
-                            borderRadius: BorderRadius.circular(100),
-                            border: Border.all(
-                              color: widget.isProcessing
-                                  ? (isLightSurface
-                                        ? readableColors.inputBorder.withValues(
-                                            alpha: 0.18,
-                                          )
-                                        : const Color.fromRGBO(
-                                            255,
-                                            255,
-                                            255,
-                                            0.06,
-                                          ))
-                                  : (isLightSurface
-                                        ? readableColors.inputBorder
-                                        : const Color.fromRGBO(
-                                            255,
-                                            255,
-                                            255,
-                                            0.15,
-                                          )),
-                            ),
-                          ),
-                          child: Center(
-                            child: Icon(
-                              Icons.add_rounded,
-                              size: 20,
-                              color: widget.isProcessing
-                                  ? (isLightSurface
-                                        ? readableColors.iconMuted.withValues(
-                                            alpha: 0.55,
-                                          )
-                                        : const Color.fromRGBO(
-                                            255,
-                                            255,
-                                            255,
-                                            0.15,
-                                          ))
-                                  : (isLightSurface
-                                        ? readableColors.iconMuted
-                                        : const Color.fromRGBO(
-                                            255,
-                                            255,
-                                            255,
-                                            0.5,
-                                          )),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Colors.transparent, readableColors.composerBarColor],
+                stops: const [0.0, 0.2],
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!widget.compact &&
+                    widget.privateMediaEligibility.allowsNewPrivateMedia &&
+                    widget.onPrivateMediaPolicyChanged != null)
+                  _buildPrivateMediaSelector(context),
+                if (showQuotePreview && !widget.compact)
+                  QuotePreviewBar(
+                    text: quotePreviewText!,
+                    onDismiss: widget.onClearQuote,
                   ),
-                  const SizedBox(width: 8),
-                  // Review preview, recording overlay, or text input
-                  Expanded(
-                    child: widget.recordingState.isReviewing
-                        ? _buildReviewPreview(context)
-                        : _isRecording
-                        ? RecordingOverlay(
-                            elapsed: widget.recordingDuration,
-                            onCancel: widget.onRecordCancel ?? () {},
-                            amplitudeValues: widget.amplitudeValues,
-                          )
-                        : AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            constraints: BoxConstraints(
-                              minHeight: 44,
-                              maxHeight: widget.compact ? 48 : 160,
-                            ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Attachment button
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: ActionSemantics(
+                        identifier: 'chat_attach',
+                        label: AppLocalizations.of(
+                          context,
+                        )!.action_add_attachment,
+                        enabled:
+                            !widget.isProcessing &&
+                            !_isRecording &&
+                            widget.onAttach != null,
+                        child: GestureDetector(
+                          onTap: widget.isProcessing || _isRecording
+                              ? null
+                              : widget.onAttach,
+                          behavior: HitTestBehavior.opaque,
+                          child: Container(
+                            key: const ValueKey('composer-attach-button'),
+                            // Match the VoiceRecordButton / send button (48x48) so
+                            // the "+" is on the same accessible tap-target baseline
+                            // as the other composer action buttons (204 BUG-2).
+                            width: 48,
+                            height: 48,
                             decoration: BoxDecoration(
-                              color: isLightSurface
-                                  ? readableColors.composerInputFill
-                                  : const Color.fromRGBO(255, 255, 255, 0.06),
-                              borderRadius: BorderRadius.circular(22),
+                              color: widget.isProcessing
+                                  ? (isLightSurface
+                                        ? readableColors.composerInputFill
+                                              .withValues(alpha: 0.55)
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.04,
+                                          ))
+                                  : (isLightSurface
+                                        ? readableColors.composerInputFill
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.08,
+                                          )),
+                              borderRadius: BorderRadius.circular(100),
                               border: Border.all(
-                                color: _hasFocus
+                                color: widget.isProcessing
                                     ? (isLightSurface
-                                          ? readableColors.accent
+                                          ? readableColors.inputBorder
+                                                .withValues(alpha: 0.18)
                                           : const Color.fromRGBO(
                                               255,
                                               255,
                                               255,
-                                              0.20,
+                                              0.06,
                                             ))
                                     : (isLightSurface
                                           ? readableColors.inputBorder
@@ -630,183 +561,254 @@ class _ComposeAreaState extends State<ComposeArea>
                                               255,
                                               255,
                                               255,
-                                              0.10,
+                                              0.15,
                                             )),
                               ),
-                              boxShadow: _hasFocus
-                                  ? [
-                                      BoxShadow(
-                                        color: isLightSurface
-                                            ? readableColors.accent.withValues(
-                                                alpha: 0.10,
-                                              )
+                            ),
+                            child: Center(
+                              child: Icon(
+                                Icons.add_rounded,
+                                size: 20,
+                                color: widget.isProcessing
+                                    ? (isLightSurface
+                                          ? readableColors.iconMuted.withValues(
+                                              alpha: 0.55,
+                                            )
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.15,
+                                            ))
+                                    : (isLightSurface
+                                          ? readableColors.iconMuted
+                                          : const Color.fromRGBO(
+                                              255,
+                                              255,
+                                              255,
+                                              0.5,
+                                            )),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Review preview, recording overlay, or text input
+                    Expanded(
+                      child: widget.recordingState.isReviewing
+                          ? _buildReviewPreview(context)
+                          : _isRecording
+                          ? RecordingOverlay(
+                              elapsed: widget.recordingDuration,
+                              onCancel: widget.onRecordCancel ?? () {},
+                              amplitudeValues: widget.amplitudeValues,
+                            )
+                          : AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              constraints: BoxConstraints(
+                                minHeight: 44,
+                                maxHeight: widget.compact ? 48 : 160,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isLightSurface
+                                    ? readableColors.composerInputFill
+                                    : const Color.fromRGBO(255, 255, 255, 0.06),
+                                borderRadius: BorderRadius.circular(22),
+                                border: Border.all(
+                                  color: _hasFocus
+                                      ? (isLightSurface
+                                            ? readableColors.accent
                                             : const Color.fromRGBO(
                                                 255,
                                                 255,
                                                 255,
-                                                0.08,
-                                              ),
-                                        blurRadius: 0,
-                                        spreadRadius: 1,
-                                      ),
-                                      const BoxShadow(
-                                        color: Color.fromRGBO(0, 0, 0, 0.3),
-                                        blurRadius: 20,
-                                        offset: Offset(0, 4),
-                                      ),
-                                    ]
-                                  : null,
-                            ),
-                            // The container makes this the text field's own
-                            // node, so the automation id lands on it.
-                            child: Semantics(
-                              container: true,
-                              identifier: 'chat_composer',
-                              child: TextField(
-                                controller: _controller,
-                                focusNode: _focusNode,
-                                textDirection: _inputDirection,
-                                maxLines: null,
-                                maxLength: maxMessageLength,
-                                enabled: !_isRecording,
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  color: isLightSurface
-                                      ? readableColors.textPrimary
-                                      : const Color.fromRGBO(
-                                          255,
-                                          255,
-                                          255,
-                                          0.95,
-                                        ),
-                                  height: 1.5,
+                                                0.20,
+                                              ))
+                                      : (isLightSurface
+                                            ? readableColors.inputBorder
+                                            : const Color.fromRGBO(
+                                                255,
+                                                255,
+                                                255,
+                                                0.10,
+                                              )),
                                 ),
-                                decoration: InputDecoration(
-                                  prefixIcon: widget.compact
-                                      ? showQuotePreview
-                                            ? const Icon(
-                                                Icons.format_quote,
-                                                size: 18,
-                                              )
-                                            : widget.hasAttachments
-                                            ? const Icon(
-                                                Icons.attach_file,
-                                                size: 18,
-                                              )
-                                            : null
-                                      : null,
-                                  hintText: AppLocalizations.of(
-                                    context,
-                                  )!.conversation_hint,
-                                  hintStyle: TextStyle(
+                                boxShadow: _hasFocus
+                                    ? [
+                                        BoxShadow(
+                                          color: isLightSurface
+                                              ? readableColors.accent
+                                                    .withValues(alpha: 0.10)
+                                              : const Color.fromRGBO(
+                                                  255,
+                                                  255,
+                                                  255,
+                                                  0.08,
+                                                ),
+                                          blurRadius: 0,
+                                          spreadRadius: 1,
+                                        ),
+                                        const BoxShadow(
+                                          color: Color.fromRGBO(0, 0, 0, 0.3),
+                                          blurRadius: 20,
+                                          offset: Offset(0, 4),
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              // The container makes this the text field's own
+                              // node, so the automation id lands on it.
+                              child: Semantics(
+                                container: true,
+                                identifier: 'chat_composer',
+                                child: TextField(
+                                  controller: _controller,
+                                  focusNode: _focusNode,
+                                  textDirection: _inputDirection,
+                                  maxLines: null,
+                                  maxLength: maxMessageLength,
+                                  enabled: !_isRecording,
+                                  style: TextStyle(
                                     fontSize: 15,
                                     color: isLightSurface
-                                        ? readableColors.composerHint
-                                        : (_hasFocus
-                                              ? const Color.fromRGBO(
-                                                  255,
-                                                  255,
-                                                  255,
-                                                  0.2,
+                                        ? readableColors.textPrimary
+                                        : const Color.fromRGBO(
+                                            255,
+                                            255,
+                                            255,
+                                            0.95,
+                                          ),
+                                    height: 1.5,
+                                  ),
+                                  decoration: InputDecoration(
+                                    prefixIcon: widget.compact
+                                        ? showQuotePreview
+                                              ? const Icon(
+                                                  Icons.format_quote,
+                                                  size: 18,
                                                 )
-                                              : readableColors.composerHint),
-                                  ),
-                                  border: InputBorder.none,
-                                  // The rounded AnimatedContainer above paints the
-                                  // fill; the light theme's filled
-                                  // InputDecorationTheme would otherwise paint a
-                                  // square fill rect on top of it.
-                                  filled: false,
-                                  counterText: '',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: widget.compact ? 8 : 12,
+                                              : widget.hasAttachments
+                                              ? const Icon(
+                                                  Icons.attach_file,
+                                                  size: 18,
+                                                )
+                                              : null
+                                        : null,
+                                    hintText: AppLocalizations.of(
+                                      context,
+                                    )!.conversation_hint,
+                                    hintStyle: TextStyle(
+                                      fontSize: 15,
+                                      color: isLightSurface
+                                          ? readableColors.composerHint
+                                          : (_hasFocus
+                                                ? const Color.fromRGBO(
+                                                    255,
+                                                    255,
+                                                    255,
+                                                    0.2,
+                                                  )
+                                                : readableColors.composerHint),
+                                    ),
+                                    border: InputBorder.none,
+                                    // The rounded AnimatedContainer above paints the
+                                    // fill; the light theme's filled
+                                    // InputDecorationTheme would otherwise paint a
+                                    // square fill rect on top of it.
+                                    filled: false,
+                                    counterText: '',
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: widget.compact ? 8 : 12,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Review actions, mic button, or send button
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 3),
-                    child: widget.recordingState.isReviewing
-                        ? _buildReviewActions(context)
-                        : _shouldShowMicButton
-                        ? VoiceRecordButton(
-                            onTapDown: widget.onRecordStart!,
-                            onTapUp: widget.onRecordStop!,
-                            onTapCancel: widget.onRecordCancel ?? () {},
-                            isRecording: _isRecording,
-                            phase: switch (widget.recordingState) {
-                              VoiceRecordingState.arming =>
-                                VoiceRecordPhase.arming,
-                              VoiceRecordingState.stopping =>
-                                VoiceRecordPhase.stopping,
-                              _ =>
-                                _isRecording
-                                    ? VoiceRecordPhase.recording
-                                    : VoiceRecordPhase.idle,
-                            },
-                          )
-                        : AnimatedBuilder(
-                            animation: _sendButtonController,
-                            builder: (context, child) {
-                              return Opacity(
-                                opacity: _sendOpacity.value,
-                                child: Transform.scale(
-                                  scale: _sendScale.value,
-                                  child: child,
-                                ),
-                              );
-                            },
-                            child: ActionSemantics(
-                              identifier: 'chat_send',
-                              label: AppLocalizations.of(
-                                context,
-                              )!.action_send_message,
-                              enabled:
-                                  !widget.isProcessing &&
-                                  !widget.isSending &&
-                                  !widget.hasInvalidAttachment &&
-                                  (_hasText || widget.hasAttachments),
-                              child: GestureDetector(
-                                onTap:
+                    ),
+                    const SizedBox(width: 8),
+                    // Review actions, mic button, or send button
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 3),
+                      child: widget.recordingState.isReviewing
+                          ? _buildReviewActions(context)
+                          : _shouldShowMicButton
+                          ? VoiceRecordButton(
+                              onTapDown: widget.onRecordStart!,
+                              onTapUp: widget.onRecordStop!,
+                              onTapCancel: widget.onRecordCancel ?? () {},
+                              isRecording: _isRecording,
+                              phase: switch (widget.recordingState) {
+                                VoiceRecordingState.arming =>
+                                  VoiceRecordPhase.arming,
+                                VoiceRecordingState.stopping =>
+                                  VoiceRecordPhase.stopping,
+                                _ =>
+                                  _isRecording
+                                      ? VoiceRecordPhase.recording
+                                      : VoiceRecordPhase.idle,
+                              },
+                            )
+                          : AnimatedBuilder(
+                              animation: _sendButtonController,
+                              builder: (context, child) {
+                                return Opacity(
+                                  opacity: _sendOpacity.value,
+                                  child: Transform.scale(
+                                    scale: _sendScale.value,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: ActionSemantics(
+                                identifier: 'chat_send',
+                                label: AppLocalizations.of(
+                                  context,
+                                )!.action_send_message,
+                                enabled:
                                     !widget.isProcessing &&
-                                        !widget.isSending &&
-                                        !widget.hasInvalidAttachment &&
-                                        (_hasText || widget.hasAttachments)
-                                    ? _onSendPressed
-                                    : null,
-                                child: Container(
-                                  // Match the VoiceRecordButton (48x48) so the
-                                  // send affordance is the same size as the mic
-                                  // and the slot doesn't resize when text is typed.
-                                  width: 48,
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    color: readableColors.sendBg,
-                                    borderRadius: BorderRadius.circular(100),
-                                    border: Border.all(
-                                      color: readableColors.micBorder,
+                                    !widget.isSending &&
+                                    !widget.hasInvalidAttachment &&
+                                    (_hasText || widget.hasAttachments),
+                                child: GestureDetector(
+                                  onTap:
+                                      !widget.isProcessing &&
+                                          !widget.isSending &&
+                                          !widget.hasInvalidAttachment &&
+                                          (_hasText || widget.hasAttachments)
+                                      ? _onSendPressed
+                                      : null,
+                                  child: Container(
+                                    // Match the VoiceRecordButton (48x48) so the
+                                    // send affordance is the same size as the mic
+                                    // and the slot doesn't resize when text is typed.
+                                    width: 48,
+                                    height: 48,
+                                    decoration: BoxDecoration(
+                                      color: readableColors.sendBg,
+                                      borderRadius: BorderRadius.circular(100),
+                                      border: Border.all(
+                                        color: readableColors.micBorder,
+                                      ),
                                     ),
-                                  ),
-                                  child: Center(
-                                    child: Icon(
-                                      Icons.arrow_upward_rounded,
-                                      size: 20,
-                                      color: readableColors.sendIcon,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.arrow_upward_rounded,
+                                        size: 20,
+                                        color: readableColors.sendIcon,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                  ),
-                ],
-              ),
-            ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

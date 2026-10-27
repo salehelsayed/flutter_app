@@ -1323,52 +1323,56 @@ class _ReplyField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final canSend = enabled && controller.text.trim().isNotEmpty;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: focusNode.hasFocus ? 0.22 : 0.16),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              key: const ValueKey('thought-reply-field'),
-              controller: controller,
-              enabled: enabled,
-              focusNode: focusNode,
-              minLines: 1,
-              maxLines: 4,
-              textInputAction: TextInputAction.send,
-              onSubmitted: (_) => onSend(),
-              style: const TextStyle(color: Colors.white, fontSize: 15),
-              cursorColor: Colors.white,
-              decoration: InputDecoration(
-                hintText: hint,
-                hintStyle: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.85),
+    return TextFieldTapRegion(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(
+            alpha: focusNode.hasFocus ? 0.22 : 0.16,
+          ),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                key: const ValueKey('thought-reply-field'),
+                controller: controller,
+                enabled: enabled,
+                focusNode: focusNode,
+                minLines: 1,
+                maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => onSend(),
+                style: const TextStyle(color: Colors.white, fontSize: 15),
+                cursorColor: Colors.white,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.85),
+                  ),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.fromLTRB(18, 13, 8, 13),
                 ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.fromLTRB(18, 13, 8, 13),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(5),
-            child: IconButton.filled(
-              key: const ValueKey('thought-reply-send'),
-              tooltip: sendLabel,
-              onPressed: canSend ? onSend : null,
-              style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFF0F766E),
-                disabledBackgroundColor: Colors.white,
-                foregroundColor: Colors.white,
-                disabledForegroundColor: const Color(0xFF0F766E),
+            Padding(
+              padding: const EdgeInsets.all(5),
+              child: IconButton.filled(
+                key: const ValueKey('thought-reply-send'),
+                tooltip: sendLabel,
+                onPressed: canSend ? onSend : null,
+                style: IconButton.styleFrom(
+                  backgroundColor: const Color(0xFF0F766E),
+                  disabledBackgroundColor: Colors.white,
+                  foregroundColor: Colors.white,
+                  disabledForegroundColor: const Color(0xFF0F766E),
+                ),
+                icon: const Icon(Icons.send_rounded, size: 20),
               ),
-              icon: const Icon(Icons.send_rounded, size: 20),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
