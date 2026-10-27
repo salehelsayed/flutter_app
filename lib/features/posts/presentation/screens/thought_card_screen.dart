@@ -11,6 +11,7 @@ import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
+import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -122,8 +123,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   late final _voice = ConversationVoiceCaptureController(
     onAutoStopOutcome: (outcome) => _handOffVoice(outcome, autoStopped: true),
     // An incoming call takes the microphone; the cut recording is dropped.
-    onCallInterruptionOutcome: (_) {},
+    onCallInterruptionOutcome: (outcome) => _deleteRecording(outcome.recording),
   )..addListener(_onVoiceChanged);
+
+  /// A recording handed to [ThoughtCardScreen.onVoiceReply] once the card has
+  /// closed. Still set at dispose means it never left, so its file goes.
+  AudioRecording? _voiceInHandOff;
   String? _replyPostId;
   ThoughtReplyStatus? _replyStatus;
   bool _sendingReply = false;
@@ -604,6 +609,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _voice
       ..removeListener(_onVoiceChanged)
       ..dispose();
+    _deleteRecording(_voiceInHandOff);
     super.dispose();
   }
 
@@ -647,14 +653,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }) {
     final recording = outcome.recording;
     final onVoiceReply = widget.onVoiceReply;
+    if (recording == null) return;
     if (!mounted ||
+        _closing ||
         !_voice.isCurrentOutcome(outcome) ||
-        recording == null ||
-        onVoiceReply == null) {
-      return;
-    }
-    if (!_isLive) {
-      _close();
+        onVoiceReply == null ||
+        !_isLive) {
+      _deleteRecording(recording);
+      if (mounted && !_isLive) _close();
       return;
     }
     final reply = ThoughtVoiceReply(
@@ -663,7 +669,21 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       postId: _post.id,
       autoStopped: autoStopped,
     );
-    _close(afterClose: () => onVoiceReply(reply));
+    _voiceInHandOff = recording;
+    _close(
+      afterClose: () {
+        _voiceInHandOff = null;
+        onVoiceReply(reply);
+      },
+    );
+  }
+
+  /// Removes a finished recording that no chat will send.
+  static void _deleteRecording(AudioRecording? recording) {
+    if (recording == null) return;
+    unawaited(
+      File(recording.filePath).delete().then<void>((_) {}, onError: (_) {}),
+    );
   }
 
   Future<void> _sendReply(

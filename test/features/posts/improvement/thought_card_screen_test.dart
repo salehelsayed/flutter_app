@@ -140,6 +140,14 @@ void main() {
     await tester.pump();
   }
 
+  /// The card removes a dropped recording with real file I/O.
+  Future<void> waitForDeletion(WidgetTester tester, File file) =>
+      tester.runAsync(() async {
+        for (var i = 0; i < 50 && file.existsSync(); i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+      });
+
   Future<void> finish(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
@@ -1080,6 +1088,82 @@ void main() {
     expect(voiceReplies.single.autoStopped, isFalse);
     expect(find.byType(ThoughtCardScreen), findsNothing);
     expect(find.text('orbit-home'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a call that cuts the recording leaves no file and no reply', timeout: const Timeout(Duration(seconds: 30)), (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final file = _tempFile('cut-by-call.m4a');
+    final recorder = FakeAudioRecorderService()..fakeOutputPath = file.path;
+    final voiceReplies = <ThoughtVoiceReply>[];
+    await openCard(
+      tester,
+      thought,
+      onReply: (_, _) {},
+      onVoiceReply: voiceReplies.add,
+      recorder: recorder,
+    );
+    await tester.tap(find.byType(VoiceRecordButton));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(recorder.isRecording, isTrue);
+
+    var callGotMicrophone = false;
+    unawaited(
+      microphoneCaptureLeasesFor(
+        recorder,
+      ).prepareForCall().then((_) => callGotMicrophone = true),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await waitForDeletion(tester, file);
+
+    expect(callGotMicrophone, isTrue);
+
+    expect(voiceReplies, isEmpty);
+    expect(file.existsSync(), isFalse);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('a recording that finishes after the card closed is removed', timeout: const Timeout(Duration(seconds: 30)), (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final file = _tempFile('after-close.m4a');
+    final stopGate = Completer<void>();
+    final recorder = FakeAudioRecorderService()
+      ..fakeOutputPath = file.path
+      ..stopGate = stopGate;
+    final voiceReplies = <ThoughtVoiceReply>[];
+    await openCard(
+      tester,
+      thought,
+      onReply: (_, _) {},
+      onVoiceReply: voiceReplies.add,
+      recorder: recorder,
+    );
+    final mic = find.byType(VoiceRecordButton);
+    await tester.tap(mic);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(mic);
+    await tester.pump();
+
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(ThoughtCardScreen), findsNothing);
+    stopGate.complete();
+    await tester.pump();
+    await waitForDeletion(tester, file);
+
+    expect(voiceReplies, isEmpty);
+    expect(file.existsSync(), isFalse);
     await finish(tester);
   });
 
