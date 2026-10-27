@@ -140,7 +140,11 @@ const _expectedGroupApiFingerprint = 'fe1ac6ec';
 // quoted thought from its quote. No other handoff changes.
 // 407 128-D: that `onOpenThought` handoff now passes the async in-place
 // sender. No other handoff changes.
-const _expectedDirectHandoffFingerprint = 'a93e7f8d';
+// Normal chat entry withholds messages/calls until the initial page is ready;
+// quoted Thoughts now also receive explicit IDs for pending first lookups.
+// These are display-state handoff changes only; both public Wired APIs and
+// the group handoff retain their existing fingerprints.
+const _expectedDirectHandoffFingerprint = 'b832d963';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 const _expectedGroupHandoffFingerprint = '060099cf';

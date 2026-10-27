@@ -8956,6 +8956,10 @@ class _ConversationWiredState extends State<ConversationWired>
           onMaybeLater: _onMaybeLater,
           onQuoteReply: _onQuoteReply,
           thoughtQuotes: _thoughtQuotes,
+          loadingThoughtQuoteIds: {
+            for (final postId in _thoughtQuoteLoads.keys)
+              if (!_thoughtQuotes.containsKey(postId)) postId,
+          },
           thoughtNow: _thoughtNow,
           onOpenThought: widget.onOpenThought == null || _thoughtPosts == null
               ? null

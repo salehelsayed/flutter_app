@@ -2130,7 +2130,9 @@ void main() {
       });
     }
 
-    Future<_OrbitThoughtPostRepository> photoThoughtForScroll() async {
+    Future<_OrbitThoughtPostRepository> photoThoughtForScroll({
+      _OrbitThoughtPostRepository? repository,
+    }) async {
       final directory = Directory.systemTemp.createTempSync('thought-scroll-');
       addTearDown(() => directory.deleteSync(recursive: true));
       final photo = File('${directory.path}/lake.png')
@@ -2139,7 +2141,7 @@ void main() {
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
           ),
         );
-      final posts = _OrbitThoughtPostRepository();
+      final posts = repository ?? _OrbitThoughtPostRepository();
       addTearDown(posts.dispose);
       await posts.savePost(
         thought('lake', text: 'Sunset at the lake?', mediaKind: 'image'),
@@ -2205,6 +2207,129 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       fail('the conversation did not paint its history');
+    }
+
+    for (final resolution in ['live', 'missing', 'expired']) {
+      testWidgets('a pending thought quote stays neutral before ' + resolution, (
+        tester,
+      ) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _HeldSnapshotLookupRepository('lake');
+        await photoThoughtForScroll(repository: posts);
+        if (resolution == 'missing') {
+          await posts.deletePostCascade('lake');
+        } else if (resolution == 'expired') {
+          await posts.savePost(
+            thought(
+              'lake',
+              text: 'Sunset at the lake?',
+              expiresAt: thoughtNow.subtract(const Duration(seconds: 1)),
+              mediaKind: 'image',
+            ),
+          );
+        }
+        final timestamp = thoughtNow.toIso8601String();
+        await messageRepo.saveMessage(
+          ConversationMessage(
+            id: 'quote-loading-reply',
+            contactPeerId: testContact.peerId,
+            senderPeerId: testIdentity.peerId,
+            text: 'I saw your thought',
+            timestamp: timestamp,
+            createdAt: timestamp,
+            status: 'delivered',
+            isIncoming: false,
+            quotedMessageId: 'thought:lake',
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        posts.holding = true;
+        var recording = true;
+        var quotePaints = 0;
+        var goneWhilePending = false;
+        var loadingPaints = 0;
+        tester.binding.addPersistentFrameCallback((_) {
+          if (!recording) return;
+          final quote = find.byKey(const ValueKey('thought-quote-block'));
+          if (quote.evaluate().isEmpty) return;
+          quotePaints++;
+          goneWhilePending |= find
+              .descendant(of: quote, matching: find.text('No longer available'))
+              .evaluate()
+              .isNotEmpty;
+          if (find
+              .byKey(const ValueKey('thought-quote-loading'))
+              .evaluate()
+              .isNotEmpty) {
+            loadingPaints++;
+          }
+        });
+        try {
+          await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+          for (var frame = 0; frame < 40; frame++) {
+            await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(posts.heldCount, greaterThan(0));
+          expect(quotePaints, greaterThan(0));
+          expect(
+            goneWhilePending,
+            isFalse,
+            reason:
+                'a lookup still in flight is not a confirmed unavailable Thought',
+          );
+          expect(loadingPaints, greaterThan(0));
+          expect(
+            find.byKey(const ValueKey('thought-quote-open')),
+            findsNothing,
+          );
+          recording = false;
+          posts.releaseAll();
+          for (var frame = 0; frame < 20; frame++) {
+            await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(
+            find.byKey(const ValueKey('thought-quote-loading')),
+            findsNothing,
+          );
+          if (resolution == 'live') {
+            expect(
+              find.byKey(const ValueKey('thought-quote-photo')),
+              findsOneWidget,
+            );
+            expect(find.text('Sunset at the lake?'), findsOneWidget);
+            expect(find.text('No longer available'), findsNothing);
+            expect(
+              find.byKey(const ValueKey('thought-quote-open')),
+              findsOneWidget,
+            );
+          } else {
+            expect(find.text('No longer available'), findsOneWidget);
+            expect(find.text('Sunset at the lake?'), findsNothing);
+            expect(
+              find.byKey(const ValueKey('thought-quote-photo')),
+              findsNothing,
+            );
+            expect(
+              find.byKey(const ValueKey('thought-quote-open')),
+              findsNothing,
+            );
+          }
+        } finally {
+          recording = false;
+          posts.releaseAll();
+          await finishThoughtCase(tester);
+        }
+      });
     }
 
     for (final entry in ['normal', 'text', 'voice']) {

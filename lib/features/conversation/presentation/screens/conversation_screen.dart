@@ -336,6 +336,9 @@ class ConversationScreen extends StatefulWidget {
 
   /// Thoughts quoted by messages here, by post id; null when not stored here.
   final Map<String, ThoughtQuotePreview?> thoughtQuotes;
+
+  /// Started quote lookups whose first result is still pending.
+  final Set<String> loadingThoughtQuoteIds;
   final DateTime? thoughtNow;
 
   /// Opens a quoted thought, by post id, while it still lives.
@@ -451,6 +454,7 @@ class ConversationScreen extends StatefulWidget {
     this.onPrivateMediaPolicyChanged,
     this.onQuoteReply,
     this.thoughtQuotes = const {},
+    this.loadingThoughtQuoteIds = const {},
     this.thoughtNow,
     this.onOpenThought,
     this.onRetryFailedMessage,
@@ -1189,6 +1193,9 @@ class _ConversationScreenState extends State<ConversationScreen>
                         ? l10n.thought_quote_yours
                         : l10n.thought_quote_theirs(widget.contactUsername),
                     preview: widget.thoughtQuotes[quotedThoughtId],
+                    isLoading: widget.loadingThoughtQuoteIds.contains(
+                      quotedThoughtId,
+                    ),
                     now: thoughtNow,
                     unavailableText: l10n.thought_quote_gone,
                     mediaLabel: (kind) => switch (kind) {

@@ -2539,8 +2539,34 @@ Nineteen focused tests pass, including the prior Thought controls and five
 terminal-call preservation cases. Evidence:
 `.audit/orbit-chat-first-frame/first-paint-baseline2.jsonl`,
 `held-reactions-red.jsonl`, and `reaction-independent-focused-green.jsonl`
-in that directory. Device confirmation of the owner's symptom remains
-separate; widget checks do not certify remote voice delivery.
+in that directory. Kayan/flutter_app's Pixel recording report
+(`m-e9c20eec`, seq 68904) confirms build 156 no longer flashes the stale call
+rows: the loading shell goes directly to newest history. This is device-owner
+evidence, not a device run by Codex-UI; widget checks do not certify remote
+voice delivery.
+
+A quoted Thought has a pending first lookup separately from a completed,
+unavailable result. The quote loader records started IDs before awaiting the
+post and media reads; an absent result key means pending, while a present
+null result is unavailable. Pass only those pending IDs to the pure view.
+The quote shows a neutral static placeholder until its first result arrives,
+stays non-openable while pending, and keeps the existing confirmed-missing
+and expired states. Do not manufacture a live preview to hide loading.
+
+The real Orbit route tests hold each lookup through actual paint, then release
+it to live-photo, missing and expired results. All three fail on
+`89479e596` by painting "No longer available" while the read is still held.
+The fix passes those transitions and the prior entry/send/call controls;
+40 focused checks pass across route/screen preservation, image/bidi quote
+rendering, and controller composition contracts. The direct screen-handoff
+fingerprint explicitly includes the initial timeline gate and pending quote
+IDs; both public Wired APIs and the group handoff stay unchanged.
+Evidence: `.audit/thought-quote-loading/pending-quote-red2.jsonl`,
+`quote-route-preservation-green.jsonl`,
+`quote-block-preservation-green.jsonl`, and
+`composition-contract-green.jsonl` in that directory. The Pixel quote flash
+persisted on build 156 per the same device-owner report; the neutral quote
+placeholder still needs confirmation on the next device candidate.
 
 A live text send can lose custody staging to concurrent recovery after both
 independently encrypt. An intent-bearing losing caller must not transition
