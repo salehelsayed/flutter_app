@@ -469,7 +469,7 @@ abstract class AppLocalizations {
   /// No description provided for @thought_photo_crop.
   ///
   /// In en, this message translates to:
-  /// **'Crop square'**
+  /// **'Fill screen'**
   String get thought_photo_crop;
 
   /// No description provided for @thought_photo_use.

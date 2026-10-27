@@ -213,7 +213,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_photo_fit => 'Ganz zeigen';
 
   @override
-  String get thought_photo_crop => 'Quadratisch zuschneiden';
+  String get thought_photo_crop => 'Bildschirm füllen';
 
   @override
   String get thought_photo_use => 'Fotos verwenden';

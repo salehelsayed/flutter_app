@@ -202,7 +202,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_photo_fit => 'ملاءمة';
 
   @override
-  String get thought_photo_crop => 'قص مربع';
+  String get thought_photo_crop => 'ملء الشاشة';
 
   @override
   String get thought_photo_use => 'استخدام الصور';

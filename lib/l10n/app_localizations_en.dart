@@ -207,7 +207,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_photo_fit => 'Fit';
 
   @override
-  String get thought_photo_crop => 'Crop square';
+  String get thought_photo_crop => 'Fill screen';
 
   @override
   String get thought_photo_use => 'Use photos';
