@@ -2458,6 +2458,24 @@ initial attachment-first order in f414 was **refuted** by a real-repository
 voice regression and superseded by this parent-first order. The gated attachment
 test checks the repository stream as well as the bubble.
 
+A Thought opened from a conversation quote can cover an already mounted,
+scrolled conversation. Its reply uses the independent durable send callback,
+so it must restore the existing reversed list to offset zero while the card
+still covers it, then settle layout before popping the card. Deferring the
+only reset until after layout can leave a later offset correction. Fresh
+normal, text-Thought and voice-Thought routes already start at zero; they do
+not need a different initial-loading scroll policy. The focused
+`orbit_wired_test.dart` checks use a downloaded image Thought and 40 older
+quoted rows: first chat frame and subsequent frames stay at zero without
+scroll activity, text/voice replies become hit-testable, and a reply over a
+chat scrolled to 600 pixels returns at the live edge. Ordinary composer sends
+still animate from older history; reopened-card sends preserve the chat draft
+and send once. Baseline return failure and the eight focused passing controls
+are retained under `.audit/thought-reply-initial-bottom/` in
+`final-baseline-red.jsonl` and `narrow-fix-focused-green2.jsonl`.
+These widget checks prove positioning and local publication, not device
+rendering or remote voice delivery.
+
 A live text send can lose custody staging to concurrent recovery after both
 independently encrypt. An intent-bearing losing caller must not transition
 that recovery-owned `sending` row to `failed`, including Feed's exception path.

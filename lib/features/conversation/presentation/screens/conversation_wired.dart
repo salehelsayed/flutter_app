@@ -8790,6 +8790,14 @@ class _ConversationWiredState extends State<ConversationWired>
     if (!mounted || posts == null || contacts == null || bridge == null) {
       return ThoughtReplyStatus.failed;
     }
+    // The card still covers this chat. Restore its live edge now, then settle
+    // the list layout before the card pops. The durable send stays independent.
+    if (_scrollController.hasClients) _scrollController.jumpTo(0.0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scrollController.hasClients) {
+        _scrollController.jumpTo(0.0);
+      }
+    });
     return sendThoughtReply(
       messageId: messageId,
       postId: postId,

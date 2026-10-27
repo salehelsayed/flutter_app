@@ -104,6 +104,7 @@ import 'package:flutter_app/features/posts/domain/models/post_route_target.dart'
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -1800,9 +1801,13 @@ void main() {
       WidgetTester tester,
       _OrbitThoughtPostRepository posts, {
       required DateTime Function() clock,
+      List<ConversationMessage> history = const [],
     }) async {
       setLargeTestSurface(tester);
       messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
+      for (final message in history) {
+        await messageRepo.saveMessage(message);
+      }
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
       await tester.pumpWidget(
@@ -1822,7 +1827,7 @@ void main() {
           of: find.byKey(const ValueKey('thought-quote-block')),
           matching: find.text('Sunset at the lake?'),
         ),
-        findsOneWidget,
+        history.isEmpty ? findsOneWidget : findsWidgets,
       );
     }
 
@@ -1915,6 +1920,253 @@ void main() {
         expect(
           (thumbnail.image as ResizeImage).imageProvider,
           FileImage(photo),
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    Future<_OrbitThoughtPostRepository> photoThoughtForScroll() async {
+      final directory = Directory.systemTemp.createTempSync('thought-scroll-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final photo = File('${directory.path}/lake.png')
+        ..writeAsBytesSync(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          ),
+        );
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('lake', text: 'Sunset at the lake?', mediaKind: 'image'),
+      );
+      await posts.savePostMediaAttachment(
+        PostMediaAttachmentModel(
+          mediaId: 'media-lake',
+          postId: 'lake',
+          blobId: 'blob-lake',
+          kind: 'image',
+          mime: 'image/png',
+          sizeBytes: photo.lengthSync(),
+          createdAt: thoughtNow.toIso8601String(),
+          localPath: photo.path,
+          downloadStatus: 'done',
+        ),
+      );
+      return posts;
+    }
+
+    List<ConversationMessage> thoughtReplyHistory() => [
+      for (var i = 0; i < 40; i++)
+        ConversationMessage(
+          id: 'history-$i',
+          contactPeerId: testContact.peerId,
+          senderPeerId: testContact.peerId,
+          text: 'Earlier message $i ' * 5,
+          timestamp: thoughtNow
+              .subtract(Duration(minutes: 50 - i))
+              .toIso8601String(),
+          createdAt: thoughtNow
+              .subtract(Duration(minutes: 50 - i))
+              .toIso8601String(),
+          status: 'delivered',
+          isIncoming: true,
+          quotedMessageId: 'thought:lake',
+        ),
+    ];
+
+    void expectLiveEdge(ScrollController controller) {
+      expect(
+        controller.offset,
+        0,
+        reason: 'the first visible chat frame starts at the newest message',
+      );
+      expect(
+        controller.position.isScrollingNotifier.value,
+        isFalse,
+        reason: 'opening a chat must not animate through history',
+      );
+    }
+
+    Future<ScrollController> firstChatList(WidgetTester tester) async {
+      for (var frame = 0; frame < 40; frame++) {
+        final list = find.byKey(const ValueKey('messages'));
+        if (list.evaluate().isNotEmpty) {
+          final controller = tester.widget<ListView>(list).controller!;
+          if (controller.hasClients) {
+            expectLiveEdge(controller);
+            return controller;
+          }
+        }
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      fail('the conversation did not paint its history');
+    }
+
+    for (final entry in ['normal', 'text', 'voice']) {
+      testWidgets(
+        '$entry Thought entry paints its first chat frame at the live edge without scrolling',
+        (tester) async {
+          setLargeTestSurface(tester);
+          messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
+          identityRepo.seed(testIdentity);
+          contactRepo.seed([testContact]);
+          for (final message in thoughtReplyHistory()) {
+            await messageRepo.saveMessage(message);
+          }
+          final posts = await photoThoughtForScroll();
+          final recorder = FakeAudioRecorderService()
+            ..fakeDurationMs = 1500
+            ..fakeSizeBytes = 2048;
+          if (entry == 'voice') {
+            final directory = Directory.systemTemp.createTempSync(
+              'thought-entry-voice-',
+            );
+            addTearDown(() => directory.deleteSync(recursive: true));
+            recorder.fakeOutputPath = '${directory.path}/v.m4a';
+            File(
+              recorder.fakeOutputPath!,
+            ).writeAsBytesSync(List<int>.filled(2048, 1));
+          }
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              thoughtNowProvider: () => thoughtNow,
+              audioRecorderService: recorder,
+              micPermissionGateway: FakeMicPermissionGateway(),
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 8);
+          if (entry == 'normal') {
+            await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+          } else {
+            await tester.tap(
+              find.byKey(const ValueKey('orbit-thought-tap-lake')),
+            );
+            await pumpOrbitFrames(tester, count: 8);
+            if (entry == 'text') {
+              await tester.enterText(_replyField, 'Fresh Thought entry reply');
+              await tester.pump();
+              await tester.tap(_replySend);
+            } else {
+              await tester.tap(find.byType(VoiceRecordButton));
+              await pumpOrbitFrames(tester, count: 2);
+              await tester.tap(find.byType(VoiceRecordButton));
+            }
+          }
+          final controller = await firstChatList(tester);
+          for (var frame = 0; frame < 25; frame++) {
+            if (entry == 'voice') {
+              // Durable voice preparation deletes the recorder file through real I/O.
+              await tester.runAsync(
+                () => Future<void>.delayed(const Duration(milliseconds: 10)),
+              );
+            }
+            await tester.pump(const Duration(milliseconds: 16));
+            expectLiveEdge(controller);
+          }
+          if (entry == 'text') {
+            expect(
+              find
+                  .text('Fresh Thought entry reply', findRichText: true)
+                  .hitTestable(),
+              findsOneWidget,
+            );
+          }
+          if (entry == 'voice') {
+            final chat = tester.widget<ConversationWired>(
+              find.byType(ConversationWired),
+            );
+            expect(
+              chat.initialThoughtVoiceReply!.quotedMessageId,
+              'thought:lake',
+            );
+            final screen = tester.widget<ConversationScreen>(
+              find.byType(ConversationScreen),
+            );
+            final reply = screen.messages.where((m) => !m.isIncoming).single;
+            expect(reply.quotedMessageId, 'thought:lake');
+            expect(reply.media.single.mediaType, 'audio');
+            expect(
+              find.byKey(ValueKey('msg-${reply.id}')).hitTestable(),
+              findsOneWidget,
+            );
+          }
+          await finishThoughtCase(tester);
+        },
+      );
+    }
+
+    testWidgets(
+      'a Thought reply returns to a scrolled chat already at the live edge',
+      (tester) async {
+        final posts = await photoThoughtForScroll();
+        var now = thoughtNow;
+        await replyFromCard(
+          tester,
+          posts,
+          clock: () => now,
+          history: thoughtReplyHistory(),
+        );
+        final list = tester.widget<ListView>(
+          find.byKey(const ValueKey('messages')),
+        );
+        final controller = list.controller!;
+        controller.jumpTo(600);
+        await tester.pump();
+        expect(controller.offset, greaterThan(500));
+        await tester.tap(
+          find.byKey(const ValueKey('thought-quote-open')).hitTestable().first,
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        now = thoughtNow.add(const Duration(seconds: 1));
+        await tester.enterText(_replyField, 'Reply while reading history');
+        await tester.pump();
+        await tester.tap(_replySend);
+        await tester.pump();
+        expectLiveEdge(controller);
+        for (var frame = 0; frame < 60; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          expectLiveEdge(controller);
+        }
+        expect(
+          find
+              .text('Reply while reading history', findRichText: true)
+              .hitTestable(),
+          findsOneWidget,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'ordinary chat sends still animate to the live edge from older history',
+      (tester) async {
+        final posts = await photoThoughtForScroll();
+        await replyFromCard(
+          tester,
+          posts,
+          clock: () => thoughtNow,
+          history: thoughtReplyHistory(),
+        );
+        await tester.enterText(find.byType(TextField), 'Ordinary chat reply');
+        await tester.pump(const Duration(milliseconds: 300));
+        final controller = tester
+            .widget<ListView>(find.byKey(const ValueKey('messages')))
+            .controller!;
+        controller.jumpTo(600);
+        await tester.pump();
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
+        expect(controller.position.isScrollingNotifier.value, isTrue);
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(controller.offset, inExclusiveRange(0, 600));
+        await tester.pump(const Duration(milliseconds: 300));
+        expectLiveEdge(controller);
+        expect(
+          find.text('Ordinary chat reply', findRichText: true).hitTestable(),
+          findsOneWidget,
         );
         await finishThoughtCase(tester);
       },
