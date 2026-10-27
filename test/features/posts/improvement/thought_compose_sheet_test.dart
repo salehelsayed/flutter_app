@@ -44,6 +44,16 @@ void main() {
     ),
   );
 
+  Future<void> finishPhotoPreview(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+    final use = find.byKey(const ValueKey('thought-photo-use'));
+    if (use.evaluate().isNotEmpty) {
+      await tester.ensureVisible(use);
+      await tester.tap(use);
+      await tester.pumpAndSettle();
+    }
+  }
+
   ElevatedButton share(WidgetTester tester) =>
       tester.widget(find.byKey(const ValueKey('thought-composer-share')));
 
@@ -133,7 +143,7 @@ void main() {
           ),
         );
         await tester.tap(find.text('Media'));
-        await tester.pump();
+        await finishPhotoPreview(tester);
         expect(share(tester).onPressed, isNotNull);
         await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
         await tester.pump();
@@ -160,7 +170,7 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     AttachmentPreviewStrip strip() =>
         tester.widget(find.byType(AttachmentPreviewStrip));
     expect(strip().attachments.map((file) => file.path), [
@@ -292,7 +302,7 @@ void main() {
     );
     expect(find.text(leftOutLine), findsNothing);
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     expect(stripPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
   });
@@ -307,7 +317,7 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     expect(stripPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
   });
@@ -327,13 +337,13 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     expect(stripPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
     expect(find.text(leftOutLine), findsNothing);
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     expect(stripPaths(tester), ['/tmp/clip.mp4']);
   });
 
@@ -349,7 +359,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Still here');
     await tester.pump();
     await tester.tap(find.text('Media'));
-    await tester.pump();
+    await finishPhotoPreview(tester);
     expect(find.text("Couldn't add your media. Try again."), findsOneWidget);
     expect(find.text('Send failed'), findsNothing);
     expect(find.text('Still here'), findsOneWidget);
@@ -470,7 +480,7 @@ void main() {
       );
       await tester.enterText(find.byType(TextField), 'Half a thought');
       await tester.tap(find.text('Media'));
-      await tester.pump();
+      await finishPhotoPreview(tester);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(closed, hasLength(1));
       expect(closed.single!.text, 'Half a thought');

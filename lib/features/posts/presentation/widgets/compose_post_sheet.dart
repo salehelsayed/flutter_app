@@ -18,6 +18,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
+import 'thought_photo_preview.dart';
+
 class ComposePostResult {
   final String text;
   final PostAudience audience;
@@ -286,9 +288,27 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         return;
       }
       if (!mounted) return;
-      final combined = combinePostMedia(_mediaDrafts, pick.drafts);
+      final originals = _mediaDrafts;
+      final combined = combinePostMedia(originals, pick.drafts);
+      var selected = combined.drafts;
+      if (widget.thoughtsOnly &&
+          pick.drafts.any((draft) => draft.kind == 'image') &&
+          selected.isNotEmpty &&
+          selected.every((draft) => draft.kind == 'image')) {
+        final preview = await showThoughtPhotoPreview(
+          context,
+          selected,
+          replacesCurrentThought: widget.replacesCurrentThought,
+        );
+        if (preview == null) return;
+        if (!mounted || !identical(_mediaDrafts, originals)) {
+          await preview.discard();
+          return;
+        }
+        selected = preview.drafts;
+      }
       setState(() {
-        _mediaDrafts = combined.drafts;
+        _mediaDrafts = selected;
         if (pick.leftOut || combined.leftOut) {
           _notice = _ComposeNotice.mediaLeftOut;
         }
@@ -787,7 +807,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     ),
                   ],
                   const SizedBox(height: 16),
-                  Row(
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
                     children: [
                       OutlinedButton.icon(
                         onPressed:
@@ -808,7 +830,6 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                               : AppLocalizations.of(context)!.compose_media,
                         ),
                       ),
-                      const SizedBox(width: 10),
                       OutlinedButton.icon(
                         onPressed:
                             (widget.onAttachVoice == null &&
