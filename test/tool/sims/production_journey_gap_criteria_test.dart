@@ -260,7 +260,50 @@ Map<String, Object?> _complete(String journey) {
   return receipt;
 }
 
+Map<String, Object?> _ownedTurnFault() => {
+  'scope': 'owned_fixture_turn',
+  'deviceId': 'emulator-5554',
+  'fixtureOwned': true,
+  'containerIdentitySha256': 'd' * 64,
+  'readinessContainerIdentitySha256': 'd' * 64,
+  'turnAuthoritySha256': 'e' * 64,
+  'configuredTurnAuthoritySha256': 'e' * 64,
+  'configuredTurnServerCount': 1,
+  'pausedDuringOutage': true,
+  'runningAfterRestore': true,
+  'signalingStillReachable': true,
+  'hetznerChanged': false,
+};
+
 void main() {
+  test('VC-023 accepts an owned coturn pause without emulator root', () {
+    final receipt = _complete('VC-023');
+    (receipt['observations'] as Map)['turnFault'] = _ownedTurnFault();
+
+    expect(validateProductionJourneyGapReceipt(receipt), isEmpty);
+  });
+
+  for (final change in <String, Object?>{
+    'fixtureOwned': false,
+    'containerIdentitySha256': 'f' * 64,
+    'readinessContainerIdentitySha256': 'invalid',
+    'configuredTurnAuthoritySha256': 'f' * 64,
+    'configuredTurnServerCount': 2,
+    'pausedDuringOutage': false,
+    'runningAfterRestore': false,
+    'signalingStillReachable': false,
+    'hetznerChanged': true,
+    'deviceId': 'emulator-5556',
+  }.entries) {
+    test('VC-023 rejects invalid owned TURN fault ${change.key}', () {
+      final receipt = _complete('VC-023');
+      (receipt['observations'] as Map)['turnFault'] = _ownedTurnFault()
+        ..[change.key] = change.value;
+
+      expect(validateProductionJourneyGapReceipt(receipt), isNotEmpty);
+    });
+  }
+
   test(
     'CONTACT-001 allows durable retry across reopen with one logical request',
     () {

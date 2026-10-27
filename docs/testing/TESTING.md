@@ -2409,6 +2409,19 @@ duplicate and decreasing-counter sentinels. Evidence is in
 `.codex-test-logs/journey-gap-followups-20261027/`; this does not replace a fresh
 device run or change application behavior.
 
+VC-023 also accepts an owned local coturn pause when emulator root is unavailable.
+Its fault evidence binds the exact readiness container and sole configured TURN
+URL by SHA-256, requires pause/restoration and continuing signaling, and retains
+all route/RTP/no-direct-fallback/deadline assertions. The rooted per-UID firewall
+branch retains its packet-hit and restoration checks. The optional central
+`android.e2e.production_call_preference` profile enables the native build option
+and call gates with forced relay disabled, uses its own disposable package and
+adds no update-test trust keys. Profile/oracle host checks are preparation;
+actual fixture setup, calls and outage execution remain device-owner work.
+Both missing prerequisites fail causally on the previous checker/manifest; the
+three-file criteria/build-cache/manifest selection passes 104 tests without
+failures or skips in that same follow-up evidence directory.
+
 MEDIA-018's test-only `direct_media_transfer_checkpoint_fixture_test.go`
 extends the existing disposable media relay with a bounded, one-shot body gate.
 It counts ciphertext body bytes, preserves framed metadata, learns the actual

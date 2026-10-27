@@ -16,6 +16,8 @@ const String _androidProductionAudioCallProfileId =
     'android.e2e.production_call_local';
 const String _androidProductionAudioCallApplicationId =
     'com.mknoon.sims.productionaudio';
+const String _androidCallPreferenceProfileId =
+    'android.e2e.production_call_preference';
 const String _androidGroupMedia269ProfileId = 'android.e2e.group_media_269';
 const String _androidGroupMedia269ApplicationId =
     'com.mknoon.sims.groupmedia269';
@@ -1185,7 +1187,8 @@ List<String> effectiveSimsBuildArguments(
       '--debug',
       '--target-platform=android-arm64',
       '--android-project-arg=simsAndroidAbi=arm64-v8a',
-      if (profile.id == _androidProductionAudioCallProfileId) ...const <String>[
+      if (profile.id == _androidProductionAudioCallProfileId ||
+          profile.id == _androidCallPreferenceProfileId) ...const <String>[
         '--android-project-arg=enableAndroidNativeCalls=true',
         '--android-project-arg=disableGoogleServicesForDisposableProof=true',
       ],
@@ -1294,6 +1297,9 @@ String effectiveSimsApplicationId(
   }
   if (profile.id == _androidProductionAudioCallProfileId) {
     return _androidProductionAudioCallApplicationId;
+  }
+  if (profile.id == _androidCallPreferenceProfileId) {
+    return 'com.mknoon.sims.callpreference';
   }
   if (profile.id == _androidGroupMedia269ProfileId) {
     return _androidGroupMedia269ApplicationId;

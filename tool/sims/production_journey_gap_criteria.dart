@@ -215,18 +215,32 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
         'actual saved toggle on an Android emulator, without forced-relay build',
       );
       final fault = journeyGapMap(observations['turnFault']);
+      final emulatorFault =
+          fault['scope'] == 'subject_emulator_only' &&
+          fault['rootAvailable'] == true &&
+          fault['rulesInstalled'] == true &&
+          fault['matchedTurnPackets'] is int &&
+          (fault['matchedTurnPackets']! as int) > 0 &&
+          fault['rulesRemoved'] == true &&
+          fault['originalRulesRestored'] == true;
+      final fixtureFault =
+          fault['scope'] == 'owned_fixture_turn' &&
+          fault['fixtureOwned'] == true &&
+          digest(fault['containerIdentitySha256'], 64) &&
+          fault['containerIdentitySha256'] ==
+              fault['readinessContainerIdentitySha256'] &&
+          digest(fault['turnAuthoritySha256'], 64) &&
+          fault['turnAuthoritySha256'] ==
+              fault['configuredTurnAuthoritySha256'] &&
+          fault['configuredTurnServerCount'] == 1 &&
+          fault['pausedDuringOutage'] == true &&
+          fault['runningAfterRestore'] == true;
       require(
-        fault['scope'] == 'subject_emulator_only' &&
+        (emulatorFault || fixtureFault) &&
             fault['deviceId'] == subject['deviceId'] &&
-            fault['rootAvailable'] == true &&
-            fault['rulesInstalled'] == true &&
-            fault['matchedTurnPackets'] is int &&
-            (fault['matchedTurnPackets']! as int) > 0 &&
             fault['signalingStillReachable'] == true &&
-            fault['rulesRemoved'] == true &&
-            fault['originalRulesRestored'] == true &&
             fault['hetznerChanged'] == false,
-        'TURN fault must be effective, emulator-only and fully restored',
+        'TURN fault must be effective, owned and fully restored',
       );
       final calls = <Object?>[];
       for (final phase in ['beforeOutage', 'afterRestore']) {

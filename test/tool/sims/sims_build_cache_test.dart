@@ -182,6 +182,71 @@ void main() {
   });
 
   test(
+    'VC-023 build preserves user relay preference and native call options',
+    () {
+      final manifest = SimsManifest.loadSync(
+        File('tool/sims/critical_features.json'),
+      );
+      final profile = manifest.buildProfileById(
+        'android.e2e.production_call_preference',
+      );
+      expect(profile, isNotNull);
+      final defines = effectiveSimsCompileDefines(
+        profile!,
+        environment: const {},
+      );
+      expect(defines['VOICE_CALL_FORCE_RELAY_ENABLED'], 'false');
+      for (final flag in [
+        'VOICE_CALL_CAPABILITY_V1',
+        'VOICE_CALL_OUTGOING_ENABLED',
+        'VOICE_CALL_INCOMING_ENABLED',
+        'VOICE_CALL_TURN_ENABLED',
+        'VOICE_CALL_ANDROID_NATIVE_ENABLED',
+        'VOICE_CALL_ALWAYS_RELAY_ENABLED',
+      ]) {
+        expect(defines[flag], 'true');
+      }
+      expect(
+        defines.keys.where((key) => key.startsWith('MKNOON_SE41_TEST_')),
+        isEmpty,
+      );
+      final arguments = effectiveSimsBuildArguments(
+        profile,
+        environment: const {},
+      );
+      expect(
+        arguments,
+        contains('--android-project-arg=enableAndroidNativeCalls=true'),
+      );
+      expect(
+        arguments,
+        contains(
+          '--android-project-arg=disableGoogleServicesForDisposableProof=true',
+        ),
+      );
+      expect(
+        effectiveSimsApplicationId(
+          profile,
+          environment: const {'SIMS_APP_ID': 'com.mknoon.app'},
+        ),
+        'com.mknoon.sims.callpreference',
+      );
+      final build = manifest.capabilityById(
+        'build.android.e2e.production_call_preference',
+      )!;
+      expect(build.buildProfileId, profile.id);
+      expect(build.command, ['@prepare-build', profile.id]);
+      expect(build.resources.single.name, 'build:${profile.id}');
+      expect(
+        manifest
+            .buildProfileById('android.e2e.production_call_local')!
+            .compileDefines['VOICE_CALL_FORCE_RELAY_ENABLED'],
+        'true',
+      );
+    },
+  );
+
+  test(
     'production-call APK command and cache identity include every native option',
     () {
       final manifest = SimsManifest.loadSync(

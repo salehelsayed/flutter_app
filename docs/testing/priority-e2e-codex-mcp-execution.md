@@ -172,10 +172,10 @@ also checks exact plaintext equality. Without that capture, this stronger byte
 comparison stays **NOT RUN**, even if recorded full-viewer/content assertions
 pass. Never manufacture an encryption-input receipt from raw camera bytes.
 
-## VC-023: saved relay setting, emulator-only outage, restore
+## VC-023: saved relay setting, owned TURN outage, restore
 
-Estimate 15–25 min. Subject is an available rooted Android emulator; peer is
-Pixel. **Start each call only after 08:30 CET**; record the actual timezone-aware
+Estimate 15–25 min. Subject is an available Android emulator; peer is an
+available Android target (Pixel by default). **Start each call only after 08:30 CET**; record the actual timezone-aware
 first call start as `observations.startedAt`. Preserve prior preference/rules.
 
 1. With force-relay build restriction false, enable **Always relay calls**
@@ -209,9 +209,39 @@ first call start as `observations.startedAt`. Preserve prior preference/rules.
    `afterRestore`. Successful phases include two `peers` with role and native
    start/end `packetsSent`/`packetsReceived`; outage records policy, zero direct
    pairs, no connected interval, unchanged-deadline terminal and release.
-   Missing root, a safe per-emulator rule, selected-pair/RTP observation or
-   signaling-preserving fault is BLOCKED with that reason. Do not invent a
+   If root is unavailable, use the owned-fixture alternative below. Missing
+   selected-pair/RTP observation or a signaling-preserving fault is BLOCKED.
+   Do not invent a
    network harness, mutate Hetzner, or use the forced-relay local-call campaign.
+
+For the non-root alternative, reuse `ProductionAudioCallLocalFixtureLease` in
+`integration_test/scripts/production_audio_call_local_fixture.dart`. It owns a
+digest-pinned coturn and a separate disposable signaling relay. Keep its private
+readiness record, and centrally prepare the preference build with its multiaddr:
+
+```sh
+MKNOON_RELAY_ADDRESSES="$RELAY" dart run tool/sims/sims.dart major --only build.android.e2e.production_call_preference --prepare-builds
+```
+
+This optional profile enables native calls with `FORCE_RELAY=false`, uses
+`com.mknoon.sims.callpreference`, and carries no update-test trust keys. Drive
+ordinary app UI with MCP; the forced-relay campaign and its runtime invocation
+are separate. Complete the same three call phases and original deadlines.
+Between them, identify only the owned coturn by matching SHA-256 of its full
+Docker ID to readiness `coturnContainerIdentitySha256`, then run
+`docker pause "$OWNED_COTURN_ID"` and `docker unpause "$OWNED_COTURN_ID"`.
+Keep signaling running. Do not use `docker stop`: the fixture's `--rm` container
+would disappear. Restore the fixture and preference through their existing owners.
+
+For this branch, `turnFault.scope=owned_fixture_turn` and `deviceId` names the
+subject. Record `fixtureOwned=true`, matching `containerIdentitySha256` /
+`readinessContainerIdentitySha256`, and `turnAuthoritySha256` (SHA-256 of the
+fixture's TURN URL) matching the actual client's `configuredTurnAuthoritySha256`.
+Require exactly one `configuredTurnServerCount`, `pausedDuringOutage=true`,
+`runningAfterRestore=true`, `signalingStillReachable=true`, and
+`hetznerChanged=false`. Hash the actual Docker/configuration/call evidence with
+the receipt. Do not set root/firewall fields for this branch. Before/after relay
+selection, both-peer RTP, no direct fallback and native cleanup remain required.
 
 ## MEDIA-018: held partial transfer through abrupt process death
 
