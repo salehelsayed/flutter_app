@@ -1078,6 +1078,37 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('a newer text Thought brings back the card hidden behind a '
+      'photo', (tester) async {
+    await openPhotoCard(tester);
+    await tester.tap(find.byKey(const ValueKey('thought-photo-full')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
+
+    await posts.savePost(
+      _withId(
+        _thought(initialNow).copyWith(
+          createdAt: initialNow.toIso8601String(),
+          text: 'Words after the photo',
+        ),
+        'thought-2',
+      ),
+    );
+    await pumpMediaFrames(tester);
+
+    expect(
+      find.text('Words after the photo', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('thought-photo-toggle')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('thought-reply-composer')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('thought-age')), findsOneWidget);
+    await finish(tester);
+  });
+
   testWidgets('with the keyboard open a tap on the photo only closes it', (
     tester,
   ) async {

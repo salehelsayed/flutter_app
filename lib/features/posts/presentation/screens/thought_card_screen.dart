@@ -238,6 +238,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             _replyController.clear();
             _activity = null;
             _activityExpanded = false;
+            _immersive = false;
           }
         });
         _armExpiry();
