@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -26,7 +28,9 @@ void main() {
     ComposePostResult? initialDraft,
     ValueChanged<ComposePostResult?>? onClosed,
     bool replacesCurrentThought = false,
+    ThemeData? theme,
   }) => MaterialApp(
+    theme: theme,
     locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
@@ -240,10 +244,11 @@ void main() {
         ),
       );
       await tester.tap(find.byTooltip('Voice'));
-      await tester.pump();
+      // The recording bar grows out of the mic first.
+      await tester.pumpAndSettle();
       expect(share(tester).onPressed, isNull);
       recorder.emitAmplitude(0.5);
-      await tester.tap(find.text('Stop'));
+      await tester.tap(find.byTooltip('Stop'));
       await tester.pump();
       await tapVisible(
         tester,
@@ -671,6 +676,99 @@ void main() {
         area: Offset.zero & editable.size,
         // The field keeps room for the cursor at the line end.
         tolerance: 4,
+      );
+    });
+  }
+
+  testWidgets('the composer takes the app theme and shows icons only', (
+    tester,
+  ) async {
+    const light = BackgroundReadableColors.representativeLight;
+    await tester.pumpWidget(
+      scene(
+        submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+        recorder: FakeAudioRecorderService(),
+        media: () async => const [],
+        theme: ThemeData(extensions: const [light]),
+      ),
+    );
+    await tester.enterText(find.byType(TextField), 'Lake at dusk');
+    await tester.pump();
+
+    final sheet = tester.widget<Material>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey('thought-composer-toolbar')),
+            matching: find.byType(Material),
+          )
+          .first,
+    );
+    expect(sheet.color, light.surfaceRaised);
+    final title = tester.widget<Text>(find.text('New thought'));
+    expect(title.style!.color, light.textPrimary);
+    final shareStyle = share(tester).style!;
+    expect(shareStyle.backgroundColor!.resolve({}), light.accent);
+    expect(shareStyle.foregroundColor!.resolve({}), Colors.white);
+    final text = tester.widget<TextField>(find.byType(TextField));
+    expect(text.style!.color, light.textPrimary);
+    expect(find.text('Media'), findsNothing);
+    expect(find.text('Voice'), findsNothing);
+    expect(find.byTooltip('Media'), findsOneWidget);
+    expect(find.byTooltip('Voice'), findsOneWidget);
+  });
+
+  for (final rtl in [false, true]) {
+    testWidgets('the mic sits at the end and recording grows out of it '
+        '(${rtl ? 'Arabic' : 'English'})', (tester) async {
+      final recorder = FakeAudioRecorderService();
+      addTearDown(recorder.dispose);
+      await tester.pumpWidget(
+        scene(
+          submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+          recorder: recorder,
+          media: () async => const [],
+          locale: rtl ? const Locale('ar') : const Locale('en'),
+        ),
+      );
+      final toolbar = tester.getRect(
+        find.byKey(const ValueKey('thought-composer-toolbar')),
+      );
+      final media = find.byKey(const ValueKey('thought-composer-media'));
+      final voice = find.byKey(const ValueKey('thought-composer-voice'));
+      final micCentre = tester.getCenter(voice).dx;
+      if (rtl) {
+        expect(micCentre, lessThan(tester.getCenter(media).dx));
+        expect(micCentre, lessThan(toolbar.left + 60));
+      } else {
+        expect(micCentre, greaterThan(tester.getCenter(media).dx));
+        expect(micCentre, greaterThan(toolbar.right - 60));
+      }
+
+      await tester.tap(voice);
+      await tester.pumpAndSettle();
+      final stop = find.byKey(const ValueKey('thought-composer-voice-stop'));
+      expect(stop, findsOneWidget);
+      expect(
+        tester.getCenter(stop).dx,
+        moreOrLessEquals(micCentre, epsilon: 1),
+      );
+      expect(find.byType(RecordingOverlay), findsOneWidget);
+      final overlay = tester.getRect(find.byType(RecordingOverlay));
+      final mediaRect = tester.getRect(media);
+      final stopRect = tester.getRect(stop);
+      // The bar fills the space between the photo button and the stop.
+      if (rtl) {
+        expect(stopRect.right, lessThanOrEqualTo(overlay.left));
+        expect(overlay.right, lessThanOrEqualTo(mediaRect.left));
+      } else {
+        expect(mediaRect.right, lessThanOrEqualTo(overlay.left));
+        expect(overlay.right, lessThanOrEqualTo(stopRect.left));
+      }
+      await tester.tap(stop);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('thought-composer-voice')),
+        findsOneWidget,
       );
     });
   }

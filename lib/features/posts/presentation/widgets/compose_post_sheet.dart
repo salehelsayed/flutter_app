@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -597,6 +598,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         .where((contact) => !contact.isArchived && !contact.isBlocked)
         .toList(growable: false);
 
+    final rc = context.backgroundReadableColors;
+    final thought = widget.thoughtsOnly;
     final body = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -653,7 +656,24 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
+        if (thought)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Row(
+              children: [
+                Icon(Icons.schedule_rounded, size: 16, color: rc.textSecondary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    AppLocalizations.of(context)!.thought_compose_lifetime,
+                    key: const ValueKey('thought-composer-lifetime'),
+                    style: TextStyle(color: rc.textSecondary, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        SizedBox(height: thought ? 6 : 16),
         TextField(
           controller: _textController,
           textDirection: _inputDirection,
@@ -665,8 +685,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             hintText: AppLocalizations.of(context)!.compose_hint,
-            hintStyle: const TextStyle(
-              color: Color.fromRGBO(255, 255, 255, 0.35),
+            hintStyle: TextStyle(
+              color: thought
+                  ? rc.placeholderText
+                  : const Color.fromRGBO(255, 255, 255, 0.35),
             ),
             filled: !widget.thoughtsOnly,
             fillColor: const Color(0xFF1A1E26),
@@ -675,7 +697,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               borderSide: BorderSide.none,
             ),
           ),
-          style: const TextStyle(color: Colors.white),
+          style: thought
+              ? TextStyle(color: rc.textPrimary, fontSize: 19, height: 1.4)
+              : const TextStyle(color: Colors.white),
         ),
         const SizedBox(height: 16),
         if (!widget.thoughtsOnly)
@@ -797,7 +821,8 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ),
           ),
         ],
-        if (_isRecording) ...[
+        // A Thought records on its toolbar instead.
+        if (_isRecording && !thought) ...[
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -848,11 +873,16 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFF1A1E26),
+              color: thought ? rc.composerInputFill : const Color(0xFF1A1E26),
+              border: thought ? Border.all(color: rc.divider) : null,
               borderRadius: BorderRadius.circular(18),
             ),
             child: Row(
               children: [
+                if (thought) ...[
+                  Icon(Icons.graphic_eq_rounded, color: rc.accent),
+                  const SizedBox(width: 10),
+                ],
                 Expanded(
                   child: Text(
                     _mediaDrafts.first.kind == 'voice'
@@ -860,15 +890,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                         : AppLocalizations.of(
                             context,
                           )!.compose_attachments(_mediaDrafts.length),
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: thought ? rc.textPrimary : Colors.white,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ),
                 IconButton(
                   onPressed: _clearDrafts,
-                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                  icon: Icon(
+                    Icons.close_rounded,
+                    color: thought ? rc.iconSecondary : Colors.white70,
+                  ),
                 ),
               ],
             ),
@@ -930,30 +963,31 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ),
           ),
         ],
-        const SizedBox(height: 20),
-        if (widget.thoughtsOnly) ...[
-          Text(
-            AppLocalizations.of(context)!.thought_compose_lifetime,
-            key: const ValueKey('thought-composer-lifetime'),
-            style: const TextStyle(color: Colors.white70),
-          ),
-          if (widget.replacesCurrentThought) ...[
-            const SizedBox(height: 4),
-            Text(
-              AppLocalizations.of(context)!.thought_compose_replaces,
-              key: const ValueKey('thought-composer-replaces'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
+        SizedBox(height: thought ? 12 : 20),
+        if (thought && widget.replacesCurrentThought) ...[
+          Row(
+            children: [
+              Icon(Icons.info_outline_rounded, size: 16, color: rc.textMuted),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  AppLocalizations.of(context)!.thought_compose_replaces,
+                  key: const ValueKey('thought-composer-replaces'),
+                  style: TextStyle(color: rc.textMuted, fontSize: 13),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
           const SizedBox(height: 12),
         ],
         if (_notice case final notice?) ...[
           Text(
             _noticeText(AppLocalizations.of(context)!, notice),
-            style: const TextStyle(color: Color(0xFFFFB4A9)),
+            style: TextStyle(
+              color: thought
+                  ? Theme.of(context).colorScheme.error
+                  : const Color(0xFFFFB4A9),
+            ),
           ),
           const SizedBox(height: 12),
         ],
@@ -993,37 +1027,50 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   /// A Thought keeps Share in the header and its photo and mic on a toolbar
-  /// that rides just above the keyboard, so neither scrolls out of reach.
+  /// that rides just above the keyboard, so neither scrolls out of reach. Its
+  /// colours come from the app theme.
   Widget _thoughtSheet(BuildContext context, Widget body) {
     final l10n = AppLocalizations.of(context)!;
-    final counter = _thoughtCounter(
-      context,
-      currentLength: _textController.text.characters.length,
-      isFocused: false,
-      maxLength: _thoughtMaxLength,
-    );
+    final rc = context.backgroundReadableColors;
+    final length = _textController.text.characters.length;
+    final over = length > _thoughtMaxLength;
+    final error = Theme.of(context).colorScheme.error;
+    // White text fails on the bright dark-theme green.
+    final onAccent = rc.accent.computeLuminance() > .3
+        ? const Color(0xFF0A0A0F)
+        : Colors.white;
     return Padding(
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top + 12,
         bottom: MediaQuery.viewInsetsOf(context).bottom,
       ),
       child: Material(
-        color: const Color(0xFF111318),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        color: rc.surfaceRaised.withValues(alpha: 1),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         child: SafeArea(
           top: false,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Container(
+                width: 36,
+                height: 5,
+                margin: const EdgeInsets.only(top: 8),
+                decoration: BoxDecoration(
+                  color: rc.divider,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(4, 6, 12, 2),
+                padding: const EdgeInsets.fromLTRB(4, 2, 16, 2),
                 child: Row(
                   children: [
                     TextButton(
                       key: const ValueKey('thought-composer-cancel'),
                       onPressed: () => Navigator.of(context).maybePop(),
                       style: TextButton.styleFrom(
-                        foregroundColor: Colors.white70,
+                        foregroundColor: rc.textSecondary,
+                        textStyle: const TextStyle(fontSize: 16),
                       ),
                       child: Text(l10n.btn_cancel),
                     ),
@@ -1031,10 +1078,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       child: Text(
                         l10n.thought_compose_header,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                        style: TextStyle(
+                          color: rc.textPrimary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
@@ -1042,10 +1089,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       key: const ValueKey('thought-composer-share'),
                       onPressed: _canSubmit ? _submit : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F766E),
-                        foregroundColor: Colors.white,
+                        backgroundColor: rc.accent,
+                        foregroundColor: onAccent,
+                        disabledBackgroundColor: rc.disabledSurface,
+                        disabledForegroundColor: rc.disabledForeground,
+                        elevation: 0,
                         shape: const StadiumBorder(),
                         minimumSize: const Size(72, 36),
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       child: Text(l10n.thought_compose_share),
                     ),
@@ -1064,17 +1118,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 child: Container(
                   key: const ValueKey('thought-composer-toolbar'),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
+                    horizontal: 12,
+                    vertical: 8,
                   ),
-                  decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: Color(0x1FFFFFFF))),
+                  decoration: BoxDecoration(
+                    color: rc.composerBarColor,
+                    border: Border(top: BorderSide(color: rc.divider)),
                   ),
                   child: Row(
                     children: [
                       _ToolButton(
                         key: const ValueKey('thought-composer-media'),
-                        icon: Icons.photo_library_outlined,
+                        icon: Icons.photo_outlined,
                         label: _isAttaching
                             ? l10n.compose_media_adding
                             : l10n.compose_media,
@@ -1086,19 +1141,94 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             : _attachMedia,
                       ),
                       const SizedBox(width: 12),
-                      _ToolButton(
-                        key: const ValueKey('thought-composer-voice'),
-                        icon: Icons.mic_none_rounded,
-                        label: l10n.compose_voice,
-                        onPressed:
-                            widget.onAttachVoice == null &&
-                                widget.audioRecorderService == null
-                            ? null
-                            : _attachVoice,
+                      // The mic sits at the end; recording grows out of it.
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          transitionBuilder: (child, animation) => Align(
+                            alignment: AlignmentDirectional.centerEnd,
+                            child: SizeTransition(
+                              sizeFactor: animation,
+                              axis: Axis.horizontal,
+                              alignment: AlignmentDirectional.centerEnd,
+                              child: child,
+                            ),
+                          ),
+                          child: _isRecording
+                              ? Row(
+                                  key: const ValueKey(
+                                    'thought-composer-recording',
+                                  ),
+                                  children: [
+                                    Expanded(
+                                      child: RecordingOverlay(
+                                        elapsed: _recordingDuration,
+                                        amplitudeValues: _recordingAmplitudes,
+                                        onCancel: () {
+                                          unawaited(_cancelVoiceRecording());
+                                        },
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _ToolButton(
+                                      key: const ValueKey(
+                                        'thought-composer-voice-stop',
+                                      ),
+                                      icon: Icons.stop_rounded,
+                                      label: l10n.compose_voice_stop,
+                                      filled: true,
+                                      onPressed: _stopVoiceRecording,
+                                    ),
+                                  ],
+                                )
+                              : Row(
+                                  key: const ValueKey('thought-composer-idle'),
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    if (length >= _thoughtCounterFrom) ...[
+                                      Text(
+                                        '$length/$_thoughtMaxLength',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: over ? error : rc.textMuted,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    if (length > 0) ...[
+                                      SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                          key: const ValueKey(
+                                            'thought-composer-count-ring',
+                                          ),
+                                          value: (length / _thoughtMaxLength)
+                                              .clamp(0.0, 1.0),
+                                          strokeWidth: 2.5,
+                                          backgroundColor: rc.divider,
+                                          color: over ? error : rc.accent,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                    ],
+                                    _ToolButton(
+                                      key: const ValueKey(
+                                        'thought-composer-voice',
+                                      ),
+                                      icon: Icons.mic_none_rounded,
+                                      label: l10n.compose_voice,
+                                      onPressed:
+                                          widget.onAttachVoice == null &&
+                                              widget.audioRecorderService ==
+                                                  null
+                                          ? null
+                                          : _attachVoice,
+                                    ),
+                                  ],
+                                ),
+                        ),
                       ),
-                      const Spacer(),
-                      ?counter,
-                      const SizedBox(width: 6),
                     ],
                   ),
                 ),
@@ -1111,32 +1241,39 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 }
 
-/// A round outlined photo or mic button on the Thought toolbar.
+/// A round photo or mic button on the Thought toolbar, in the chat
+/// composer's style. Icon only; its label is the tooltip.
 class _ToolButton extends StatelessWidget {
   const _ToolButton({
     super.key,
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.filled = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
+  final bool filled;
 
   @override
-  Widget build(BuildContext context) => IconButton.outlined(
-    tooltip: label,
-    onPressed: onPressed,
-    style: IconButton.styleFrom(
-      foregroundColor: const Color(0xFF7FD8CC),
-      side: BorderSide(
-        color: onPressed == null ? Colors.white24 : const Color(0xFF7FD8CC),
-        width: 1.4,
+  Widget build(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    return IconButton(
+      tooltip: label,
+      onPressed: onPressed,
+      constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+      style: IconButton.styleFrom(
+        backgroundColor: filled ? rc.accent : rc.composerInputFill,
+        foregroundColor: filled ? rc.accentIcon : rc.accent,
+        disabledBackgroundColor: rc.composerInputFill,
+        disabledForegroundColor: rc.disabledForeground,
+        side: filled ? null : BorderSide(color: rc.divider),
       ),
-    ),
-    icon: Icon(icon, size: 22),
-  );
+      icon: Icon(icon, size: 22),
+    );
+  }
 }
 
 Widget? _noCounter(
@@ -1145,23 +1282,6 @@ Widget? _noCounter(
   required bool isFocused,
   required int? maxLength,
 }) => null;
-
-Widget? _thoughtCounter(
-  BuildContext context, {
-  required int currentLength,
-  required bool isFocused,
-  required int? maxLength,
-}) => currentLength < _thoughtCounterFrom
-    ? null
-    : Text(
-        '$currentLength/$maxLength',
-        style: TextStyle(
-          fontSize: 12,
-          color: currentLength > _thoughtMaxLength
-              ? const Color(0xFFFFB4A9)
-              : Colors.white54,
-        ),
-      );
 
 String _noticeText(AppLocalizations l10n, _ComposeNotice notice) =>
     switch (notice) {
