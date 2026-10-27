@@ -92,7 +92,10 @@ const _controllerTestPaths = <String>[
 // 407 128-E: one optional `ConversationWired` field, `onOpenThought`. A live
 // quoted thought opens its card over the chat; a reply typed there comes back
 // through the same ordinary send path. No existing handoff changes.
-const _expectedDirectApiFingerprint = '5bccc690';
+// 407 128-D: `onOpenThought`'s reply callback becomes async and returns a
+// `ThoughtReplyStatus`, so a reply typed on the card can show Sent or Retry in
+// place. It still sends through the chat's ordinary path.
+const _expectedDirectApiFingerprint = '995a374c';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 const _expectedGroupApiFingerprint = 'fe1ac6ec';
@@ -131,7 +134,9 @@ const _expectedGroupApiFingerprint = 'fe1ac6ec';
 // `thoughtNow`, the stored-thought previews a quoted thought renders from.
 // 407 128-E: the direct handoff adds only `onOpenThought`, which opens a live
 // quoted thought from its quote. No other handoff changes.
-const _expectedDirectHandoffFingerprint = '932c57ad';
+// 407 128-D: that `onOpenThought` handoff now passes the async in-place
+// sender. No other handoff changes.
+const _expectedDirectHandoffFingerprint = 'a93e7f8d';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 const _expectedGroupHandoffFingerprint = '060099cf';

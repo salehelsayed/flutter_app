@@ -72,6 +72,8 @@ void main() {
       .insert('post_recipients', {
         'post_id': 'thought-1',
         'recipient_peer_id': peer,
+        'delivery_owner_kind': 'post',
+        'delivery_owner_id': 'thought-1',
         'delivery_status': 'inbox',
         'last_attempt_at': _created,
         'delivery_path': 'inbox',

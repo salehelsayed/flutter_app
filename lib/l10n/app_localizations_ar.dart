@@ -494,6 +494,42 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_depth_empty_ring => 'لا توجد خواطر هنا الآن.';
 
   @override
+  String get thought_activity_title => 'نشاط الخاطرة';
+
+  @override
+  String get thought_seen_title => 'شاهدها';
+
+  @override
+  String thought_seen_count(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'شاهدها $count صديق',
+      many: 'شاهدها $count صديقًا',
+      few: 'شاهدها $count أصدقاء',
+      two: 'شاهدها صديقان',
+      one: 'شاهدها صديق واحد',
+      zero: 'لم يشاهدها أحد بعد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_activity_empty => 'لا توجد تفاعلات بعد';
+
+  @override
+  String thought_activity_group(String name, int count, String glyph) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$name و$count آخرون تفاعلوا بـ $glyph',
+      one: '$name وشخص آخر تفاعلا بـ $glyph',
+      zero: 'تفاعل $name بـ $glyph',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String thought_reply_hint(String name) {
     return 'رُدّ على $name…';
   }

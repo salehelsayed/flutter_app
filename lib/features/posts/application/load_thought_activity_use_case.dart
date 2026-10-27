@@ -28,7 +28,10 @@ Future<ThoughtActivity> loadThoughtActivity({
       post.authorPeerId != localPeerId ||
       expiry == null ||
       !expiry.isAfter(now)) {
-    return (viewers: const [], reactions: const []);
+    return (
+      viewers: const <ThoughtReactionParticipant>[],
+      reactions: const <ThoughtReactionGroup>[],
+    );
   }
   if (postRepo is! ThoughtViewRepository ||
       messageRepo is! ThoughtReactionMessageRepository) {
@@ -61,7 +64,7 @@ Future<ThoughtActivity> loadThoughtActivity({
   // The card's refresh/generation fence discards a late result if its Thought
   // has been retired, replaced, or made ineligible during these reads.
   return (
-    viewers: List.unmodifiable(viewers.values),
+    viewers: List<ThoughtReactionParticipant>.unmodifiable(viewers.values),
     reactions: groupThoughtReactions(
       postId: postId,
       replies: replies,

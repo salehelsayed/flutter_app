@@ -898,6 +898,36 @@ abstract class AppLocalizations {
   /// **'No thoughts here right now.'**
   String get orbit_depth_empty_ring;
 
+  /// No description provided for @thought_activity_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Thought activity'**
+  String get thought_activity_title;
+
+  /// No description provided for @thought_seen_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Seen by'**
+  String get thought_seen_title;
+
+  /// No description provided for @thought_seen_count.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{No views yet} =1{Seen by 1 friend} other{Seen by {count} friends}}'**
+  String thought_seen_count(int count);
+
+  /// No description provided for @thought_activity_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'No reactions yet'**
+  String get thought_activity_empty;
+
+  /// No description provided for @thought_activity_group.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =0{{name} reacted {glyph}} =1{{name} and 1 other reacted {glyph}} other{{name} and {count} others reacted {glyph}}}'**
+  String thought_activity_group(String name, int count, String glyph);
+
   /// Thought card: reply field over a friend's thought
   ///
   /// In en, this message translates to:

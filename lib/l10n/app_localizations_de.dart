@@ -496,6 +496,39 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_depth_empty_ring => 'Gerade keine Gedanken hier.';
 
   @override
+  String get thought_activity_title => 'Aktivität zum Gedanken';
+
+  @override
+  String get thought_seen_title => 'Gesehen von';
+
+  @override
+  String thought_seen_count(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Von $count Freunden gesehen',
+      one: 'Von 1 Freund gesehen',
+      zero: 'Noch keine Aufrufe',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_activity_empty => 'Noch keine Reaktionen';
+
+  @override
+  String thought_activity_group(String name, int count, String glyph) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$name und $count weitere Personen haben mit $glyph reagiert',
+      one: '$name und 1 weitere Person haben mit $glyph reagiert',
+      zero: '$name hat mit $glyph reagiert',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String thought_reply_hint(String name) {
     return '$name antworten…';
   }

@@ -486,6 +486,39 @@ class AppLocalizationsEn extends AppLocalizations {
   String get orbit_depth_empty_ring => 'No thoughts here right now.';
 
   @override
+  String get thought_activity_title => 'Thought activity';
+
+  @override
+  String get thought_seen_title => 'Seen by';
+
+  @override
+  String thought_seen_count(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Seen by $count friends',
+      one: 'Seen by 1 friend',
+      zero: 'No views yet',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_activity_empty => 'No reactions yet';
+
+  @override
+  String thought_activity_group(String name, int count, String glyph) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$name and $count others reacted $glyph',
+      one: '$name and 1 other reacted $glyph',
+      zero: '$name reacted $glyph',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String thought_reply_hint(String name) {
     return 'Reply to $name…';
   }
