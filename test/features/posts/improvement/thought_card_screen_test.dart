@@ -509,7 +509,11 @@ void main() {
         thought,
         download: (requested) async {
           downloads.add(requested);
-          await posts.updatePostMediaLocalPath(requested.mediaId, photo.path);
+          await posts.updatePostMediaLocalPath(
+            requested.mediaId,
+            photo.path,
+            postId: requested.postId,
+          );
           return requested.copyWith(
             localPath: photo.path,
             downloadStatus: 'done',
@@ -560,7 +564,11 @@ void main() {
             );
             throw StateError('download failed');
           }
-          await posts.updatePostMediaLocalPath(requested.mediaId, photo.path);
+          await posts.updatePostMediaLocalPath(
+            requested.mediaId,
+            photo.path,
+            postId: requested.postId,
+          );
           return requested.copyWith(
             localPath: photo.path,
             downloadStatus: 'done',
@@ -600,7 +608,11 @@ void main() {
           tester,
           thought,
           download: (requested) async {
-            await posts.updatePostMediaLocalPath(requested.mediaId, file.path);
+            await posts.updatePostMediaLocalPath(
+              requested.mediaId,
+              file.path,
+              postId: requested.postId,
+            );
             return requested.copyWith(
               localPath: file.path,
               downloadStatus: 'done',
@@ -640,7 +652,11 @@ void main() {
         tester,
         thought,
         download: (requested) async {
-          await posts.updatePostMediaLocalPath(requested.mediaId, file.path);
+          await posts.updatePostMediaLocalPath(
+            requested.mediaId,
+            file.path,
+            postId: requested.postId,
+          );
           return requested.copyWith(
             localPath: file.path,
             downloadStatus: 'done',

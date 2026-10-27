@@ -75,7 +75,12 @@ abstract class PostRepository {
   Future<Map<String, List<PostMediaAttachmentModel>>>
   loadPostMediaAttachmentsForPosts(List<String> postIds);
 
-  Future<void> updatePostMediaLocalPath(String mediaId, String localPath);
+  /// Marks the media downloaded and reports [postId] on [postChanges].
+  Future<void> updatePostMediaLocalPath(
+    String mediaId,
+    String localPath, {
+    required String postId,
+  });
 
   Future<void> updatePostMediaDownloadStatus(
     String mediaId,

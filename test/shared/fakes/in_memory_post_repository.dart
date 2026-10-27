@@ -419,8 +419,9 @@ class InMemoryPostRepository implements PostRepository {
   @override
   Future<void> updatePostMediaLocalPath(
     String mediaId,
-    String localPath,
-  ) async {
+    String localPath, {
+    required String postId,
+  }) async {
     final attachment = _postMediaById[mediaId];
     if (attachment == null) {
       return;

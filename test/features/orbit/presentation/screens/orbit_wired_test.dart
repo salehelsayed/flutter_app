@@ -1347,6 +1347,54 @@ void main() {
       await finishThoughtCase(tester);
     });
 
+    testWidgets(
+      'a photo that finishes downloading after the reply shows in the quote',
+      (tester) async {
+        final directory = Directory.systemTemp.createTempSync('thought-quote-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final photo = File('${directory.path}/lake.png')
+          ..writeAsBytesSync(
+            base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+            ),
+          );
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(
+          thought('lake', text: 'Sunset at the lake?', mediaKind: 'image'),
+        );
+        await posts.savePostMediaAttachment(
+          PostMediaAttachmentModel(
+            mediaId: 'media-lake',
+            postId: 'lake',
+            blobId: 'blob-lake',
+            kind: 'image',
+            mime: 'image/png',
+            sizeBytes: 100,
+            createdAt: thoughtNow.toIso8601String(),
+          ),
+        );
+        await replyFromCard(tester, posts, clock: () => thoughtNow);
+        expect(find.byKey(const ValueKey('thought-quote-photo')), findsNothing);
+
+        await posts.updatePostMediaLocalPath(
+          'media-lake',
+          photo.path,
+          postId: 'lake',
+        );
+        await pumpOrbitFrames(tester, count: 6);
+
+        final thumbnail = tester.widget<Image>(
+          find.byKey(const ValueKey('thought-quote-photo')),
+        );
+        expect(
+          (thumbnail.image as ResizeImage).imageProvider,
+          FileImage(photo),
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('a quoted thought its author deletes leaves the open chat', (
       tester,
     ) async {

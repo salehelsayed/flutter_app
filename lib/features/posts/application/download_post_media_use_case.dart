@@ -150,7 +150,11 @@ Future<PostMediaAttachmentModel> _downloadPostMedia({
       blobId: attachment.blobId,
       mime: attachment.mime,
     );
-    await postRepo.updatePostMediaLocalPath(attachment.mediaId, relativePath);
+    await postRepo.updatePostMediaLocalPath(
+      attachment.mediaId,
+      relativePath,
+      postId: attachment.postId,
+    );
     emitFlowEvent(
       layer: 'FL',
       event: 'POST_MEDIA_DOWNLOAD_SUCCESS',

@@ -518,13 +518,15 @@ class PostRepositoryImpl implements PostRepository {
   @override
   Future<void> updatePostMediaLocalPath(
     String mediaId,
-    String localPath,
-  ) async {
+    String localPath, {
+    required String postId,
+  }) async {
     final dbUpdate = _require(
       dbUpdatePostMediaLocalPath,
       'Post media local-path updates are not configured for this repository.',
     );
     await dbUpdate(mediaId, localPath);
+    _postChangesController.add(postId);
   }
 
   @override
