@@ -546,6 +546,7 @@ void main() {
       find.byKey(const ValueKey('thought-reply-field')),
       'count me in',
     );
+    await tester.pump();
     await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('thought-reply-retry')), findsOneWidget);

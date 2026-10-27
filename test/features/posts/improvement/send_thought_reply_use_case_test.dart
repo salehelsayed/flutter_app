@@ -23,7 +23,7 @@ import '../../identity/domain/repositories/fake_identity_repository.dart';
 const _local = 'local-peer-0001';
 const _author = 'author-peer-0001';
 const _postId = 'thought-1';
-const _messageId = 'reply-1';
+const _messageId = '8ad53b87-3d4f-4abd-9f55-52ae557979c6';
 const _quoteId = 'thought:thought-1';
 
 void main() {

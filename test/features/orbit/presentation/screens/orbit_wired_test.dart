@@ -1602,6 +1602,7 @@ void main() {
       'a thought deleted while the chat is still looking it up leaves the chat',
       (tester) async {
         setLargeTestSurface(tester);
+        messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
         identityRepo.seed(testIdentity);
         contactRepo.seed([testContact]);
         final posts = _HeldSnapshotLookupRepository('lake');
@@ -1621,8 +1622,11 @@ void main() {
           'count me in',
         );
         await tester.pump();
-        posts.holding = true;
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await pumpOrbitFrames(tester, count: 12);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        posts.holding = true;
+        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
         await pumpOrbitFrames(tester, count: 12);
         expect(posts.heldCount, greaterThan(0));
 
@@ -1666,6 +1670,7 @@ void main() {
       'latest note opens current-name card, marks read, a reply lands quoted in chat, and the face opens ordinary chat',
       (tester) async {
         setLargeTestSurface(tester);
+        messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
         identityRepo.seed(testIdentity);
         final currentContact = testContact.copyWith(username: 'Bob Now');
         contactRepo.seed([currentContact]);
@@ -1719,16 +1724,21 @@ void main() {
         await tester.pump();
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
         await pumpOrbitFrames(tester, count: 12);
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
+        await pumpOrbitFrames(tester, count: 12);
         final messageChat = tester.widget<ConversationWired>(
           find.byType(ConversationWired),
         );
         expect(messageChat.contact.peerId, currentContact.peerId);
         expect(messageChat.initialText, isNull);
-        expect(messageChat.initialThoughtReply?.text, 'count me in');
-        expect(
-          messageChat.initialThoughtReply?.quotedMessageId,
-          'thought:latest-thought',
+        expect(messageChat.initialThoughtReply, isNull);
+        final queuedReplies = await messageRepo.getMessagesForContact(
+          currentContact.peerId,
         );
+        expect(queuedReplies, hasLength(1));
+        expect(queuedReplies.single.text, 'count me in');
+        expect(queuedReplies.single.quotedMessageId, 'thought:latest-thought');
         expect(find.text('count me in', findRichText: true), findsOneWidget);
         expect(
           find.descendant(

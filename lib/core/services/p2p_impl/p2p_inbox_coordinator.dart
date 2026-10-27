@@ -73,7 +73,8 @@ class _P2PInboxCoordinator {
       }) {
         return ['kem', 'ciphertext', 'nonce'].every(
           (key) =>
-              encrypted[key] is String && (encrypted[key] as String).isNotEmpty,
+              encrypted[key] is String &&
+              (encrypted[key] as String).trim().isNotEmpty,
         );
       }
     } catch (_) {}
