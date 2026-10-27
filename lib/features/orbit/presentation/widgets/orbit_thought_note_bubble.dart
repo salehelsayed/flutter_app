@@ -4,7 +4,8 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_media_preview_label.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
-/// A thought's two-line preview. Read state changes only its text weight.
+/// A thought's two-line preview. An unseen note is bold and outlined; a seen
+/// one is regular and dimmer. The outline never changes the layout.
 class OrbitThoughtNoteBubble extends StatelessWidget {
   static const tailHeight = 11.0;
   static const _padding = EdgeInsets.symmetric(horizontal: 9, vertical: 6);
@@ -26,7 +27,7 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
     : _authorName = null;
 
   static TextStyle textStyle({required bool isRead}) => TextStyle(
-    color: const Color(0xFFF5F5F5),
+    color: isRead ? const Color(0xFFBDBDBD) : const Color(0xFFF5F5F5),
     fontSize: 11.5,
     height: 1.22,
     fontWeight: isRead ? FontWeight.w400 : FontWeight.w600,
@@ -78,7 +79,9 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
       button: onTap != null,
       label: authorName == null
           ? l10n.orbit_thought_note_self_semantics(preview)
-          : l10n.orbit_thought_note_semantics(authorName, preview),
+          : note.isRead
+          ? l10n.orbit_thought_note_semantics(authorName, preview)
+          : l10n.orbit_thought_note_new_semantics(authorName, preview),
       onTap: onTap,
       excludeSemantics: true,
       child: GestureDetector(
@@ -106,6 +109,15 @@ class OrbitThoughtNoteBubble extends StatelessWidget {
                     ),
                   ],
                 ),
+                foregroundDecoration: note.isRead
+                    ? null
+                    : BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: const Color(0xD9FFFFFF),
+                          width: 1.5,
+                        ),
+                      ),
                 child: Text(
                   preview,
                   textDirection: detectTextDirection(preview),

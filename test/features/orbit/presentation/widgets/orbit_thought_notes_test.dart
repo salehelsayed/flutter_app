@@ -157,7 +157,7 @@ void main() {
   });
 
   testWidgets(
-    'bubble width/ellipsis and only heavier text distinguish unseen',
+    'bubble width/ellipsis and heavier text for unseen',
     (tester) async {
       await tester.pumpWidget(
         wrap(
@@ -191,6 +191,64 @@ void main() {
       expect(text.style!.fontWeight, FontWeight.w400);
       expect(text.style!.fontSize, 11.5);
       expect(text.style!.height, 1.22);
+    },
+  );
+
+  testWidgets(
+    'an unseen note is outlined and read as new; seen is plain and dimmer',
+    (tester) async {
+      Container? outline(WidgetTester tester) => tester
+          .widgetList<Container>(
+            find.descendant(
+              of: find.byType(OrbitThoughtNoteBubble),
+              matching: find.byType(Container),
+            ),
+          )
+          .where((box) => box.foregroundDecoration != null)
+          .firstOrNull;
+      final handle = tester.ensureSemantics();
+
+      await tester.pumpWidget(
+        wrap(
+          OrbitThoughtNoteBubble(
+            authorName: 'Friend 0',
+            note: note('lake', text: 'At the lake'),
+          ),
+        ),
+      );
+      final unseenSize = tester.getSize(find.byType(OrbitThoughtNoteBubble));
+      final border =
+          (outline(tester)!.foregroundDecoration! as BoxDecoration).border!
+              as Border;
+      expect(border.top.width, 1.5);
+      expect(border.top.color, const Color(0xD9FFFFFF));
+      expect(
+        find.bySemanticsLabel('New thought from Friend 0: At the lake'),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(
+        wrap(
+          OrbitThoughtNoteBubble(
+            authorName: 'Friend 0',
+            note: note('lake', text: 'At the lake', read: true),
+          ),
+        ),
+      );
+      expect(outline(tester), isNull);
+      expect(
+        tester.widget<Text>(find.text('At the lake')).style!.color,
+        const Color(0xFFBDBDBD),
+      );
+      expect(
+        find.bySemanticsLabel('Thought from Friend 0: At the lake'),
+        findsOneWidget,
+      );
+      expect(
+        tester.getSize(find.byType(OrbitThoughtNoteBubble)).height,
+        unseenSize.height,
+      );
+      handle.dispose();
     },
   );
 
@@ -293,21 +351,21 @@ void main() {
       );
       await tester.pumpWidget(scene(1));
       final node = tester.getSemantics(
-        find.bySemanticsLabel('Thought from Friend 0: A thought'),
+        find.bySemanticsLabel('New thought from Friend 0: A thought'),
       );
       expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
       expect(
-        find.semantics.byLabel('Thought from Friend 1: Voice message'),
+        find.semantics.byLabel('New thought from Friend 1: Voice message'),
         findsOne,
       );
       tester.semantics.tap(
-        find.semantics.byLabel('Thought from Friend 0: A thought'),
+        find.semantics.byLabel('New thought from Friend 0: A thought'),
       );
       expect(opened, ['live']);
 
       await tester.pumpWidget(scene(0.3));
       expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(2));
-      expect(find.semantics.byLabel(RegExp('Thought from')), findsNothing);
+      expect(find.semantics.byLabel(RegExp('thought from', caseSensitive: false)), findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 2));
       semantics.dispose();

@@ -309,6 +309,17 @@
       }
     }
   },
+  "orbit_thought_note_new_semantics": "New thought from {name}: {preview}",
+  "@orbit_thought_note_new_semantics": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "preview": {
+        "type": "String"
+      }
+    }
+  },
   "orbit_thought_note_self_semantics": "Your thought: {preview}",
   "@orbit_thought_note_self_semantics": {
     "placeholders": {

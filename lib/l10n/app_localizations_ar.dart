@@ -625,6 +625,11 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String orbit_thought_note_new_semantics(String name, String preview) {
+    return 'فكرة جديدة من $name: $preview';
+  }
+
+  @override
   String orbit_thought_note_self_semantics(String preview) {
     return 'فكرتك: $preview';
   }

@@ -1090,6 +1090,12 @@ abstract class AppLocalizations {
   /// **'Thought from {name}: {preview}'**
   String orbit_thought_note_semantics(String name, String preview);
 
+  /// No description provided for @orbit_thought_note_new_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'New thought from {name}: {preview}'**
+  String orbit_thought_note_new_semantics(String name, String preview);
+
   /// No description provided for @orbit_thought_note_self_semantics.
   ///
   /// In en, this message translates to:
