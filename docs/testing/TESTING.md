@@ -5342,19 +5342,29 @@ visible and cannot become an ordinary first-attempt PASS.
   inbox path. Minute/shutdown flushes buffer updates; snapshot health means the
   last write succeeded, not that every new count is durable. Abrupt process loss
   can lose the unflushed tail. The counter is default OFF unless
-  `MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true`; disabled initialization does not
-  read/create the snapshot. Returning posters are estimated from current-week
+  `MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true`. ON requires a nonblank secret
+  key of at least 32 bytes via `MKNOON_RELAY_THOUGHT_METRICS_KEY`; missing keys
+  refuse only the collector. Sender inputs use domain-separated HMAC-SHA256.
+  Version-2 snapshots retain a key verifier, never the key; key changes and
+  legacy unkeyed files start an empty epoch rather than mix sketches. Every
+  OFF startup deletes only the aggregate file and syncs its parent directory;
+  absent files are harmless, unsafe/nonregular paths report failure, and the
+  unrelated custody sentinel survives. Operations must complete an OFF restart
+  within seven days of switch-off and verify deletion. Returning posters are estimated from current-week
   senders intersected with the union of every earlier retained week, not just
   the preceding week. No additional sketch/ID storage is added; nonadjacent
   returns, restart preservation and expiry of prior history are covered.
-  The focused race run passes 11 top-level cases plus nine nested accuracy
-  cases, with no failures/skips. For 20/50/100 senders per week, 128 synthetic
+  The hardening race run passes 16 top-level cases plus nine nested accuracy
+  cases, with no failures/skips. The metrics bind IP setting defaults to
+  127.0.0.1 on port 2112 for ALL metrics; explicit IPv4/IPv6 overrides and
+  invalid-address rejection are covered. For 20/50/100 senders per week, 128 synthetic
   trials per rotating/all-new/all-returning pattern (weeks 3/4) give worst
-  pattern p95 absolute errors of 1/1/2 senders and observed maxima of 2/2/3.
+  pattern p95 absolute errors of 0/1/1 senders and observed maxima of 2/3/4.
   These are empirical bounds for fixed cohorts, not statistical guarantees;
   even zero true returns can yield a small nonzero estimate. Receipts and all
-  pattern results are in `.codex-test-logs/relay-thought-returners-20261027/`
-  in the delivering checkout. This is host/inbox/filesystem proof with a
+  pattern results are in `.codex-test-logs/relay-thought-hardening-20261027/`
+  in the delivering checkout (the earlier unkeyed run is superseded for this
+  candidate). This is host/inbox/filesystem proof with a
   recording provider, not deployed relay, real push, device or signed-artifact
   evidence. Direct-only deliveries are unseen; counts are observed sender IDs,
   not verified people. All-time returning/engagement claims remain unsupported.

@@ -17,10 +17,30 @@ The additional code is in `thought_metrics.go`, gated startup in `main.go`,
 and `thought_metrics_test.go`. It is not yet a deployed or reviewed release.
 
 `MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true` explicitly enables the collector.
-Unset, false or unrecognized values leave it OFF: no counter snapshot is read
-or written and no Thought metric series is registered. Initialization failure
-also leaves analytics unavailable while the relay continues serving messages.
-A missing series means unavailable, never zero.
+Unset, false or unrecognized values leave it OFF: no collector or Thought
+series is registered. Every OFF startup deletes only the counter snapshot,
+then syncs its parent directory; absent files are a successful no-op. Deletion
+failures are reported and must be repaired before claiming the retention rule
+was met. Initialization failure leaves analytics unavailable while the relay
+continues serving messages. A missing series means unavailable, never zero.
+
+When ON, `MKNOON_RELAY_THOUGHT_METRICS_KEY` is required: a nonblank, independently
+random secret of at least 32 bytes, securely provided by the release operator.
+No real key is created/read/provisioned by this preparation. Never put the key
+in chat, logs, command arguments, a git file or a public unit dump. Use the
+existing protected service environment file (0600), with approved provisioning.
+Sender IDs are domain-separated HMAC-SHA256 inputs before HLL insertion; the
+key is kept in process memory, never in the snapshot. A snapshot-only holder
+without the strong key cannot reproduce the sender hashing. This is not a
+claim against someone who also obtains the key or controls the relay.
+
+Snapshot version 2 stores only a domain-separated key verifier plus the bounded
+weekly sketches. A legacy unkeyed snapshot or different key verifier is wiped
+before starting a fresh empty epoch. Key rotation therefore resets all history;
+never combine different-key weeks or rotate keys weekly while claiming pilot
+week 3/4 returning counts. Keep the key stable across the retained pilot window.
+Thought IDs still use the existing unkeyed HLL input; do not claim every possible
+known-item membership inference is prevented.
 
 The enabled counter reads only already-routed outer `post_create` metadata after
 accepted inbox storage. It retains dense p14 HLL registers for distinct posts
@@ -34,13 +54,13 @@ It covers pilot weeks 3/4 if the earlier pilot weeks are within retention and
 were observed while enabled. It is not an all-time returning-person measure.
 Record the pilot's starting UTC ISO week; do not infer pilot week 3 from the
 calendar week number. Historical weeks before enablement cannot be backfilled.
-No new identifiers, per-input hashes, event logs or content are retained by the
-counter; its existing snapshot schema is unchanged. Dense sketches are not a
+No sender identifiers, per-input hashes, event logs or content are retained by
+the counter; snapshot version 2 adds only a non-secret key verifier. Dense sketches are not a
 differential privacy guarantee. Small-cohort errors are measured by the
 synthetic `TestThoughtMetricsReturningSmallCohortAccuracy` cases, rather than
 claiming that the HLL single-cardinality error is the intersection error.
 
-Verified focused race results: 11 top-level cases and nine accuracy subcases,
+Verified hardening race results: 16 top-level cases and nine accuracy subcases,
 zero failures/skips. Each pattern has 128 trials and two measured pilot weeks
 (256 estimates per table row). Results below take the worst pattern for each
 weekly sender count; all-returning uses a fixed cohort, while all-new/rotating
@@ -49,12 +69,13 @@ weeks, and all-new cohorts can produce false positive returning estimates.
 
 | Weekly senders | Worst pattern p95 absolute error | Observed maximum error |
 | --- | --- | --- |
-| 20 | 1 sender | 2 senders |
-| 50 | 1 sender | 2 senders |
-| 100 | 2 senders | 3 senders |
+| 20 | 0 senders | 2 senders |
+| 50 | 1 sender | 3 senders |
+| 100 | 1 sender | 4 senders |
 
-Raw JSON and every pattern's mean/p95/max are retained under
-`.codex-test-logs/relay-thought-returners-20261027/`. Dense p14 is preserved;
+Raw JSON and every keyed pattern's mean/p95/max are retained under
+`.codex-test-logs/relay-thought-hardening-20261027/`. The earlier unkeyed
+run does not certify this hardened candidate. Dense p14 is preserved;
 no sparse per-input representation or exact production sender set is introduced.
 
 The private file is `<resolved RELAY_DATA_DIR>/thoughts-metrics.json` (normally
@@ -77,8 +98,16 @@ persisted counts and returning intersections. Never use `kill -9` for release.
    > window. This counter uses routing metadata already needed for delivery;
    > it does not open encrypted Thought content. It stores aggregate sketches
    > covering at most eight weekly buckets, with no additional stored sender
-   > IDs, Thought IDs, recipients or content. Disabling collection stops updates
-   > but does not itself erase existing sketches. Direct-only activity is not counted.
+   > IDs, Thought IDs, recipients or content. Turning collection off deletes the
+   > stored sketches on the first relay restart with collection off, which we
+   > complete within seven days of switch-off. Direct-only activity is not counted.
+
+The owner decision relayed by Kayan (`m-895504c2`, 2026-10-27) is to count
+without a consent switch (owner-described legitimate interest). Mizan owns the
+privacy copy review. Operations must restart with the counter OFF **within seven
+days of switch-off** and verify the snapshot is absent. Alert/repair deletion
+failures within that deadline. Prometheus history and backup copies have their
+own retention policies; deleting this file alone does not erase those copies.
 
 3. Obtain explicit owner release approval. First test the same candidate on
    Hetzner `2.29.62.121`, **after coordinating with Codex-UI**: its current
@@ -93,7 +122,8 @@ persisted counts and returning intersections. Never use `kill -9` for release.
 - DNS **mknoun.xyz** (not mknoon.xyz), `51.21.194.144`, EC2 eu-north-1,
   x86_64 / Linux amd64. SSH user ubuntu with sudo.
 - Unit `relay-server`; binary `/usr/local/bin/relay-server`;
-  environment `/etc/mknoon/relay-server.env`; metrics `localhost:2112/metrics`.
+  environment `/etc/mknoon/relay-server.env`; metrics reachable locally on port 2112.
+  The old source binds all interfaces; AWS access controls were not probed.
 - Expected previous version `1.11.2`, source `6bae23448`, installed
   2026-10-26 12:26 UTC; SHA-256
   `e0b6e8e4ba655ee97b4238278f467c7d5d6786324518d161517336526dba1484`.
@@ -111,13 +141,13 @@ From `go-relay-server` in the final clean candidate checkout:
 ```sh
 CANDIDATE=$(git rev-parse HEAD)
 test -z "$(git status --porcelain)"
-mkdir -p ../.codex-test-logs/relay-thought-returners-20261027/build
+mkdir -p ../.codex-test-logs/relay-thought-hardening-20261027/build
 env GOTOOLCHAIN=go1.27.1 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
   go build -trimpath -ldflags "-X main.callDiagnosticBuild=$CANDIDATE" \
-  -o ../.codex-test-logs/relay-thought-returners-20261027/build/relay-server.v1.11.3 .
-shasum -a 256 ../.codex-test-logs/relay-thought-returners-20261027/build/relay-server.v1.11.3
-go version -m ../.codex-test-logs/relay-thought-returners-20261027/build/relay-server.v1.11.3
-go tool nm ../.codex-test-logs/relay-thought-returners-20261027/build/relay-server.v1.11.3 \
+  -o ../.codex-test-logs/relay-thought-hardening-20261027/build/relay-server.v1.11.3 .
+shasum -a 256 ../.codex-test-logs/relay-thought-hardening-20261027/build/relay-server.v1.11.3
+go version -m ../.codex-test-logs/relay-thought-hardening-20261027/build/relay-server.v1.11.3
+go tool nm ../.codex-test-logs/relay-thought-hardening-20261027/build/relay-server.v1.11.3 \
   | rg 'main.thoughtReturningDesc|main.\(\*thoughtMetrics\).Collect'
 ```
 
@@ -158,8 +188,11 @@ The reviewed remote script must use `set -euo pipefail` and perform these steps:
    keys, Redis, inbox, media, profiles, ports and all existing systemd drop-ins.
 4. Add only a dedicated `/etc/systemd/system/relay-server.service.d/70-thought-metrics.conf`
    containing `[Service]` and
-   `Environment=MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true`, after recording whether
-   that exact file already exists and retaining a private backup if so. Verify
+   `Environment=MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true` and
+   `Environment=MKNOON_RELAY_METRICS_BIND_IP=127.0.0.1`, after recording whether
+   that exact file already exists and retaining a private backup if so. Securely
+   provision the required random `MKNOON_RELAY_THOUGHT_METRICS_KEY` in the existing
+   protected service env file; never print/read back its value. Verify
    the existing `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED` remains true without
    printing other environment values. Resolve the persistent storage root and
    ensure the service account can write it; never fall back to an ephemeral path.
@@ -190,16 +223,39 @@ verify its SHA, restore only the release-owned drop-in to its prior state, run
 Do not restore the older v1.11.1 backup by accident, delete the HLL snapshot or
 reset Redis/inbox data. Record the failed attempt and rollback outcome.
 
-To stop collection while retaining v1.11.3, set the dedicated flag explicitly to
-`false`, daemon-reload and cleanly restart. Series become absent, not zero;
-keep existing snapshots private. Persisted records expire to eight weeks on the
-next enabled rotation, so disabling does not itself erase the inactive file.
-The counter has no historical backfill for time disabled.
+To stop collection while retaining v1.11.3, set the dedicated enable flag to
+`false`, daemon-reload and cleanly restart **within seven days of switch-off**.
+The snapshot is deleted on the first restart with the counter OFF; check it is
+absent and that no deletion failure was reported. The same behavior applies to
+an unset/unrecognized enable flag. Normal ON startup with a missing/invalid key
+refuses the collector without claiming deletion succeeded. Series become absent,
+not zero; there is no historical backfill for time disabled. Root/operators
+must separately apply approved retention for backups and Prometheus history.
+Wiping a file is logical deletion, not a promise of forensic secure erasure.
 
 ## Prometheus readout
 
-Use the existing private scrape path / local SSH command; do not open port 2112.
-The week label is calendar ISO week; substitute the recorded pilot weeks.
+**Behavior change for ALL relay metrics:** `MKNOON_RELAY_METRICS_BIND_IP` defaults
+to `127.0.0.1`; the port remains 2112. An explicit IP override (for example
+`0.0.0.0` or `::1`) is possible; invalid input leaves the metrics listener off
+with a diagnostic while relay message service continues. The endpoint itself
+has no authentication, so retain approved network access controls.
+
+Before activation, account for every existing Prometheus consumer and confirm
+it reaches the loopback endpoint using a local scrape or an existing approved
+SSH tunnel. A direct remote Prometheus scrape must be adapted before release;
+do not silently break all existing relay monitoring. Example approved tunnel:
+
+```sh
+ssh -i <approved-key-path> -N -L 12112:127.0.0.1:2112 ubuntu@51.21.194.144
+# In another terminal, without opening port 2112 publicly:
+curl -fsS http://127.0.0.1:12112/metrics
+```
+
+The normal SSH helper can also execute a local-only
+`curl -fsS http://127.0.0.1:2112/metrics` on the host after approval. Do not print
+service environment/key values. The week label is calendar ISO week; substitute
+the recorded pilot weeks.
 
 ```promql
 relay_backend_durable

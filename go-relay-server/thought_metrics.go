@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +21,7 @@ import (
 )
 
 const thoughtMetricsEnabledEnv = "MKNOON_RELAY_THOUGHT_METRICS_ENABLED"
+const thoughtMetricsKeyEnv = "MKNOON_RELAY_THOUGHT_METRICS_KEY"
 const thoughtMetricsWeeks = 8
 const thoughtSnapshotLimit = 512 * 1024
 
@@ -31,6 +36,8 @@ type thoughtMetrics struct {
 	flushMu    sync.Mutex
 	weeks      map[string]thoughtWeek
 	path       string
+	key        []byte
+	keyID      string
 	now        func() time.Time
 	write      func(string, []byte) error
 	generation uint64
@@ -46,6 +53,7 @@ type thoughtWeekDisk struct {
 
 type thoughtSnapshot struct {
 	Version int               `json:"version"`
+	KeyID   string            `json:"key_id"`
 	Weeks   []thoughtWeekDisk `json:"weeks"`
 }
 
@@ -60,19 +68,24 @@ func thoughtWeekStart(t time.Time) time.Time {
 	return day.AddDate(0, 0, -(int(day.Weekday())+6)%7)
 }
 
-// Opt in explicitly. Disabled analytics must not even read or create a snapshot.
+// Opt in explicitly. An OFF startup deletes only the existing aggregate file.
 func newConfiguredThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, error) {
 	if !strings.EqualFold(strings.TrimSpace(os.Getenv(thoughtMetricsEnabledEnv)), "true") {
-		return nil, nil
+		return nil, removeThoughtSnapshot(path)
 	}
-	return newThoughtMetrics(path, now)
+	return newThoughtMetrics(path, now, []byte(os.Getenv(thoughtMetricsKeyEnv)))
 }
 
-func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, error) {
+func newThoughtMetrics(path string, now func() time.Time, key []byte) (*thoughtMetrics, error) {
 	m := &thoughtMetrics{weeks: make(map[string]thoughtWeek), path: path, now: now, write: appDiagnosticAtomicWrite, healthy: true}
 	if path == "" || now == nil {
 		return nil, errors.New("thought snapshot path and clock required")
 	}
+	if len(key) < 32 || strings.TrimSpace(string(key)) == "" {
+		return nil, errors.New("thought metrics require a secret key of at least 32 bytes")
+	}
+	m.key = bytes.Clone(key)
+	m.keyID = hex.EncodeToString(thoughtHash(m.key, "snapshot-key", ""))
 	f, err := os.Open(path)
 	if err == nil {
 		raw, readErr := io.ReadAll(io.LimitReader(f, thoughtSnapshotLimit+1))
@@ -89,8 +102,16 @@ func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, erro
 		if err := decoder.Decode(&disk); err != nil {
 			return nil, err
 		}
-		if decoder.Decode(new(any)) != io.EOF || disk.Version != 1 || len(disk.Weeks) > thoughtMetricsWeeks {
+		if decoder.Decode(new(any)) != io.EOF || (disk.Version != 1 && disk.Version != 2) || len(disk.Weeks) > thoughtMetricsWeeks || (disk.Version == 2 && disk.KeyID == "") {
 			return nil, errors.New("invalid thought snapshot")
+		}
+		if disk.Version == 1 || disk.KeyID != m.keyID {
+			// Never combine legacy unkeyed or differently keyed sender sketches.
+			// Only the aggregate snapshot is removed; no relay custody data.
+			if err := removeThoughtSnapshot(path); err != nil {
+				return nil, err
+			}
+			disk.Weeks = nil
 		}
 		for _, week := range disk.Weeks {
 			start, err := time.Parse("2006-01-02", week.Start)
@@ -117,6 +138,36 @@ func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, erro
 		return nil, err
 	}
 	return m, nil
+}
+
+// Separate key verification from sender hashing; the file never contains the
+// secret. The same key is needed across retained weeks for prefix intersections.
+func thoughtHash(key []byte, domain, value string) []byte {
+	mac := hmac.New(sha256.New, key)
+	_, _ = mac.Write([]byte("mknoon/thought-metrics/" + domain + "\x00" + value))
+	return mac.Sum(nil)
+}
+
+func removeThoughtSnapshot(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("thought snapshot wipe requires a regular file")
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func loadThoughtSketch(raw []byte) (*hyperloglog.Sketch, error) {
@@ -178,7 +229,7 @@ func (m *thoughtMetrics) record(entry inboxMessage) {
 		m.weeks[key] = week
 	}
 	week.posts.Insert([]byte(envelope.PostID))
-	week.posters.Insert([]byte(entry.From))
+	week.posters.Insert(thoughtHash(m.key, "sender", entry.From))
 	m.generation++
 }
 
@@ -202,7 +253,7 @@ func (m *thoughtMetrics) flush() error {
 		weeks = append(weeks, thoughtWeek{week.posts.Clone(), week.posters.Clone()})
 	}
 	m.mu.Unlock()
-	disk := thoughtSnapshot{Version: 1}
+	disk := thoughtSnapshot{Version: 2, KeyID: m.keyID}
 	for i, key := range keys {
 		week := weeks[i]
 		posts, _ := week.posts.MarshalBinary()

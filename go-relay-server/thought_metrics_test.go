@@ -21,9 +21,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const thoughtMetricsTestKey = "synthetic-counter-test-key-32-bytes-only"
+
 func newTestThoughtMetrics(t *testing.T, now *time.Time) *thoughtMetrics {
 	t.Helper()
-	m, err := newThoughtMetrics(filepath.Join(t.TempDir(), "thoughts-metrics.json"), func() time.Time { return *now })
+	m, err := newThoughtMetrics(filepath.Join(t.TempDir(), "thoughts-metrics.json"), func() time.Time { return *now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +154,7 @@ func TestThoughtMetricsISOWeekRolloverLateRetryAndRetention(t *testing.T) {
 	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	reloaded, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +166,7 @@ func TestThoughtMetricsISOWeekRolloverLateRetryAndRetention(t *testing.T) {
 	biz := newBusinessMetrics()
 	biz.thoughts = m
 	biz.CheckAndResetPeriods()
-	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +184,7 @@ func TestThoughtMetricsRestartPersistenceAndPrivacy(t *testing.T) {
 	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +194,7 @@ func TestThoughtMetricsRestartPersistenceAndPrivacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{entry.From, "private-thought-id-never-in-snapshot", "private-fixture-content", "post_id", "sender_peer_id", "encrypted", "recipient"} {
+	for _, forbidden := range []string{entry.From, "private-thought-id-never-in-snapshot", "private-fixture-content", thoughtMetricsTestKey, "post_id", "sender_peer_id", "encrypted", "recipient"} {
 		if bytes.Contains(raw, []byte(forbidden)) {
 			t.Fatalf("aggregate file retained forbidden data category %q", forbidden)
 		}
@@ -265,7 +267,7 @@ func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
 	if !strings.Contains(scrape(), "relay_thoughts_snapshot_healthy 1") {
 		t.Fatal("pending aggregate write did not recover")
 	}
-	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +336,7 @@ func TestThoughtMetricsBlockedWriterDoesNotDelayStoreOrPush(t *testing.T) {
 	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +356,7 @@ func TestThoughtMetricsRejectsInvalidSnapshot(t *testing.T) {
 		if err := os.WriteFile(m.path, raw, 0600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := newThoughtMetrics(m.path, func() time.Time { return now }); err == nil {
+		if _, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey)); err == nil {
 			t.Fatal("invalid snapshot accepted")
 		}
 	}
@@ -383,12 +385,13 @@ func TestThoughtMetricsConcurrentRetryAndScrape(t *testing.T) {
 }
 
 func TestThoughtMetricsDefaultOff(t *testing.T) {
+	t.Setenv(thoughtMetricsKeyEnv, thoughtMetricsTestKey)
 	t.Setenv(thoughtMetricsEnabledEnv, "")
 	if err := os.Unsetenv(thoughtMetricsEnabledEnv); err != nil {
 		t.Fatal(err)
 	}
 	// An invalid path/clock would fail initialization if the unset flag did
-	// anything with the snapshot.
+	// initialize a collector. An absent snapshot needs no deletion.
 	if m, err := newConfiguredThoughtMetrics("", nil); m != nil || err != nil {
 		t.Fatalf("unset flag initialized analytics: %v %v", m, err)
 	}
@@ -412,7 +415,13 @@ func TestThoughtMetricsDefaultOff(t *testing.T) {
 	}
 	t.Setenv(thoughtMetricsEnabledEnv, "false")
 	if m, err := newConfiguredThoughtMetrics(path, nil); m != nil || err != nil {
-		t.Fatalf("disabled analytics read corrupt snapshot: %v %v", m, err)
+		t.Fatalf("disabled analytics could not delete corrupt snapshot: %v %v", m, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("OFF startup retained the snapshot: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt snapshot"), 0600); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv(thoughtMetricsEnabledEnv, "true")
 	if m, err := newConfiguredThoughtMetrics(path, func() time.Time { return now }); m != nil || err == nil {
@@ -449,7 +458,7 @@ func TestThoughtMetricsReturningAcrossEarlierWeeksAndRestart(t *testing.T) {
 	if err := m.flush(); err != nil {
 		t.Fatal(err)
 	}
-	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now })
+	restarted, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +480,7 @@ func TestThoughtMetricsReturningSmallCohortAccuracy(t *testing.T) {
 				var errors []int
 				for trial := 0; trial < trials; trial++ {
 					now := first.AddDate(0, 0, 21)
-					m := &thoughtMetrics{weeks: make(map[string]thoughtWeek), now: func() time.Time { return now }, healthy: true}
+					m := &thoughtMetrics{weeks: make(map[string]thoughtWeek), now: func() time.Time { return now }, healthy: true, key: []byte(thoughtMetricsTestKey)}
 					prior := make(map[string]bool)
 					truth := make([]int, 4)
 					for week := 0; week < 4; week++ {
@@ -509,5 +518,110 @@ func TestThoughtMetricsReturningSmallCohortAccuracy(t *testing.T) {
 				t.Logf("dense p14: n=%d pattern=%s samples=%d mean_absolute_error=%.4f p95_absolute_error=%d max_absolute_error=%d", size, pattern, len(errors), float64(sum)/float64(len(errors)), errors[(95*len(errors)+99)/100-1], errors[len(errors)-1])
 			})
 		}
+	}
+}
+
+func TestThoughtMetricsRequiresKeyWhenOn(t *testing.T) {
+	t.Setenv(thoughtMetricsEnabledEnv, "true")
+	path := filepath.Join(t.TempDir(), "thoughts.json")
+	for _, key := range []string{"", "too-short", strings.Repeat(" ", 32)} {
+		t.Setenv(thoughtMetricsKeyEnv, key)
+		if m, err := newConfiguredThoughtMetrics(path, time.Now); m != nil || err == nil {
+			t.Fatal("ON without a suitable key must refuse to start the counter")
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("invalid key touched the snapshot")
+		}
+	}
+}
+
+func TestThoughtMetricsKeyedSendersAndRotation(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	entry := thoughtMetricEntry("keyed-post", "known-synthetic-peer", now)
+	m.record(entry)
+	if err := m.flush(); err != nil {
+		t.Fatal(err)
+	}
+	sketch := m.weeks[thoughtWeekStart(now).Format("2006-01-02")].posters
+	before, _ := sketch.MarshalBinary()
+	plain := sketch.Clone()
+	plain.Insert([]byte(entry.From))
+	afterPlain, _ := plain.MarshalBinary()
+	if bytes.Equal(before, afterPlain) {
+		t.Fatal("raw known peer ID unexpectedly matches keyed fixture")
+	}
+	keyed := sketch.Clone()
+	keyed.Insert(thoughtHash([]byte(thoughtMetricsTestKey), "sender", entry.From))
+	afterKeyed, _ := keyed.MarshalBinary()
+	if !bytes.Equal(before, afterKeyed) {
+		t.Fatal("sender was not inserted using the keyed domain")
+	}
+	reloaded, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, reloaded, "2026-W44", 1, 1)
+	rotated, err := newThoughtMetrics(m.path, func() time.Time { return now }, []byte("different-synthetic-key-at-least-32-bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, rotated, "2026-W44", 0, 0)
+	if rotated.keyID == m.keyID {
+		t.Fatal("key rotation did not start a new snapshot epoch")
+	}
+	raw, err := os.ReadFile(m.path)
+	if err != nil || bytes.Contains(raw, []byte(thoughtMetricsTestKey)) || bytes.Contains(raw, []byte(m.keyID)) {
+		t.Fatal("rotation retained old key epoch or secret material")
+	}
+}
+
+func TestThoughtMetricsLegacySnapshotIsWiped(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "thoughts.json")
+	sketch := hyperloglog.NewNoSparse()
+	sketch.Insert([]byte("legacy-unkeyed-peer"))
+	rawSketch, _ := sketch.MarshalBinary()
+	raw, _ := json.Marshal(thoughtSnapshot{Version: 1, Weeks: []thoughtWeekDisk{{Start: "2026-10-26", Posts: rawSketch, Posters: rawSketch}}})
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := newThoughtMetrics(path, func() time.Time { return now }, []byte(thoughtMetricsTestKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertThoughtWeek(t, m, "2026-W44", 0, 0)
+}
+
+func TestThoughtMetricsOffDeletesOnlySnapshotAndReportsFailure(t *testing.T) {
+	t.Setenv(thoughtMetricsEnabledEnv, "false")
+	root := t.TempDir()
+	path := filepath.Join(root, "thoughts.json")
+	other := filepath.Join(root, "inbox-sentinel")
+	if err := os.WriteFile(other, []byte("keep-custody"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old-aggregate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if m, err := newConfiguredThoughtMetrics(path, nil); m != nil || err != nil {
+			t.Fatalf("OFF cleanup failed: %v %v", m, err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatal("OFF restart retained/recreated snapshot")
+		}
+	}
+	if raw, err := os.ReadFile(other); err != nil || string(raw) != "keep-custody" {
+		t.Fatal("OFF cleanup touched unrelated custody data")
+	}
+	if err := os.Symlink(other, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newConfiguredThoughtMetrics(path, nil); err == nil {
+		t.Fatal("unsafe cleanup failure was not reported")
+	}
+	if raw, err := os.ReadFile(other); err != nil || string(raw) != "keep-custody" {
+		t.Fatal("cleanup followed a symlink")
 	}
 }

@@ -204,3 +204,24 @@ func TestRelayMetricsHandlerScrapeContract(t *testing.T) {
 		}
 	}
 }
+
+func TestRelayMetricsListenAddress(t *testing.T) {
+	for _, tc := range []struct{ ip, want string }{
+		{"", "127.0.0.1:2112"},
+		{"127.0.0.1", "127.0.0.1:2112"},
+		{"0.0.0.0", "0.0.0.0:2112"},
+		{"::1", "[::1]:2112"},
+	} {
+		t.Setenv(relayMetricsBindIPEnv, tc.ip)
+		got, err := relayMetricsListenAddress()
+		if err != nil || got != tc.want {
+			t.Fatalf("bind IP %q: got %q, %v; want %q", tc.ip, got, err, tc.want)
+		}
+	}
+	for _, invalid := range []string{"localhost:2112", "0.0.0.0:1234", "invalid"} {
+		t.Setenv(relayMetricsBindIPEnv, invalid)
+		if _, err := relayMetricsListenAddress(); err == nil {
+			t.Fatalf("invalid metrics bind %q accepted", invalid)
+		}
+	}
+}

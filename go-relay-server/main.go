@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +27,19 @@ import (
 )
 
 const version = "1.11.3"
+const relayMetricsBindIPEnv = "MKNOON_RELAY_METRICS_BIND_IP"
+
+// The explicit override changes all relay metrics; the port stays 2112.
+func relayMetricsListenAddress() (string, error) {
+	ip := strings.TrimSpace(os.Getenv(relayMetricsBindIPEnv))
+	if ip == "" {
+		ip = "127.0.0.1"
+	}
+	if net.ParseIP(ip) == nil {
+		return "", errors.New("metrics bind must be an IP address")
+	}
+	return net.JoinHostPort(ip, "2112"), nil
+}
 
 func main() {
 	// Handle subcommands
@@ -170,7 +185,11 @@ func main() {
 	if thoughtsErr != nil {
 		// Missing series mean unavailable, never a fabricated zero. Analytics
 		// storage failure must not prevent the relay from serving messages.
-		log.Print("[THOUGHT_METRICS] disabled: aggregate snapshot unavailable")
+		if !strings.EqualFold(strings.TrimSpace(os.Getenv(thoughtMetricsEnabledEnv)), "true") {
+			log.Print("[THOUGHT_METRICS] disabled: snapshot deletion failed")
+		} else {
+			log.Print("[THOUGHT_METRICS] disabled: key configuration or aggregate snapshot unavailable")
+		}
 	} else if thoughts != nil {
 		biz.thoughts = thoughts
 		prometheus.MustRegister(thoughts)
@@ -292,12 +311,17 @@ func main() {
 	log.Printf("  Push:       %s", push.Status())
 	log.Println()
 
-	// Prometheus metrics endpoint on :2112
+	// Prometheus metrics default to loopback; explicit IP override keeps port2112.
 	go func() {
+		address, err := relayMetricsListenAddress()
+		if err != nil {
+			log.Print("[METRICS] disabled: invalid bind IP")
+			return
+		}
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
-		log.Println("[METRICS] Serving Prometheus metrics on :2112/metrics")
-		if err := http.ListenAndServe(":2112", mux); err != nil {
+		log.Printf("[METRICS] Serving Prometheus metrics on %s/metrics", address)
+		if err := http.ListenAndServe(address, mux); err != nil {
 			log.Printf("[METRICS] HTTP server error: %v", err)
 		}
 	}()
