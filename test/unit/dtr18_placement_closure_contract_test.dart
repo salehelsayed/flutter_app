@@ -25,7 +25,10 @@ const _relocations = <String, List<String>>{
       'contact_request_repository_impl.dart': <String>[
     'lib/features/contact_request/data/repositories/'
         'contact_request_repository_impl.dart',
-    '3471670dde3c51e2c8dec5fd6cd84d412d716b99e64f031d3a0f5b48cfb8ab18',
+    // Contact decisions retain this data adapter and its existing delegates;
+    // the guarded SQL function moves here byte-identically from core.
+    // See contact-request-decisions-20261026/architecture-placement-proof.json.
+    '3d92f9cb43074e905cf67dd651f78e56f0b4db6d72e6a18716e053ab760f2a5e',
   ],
   'lib/features/contacts/domain/repositories/'
       'contact_repository_impl.dart': <String>[
@@ -33,7 +36,9 @@ const _relocations = <String, List<String>>{
     // Plan 361 adds the serialized contact-conversation purge capability
     // delegate (dbPurgeDirectContactConversationAndContact) and its
     // reconciliation surface to the SAME data adapter; nothing relocates.
-    'ef67291da37df1e3edb35b95c7b1419fb78762c709a0bdff47bae5f19d31cd96',
+    // Atomic consent adds pre-write retirement and post-commit publication
+    // hooks to this same adapter; removing those two methods restores the pin.
+    '5ec64e5d6e0ad8dfc0ff7018baf24f086a5d12bbefc7a03fe9b9f100119ddac2',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[

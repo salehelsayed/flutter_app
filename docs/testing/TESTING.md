@@ -2979,6 +2979,15 @@ The five original CR-013/017 gap cases are enabled. Keep the durable key marker
 before accepted status, with network/profile work outside the transaction.
 Projection controls require orphan transport authority retired before a new
 contact write and current committed authority/eligibility published afterward.
+The decision SQL lives beside the existing request data repository; core SQL
+helpers retain plain database operations without feature-domain imports. Contact
+behavior tests alone do not prove this boundary: the architecture lane checks
+dependency direction and both request/contact adapter fingerprints. Reversing
+only the reviewed decision delegates, SQL move and projection hooks reproduces
+the two old pins, while the SQL function moves byte-identically. Keep all 22
+adapter locations, stale-consumer/source-lock checks and the exact 153-dependency
+floor intact. Proof: `architecture-placement-proof.json` in the artifact
+directory below.
 Passive legacy settlement also awaits the existing durable ML-KEM marker hook
 before accepted, including attach, queued presentation and resolver reconciliation.
 Both production compositions supply that hook; an explicit acceptance hook takes
