@@ -72,6 +72,7 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
         );
       }
       final granted = journeyGapMap(observations['granted']);
+      final reopened = journeyGapMap(observations['reopened']);
       require(
         granted['entry'] == 'contact_scan' &&
             granted['input'] == 'optical_camera' &&
@@ -97,9 +98,10 @@ List<String> validateProductionJourneyGapReceipt(Map<String, Object?> receipt) {
             before['requestSendAttempts'] is int &&
             (granted['requestSendAttempts']! as int) >
                 (before['requestSendAttempts']! as int) &&
-            journeyGapMap(observations['reopened'])['requestSendAttempts'] ==
-                granted['requestSendAttempts'],
-        'real request egress, with no additional dispatch after reopen',
+            reopened['requestSendAttempts'] is int &&
+            (reopened['requestSendAttempts']! as int) >=
+                (granted['requestSendAttempts']! as int),
+        'real request egress and monotonic retry count after reopen',
       );
       require(
         (observations['duplicateObservationMs'] as num? ?? 0) >= 10000,

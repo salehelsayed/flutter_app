@@ -90,6 +90,8 @@ on the Android pair; an available iPhone supplies a separate native iOS leg.
    Start the complete request-egress observation before opening the scanner;
    absence of a UI bubble alone cannot prove zero network send. Missing egress
    observability is BLOCKED, not an assumed zero.
+   Count actual `CONTACT_REQUEST_SEND_SENDING` transmissions, not
+   `CONTACT_REQUEST_SEND_START` entries, which precede equivalent-send reuse.
 2. `camera_entry(scanner, contact_scan, keep)` then
    `camera_capture(cancel)` before any code result. In `cancelled` record the
    outcome and all three counters unchanged.
@@ -102,8 +104,11 @@ on the Android pair; an available iPhone supplies a separate native iOS leg.
    measured counters. Exactly one contact/request is added. Transport retries
    are not additional logical requests.
 5. Reopen without clearing data; observe ten seconds, retaining one logical
-   contact/request and no additional request dispatch. Fill `reopened` and
-   `duplicateObservationMs`. `camera_restore` and set `cleanupRestored=true`
+   contact/request. The cumulative egress counter must not decrease; durable
+   key-exchange or capability-distribution retries may increase it while the
+   relationship is incomplete. Preserve retry triggers and reciprocal-key
+   arrival evidence; another logical request/contact remains a failure.
+   Fill `reopened` and `duplicateObservationMs`. `camera_restore` and set `cleanupRestored=true`
    only after checking the recorded permissions/state.
 
 ## MEDIA-010: permission recovery preserves the draft

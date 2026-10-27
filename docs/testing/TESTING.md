@@ -2392,6 +2392,23 @@ checks. Equality with the processed encryption input is additional proof and
 remains `NOT RUN` when its existing sender receipt was not captured. Available
 target discovery supports an explicit unavailable-target N/A rather than a pass.
 
+CONTACT-001 separates logical requests from transport retries. A contact missing
+its reciprocal ML-KEM key remains in the durable retry set across reopen, and
+new wake-token/call-grant material also requires distribution. One transport ACK
+does not complete that exchange. Require one logical contact/request after the
+scan and reopen, positive actual post-scan egress and a monotonic cumulative
+egress count; refusal phases still require zero additional attempts. Count
+`CONTACT_REQUEST_SEND_SENDING`, not the function-entry `SEND_START` event before
+equivalent-send reuse. The original emulator receipt at
+`.codex-test-logs/journey-gap-20261027T0950Z/contact001/` retains its first FAIL:
+its reopen retry preceded reciprocal-key installation and added no logical row.
+The causal host regression first rejects the supplied 2-to-3 retry counts under
+the old dispatch-equality rule. The corrected criteria and existing transfer-cut
+tests pass 48 cases with no failures/skips, including refusal egress, logical
+duplicate and decreasing-counter sentinels. Evidence is in
+`.codex-test-logs/journey-gap-followups-20261027/`; this does not replace a fresh
+device run or change application behavior.
+
 MEDIA-018's test-only `direct_media_transfer_checkpoint_fixture_test.go`
 extends the existing disposable media relay with a bounded, one-shot body gate.
 It counts ciphertext body bytes, preserves framed metadata, learns the actual

@@ -261,6 +261,18 @@ Map<String, Object?> _complete(String journey) {
 }
 
 void main() {
+  test(
+    'CONTACT-001 allows durable retry across reopen with one logical request',
+    () {
+      final receipt = _complete('CONTACT-001');
+      final observations = receipt['observations']! as Map<String, Object?>;
+      (observations['granted'] as Map)['requestSendAttempts'] = 2;
+      (observations['reopened'] as Map)['requestSendAttempts'] = 3;
+
+      expect(validateProductionJourneyGapReceipt(receipt), isEmpty);
+    },
+  );
+
   for (final journey in productionJourneyGapIds) {
     test(
       '$journey accepts complete structural receipts without claiming device execution',
@@ -293,6 +305,26 @@ void main() {
     'scanner denial added a contact': (
       'CONTACT-001',
       (o) => (o['denied'] as Map)['contactCount'] = 1,
+    ),
+    'scanner denial sent a request': (
+      'CONTACT-001',
+      (o) => (o['denied'] as Map)['requestSendAttempts'] = 1,
+    ),
+    'scanner grant had no request egress': (
+      'CONTACT-001',
+      (o) => (o['granted'] as Map)['requestSendAttempts'] = 0,
+    ),
+    'scanner reopen counter went backwards': (
+      'CONTACT-001',
+      (o) => (o['reopened'] as Map)['requestSendAttempts'] = 0,
+    ),
+    'scanner reopen duplicated the logical request': (
+      'CONTACT-001',
+      (o) => (o['reopened'] as Map)['requestCount'] = 2,
+    ),
+    'scanner reopen duplicated the contact': (
+      'CONTACT-001',
+      (o) => (o['reopened'] as Map)['contactCount'] = 2,
     ),
     'paste is not an optical scan': (
       'CONTACT-001',
