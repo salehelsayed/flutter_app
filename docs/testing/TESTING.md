@@ -5332,6 +5332,34 @@ visible and cannot become an ordinary first-attempt PASS.
   `StateError` before the publication guard; all 25 listener and seven view
   delivery cases pass afterward. Red/green receipts are retained in
   `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+- **Relay Thought aggregate snapshot boundary:**
+  `go-relay-server/thought_metrics_test.go` exercises actual inbox acceptance,
+  dense HLL fanout/retry deduplication, authored UTC ISO weeks, eight-week file
+  reload/expiry and metadata-free metric output. Its blocked-writer case proves
+  Store and the recording push-provider callback complete before snapshot I/O
+  is released; updates accepted during that write survive a later flush/reload.
+  Never marshal or sync snapshots while holding the register mutex on the
+  inbox path. Minute/shutdown flushes buffer updates; snapshot health means the
+  last write succeeded, not that every new count is durable. Abrupt process loss
+  can lose the unflushed tail. The counter is default OFF unless
+  `MKNOON_RELAY_THOUGHT_METRICS_ENABLED=true`; disabled initialization does not
+  read/create the snapshot. Returning posters are estimated from current-week
+  senders intersected with the union of every earlier retained week, not just
+  the preceding week. No additional sketch/ID storage is added; nonadjacent
+  returns, restart preservation and expiry of prior history are covered.
+  The focused race run passes 11 top-level cases plus nine nested accuracy
+  cases, with no failures/skips. For 20/50/100 senders per week, 128 synthetic
+  trials per rotating/all-new/all-returning pattern (weeks 3/4) give worst
+  pattern p95 absolute errors of 1/1/2 senders and observed maxima of 2/2/3.
+  These are empirical bounds for fixed cohorts, not statistical guarantees;
+  even zero true returns can yield a small nonzero estimate. Receipts and all
+  pattern results are in `.codex-test-logs/relay-thought-returners-20261027/`
+  in the delivering checkout. This is host/inbox/filesystem proof with a
+  recording provider, not deployed relay, real push, device or signed-artifact
+  evidence. Direct-only deliveries are unseen; counts are observed sender IDs,
+  not verified people. All-time returning/engagement claims remain unsupported.
+  See `go-relay-server/docs/thought-metrics-release.md` for the default-off
+  release preparation and the separate approval/privacy/staging prerequisites.
 
 - **Settings, consent, group creation and update recovery boundaries:** recovery
   phrase visibility is page-owned but its modal sheet must also rebuild when

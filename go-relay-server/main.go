@@ -24,7 +24,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-const version = "1.11.2"
+const version = "1.11.3"
 
 func main() {
 	// Handle subcommands
@@ -166,12 +166,12 @@ func main() {
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()
-	thoughts, thoughtsErr := newThoughtMetrics(filepath.Join(storageCfg.RootDir, "thoughts-metrics.json"), time.Now)
+	thoughts, thoughtsErr := newConfiguredThoughtMetrics(filepath.Join(storageCfg.RootDir, "thoughts-metrics.json"), time.Now)
 	if thoughtsErr != nil {
 		// Missing series mean unavailable, never a fabricated zero. Analytics
 		// storage failure must not prevent the relay from serving messages.
 		log.Print("[THOUGHT_METRICS] disabled: aggregate snapshot unavailable")
-	} else {
+	} else if thoughts != nil {
 		biz.thoughts = thoughts
 		prometheus.MustRegister(thoughts)
 	}

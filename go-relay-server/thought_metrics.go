@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const thoughtMetricsEnabledEnv = "MKNOON_RELAY_THOUGHT_METRICS_ENABLED"
 const thoughtMetricsWeeks = 8
 const thoughtSnapshotLimit = 512 * 1024
 
@@ -48,14 +50,22 @@ type thoughtSnapshot struct {
 }
 
 type thoughtEstimate struct {
-	week           string
-	posts, posters uint64
+	week                      string
+	posts, posters, returning uint64
 }
 
 func thoughtWeekStart(t time.Time) time.Time {
 	u := t.UTC()
 	day := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 	return day.AddDate(0, 0, -(int(day.Weekday())+6)%7)
+}
+
+// Opt in explicitly. Disabled analytics must not even read or create a snapshot.
+func newConfiguredThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, error) {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv(thoughtMetricsEnabledEnv)), "true") {
+		return nil, nil
+	}
+	return newThoughtMetrics(path, now)
 }
 
 func newThoughtMetrics(path string, now func() time.Time) (*thoughtMetrics, error) {
@@ -225,26 +235,51 @@ func (m *thoughtMetrics) keysLocked() []string {
 
 func (m *thoughtMetrics) snapshot() ([]thoughtEstimate, bool) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.rotateLocked()
+	keys := m.keysLocked()
+	weeks := make([]thoughtWeek, 0, len(keys))
+	for _, key := range keys {
+		value := m.weeks[key]
+		weeks = append(weeks, thoughtWeek{value.posts.Clone(), value.posters.Clone()})
+	}
+	healthy := m.healthy
+	m.mu.Unlock()
+
+	// Compute only from bounded copies: prefix unions and estimates must not
+	// hold the inbox register lock. No new identifiers or sketches are retained.
+	prior := hyperloglog.NewNoSparse()
 	var result []thoughtEstimate
-	for _, key := range m.keysLocked() {
+	for i, key := range keys {
 		start, _ := time.Parse("2006-01-02", key)
 		year, week := start.ISOWeek()
-		label := fmt.Sprintf("%04d-W%02d", year, week)
-		value := m.weeks[key]
-		result = append(result, thoughtEstimate{label, value.posts.Estimate(), value.posters.Estimate()})
+		value := weeks[i]
+		posters := value.posters.Estimate()
+		earlier := prior.Estimate()
+		// All sketches use the same validated dense p14 encoding, so Merge
+		// cannot encounter its only error (different precision).
+		_ = prior.Merge(value.posters)
+		union := prior.Estimate()
+		var returning uint64
+		if posters+earlier > union {
+			returning = min(posters+earlier-union, posters, earlier)
+		}
+		result = append(result, thoughtEstimate{
+			week:  fmt.Sprintf("%04d-W%02d", year, week),
+			posts: value.posts.Estimate(), posters: posters, returning: returning,
+		})
 	}
-	return result, m.healthy
+	return result, healthy
 }
 
 var thoughtPostsDesc = prometheus.NewDesc("relay_thoughts_weekly_estimated", "Estimated distinct relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage: direct-only deliveries are unseen; HLL estimates may err in either direction.", []string{"week"}, nil)
-var thoughtPostersDesc = prometheus.NewDesc("relay_thought_posters_weekly_estimated", "Estimated distinct senders of relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage, not verified people or returning posters.", []string{"week"}, nil)
+var thoughtPostersDesc = prometheus.NewDesc("relay_thought_posters_weekly_estimated", "Estimated distinct senders of relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage, not verified people.", []string{"week"}, nil)
+var thoughtReturningDesc = prometheus.NewDesc("relay_thought_returning_posters_weekly_estimated", "Estimated senders in this authored UTC ISO week and any earlier retained week (eight-week window). Not all-time returning people; direct-only deliveries are unseen; small-cohort HLL intersection estimates can err.", []string{"week"}, nil)
 var thoughtSnapshotDesc = prometheus.NewDesc("relay_thoughts_snapshot_healthy", "Last aggregate snapshot write succeeded (1) or failed (0). New updates are buffered until periodic/shutdown flush. Missing Thought series mean unavailable, not zero.", nil, nil)
 
 func (m *thoughtMetrics) Describe(ch chan<- *prometheus.Desc) {
 	ch <- thoughtPostsDesc
 	ch <- thoughtPostersDesc
+	ch <- thoughtReturningDesc
 	ch <- thoughtSnapshotDesc
 }
 
@@ -253,6 +288,7 @@ func (m *thoughtMetrics) Collect(ch chan<- prometheus.Metric) {
 	for _, week := range weeks {
 		ch <- prometheus.MustNewConstMetric(thoughtPostsDesc, prometheus.GaugeValue, float64(week.posts), week.week)
 		ch <- prometheus.MustNewConstMetric(thoughtPostersDesc, prometheus.GaugeValue, float64(week.posters), week.week)
+		ch <- prometheus.MustNewConstMetric(thoughtReturningDesc, prometheus.GaugeValue, float64(week.returning), week.week)
 	}
 	value := 0.0
 	if healthy {
