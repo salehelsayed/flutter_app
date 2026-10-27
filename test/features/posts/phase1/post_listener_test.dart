@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+
 import '../../../core/secure_storage/fake_secure_key_store.dart';
+
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/application/ios_thoughts_switch.dart';
 import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart';
@@ -548,6 +550,72 @@ void main() {
   );
 
   group('deferred direct ack', () {
+    test(
+      'finishing a stored thought after disposal keeps its ACK without publishing',
+      () async {
+        contacts.addTestContact(_contact('peer-bob', 'Bob'));
+        final hydrationStarted = Completer<void>();
+        final download = Completer<PostMediaAttachmentModel>();
+        PostMediaAttachmentModel? requested;
+        final slow = PostListener(
+          postCreateStream: controller.stream,
+          postRepo: posts,
+          contactRepo: contacts,
+          bridge: bridge,
+          hydratePostMediaFn: ({required attachment, required postId}) {
+            requested = attachment;
+            hydrationStarted.complete();
+            return download.future;
+          },
+        );
+        listener.dispose();
+        addTearDown(slow.dispose);
+        final errors = <Object>[];
+        runZonedGuarded<void>(slow.start, (error, _) => errors.add(error));
+        final emitted = <PostModel>[];
+        final closed = Completer<void>();
+        final subscription = slow.incomingPostStream.listen(
+          emitted.add,
+          onDone: closed.complete,
+        );
+        addTearDown(subscription.cancel);
+
+        controller.add(
+          _message(
+            'peer-bob',
+            'Bob',
+            postId: 'disposed-photo',
+            mediaKind: 'image',
+            confirmNonce: 'nonce-disposed',
+          ),
+        );
+        await hydrationStarted.future;
+        expect(await posts.loadFeed(), hasLength(1));
+        expect(bridge.payloadsFor('message:confirm'), [
+          {'nonce': 'nonce-disposed', 'ok': true},
+        ]);
+
+        slow.dispose();
+        await closed.future;
+        download.complete(requested!.copyWith(downloadStatus: 'done'));
+        // After the controlled download, only in-memory repository futures and
+        // receive-handler continuations remain; drain them without a timed sleep.
+        await pumpEventQueue();
+
+        expect(
+          (await posts.loadPostMediaAttachments(
+            'disposed-photo',
+          )).single.downloadStatus,
+          'done',
+        );
+        expect(emitted, isEmpty);
+        expect(errors, isEmpty);
+        expect(bridge.payloadsFor('message:confirm'), [
+          {'nonce': 'nonce-disposed', 'ok': true},
+        ]);
+      },
+    );
+
     test('releases the ack once the thought is stored', () async {
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
 

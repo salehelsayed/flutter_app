@@ -5236,6 +5236,16 @@ visible and cannot become an ordinary first-attempt PASS.
 
 ## Diagnostics and confirmed lessons
 
+- **PostListener disposal after durable storage:** cancelling its input
+  subscription does not join an in-flight async receive. A media completion
+  after `dispose()` must finish storage and retain the single durable ACK while
+  skipping publication to the closed incoming-post stream. The gated case in
+  `post_listener_test.dart` pauses hydration after storage/ACK, disposes the
+  listener, then resumes without timed sleeps. It reproduced the closed-stream
+  `StateError` before the publication guard; all 25 listener and seven view
+  delivery cases pass afterward. Red/green receipts are retained in
+  `.codex-test-logs/post-listener-dispose-20261027/` in the delivering checkout.
+
 - **Settings, consent, group creation and update recovery boundaries:** recovery
   phrase visibility is page-owned but its modal sheet must also rebuild when
   inactive/hidden/paused conceals it. A visual blur does not exclude phrase

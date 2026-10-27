@@ -209,7 +209,9 @@ class PostListener {
           await _cancelCard(NotificationRouteTarget.post(post.id).toPayload());
           return;
         }
-        _postController.add(post);
+        // Cancelling the subscription does not join an in-flight receive.
+        // Its durable ACK still settles, but disposal ends stream publication.
+        if (!_postController.isClosed) _postController.add(post);
         return;
       case HandleIncomingPostResult.expired:
       case HandleIncomingPostResult.superseded:
