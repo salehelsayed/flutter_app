@@ -2,10 +2,10 @@ import 'package:flutter/foundation.dart';
 
 /// Build-time switches for Thoughts and the 3D Orbit view (plan 407).
 ///
-/// Thoughts default ON: build 127 shipped them and beta testers use them, so a
-/// store build without defines shows them. `--dart-define=MKNOON_ENABLE_THOUGHTS=false`
-/// still turns them off. 3D defaults OFF; a dev build turns it on with
-/// `--dart-define=MKNOON_ENABLE_ORBIT_DEPTH=true`.
+/// Both default ON: build 127 shipped Thoughts and beta testers use them, and
+/// the owner turned the 3D Orbit view on for build 128. A store build without
+/// defines shows both. `--dart-define=MKNOON_ENABLE_THOUGHTS=false` and
+/// `--dart-define=MKNOON_ENABLE_ORBIT_DEPTH=false` still turn them off.
 ///
 /// Thoughts off hides sharing and reading: no "+" on the own avatar, no notes,
 /// no thought card, no thought notifications, and a reply to a thought reads
@@ -19,6 +19,7 @@ const bool kThoughtsEnabled = bool.fromEnvironment(
 /// 3D off keeps Orbit flat: nothing opens the depth view.
 const bool kOrbitDepthEnabled = bool.fromEnvironment(
   'MKNOON_ENABLE_ORBIT_DEPTH',
+  defaultValue: true,
 );
 
 /// Tests run with both on (test/flutter_test_config.dart) and switch them off

@@ -88,7 +88,8 @@ devices. Keep original attempts and source/configuration/artifact identities.
    If it was already 124, label the actual install-over result honestly; the
    host 123→124 test is a separate result.
 2. **Defaults and entry points.** On that defines-free build, Thoughts plus and
-   notes are visible and 3D is absent. Tap the plus near its outer edge and the
+   notes are visible and the 3D Orbit view opens (owner turned it on for
+   128). Tap the plus near its outer edge and the
    self-avatar separately. Observe the first-use hint when applicable; opening
    and dismissing the composer retires it across relaunch. Check unseen outline
    and new-Thought accessibility label, then the seen style after opening.
@@ -132,7 +133,7 @@ the matching checklist legs, and preserve host/device proof as separate fields.
 
 | Proposed ID | Title / items | Host references | Device leg |
 | --- | --- | --- | --- |
-| TH-002 | Defines-free Thoughts on / depth off; distinct unseen notes (G) | `test/core/config/thoughts_feature_flags_test.dart`; `orbit_thought_notes_test.dart`; existing forced-off Orbit/Settings scan controls | 2 |
+| TH-002 | Defines-free Thoughts on / depth on; distinct unseen notes (G) | `test/core/config/thoughts_feature_flags_test.dart`; `orbit_thought_notes_test.dart`; existing forced-off Orbit/Settings scan controls | 2 |
 | TH-003 | Thought entry, first-use hint, replacement and photo framing (B/C/J) | `orbital_visualization_test.dart`; `orbit_wired_test.dart`; `thought_compose_sheet_test.dart`; author's `thought_photo_preview_test.dart` | 2–3 |
 | TH-004 | Offline photo posting progress and one-tap retry (A) | Codex-UI's posting card cases; existing delivery/retry suites | 5 |
 | TH-005 | Encrypted preview, true-ratio photo and late quote thumbnail (I) | `post_create_envelope_media_keys_test.dart`; `post_create_encrypted_media_integration_test.dart`; `thought_card_screen_test.dart`; `thought_quote_block_test.dart`; Orbit's late-download quote case | 4 and 6 |
