@@ -189,7 +189,11 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_share => 'مشاركة';
 
   @override
-  String get thought_compose_lifetime => 'يرى أصدقاؤك هذه الخاطرة لمدة 24 ساعة';
+  String get thought_compose_lifetime =>
+      'يرى جميع أصدقائك هذه الخاطرة لمدة 24 ساعة';
+
+  @override
+  String get thought_compose_replaces => 'المشاركة تستبدل خاطرتك الحالية';
 
   @override
   String get thought_compose_nobody_to_share_with => 'أضف صديقًا لتشارك خواطرك';

@@ -200,7 +200,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get thought_compose_lifetime =>
-      'Deine Freunde sehen diesen Gedanken 24 Stunden lang';
+      'Alle deine Freunde sehen diesen Gedanken 24 Stunden lang';
+
+  @override
+  String get thought_compose_replaces =>
+      'Teilen ersetzt deinen aktuellen Gedanken';
 
   @override
   String get thought_compose_nobody_to_share_with =>

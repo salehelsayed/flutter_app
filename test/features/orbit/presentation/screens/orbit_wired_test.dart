@@ -1298,6 +1298,42 @@ void main() {
       },
     );
 
+    testWidgets(
+      'with a thought up, the composer says sharing replaces it and no hint shows',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(
+          thought('own-live', text: 'Up now').copyWith(
+            senderPeerId: testIdentity.peerId,
+            authorPeerId: testIdentity.peerId,
+            authorUsername: testIdentity.username,
+            isIncoming: false,
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byKey(const ValueKey('orbit-compose-hint')), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(
+          find.text('Sharing replaces the thought you have up now'),
+          findsOneWidget,
+        );
+        await tester.binding.handlePopRoute();
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,
     ) async {

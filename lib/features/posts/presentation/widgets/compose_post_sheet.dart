@@ -71,6 +71,9 @@ class ComposePostSheet extends StatefulWidget {
   /// What a previous visit left unshared; the sheet starts from it.
   final ComposePostResult? initialDraft;
 
+  /// The user has a thought up now, which sharing this one replaces.
+  final bool replacesCurrentThought;
+
   /// Runs once as the sheet goes away: the unshared draft, or null after a
   /// share or when nothing was left to keep.
   final ValueChanged<ComposePostResult?>? onClosed;
@@ -78,6 +81,7 @@ class ComposePostSheet extends StatefulWidget {
   const ComposePostSheet({
     super.key,
     this.thoughtsOnly = false,
+    this.replacesCurrentThought = false,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,
@@ -959,8 +963,20 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   if (widget.thoughtsOnly) ...[
                     Text(
                       AppLocalizations.of(context)!.thought_compose_lifetime,
+                      key: const ValueKey('thought-composer-lifetime'),
                       style: const TextStyle(color: Colors.white70),
                     ),
+                    if (widget.replacesCurrentThought) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        AppLocalizations.of(context)!.thought_compose_replaces,
+                        key: const ValueKey('thought-composer-replaces'),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 12),
                   ],
                   if (_notice case final notice?) ...[

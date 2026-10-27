@@ -965,6 +965,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         backgroundColor: Colors.transparent,
         builder: (_) => ComposePostSheet(
           thoughtsOnly: true,
+          replacesCurrentThought: _thoughtsByPeerId.containsKey(
+            identity.peerId,
+          ),
           eligibleContacts: const [],
           initialDraft: _thoughtDraft,
           onClosed: (draft) {

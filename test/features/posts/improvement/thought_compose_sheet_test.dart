@@ -23,6 +23,7 @@ void main() {
     Key? key,
     ComposePostResult? initialDraft,
     ValueChanged<ComposePostResult?>? onClosed,
+    bool replacesCurrentThought = false,
   }) => MaterialApp(
     locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -31,6 +32,7 @@ void main() {
       body: ComposePostSheet(
         key: key,
         thoughtsOnly: true,
+        replacesCurrentThought: replacesCurrentThought,
         eligibleContacts: const [],
         onSubmitWithOutcome: submit,
         onAttachMedia: media,
@@ -65,8 +67,28 @@ void main() {
     expect(find.byType(CheckboxListTile), findsNothing);
     expect(find.text('People Nearby'), findsNothing);
     expect(find.text('Pick People'), findsNothing);
-    expect(find.text('Your friends see this for 24 hours'), findsOneWidget);
+    expect(find.text('All your friends see this for 24 hours'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('thought-composer-replaces')),
+      findsNothing,
+    );
     expect(submissions, 0);
+  });
+
+  testWidgets('with a thought already up the sheet says sharing replaces it', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      scene(
+        submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+        replacesCurrentThought: true,
+      ),
+    );
+    expect(find.text('All your friends see this for 24 hours'), findsOneWidget);
+    expect(
+      find.text('Sharing replaces the thought you have up now'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
@@ -229,7 +251,10 @@ void main() {
           submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
         ),
       );
-      expect(find.text('يرى أصدقاؤك هذه الخاطرة لمدة 24 ساعة'), findsOneWidget);
+      expect(
+        find.text('يرى جميع أصدقائك هذه الخاطرة لمدة 24 ساعة'),
+        findsOneWidget,
+      );
       expect(find.text('مشاركة'), findsOneWidget);
       expect(find.byType(ChoiceChip), findsNothing);
     },

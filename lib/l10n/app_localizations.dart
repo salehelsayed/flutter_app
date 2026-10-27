@@ -445,8 +445,14 @@ abstract class AppLocalizations {
   /// No description provided for @thought_compose_lifetime.
   ///
   /// In en, this message translates to:
-  /// **'Your friends see this for 24 hours'**
+  /// **'All your friends see this for 24 hours'**
   String get thought_compose_lifetime;
+
+  /// No description provided for @thought_compose_replaces.
+  ///
+  /// In en, this message translates to:
+  /// **'Sharing replaces the thought you have up now'**
+  String get thought_compose_replaces;
 
   /// No description provided for @thought_compose_nobody_to_share_with.
   ///
