@@ -393,6 +393,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   /// Starts true so the first-use hint never flashes before storage answers.
   bool _thoughtHintSeen = true;
+
+  /// The composer has opened in this session; a late initial read is ignored.
+  bool _thoughtComposerOpened = false;
   static const _thoughtHintSeenKey = 'orbit_thought_hint_seen_v1';
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
@@ -799,12 +802,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _loadThoughtHintSeen() async {
     try {
       final seen = await widget.secureKeyStore.read(_thoughtHintSeenKey);
-      if (mounted && seen == null) setState(() => _thoughtHintSeen = false);
+      if (mounted && seen == null && !_thoughtComposerOpened) {
+        setState(() => _thoughtHintSeen = false);
+      }
     } catch (_) {}
   }
 
   void _markThoughtHintSeen() {
-    if (_thoughtHintSeen) return;
+    if (_thoughtComposerOpened) return;
+    _thoughtComposerOpened = true;
     setState(() => _thoughtHintSeen = true);
     unawaited(
       widget.secureKeyStore

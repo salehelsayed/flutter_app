@@ -1276,6 +1276,38 @@ void main() {
     );
 
     testWidgets(
+      'opening the composer before the hint flag loads still retires the hint',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final held = _HeldReadSecureKeyStore('orbit_thought_hint_seen_v1');
+        secureKeyStore = held;
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(held.heldReads, 1);
+
+        await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(ComposePostSheet), findsOneWidget);
+        held.release();
+        await tester.binding.handlePopRoute();
+        await pumpOrbitFrames(tester, count: 6);
+        final hint = find.byKey(const ValueKey('orbit-compose-hint'));
+        expect(hint, findsNothing);
+        expect(await held.read('orbit_thought_hint_seen_v1'), '1');
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(hint, findsNothing);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
       'the plus is a 44 px target that stays off the centre of the own avatar',
       (tester) async {
         setLargeTestSurface(tester);
@@ -11336,6 +11368,27 @@ class _HeldSavePostRepository extends InMemoryPostRepository {
   Future<void> savePost(PostModel post) async {
     await release.future;
     await super.savePost(post);
+  }
+}
+
+/// Holds the first read of [heldKey] and then answers it with what the store
+/// held when asked, so a late answer can predate a later write.
+class _HeldReadSecureKeyStore extends FakeSecureKeyStore {
+  _HeldReadSecureKeyStore(this.heldKey);
+
+  final String heldKey;
+  final _gate = Completer<void>();
+  var heldReads = 0;
+
+  void release() => _gate.complete();
+
+  @override
+  Future<String?> read(String key) async {
+    if (key != heldKey || _gate.isCompleted) return super.read(key);
+    final snapshot = await super.read(key);
+    heldReads++;
+    await _gate.future;
+    return snapshot;
   }
 }
 
