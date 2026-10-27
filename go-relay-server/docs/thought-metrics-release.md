@@ -101,7 +101,7 @@ persisted counts and returning intersections. Never use `kill -9` for release.
 
    Engineering description only: the counter stores bounded weekly sketches
    and a key verifier, not lists of sender/Thought/recipient IDs or content.
-   Sender hashing uses a separate secret key. OFF startup deletes the aggregate
+   Sender hashing uses a separate secret key. Global relay-counter OFF startup deletes the aggregate
    snapshot; operations complete and verify that restart within seven days of
    switch-off. This description is superseded as user-facing copy by Mizan's
    version, per Kayan `m-2421a59d`; do not publish this draft instead.
@@ -280,23 +280,35 @@ collector can legitimately report zero; absent series are unavailable. Returning
 counts are approximate observed-sender intersections, with the tested cohort
 error and the retention/coverage limits above, not engagement percentages.
 
-## Build 129 relay opt-out plan (format proposed, awaiting Claude-UI agreement)
+## Build 129 relay opt-out contract (agreed; implementation paused)
 
-Proposal sent to Claude-UI after `m-1d69c2f5`: a top-level JSON boolean
+Agreed with Claude-UI in `m-d467a3cf` after `m-1d69c2f5`: a top-level JSON boolean
 `thoughts_metrics_opt_out: true` in the existing outer `post_create` routing
 metadata, next to `post_id`, `sender_peer_id` and `created_at`, outside encrypted
 content. App-owned seam: `PostCreateEnvelope.buildEncryptedEnvelope`.
 
 The planned relay change checks this flag after accepted inbox storage, before
 hashing or updating either sketch. True skips both post/sender contributions;
-false/absent preserves existing eligibility. A malformed nonboolean skips
-counting while message delivery remains unchanged. No opted-out-person list,
+false/absent preserves existing eligibility; the app omits the key while ON.
+Any nonboolean (including JSON null) skips counting while message delivery remains
+unchanged. No opted-out-person list,
 new stored identifiers or opt-out metric labels are introduced.
 
-The app must carry a consistent decision across recipient fanout and durable
-retries, and agree the treatment of queued/in-flight Thoughts at withdrawal.
+Claude-UI owns the planned app DB v125 `metrics_opt_out` post-row field,
+default 0. Creation captures the switch; switching OFF also marks the user's
+own posts with undelivered recipients. The bit is one-way per Thought: switching
+back ON never clears an older true value. Every recipient/retry rebuilds from
+that durable row, so a later copy cannot become eligible after an opted-out copy.
+Already accepted contributions remain counted; the app wording is “from now on”.
+
 A previously counted Thought cannot be subtracted from an HLL; the relay will
-not retain individual history to undo it. Do not claim this admission plan is
-implemented or validated until that contract and focused skip/preservation
-cases are complete. The hardening source review remains scoped to its fixed
+not retain individual history to undo it. The seven-day global OFF deletion
+rule does not mean each user's app switch erases their historical contribution.
+The present collector reads only `post_create`: chat replies/quotedMessageId,
+reactions, views and `post_pass` are ignored and have no engagement metric in
+this task. Do not add opt-out fields to those unrelated types for this counter.
+
+Kayan approved implementation only **after the resource pause ends**, in the
+reply to `m-2324c926`. The relay opt-out code and focused skip/preservation cases
+are not implemented or validated yet. The hardening source review remains scoped to its fixed
 commit; this 129 plan does not reopen the earlier source review.
