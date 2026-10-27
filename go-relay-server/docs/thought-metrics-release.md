@@ -4,6 +4,12 @@ Status: PREPARATION ONLY. No relay login, upload, deployment, tag creation, or
 production configuration change was performed for this work. Kayan routes code
 review; a separate explicit owner approval is required at release time.
 
+**Build 129 only.** Kayan's owner decision `m-1d69c2f5` (2026-10-27) adds a
+separate in-app “Thoughts metrics” withdrawal switch. Do not activate the counter
+for build 128. The relay opt-out admission change is planned below and is not
+implemented by the hardening commit alone. Full hardening validation and frozen
+builds are paused by `m-e77eb4b7`; the earlier artifact is superseded.
+
 ## Candidate and behavior
 
 Proposed component tag: `relay-v1.11.3` (not created or pushed).
@@ -93,21 +99,21 @@ persisted counts and returning intersections. Never use `kill -9` for release.
    deploying this release** and Kayan records the approved copy. Suggested copy
    for that review:
 
-   > Our relay can collect approximate weekly totals of Thoughts and their
-   > senders, including senders seen in an earlier week within an eight-week
-   > window. This counter uses routing metadata already needed for delivery;
-   > it does not open encrypted Thought content. It stores aggregate sketches
-   > covering at most eight weekly buckets, with no additional stored sender
-   > IDs, Thought IDs, recipients or content. Turning collection off deletes the
-   > stored sketches on the first relay restart with collection off, which we
-   > complete within seven days of switch-off. Direct-only activity is not counted.
+   Engineering description only: the counter stores bounded weekly sketches
+   and a key verifier, not lists of sender/Thought/recipient IDs or content.
+   Sender hashing uses a separate secret key. OFF startup deletes the aggregate
+   snapshot; operations complete and verify that restart within seven days of
+   switch-off. This description is superseded as user-facing copy by Mizan's
+   version, per Kayan `m-2421a59d`; do not publish this draft instead.
 
-The owner decision relayed by Kayan (`m-895504c2`, 2026-10-27) is to count
-without a consent switch (owner-described legitimate interest). Mizan owns the
-privacy copy review. Operations must restart with the counter OFF **within seven
-days of switch-off** and verify the snapshot is absent. Alert/repair deletion
-failures within that deadline. Prometheus history and backup copies have their
-own retention policies; deleting this file alone does not erase those copies.
+The later owner decision in `m-1d69c2f5` supersedes the earlier without-consent
+wording from `m-895504c2`: the basis is existing beta consent, with a separate
+“Thoughts metrics” withdrawal switch in 129. Obtain the owner's lawyer check
+before including any users outside that beta group. Mizan owns the privacy
+copy. Operations must restart with the counter OFF **within seven days of
+switch-off** and verify the snapshot is absent; repair deletion failures within
+that deadline. Prometheus history and backup copies need their own retention
+rules; deleting this file alone does not erase those copies.
 
 3. Obtain explicit owner release approval. First test the same candidate on
    Hetzner `2.29.62.121`, **after coordinating with Codex-UI**: its current
@@ -273,3 +279,24 @@ snapshot is reloaded. Only the unflushed tail can be lost. A healthy empty
 collector can legitimately report zero; absent series are unavailable. Returning
 counts are approximate observed-sender intersections, with the tested cohort
 error and the retention/coverage limits above, not engagement percentages.
+
+## Build 129 relay opt-out plan (format proposed, awaiting Claude-UI agreement)
+
+Proposal sent to Claude-UI after `m-1d69c2f5`: a top-level JSON boolean
+`thoughts_metrics_opt_out: true` in the existing outer `post_create` routing
+metadata, next to `post_id`, `sender_peer_id` and `created_at`, outside encrypted
+content. App-owned seam: `PostCreateEnvelope.buildEncryptedEnvelope`.
+
+The planned relay change checks this flag after accepted inbox storage, before
+hashing or updating either sketch. True skips both post/sender contributions;
+false/absent preserves existing eligibility. A malformed nonboolean skips
+counting while message delivery remains unchanged. No opted-out-person list,
+new stored identifiers or opt-out metric labels are introduced.
+
+The app must carry a consistent decision across recipient fanout and durable
+retries, and agree the treatment of queued/in-flight Thoughts at withdrawal.
+A previously counted Thought cannot be subtracted from an HLL; the relay will
+not retain individual history to undo it. Do not claim this admission plan is
+implemented or validated until that contract and focused skip/preservation
+cases are complete. The hardening source review remains scoped to its fixed
+commit; this 129 plan does not reopen the earlier source review.
