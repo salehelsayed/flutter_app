@@ -80,7 +80,8 @@ void main() {
   setUp(() {
     identityRepo = FakeIdentityRepository();
     contactRepo = FakeContactRepository();
-    contactRequestRepo = FakeContactRequestRepository();
+    contactRequestRepo = FakeContactRequestRepository()
+      ..contactRepository = contactRepo;
     bridge = FakeBridge();
     p2pService = FakeP2PService();
     secureKeyStore = FakeSecureKeyStore();
@@ -473,6 +474,8 @@ void main() {
       // whose requestStream we control.
       final customListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
       );
       Future<AccountMigrationTransferResult> runner({
         required AccountMigrationTransferRequest request,
@@ -502,6 +505,7 @@ void main() {
         receivedAt: DateTime.now().toUtc().toIso8601String(),
       );
 
+      contactRequestRepo.seed([request]);
       requestController.add(request);
       await tester.pump();
       await tester.pump();
@@ -606,6 +610,8 @@ void main() {
           StreamController<ContactRequestModel>.broadcast();
       final customListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
       );
       final shareIntentService = ShareIntentService(resetShareIntent: () {});
       await shareIntentService.bufferIntent(
@@ -640,62 +646,82 @@ void main() {
       await requestController.close();
     });
 
-    testWidgets('notPending still settles and replays a buffered share', (
-      tester,
-    ) async {
-      identityRepo.seed(testIdentity);
-      bridge.responses['payload.sign'] = {'ok': true, 'signature': 'test-sig'};
+    for (final hasCurrentContact in [false, true]) {
+      testWidgets(
+        'alreadyAccepted ${hasCurrentContact ? 'with a current contact replays the buffered share' : 'without a contact keeps the share buffered'}',
+        (tester) async {
+          identityRepo.seed(testIdentity);
+          bridge.responses['payload.sign'] = {
+            'ok': true,
+            'signature': 'test-sig',
+          };
+          final request = ContactRequestModel(
+            peerId: 'sender-peer-id-accepted',
+            publicKey: 'sender-pub-key',
+            rendezvous: '/p2p-circuit/relay',
+            username: 'Charlie',
+            signature: 'sender-sig',
+            receivedAt: DateTime.now().toUtc().toIso8601String(),
+          );
+          contactRequestRepo.seed([request]);
+          final requestController =
+              StreamController<ContactRequestModel>.broadcast();
+          final customListener = _FakeContactRequestListener(
+            requestStream: requestController.stream,
+            requestRepo: contactRequestRepo,
+            contactRepo: contactRepo,
+          );
+          final shareIntentService = ShareIntentService(
+            resetShareIntent: () {},
+          );
+          await shareIntentService.bufferIntent(
+            const ShareIntent(
+              type: ShareIntentType.text,
+              text: 'already added',
+            ),
+          );
+          await tester.pumpWidget(
+            buildFTE(
+              overrideListener: customListener,
+              shareIntentService: shareIntentService,
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+          requestController.add(request);
+          await tester.pump();
+          await tester.pump();
+          expect(find.text('Accept'), findsOneWidget);
 
-      final acceptedRequest = ContactRequestModel(
-        peerId: 'sender-peer-id-accepted',
-        publicKey: 'sender-pub-key',
-        rendezvous: '/p2p-circuit/relay',
-        username: 'Charlie',
-        signature: 'sender-sig',
-        receivedAt: DateTime.now().toUtc().toIso8601String(),
-        status: ContactRequestStatus.accepted,
+          // Another owner settles this exact displayed request before the tap.
+          contactRequestRepo.seed([
+            request.copyWith(status: ContactRequestStatus.accepted),
+          ]);
+          if (hasCurrentContact) {
+            await contactRepo.addContact(request.toContactModel());
+          }
+          await tester.tap(find.text('Accept'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.pump();
+          expect(shareIntentService.isSettled, hasCurrentContact);
+          expect(shareIntentService.hasPendingIntent, !hasCurrentContact);
+          expect(
+            find.text('Share with...'),
+            hasCurrentContact ? findsOneWidget : findsNothing,
+          );
+          if (hasCurrentContact) {
+            expect(find.text('already added'), findsOneWidget);
+          } else {
+            expect(find.byType(FirstTimeExperienceWired), findsOneWidget);
+            expect(await contactRepo.getContact(request.peerId), isNull);
+          }
+          await tester.pump(const Duration(seconds: 5));
+          await tester.pump();
+          await requestController.close();
+        },
       );
-      contactRequestRepo.seed([acceptedRequest]);
-      await contactRepo.addContact(acceptedRequest.toContactModel());
-
-      final requestController =
-          StreamController<ContactRequestModel>.broadcast();
-      final customListener = _FakeContactRequestListener(
-        requestStream: requestController.stream,
-      );
-      final shareIntentService = ShareIntentService(resetShareIntent: () {});
-      await shareIntentService.bufferIntent(
-        const ShareIntent(type: ShareIntentType.text, text: 'already added'),
-      );
-
-      await tester.pumpWidget(
-        buildFTE(
-          overrideListener: customListener,
-          shareIntentService: shareIntentService,
-        ),
-      );
-      await tester.pump();
-      await tester.pump();
-
-      requestController.add(acceptedRequest);
-      await tester.pump();
-      await tester.pump();
-
-      await tester.tap(find.text('Accept'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump();
-
-      expect(shareIntentService.isSettled, isTrue);
-      expect(find.text('Share with...'), findsOneWidget);
-      expect(find.text('already added'), findsOneWidget);
-
-      // 214: the shell underneath now mounts the Orbit pane, whose avatars
-      // schedule zero-duration timers on mount — flush them before teardown.
-      await tester.pump(const Duration(seconds: 5));
-      await tester.pump();
-      await requestController.close();
-    });
+    }
 
     testWidgets(
       '5o: accept success without buffered intent lands on the Orbit surface',
@@ -727,6 +753,8 @@ void main() {
             StreamController<ContactRequestModel>.broadcast();
         final customListener = _FakeContactRequestListener(
           requestStream: requestController.stream,
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
         );
         final shareIntentService = ShareIntentService(resetShareIntent: () {});
 
@@ -796,6 +824,8 @@ void main() {
             StreamController<ContactRequestModel>.broadcast();
         final customListener = _FakeContactRequestListener(
           requestStream: requestController.stream,
+          requestRepo: contactRequestRepo,
+          contactRepo: contactRepo,
         );
         final shareIntentService = ShareIntentService(resetShareIntent: () {});
 
@@ -864,6 +894,8 @@ void main() {
           StreamController<ContactRequestModel>.broadcast();
       final customListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
+        requestRepo: contactRequestRepo,
+        contactRepo: contactRepo,
       );
       Future<AccountMigrationTransferResult> runner({
         required AccountMigrationTransferRequest request,
@@ -983,11 +1015,11 @@ class _FakeContactRequestListener extends ContactRequestListener {
 
   _FakeContactRequestListener({
     required Stream<ContactRequestModel> requestStream,
+    required super.requestRepo,
+    required super.contactRepo,
   }) : _overrideStream = requestStream,
        super(
          contactRequestStream: const Stream<ChatMessage>.empty(),
-         requestRepo: _NoOpContactRequestRepo(),
-         contactRepo: _NoOpContactRepo(),
          bridge: FakeBridge(),
          getOwnPeerId: () => '',
        );
@@ -995,8 +1027,3 @@ class _FakeContactRequestListener extends ContactRequestListener {
   @override
   Stream<ContactRequestModel> get requestStream => _overrideStream;
 }
-
-/// Minimal no-op repos for the fake listener constructor.
-class _NoOpContactRequestRepo extends FakeContactRequestRepository {}
-
-class _NoOpContactRepo extends FakeContactRepository {}

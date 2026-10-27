@@ -82,7 +82,8 @@ void main() {
     identityRepository = FakeIdentityRepository()..seed(identity);
     // First run: identity exists, ZERO contacts → FTE landing.
     contactRepository = FakeContactRepository();
-    contactRequestRepository = FakeContactRequestRepository();
+    contactRequestRepository = FakeContactRequestRepository()
+      ..contactRepository = contactRepository;
     messageRepository = InMemoryMessageRepository();
     postRepository = InMemoryPostRepository();
     mediaAttachmentRepository = InMemoryMediaAttachmentRepository();

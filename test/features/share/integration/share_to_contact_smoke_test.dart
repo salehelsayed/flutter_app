@@ -112,7 +112,8 @@ void main() {
     };
 
     contactRepository = InMemoryContactRepository();
-    contactRequestRepository = FakeContactRequestRepository();
+    contactRequestRepository = FakeContactRequestRepository()
+      ..contactRepository = contactRepository;
     messageRepository = InMemoryMessageRepository();
     mediaAttachmentRepository = InMemoryMediaAttachmentRepository();
     postRepository = InMemoryPostRepository();
@@ -502,6 +503,8 @@ void main() {
       addTearDown(requestController.close);
       final requestListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
+        requestRepository: contactRequestRepository,
+        contactRepository: contactRepository,
       );
       final shareIntentService = ShareIntentService(resetShareIntent: () {});
       await shareIntentService.bufferIntent(
@@ -563,6 +566,8 @@ void main() {
       addTearDown(requestController.close);
       final requestListener = _FakeContactRequestListener(
         requestStream: requestController.stream,
+        requestRepository: contactRequestRepository,
+        contactRepository: contactRepository,
       );
       final shareIntentService = ShareIntentService(resetShareIntent: () {});
       await shareIntentService.bufferIntent(
@@ -771,11 +776,13 @@ class _FakeContactRequestListener extends ContactRequestListener {
 
   _FakeContactRequestListener({
     required Stream<ContactRequestModel> requestStream,
+    required FakeContactRequestRepository requestRepository,
+    required InMemoryContactRepository contactRepository,
   }) : _overrideStream = requestStream,
        super(
          contactRequestStream: const Stream<ChatMessage>.empty(),
-         requestRepo: FakeContactRequestRepository(),
-         contactRepo: InMemoryContactRepository(),
+         requestRepo: requestRepository,
+         contactRepo: contactRepository,
          bridge: FakeBridge(),
          getOwnPeerId: () => '',
        );

@@ -2999,12 +2999,16 @@ the current pending decision before presentation. Blocked pending rows remain
 pending during passive replay. Resolver/materializer controls cover blocked
 peers with/without requests, removal/replacement during awaits and blocking or
 deletion before reciprocal/profile work. Notification sender-name copy is unchanged.
-Orbit widget fixtures must persist the pending row before fake listener emission
-and bind the request decision fake to the same contact repository. Paired
-already-accepted race controls require navigation with a current contact and no
-navigation without one; the failed-add control keeps the request pending.
-The 151-case Orbit preservation pass is retained as `orbit-decision-fixtures.log`
-in the artifact directory below.
+Feed, Orbit, FTE, Share and onboarding widget fixtures must persist the pending
+row before fake listener emission and bind the listener and decision fake to the
+same request/contact repositories used by the screen. Paired already-accepted
+race controls display a pending request, persist acceptance before the tap, and
+require navigation/replay only with a current contact. With no contact, FTE keeps
+the buffered share unsettled; a failed add keeps the request pending.
+The 151-case Orbit preservation pass is retained as `orbit-decision-fixtures.log`.
+The combined run's fixture failures and corrected 32-file / 552-case focused pass
+are retained in `combined-affected-0a6/` and `post-combined-fixes-focused.log`
+in the artifact directory below, with zero failures/skips in the focused pass.
 These cases and the receive, reciprocal-key, onboarding and shell preservation
 controls passed 252 host tests with zero failures/skips in
 `.codex-test-logs/contact-request-decisions-20261026/focused-ad-final.log`.
@@ -7042,7 +7046,12 @@ visible and cannot become an ordinary first-attempt PASS.
   `dbWriteTransaction`, with every query/update in the callback made through its
   transaction handle. The runtime test executes the real FFI database action,
   checks that only `username` changes, and bounds completion to detect a
-  connection deadlock. Retain the repository-wide raw-transaction source guard.
+  connection deadlock. Contact-request decisions also use this existing wrapper:
+  its Zone guard prevents Bridge calls during the SQL transaction. The initial
+  affected-storage failure caught a raw `db.transaction` call; the focused
+  contact-decision/SQL suite and raw-transaction guard pass after replacing it.
+  Retain the repository-wide raw-transaction source guard. Evidence:
+  `.codex-test-logs/contact-request-decisions-20261026/`.
 
 - **Bootstrap fingerprint review:** DTR-18 is a structural ownership contract,
   not a runtime crash test. The secure-key scope and direct/group retry bindings
@@ -7069,6 +7078,21 @@ visible and cannot become an ordinary first-attempt PASS.
   quality regression fixture adds one explicit test importer to each Posts
   adapter census. Those reviewed changes move no production owner or adapter;
   retain `quality-pref-live/pin-chain-proof.json` and the exact owner diff.
+  Contact-decision composition changes likewise update only the two bootstrap
+  pins. `0a6ec56a6` reproduces both previous pins; the reviewed diff adds existing
+  request-decision/projection/ML-KEM callbacks without moving an owner. All 25 URI
+  rewrites, the exact historical callback and other owner fingerprints remain
+  unchanged. The four DTR-18 cases pass after the two-pin update; retain
+  `.codex-test-logs/contact-request-decisions-20261026/bootstrap-pin-proof.json`
+  and `bootstrap-owner-diff.patch`.
+
+- **Post notification readiness:** the active-direct-contact listener test waits
+  with its existing bounded `_until` helper for the observable notification before
+  reading the card. A fixed 50 ms delay failed under the combined host workload;
+  the production listener, root test flags and original card/body/payload/feed
+  assertions are unchanged. Preserve the first affected-surfaces failure and
+  corrected focused pass under
+  `.codex-test-logs/contact-request-decisions-20261026/`.
 
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed

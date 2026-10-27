@@ -117,7 +117,8 @@ void main() {
   setUp(() {
     identityRepo = FakeIdentityRepository();
     contactRepo = FakeContactRepository();
-    contactRequestRepo = FakeContactRequestRepository();
+    contactRequestRepo = FakeContactRequestRepository()
+      ..contactRepository = contactRepo;
     bridge = FakeBridge();
     p2pService = FakeP2PService();
     secureKeyStore = FakeSecureKeyStore();
@@ -618,18 +619,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Emit a contact request
-      fakeRequestListener.emitRequest(
-        ContactRequestModel(
-          peerId: 'requester-peer-id',
-          publicKey: 'requester-pk',
-          rendezvous: '/dns4/relay',
-          username: 'Charlie',
-          signature: 'req-sig',
-          receivedAt: DateTime.now().toUtc().toIso8601String(),
-          status: ContactRequestStatus.pending,
-        ),
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
       );
+      contactRequestRepo.seed([request]);
+      fakeRequestListener.emitRequest(request);
 
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -802,6 +802,11 @@ void main() {
 
       expect(find.byType(SnackBar), findsOneWidget);
       expect(find.byType(ConversationWired), findsNothing);
+      expect(await contactRepo.getContact(request.peerId), isNull);
+      expect(
+        (await contactRequestRepo.getRequest(request.peerId))!.status,
+        ContactRequestStatus.pending,
+      );
     });
 
     testWidgets('orbit navigation bar button exists', (tester) async {

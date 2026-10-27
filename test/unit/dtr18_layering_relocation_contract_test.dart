@@ -322,6 +322,10 @@ const _applicationRootNormalizedSha256 =
 // Both pins retain the exact historical callback; see erase-notification-state-20261023/dtr18-pin-proof.json.
 // DC-004 boundary repair composes fanout-aware retry through the retrier's
 // existing callback in bootstrap; no new core-to-feature exception is allowed.
+// Contact consent wires atomic decisions, projection publication and durable
+// retry ownership on the same app-owned request repository. Both pins below
+// retain the exact historical database callback; bootstrap-pin-proof.json
+// under contact-request-decisions-20261026 reconstructs the prior identities.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -434,7 +438,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    '447f0cf6c73bf749ed847766583ecac11862068367487577b917fec68d33a64f';
+    '70a1234489aa3084f9aba81f10f65cc20d6607e6d2bbce7bf37d9428da757f06';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -469,7 +473,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same contact-request requireFresh argument changes only the reviewed remainder.
 // The same retry composition leaves the historical notification callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '29c75bdcf38d759d55eae6e41e9869908d2a8880fff4142f14bcc361b80df588';
+    'd647bd41b56f08a1dc71a9bb47d835a330da7437fb34c76bafc96586aede96c4';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

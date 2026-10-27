@@ -224,7 +224,7 @@ void main() {
     contacts.addTestContact(_contact('peer-bob', 'Bob'));
 
     controller.add(_message('peer-bob', 'Bob'));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await _until(() => notifications.shownThoughts.isNotEmpty);
 
     expect(notifications.shownGeneric, isEmpty);
     final shown = notifications.shownThoughts.single;

@@ -2,6 +2,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 
+import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
 
 /// Rechecks the displayed request and commits contact/decision together.
@@ -16,7 +17,7 @@ Future<ContactRequestDecisionResult> dbDecideContactRequest(
   final peerId = expected['peer_id'] as String;
   var failure = ContactRequestDecisionResult.updateStatusError;
   try {
-    return await db.transaction((txn) async {
+    return await dbWriteTransaction(db, (txn) async {
       final rows = await txn.query(
         'contact_requests',
         where: 'peer_id = ?',
