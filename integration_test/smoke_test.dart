@@ -123,6 +123,8 @@ void main() {
       dbUpdateRequestStatus: (peerId, status) =>
           dbUpdateRequestStatus(db, peerId, status),
       dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
+      dbDecideRequest: (expected, accept, existingOnly, before) =>
+          dbDecideContactRequest(db, expected, accept, existingOnly, before),
       dbRequestExists: (peerId) => dbRequestExists(db, peerId),
     );
     final custodyDb = DirectInboxCustodyDbBindings(db);
