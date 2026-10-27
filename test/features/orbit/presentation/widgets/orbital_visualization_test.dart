@@ -144,7 +144,10 @@ void main() {
       ),
     );
     await pumpBounded(tester);
-    await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+    final plus = find.byKey(const ValueKey('orbit-compose-thought'));
+    expect(tester.getSize(plus), const Size(44, 44));
+    // The outer hit target must work beyond the visible 28-point disc.
+    await tester.tapAt(tester.getRect(plus).bottomRight - const Offset(2, 2));
     expect(shares, 1);
     expect(settings, 0);
     await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));

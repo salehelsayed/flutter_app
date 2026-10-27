@@ -84,6 +84,8 @@ void main() {
       expect(entry.blobId, 'blob-1');
       expect(entry.scheme, kMediaAttachmentEncryptionSchemeBlobAesGcmV1);
       expect(entry.contentHash, 'f' * 64);
+      // A pre-128 encrypted sender has keys but no photo preview.
+      expect(entry.preview, isNull);
     },
   );
 

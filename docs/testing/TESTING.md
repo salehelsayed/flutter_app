@@ -3659,6 +3659,20 @@ newest thought cannot reveal its older copy. A blocked media download must not
 hold the next admission. Original-code failures and corrected-run evidence are
 retained under `.codex-test-logs/thought-ordering-20261025/`.
 
+Build 128's shared migration 124 adds nullable photo previews and explicit view
+receipts without resetting existing Thoughts. The
+`124_thought_upgrade_preserves_data_test.dart` fixture exercises the production
+123→124 upgrade and another close/open with existing identity, chat, quoted
+Thought, recipient/read state and cached media. A delivered Thought must not
+become a view receipt during upgrade. Preview serialization remains inside
+encrypted `media_keys`; the existing envelope and attachment fixtures cover
+plaintext exclusion and older payloads/rows without a preview. The
+[final acceptance handoff](thoughts128-final-acceptance.md) separates these host
+assertions from install-over and live-photo evidence. Its new assertions were
+not executed during preparation because the unchanged host gate rejected the
+volume's free space; no passing runtime result is claimed. The owner excluded
+the 24-hour device measurement (K), leaving existing host expiry tests unchanged.
+
 Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
 `sent: true, acked: false` must attempt the existing inbox fallback and remain
 retryable if that storage fails. `post_follow_on_delivery_test.dart` covers both

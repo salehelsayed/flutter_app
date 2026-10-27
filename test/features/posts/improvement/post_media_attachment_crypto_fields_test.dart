@@ -17,6 +17,7 @@ void main() {
       encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
       contentHash: 'a' * 64,
       isEncrypted: true,
+      previewBase64: 'QUJD',
     );
   }
 
@@ -39,16 +40,20 @@ void main() {
     expect(restored.encryptionKeyBase64, 'key-base64');
     expect(restored.encryptionNonce, 'nonce-base64');
     expect(restored.isEncrypted, isTrue);
+    expect(restored.previewBase64, 'QUJD');
+    expect(restored.copyWith(downloadStatus: 'done').previewBase64, 'QUJD');
   });
 
   test('fromMap tolerates legacy rows without scheme/hash columns values', () {
     final map = keyedAttachment().toMap()
       ..['encryption_scheme'] = null
-      ..['content_hash'] = null;
+      ..['content_hash'] = null
+      ..remove('preview_base64');
 
     final restored = PostMediaAttachmentModel.fromMap(map);
     expect(restored.encryptionScheme, isNull);
     expect(restored.contentHash, isNull);
+    expect(restored.previewBase64, isNull);
   });
 
   test('toRenderableJson never emits key, nonce, scheme, or hash', () {
@@ -59,6 +64,8 @@ void main() {
     expect(json.keys, isNot(contains('encryption_scheme')));
     expect(json.keys, isNot(contains('content_hash')));
     expect(json.keys, isNot(contains('is_encrypted')));
+    expect(json.keys, isNot(contains('preview_base64')));
+    expect(json.keys, isNot(contains('preview')));
   });
 
   test('copyWith carries scheme and hash; isEncrypted default stays false', () {
