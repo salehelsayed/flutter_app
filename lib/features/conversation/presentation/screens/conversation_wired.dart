@@ -2201,14 +2201,15 @@ class _ConversationWiredState extends State<ConversationWired>
           details: {'count': messages.length},
         );
         _scrollToBottom();
-        await _loadReactions(messages);
-        unawaited(_recoverVisibleMedia(messages));
+        // The initial history is ready; reaction chips can fill in later.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
             setState(() => _initialLoadDone = true);
             _emitNotificationTapTimingIfNeeded();
           }
         });
+        await _loadReactions(messages);
+        unawaited(_recoverVisibleMedia(messages));
       }
     } catch (e) {
       if (mounted) {

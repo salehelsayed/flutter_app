@@ -2520,20 +2520,27 @@ message page is ready. Older call rows and repository changes can arrive
 before that page. Painting them immediately flashes stale history, even
 while the reversed list's offset remains zero. Keep ingesting those events
 and merge them normally; gate only the view's messages/call entries with the
-existing `initialLoadDone` latch. Do not replace ordinary live-send scrolling.
+existing `initialLoadDone` latch. Register readiness before awaiting reaction
+reads, so chips can fill in later. The first gate candidate `f1bcf3b14` kept
+the latch behind reaction I/O; `held-reactions-red.jsonl` **refutes** that
+dependency, which is superseded by scheduling the reveal before the await.
+Do not replace ordinary live-send scrolling.
 
-The five `normal Orbit first-paint` checks use the real Orbit route, app-root
-keyboard wrapper, short/paged mixed-photo history and a delayed initial page.
-A persistent-frame callback samples after paint and before post-frame resets:
-every painted timeline must already contain the newest message, stay at zero,
-and have no scroll activity. Both the early-call and older-repository-event
-cases fail on build 155's `208f198b9` before the view gate; the other controls
-pass. The RED/GREEN offsets remain zero, so these failures prove stale-content
-flashes, not an animated scroll. Eighteen focused tests pass with the gate,
-including the prior Thought controls and five terminal-call preservation cases.
-Evidence: `.audit/orbit-chat-first-frame/first-paint-baseline2.jsonl` and
-`initial-gate-focused-green.jsonl`. Device confirmation of the owner's symptom
-remains separate; widget checks do not certify remote voice delivery.
+The six `normal Orbit first-paint` checks use the real Orbit route, app-root
+keyboard wrapper, short/paged mixed-photo history, a delayed initial page and
+a held reactions read. A persistent-frame callback samples after paint and
+before post-frame resets: every painted timeline must already contain the
+newest message, stay at zero, and have no scroll activity. Both the early-call
+and older-repository-event cases fail on build 155's `208f198b9` before the
+view gate; the other initial controls pass. The RED/GREEN offsets remain zero,
+so those failures prove stale-content flashes, not an animated scroll. The
+held-read control requires history visible before that read is released.
+Nineteen focused tests pass, including the prior Thought controls and five
+terminal-call preservation cases. Evidence:
+`.audit/orbit-chat-first-frame/first-paint-baseline2.jsonl`,
+`held-reactions-red.jsonl`, and `reaction-independent-focused-green.jsonl`
+in that directory. Device confirmation of the owner's symptom remains
+separate; widget checks do not certify remote voice delivery.
 
 A live text send can lose custody staging to concurrent recovery after both
 independently encrypt. An intent-bearing losing caller must not transition

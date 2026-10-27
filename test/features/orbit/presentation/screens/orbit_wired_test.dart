@@ -1943,6 +1943,7 @@ void main() {
       'delayed',
       'calls-first',
       'old-repo-first',
+      'reactions-held',
     ]) {
       testWidgets('normal Orbit first-paint stays at live edge: ' + variant, (
         tester,
@@ -2022,9 +2023,20 @@ void main() {
                 ),
               ])
             : null;
+        final reactions = variant == 'reactions-held'
+            ? _HeldFirstPaintReactions()
+            : null;
+        addTearDown(() {
+          if (reactions != null && !reactions.readGate.isCompleted) {
+            reactions.readGate.complete({});
+          }
+        });
         await tester.pumpWidget(
           TapOutsideHidesKeyboard(
-            child: buildOrbitWired(callTimelineSource: calls),
+            child: buildOrbitWired(
+              callTimelineSource: calls,
+              reactionRepository: reactions,
+            ),
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
@@ -2103,6 +2115,17 @@ void main() {
         );
         expect(chat.initialThoughtReply, isNull);
         expect(chat.initialThoughtVoiceReply, isNull);
+        if (reactions != null) {
+          expect(reactions.readCalls, 1);
+          expect(
+            reactions.readGate.isCompleted,
+            isFalse,
+            reason:
+                'history must be visible while the reactions read is still held',
+          );
+          reactions.readGate.complete({});
+          await tester.pump();
+        }
         await finishThoughtCase(tester);
       });
     }
@@ -12294,6 +12317,19 @@ class _HeldReadSecureKeyStore extends FakeSecureKeyStore {
 
 /// Only the card-to-chat UI cases need pending authored text projection. The
 /// adapter's custody/retry tests use the real production database repository.
+class _HeldFirstPaintReactions extends FakeReactionRepository {
+  final readGate = Completer<Map<String, List<MessageReaction>>>();
+  int readCalls = 0;
+
+  @override
+  Future<Map<String, List<MessageReaction>>> getReactionsForMessages(
+    List<String> messageIds,
+  ) {
+    readCalls++;
+    return readGate.future;
+  }
+}
+
 class _FirstPaintCallTimeline implements ConversationCallTimelineSource {
   _FirstPaintCallTimeline(this.entries);
   final List<ConversationCallTimelineEntry> entries;
