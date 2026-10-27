@@ -24,7 +24,7 @@ landed coverage, and are not duplicated in this preparation branch.
 | G | Unseen notes are distinct beyond bold and labelled as new | `test/features/orbit/presentation/widgets/orbit_thought_notes_test.dart:197` checks outline, semantics and seen styling; `:330` covers the labelled note action. | Observe an unseen note, then its seen state; preserve accessible labels. |
 | H | Own Thought shows actual viewers and reactors; delivered does not mean seen | Migration 124 supplies `post_view_receipts`. Codex-UI's pending card case `a photo-only placeholder is not a view before content arrives` separates arrival from viewing. Its own-activity case covers names/reaction grouping. | Integrate H's receipt send/store/retry tests; prove no view on delivery or placeholder-only card, then a view after actual content is displayed. |
 | I | Real blurred preview before the photo downloads, safely encrypted | `post_create_envelope_media_keys_test.dart` covers encrypted-only preview, no v1 leak, malformed/oversize/no-preview input; `post_create_encrypted_media_integration_test.dart` covers preview delivery. `thought_card_screen_test.dart:747` proves the held-download preview, but never completes its download future; it does not yet prove the transition. `124_thought_photo_previews_and_view_receipts_test.dart` covers schema, null legacy preview, receipt dedup and quote index. Astra adds the data-preservation test below. | Card test owner should complete/assert the preview-to-full-photo transition. Verify that transition on device too. Claude-UI's pending Thoughts-only true-ratio MediaGrid change still needs integration; ordinary chat remains a separate renderer. |
-| J | Preview picked photos before Share; choose Fit or Crop | Codex author commit `0e87b94bc5af5d288f09288116d6a1386d85d831` adds `test/features/posts/improvement/thought_photo_preview_test.dart`: Fit preserves originals/order, Crop exports actual framed files with orientation, mixed framing, failure cleanup/retry, Cancel/draft preservation, small RTL controls. Not yet in the inspected base. | Integrate the author commit; use Fit and Crop, cancel once, then share the retained draft on the final pair. |
+| J | Picked photos show inside the composer: the whole photo over its blurred copy, an X removes one, the draft is kept (owner: "go with (Pattern 2)"; supersedes the Fit/Crop framing screen) | `test/features/posts/improvement/thought_compose_sheet_test.dart`: "a picked photo shows whole inside the composer and the X takes it out", plus the photo pick, mixed pick and draft-restore cases. The framing screen and its `thought_photo_preview_test.dart` were removed in `d971f186a`. | Pick a portrait photo, check the inline preview matches the card, remove it with X, pick again, then share the retained draft on the final pair. |
 | K | 24-hour expiry / notification device measurement | **EXCLUDED BY OWNER** (`m-03deceb6`). Existing `thought_expiry_scheduler_test.dart`, lifetime and widget-expiry tests are unchanged. | No 24-hour wait, clock change, new device gate or missing-proof blocker for K. |
 
 ## Astra additions and execution limits
@@ -94,9 +94,10 @@ devices. Keep original attempts and source/configuration/artifact identities.
    and dismissing the composer retires it across relaunch. Check unseen outline
    and new-Thought accessibility label, then the seen style after opening.
 3. **Composer and replacement.** Read the all-friends/24-hour copy and the
-   replacement explanation with an existing Thought. Pick a portrait photo,
-   inspect the preview, try Fit and Crop, cancel once without losing the draft,
-   then share. Confirm only the newest own/friend Thought remains visible.
+   replacement explanation with an existing Thought. Pick a portrait photo;
+   it shows inside the composer, whole over its blurred copy, with no extra
+   screen. Remove it with X without losing the text, pick it again, then
+   share. Confirm only the newest own/friend Thought remains visible.
 4. **Photo arrival and shape.** Hold the recipient's photo download using an
    existing supported test control. Before bytes arrive, require the sender's
    blurred preview; an old sender without a preview must show the shaped
@@ -136,7 +137,7 @@ the matching checklist legs, and preserve host/device proof as separate fields.
 | Proposed ID | Title / items | Host references | Device leg |
 | --- | --- | --- | --- |
 | TH-002 | Defines-free Thoughts on / depth on; distinct unseen notes (G) | `test/core/config/thoughts_feature_flags_test.dart`; `orbit_thought_notes_test.dart`; existing forced-off Orbit/Settings scan controls | 2 |
-| TH-003 | Thought entry, first-use hint, replacement and photo framing (B/C/J) | `orbital_visualization_test.dart`; `orbit_wired_test.dart`; `thought_compose_sheet_test.dart`; author's `thought_photo_preview_test.dart` | 2–3 |
+| TH-003 | Thought entry, first-use hint, replacement and inline photo preview (B/C/J) | `orbital_visualization_test.dart`; `orbit_wired_test.dart`; `thought_compose_sheet_test.dart` | 2–3 |
 | TH-004 | Offline photo posting progress and one-tap retry (A) | Codex-UI's posting card cases; existing delivery/retry suites | 5 |
 | TH-005 | Encrypted preview, true-ratio photo and late quote thumbnail (I) | `post_create_envelope_media_keys_test.dart`; `post_create_encrypted_media_integration_test.dart`; `thought_card_screen_test.dart`; `thought_quote_block_test.dart`; Orbit's late-download quote case | 4 and 6 |
 | TH-006 | Typed reply opens chat; reaction Retry stays in place; same-chat quote reopen (D/E) | `thought_card_screen_test.dart` one-handoff/reaction-retry cases; `orbit_wired_test.dart` visible quoted reply and live/gone quote cases | 6 |
