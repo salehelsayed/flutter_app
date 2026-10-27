@@ -37,6 +37,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.onOwnsHostGestureChanged,
     this.onBackActionChanged,
     this.onThoughtDeparted,
+    this.onSettled,
     this.onThoughtsExpired,
     this.loadMedia,
     this.downloadMedia,
@@ -59,6 +60,10 @@ class OrbitDepthSurface extends StatefulWidget {
   final ValueChanged<bool>? onOwnsHostGestureChanged;
   final ValueChanged<VoidCallback?>? onBackActionChanged;
   final ValueChanged<String>? onThoughtDeparted;
+
+  /// The view came to rest: its ring and the friend in front, if any. Also
+  /// called with flat when the view resets.
+  final void Function(OrbitDepthLayer layer, String? frontPeerId)? onSettled;
   final VoidCallback? onThoughtsExpired;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<String>? onThoughtTap;
@@ -262,6 +267,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 
   void _reset({bool notifyBuild = true}) {
+    if (_layer != OrbitDepthLayer.flat) {
+      // Resets also run during build; tell the host after the frame.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) widget.onSettled?.call(OrbitDepthLayer.flat, null);
+      });
+    }
     ++_settleGeneration;
     _pendingLanding = null;
     _vertical.stop();
@@ -416,6 +427,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       return;
     }
     _pendingLanding = null;
+    widget.onSettled?.call(_layer, _front?.friend.peerId);
     final next = _layer == OrbitDepthLayer.flat ? null : _front?.thought?.id;
     // Overview bubbles do not land a new expanded thought. A thought that
     // was already read at the front remains owned until its actual departure.

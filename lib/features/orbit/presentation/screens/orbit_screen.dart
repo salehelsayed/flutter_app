@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -330,6 +331,10 @@ class OrbitScreen extends StatefulWidget {
   final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
   final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
   final ValueChanged<String>? onDepthThoughtDeparted;
+
+  /// The 3D view came to rest on a ring, or back on flat.
+  final void Function(OrbitDepthLayer layer, String? frontPeerId)?
+  onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadDepthMedia;
@@ -420,6 +425,7 @@ class OrbitScreen extends StatefulWidget {
     this.onDepthOwnsHostGestureChanged,
     this.onDepthBackActionChanged,
     this.onDepthThoughtDeparted,
+    this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
     this.onThoughtTap,
@@ -540,6 +546,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
     onDepthBackActionChanged: widget.onDepthBackActionChanged,
     onDepthThoughtDeparted: widget.onDepthThoughtDeparted,
+    onDepthSettled: widget.onDepthSettled,
     loadDepthMedia: widget.loadDepthMedia,
     downloadDepthMedia: widget.downloadDepthMedia,
     onThoughtTap: widget.onThoughtTap,
@@ -626,6 +633,10 @@ class _OrbitScreenView extends StatelessWidget {
   final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
   final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
   final ValueChanged<String>? onDepthThoughtDeparted;
+
+  /// The 3D view came to rest on a ring, or back on flat.
+  final void Function(OrbitDepthLayer layer, String? frontPeerId)?
+  onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadDepthMedia;
@@ -722,6 +733,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.onDepthOwnsHostGestureChanged,
     this.onDepthBackActionChanged,
     this.onDepthThoughtDeparted,
+    this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
     this.onThoughtTap,
@@ -1235,6 +1247,7 @@ class _OrbitScreenView extends StatelessWidget {
             onOwnsHostGestureChanged: onDepthOwnsHostGestureChanged,
             onBackActionChanged: onDepthBackActionChanged,
             onThoughtDeparted: onDepthThoughtDeparted,
+            onSettled: onDepthSettled,
             onThoughtsExpired: onThoughtsExpired,
             loadMedia: loadDepthMedia,
             downloadMedia: downloadDepthMedia,

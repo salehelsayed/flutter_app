@@ -909,6 +909,70 @@ void main() {
         },
       );
 
+      Future<void> drag(WidgetTester tester, Offset delta) async {
+        await tester.timedDrag(
+          find.byType(OrbitDepthSurface),
+          delta,
+          const Duration(seconds: 1),
+        );
+        await tester.pump(const Duration(seconds: 3));
+        await pumpOrbitFrames(tester, count: 4);
+      }
+
+      testWidgets('a short drag that settles flat keeps the open step', (
+        tester,
+      ) async {
+        await introScene(tester);
+        await spread(tester);
+        await drag(tester, const Offset(0, 20));
+        expect(find.byKey(const ValueKey('orbit-depth-stage')), findsNothing);
+        expect(step('openDepth'), findsOneWidget);
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets('returning to flat on the turn step goes back a step', (
+        tester,
+      ) async {
+        await introScene(tester);
+        await spread(tester);
+        await drag(tester, const Offset(0, 260));
+        expect(step('turn'), findsOneWidget);
+        await drag(tester, const Offset(0, -260));
+        expect(step('openDepth'), findsOneWidget);
+        expect(await secureKeyStore.read('orbit_intro_seen_v1'), isNull);
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets('with one friend thought the intro ends once 3D opens', (
+        tester,
+      ) async {
+        final posts = await introScene(tester);
+        await posts.deletePostCascade('depth-second-post');
+        await pumpOrbitFrames(tester, count: 8);
+        expect(step('spread'), findsOneWidget);
+        await spread(tester);
+        await drag(tester, const Offset(0, 260));
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        expect(await secureKeyStore.read('orbit_intro_seen_v1'), '1');
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets(
+        'storage answering while 3D is open waits for flat to start',
+        (tester) async {
+          final held = _HeldReadSecureKeyStore('orbit_intro_seen_v1');
+          secureKeyStore = held;
+          await introScene(tester);
+          await drag(tester, const Offset(0, 260));
+          held.release();
+          await pumpOrbitFrames(tester, count: 4);
+          expect(find.byType(OrbitIntroOverlay), findsNothing);
+          await drag(tester, const Offset(0, -260));
+          expect(step('spread'), findsOneWidget);
+          await finishThoughtCase(tester);
+        },
+      );
+
       testWidgets('Skip ends the intro for good', (tester) async {
         await introScene(tester);
         await tester.tap(find.byKey(const ValueKey('orbit-intro-skip')));

@@ -78,6 +78,7 @@ import 'package:flutter_app/features/contacts/application/block_contact_use_case
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_intro_overlay.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
@@ -407,6 +408,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// The Orbit intro: starts seen so it never flashes before storage answers.
   bool _introSeen = true;
   OrbitIntroStep _introStep = OrbitIntroStep.spread;
+  OrbitDepthLayer _depthLayer = OrbitDepthLayer.flat;
+  String? _introTurnFrom;
   static const _introSeenKey = 'orbit_intro_seen_v1';
   static const _thoughtHintSeenKey = 'orbit_thought_hint_seen_v1';
   ImageQualityPreference _videoQualityPreference =
@@ -819,20 +822,46 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     } catch (_) {}
   }
 
+  /// A step shows only where it can be done: the first two on flat Orbit,
+  /// the sideways turn in 3D.
   bool get _showsIntro =>
       !_introSeen &&
       thoughtsEnabled &&
       orbitDepthEnabled &&
       _viewMode == OrbitViewMode.innerCircle &&
-      _depthThoughtsByPeerId.isNotEmpty;
+      _depthThoughtsByPeerId.isNotEmpty &&
+      (_introStep == OrbitIntroStep.turn) ==
+          (_depthLayer != OrbitDepthLayer.flat);
 
-  /// Moves the intro on only when [done] is the gesture it is waiting for.
-  void _introDid(OrbitIntroStep done) {
-    if (!_showsIntro || _introStep != done) return;
-    if (done == OrbitIntroStep.turn) {
+  void _onIntroSpread() {
+    if (_showsIntro && _introStep == OrbitIntroStep.spread) {
+      setState(() => _introStep = OrbitIntroStep.openDepth);
+    }
+  }
+
+  /// Steps two and three end only on what actually happened: 3D opened, then
+  /// it came to rest on a different friend.
+  void _onDepthSettled(OrbitDepthLayer layer, String? frontPeerId) {
+    final wasShowing = _showsIntro;
+    final step = _introStep;
+    if (layer != _depthLayer) setState(() => _depthLayer = layer);
+    if (_introSeen) return;
+    final open = layer != OrbitDepthLayer.flat;
+    if (step == OrbitIntroStep.openDepth && open && wasShowing) {
+      if (_depthThoughtsByPeerId.length < 2) {
+        _finishIntro();
+      } else {
+        setState(() {
+          _introStep = OrbitIntroStep.turn;
+          _introTurnFrom = frontPeerId;
+        });
+      }
+    } else if (step == OrbitIntroStep.turn && !open) {
+      setState(() => _introStep = OrbitIntroStep.openDepth);
+    } else if (step == OrbitIntroStep.turn &&
+        frontPeerId != null &&
+        frontPeerId != _introTurnFrom) {
       _finishIntro();
-    } else {
-      setState(() => _introStep = OrbitIntroStep.values[done.index + 1]);
     }
   }
 
@@ -3766,15 +3795,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       depthThoughtsByPeerId: _depthThoughtsByPeerId,
       depthActive: _isOrbitActive,
       onDepthBackActionChanged: (action) => _depthStepBack = action,
-      onDepthOwnsHostGestureChanged: (owns) {
-        widget.onDepthOwnsHostGestureChanged?.call(owns);
-        if (owns) _introDid(OrbitIntroStep.openDepth);
-      },
-      onDepthThoughtDeparted: (postId) {
-        unawaited(_markDepthThoughtSeen(postId));
-        _introDid(OrbitIntroStep.turn);
-      },
-      onThoughtsSpread: () => _introDid(OrbitIntroStep.spread),
+      onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
+      onDepthThoughtDeparted: (postId) =>
+          unawaited(_markDepthThoughtSeen(postId)),
+      onDepthSettled: _onDepthSettled,
+      onThoughtsSpread: _onIntroSpread,
       loadDepthMedia: _loadDepthMedia,
       downloadDepthMedia: _thoughtPosts == null
           ? null
