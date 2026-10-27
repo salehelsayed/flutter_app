@@ -185,8 +185,13 @@ void main() {
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
       // caff0f087 removed the banner's inbox-attention read (24 to 23).
-      'widget.p2pService': 23,
-      'widget.bridge': 36,
+      // 407 128-D: the in-place thought reply hands the same p2pService to
+      // sendThoughtReply, which stages an authored intent and calls the
+      // ordinary sendChatMessage (23 to 24). No new delivery seam.
+      'widget.p2pService': 24,
+      // 407 128-D: the same in-place reply passes the bridge to
+      // sendThoughtReply for the ordinary encrypted send (36 to 37).
+      'widget.bridge': 37,
       'widget.sendChatMessageFn(': 1,
       'widget.sendPrivateMediaFanoutChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
