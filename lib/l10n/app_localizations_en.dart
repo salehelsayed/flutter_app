@@ -201,6 +201,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sharing replaces the thought you have up now';
 
   @override
+  String get thought_compose_preview_photos => 'Preview photos';
+
+  @override
+  String get thought_photo_fit => 'Fit';
+
+  @override
+  String get thought_photo_crop => 'Crop square';
+
+  @override
+  String get thought_photo_use => 'Use photos';
+
+  @override
   String get thought_compose_nobody_to_share_with =>
       'Add a friend to share your thoughts';
 
