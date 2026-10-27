@@ -87,6 +87,73 @@ void main() {
   );
 
   testWidgets(
+    'a scroll that goes out and comes back near its start keeps the keyboard',
+    variant: mobile,
+    (tester) async {
+      await tester.pumpWidget(
+        app(
+          Column(
+            children: [
+              const TextField(),
+              Expanded(
+                child: ListView(
+                  key: const ValueKey('list'),
+                  children: [
+                    for (var i = 0; i < 40; i++)
+                      SizedBox(height: 60, child: Text('row $i')),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      await focusField(tester);
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('list'))),
+      );
+      await gesture.moveBy(const Offset(0, -100));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.up();
+      await tester.pump();
+
+      expect(fieldFocused(tester), isTrue);
+    },
+  );
+
+  testWidgets(
+    'the Thought composer keeps the keyboard when Media is tapped',
+    variant: mobile,
+    (tester) async {
+      var attached = 0;
+      await tester.pumpWidget(
+        app(
+          ComposePostSheet(
+            thoughtsOnly: true,
+            eligibleContacts: const [],
+            onSubmitWithOutcome: (_) async =>
+                ComposePostSubmitOutcome.keepSheetOpen,
+            onAttachMedia: () async {
+              attached++;
+              return const [];
+            },
+          ),
+        ),
+      );
+      await focusField(tester);
+
+      await tester.tap(find.text('Media'));
+      await tester.pump();
+
+      expect(attached, 1);
+      expect(fieldFocused(tester), isTrue);
+    },
+  );
+
+  testWidgets(
     'the chat composer keeps the keyboard when Send is tapped',
     variant: mobile,
     (tester) async {

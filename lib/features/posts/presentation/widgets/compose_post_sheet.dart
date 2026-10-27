@@ -807,41 +807,45 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                     ),
                   ],
                   const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed:
-                            (widget.onAttachMedia == null &&
-                                    widget.onPickMedia == null) ||
-                                _isRecording
-                            ? null
-                            : _attachMedia,
-                        icon: const Icon(
-                          Icons.photo_library_outlined,
-                          size: 18,
+                  // Media and voice belong to the field: tapping them keeps
+                  // the keyboard.
+                  TextFieldTapRegion(
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed:
+                              (widget.onAttachMedia == null &&
+                                      widget.onPickMedia == null) ||
+                                  _isRecording
+                              ? null
+                              : _attachMedia,
+                          icon: const Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _isAttaching
+                                ? AppLocalizations.of(
+                                    context,
+                                  )!.compose_media_adding
+                                : AppLocalizations.of(context)!.compose_media,
+                          ),
                         ),
-                        label: Text(
-                          _isAttaching
-                              ? AppLocalizations.of(
-                                  context,
-                                )!.compose_media_adding
-                              : AppLocalizations.of(context)!.compose_media,
+                        OutlinedButton.icon(
+                          onPressed:
+                              (widget.onAttachVoice == null &&
+                                  widget.audioRecorderService == null)
+                              ? null
+                              : _attachVoice,
+                          icon: const Icon(Icons.mic_none_rounded, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context)!.compose_voice,
+                          ),
                         ),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed:
-                            (widget.onAttachVoice == null &&
-                                widget.audioRecorderService == null)
-                            ? null
-                            : _attachVoice,
-                        icon: const Icon(Icons.mic_none_rounded, size: 18),
-                        label: Text(
-                          AppLocalizations.of(context)!.compose_voice,
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   if (_isRecording) ...[
                     const SizedBox(height: 12),
