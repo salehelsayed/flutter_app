@@ -454,30 +454,6 @@ abstract class AppLocalizations {
   /// **'Sharing replaces the thought you have up now'**
   String get thought_compose_replaces;
 
-  /// No description provided for @thought_compose_preview_photos.
-  ///
-  /// In en, this message translates to:
-  /// **'Preview photos'**
-  String get thought_compose_preview_photos;
-
-  /// No description provided for @thought_photo_fit.
-  ///
-  /// In en, this message translates to:
-  /// **'Fit'**
-  String get thought_photo_fit;
-
-  /// No description provided for @thought_photo_crop.
-  ///
-  /// In en, this message translates to:
-  /// **'Fill screen'**
-  String get thought_photo_crop;
-
-  /// No description provided for @thought_photo_use.
-  ///
-  /// In en, this message translates to:
-  /// **'Use photos'**
-  String get thought_photo_use;
-
   /// No description provided for @thought_compose_nobody_to_share_with.
   ///
   /// In en, this message translates to:

@@ -18,7 +18,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
-import 'thought_photo_preview.dart';
+import 'thought_photo_draft_preview.dart';
 
 class ComposePostResult {
   final String text;
@@ -288,27 +288,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         return;
       }
       if (!mounted) return;
-      final originals = _mediaDrafts;
-      final combined = combinePostMedia(originals, pick.drafts);
-      var selected = combined.drafts;
-      if (widget.thoughtsOnly &&
-          pick.drafts.any((draft) => draft.kind == 'image') &&
-          selected.isNotEmpty &&
-          selected.every((draft) => draft.kind == 'image')) {
-        final preview = await showThoughtPhotoPreview(
-          context,
-          selected,
-          replacesCurrentThought: widget.replacesCurrentThought,
-        );
-        if (preview == null) return;
-        if (!mounted || !identical(_mediaDrafts, originals)) {
-          await preview.discard();
-          return;
-        }
-        selected = preview.drafts;
-      }
+      final combined = combinePostMedia(_mediaDrafts, pick.drafts);
       setState(() {
-        _mediaDrafts = selected;
+        _mediaDrafts = combined.drafts;
         if (pick.leftOut || combined.leftOut) {
           _notice = _ComposeNotice.mediaLeftOut;
         }
@@ -875,7 +857,19 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                       ],
                     ),
                   ],
-                  if (_mediaDrafts.isNotEmpty &&
+                  if (widget.thoughtsOnly &&
+                      _mediaDrafts.isNotEmpty &&
+                      _mediaDrafts.every((draft) => draft.kind == 'image')) ...[
+                    const SizedBox(height: 12),
+                    ThoughtPhotoDraftPreview(
+                      paths: [
+                        for (final draft in _mediaDrafts) draft.localFilePath,
+                      ],
+                      onRemove: (index) => setState(
+                        () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
+                      ),
+                    ),
+                  ] else if (_mediaDrafts.isNotEmpty &&
                       _mediaDrafts.first.kind != 'voice') ...[
                     const SizedBox(height: 12),
                     AttachmentPreviewStrip(

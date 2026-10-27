@@ -207,18 +207,6 @@ class AppLocalizationsDe extends AppLocalizations {
       'Teilen ersetzt deinen aktuellen Gedanken';
 
   @override
-  String get thought_compose_preview_photos => 'Fotos ansehen';
-
-  @override
-  String get thought_photo_fit => 'Ganz zeigen';
-
-  @override
-  String get thought_photo_crop => 'Bildschirm füllen';
-
-  @override
-  String get thought_photo_use => 'Fotos verwenden';
-
-  @override
   String get thought_compose_nobody_to_share_with =>
       'Füge einen Freund hinzu, um Gedanken zu teilen';
 

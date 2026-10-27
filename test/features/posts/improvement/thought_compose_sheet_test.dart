@@ -8,6 +8,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_photo_draft_preview.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
@@ -44,14 +45,30 @@ void main() {
     ),
   );
 
-  Future<void> finishPhotoPreview(WidgetTester tester) async {
+  /// The sheet scrolls; a control below the fold is scrolled to, then tapped.
+  Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+    await tester.ensureVisible(finder);
+    await tester.tap(finder);
+  }
+
+  /// Photos show inside the sheet; nothing opens over it.
+  Future<void> finishPick(WidgetTester tester) async {
     await tester.pumpAndSettle();
-    final use = find.byKey(const ValueKey('thought-photo-use'));
-    if (use.evaluate().isNotEmpty) {
-      await tester.ensureVisible(use);
-      await tester.tap(use);
-      await tester.pumpAndSettle();
+    expect(find.byType(ComposePostSheet), findsOneWidget);
+  }
+
+  /// What the sheet shows for the picked media: photos inline, otherwise the
+  /// attachment strip.
+  List<String> shownPaths(WidgetTester tester) {
+    final photos = find.byType(ThoughtPhotoDraftPreview);
+    if (photos.evaluate().isNotEmpty) {
+      return tester.widget<ThoughtPhotoDraftPreview>(photos).paths;
     }
+    return tester
+        .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+        .attachments
+        .map((file) => file.path)
+        .toList();
   }
 
   ElevatedButton share(WidgetTester tester) =>
@@ -115,7 +132,10 @@ void main() {
       );
       await tester.enterText(find.byType(TextField), '  A new thought  ');
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('thought-composer-share')),
+      );
       await tester.pump();
       expect(drafts.single.text, 'A new thought');
       expect(drafts.single.audience.kind, PostAudienceKind.allFriends);
@@ -143,14 +163,17 @@ void main() {
           ),
         );
         await tester.tap(find.text('Media'));
-        await finishPhotoPreview(tester);
+        await finishPick(tester);
         expect(share(tester).onPressed, isNotNull);
-        await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+        await tapVisible(
+          tester,
+          find.byKey(const ValueKey('thought-composer-share')),
+        );
         await tester.pump();
         expect(submitted!.text, isEmpty);
         expect(submitted!.audience.kind, PostAudienceKind.allFriends);
         expect(submitted!.mediaDrafts.single, same(draft));
-        await tester.tap(find.byIcon(Icons.close));
+        await tapVisible(tester, find.byIcon(Icons.close));
         await tester.pump();
         expect(share(tester).onPressed, isNull);
       },
@@ -170,16 +193,14 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
-    AttachmentPreviewStrip strip() =>
-        tester.widget(find.byType(AttachmentPreviewStrip));
-    expect(strip().attachments.map((file) => file.path), [
-      '/tmp/one.jpg',
-      '/tmp/two.jpg',
-    ]);
-    await tester.tap(find.byIcon(Icons.close).first);
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-photo-draft-remove')).first,
+    );
     await tester.pump();
-    expect(strip().attachments.map((file) => file.path), ['/tmp/two.jpg']);
+    expect(shownPaths(tester), ['/tmp/two.jpg']);
   });
 
   testWidgets('nobody to share with explains inside the sheet, keeps text', (
@@ -191,7 +212,10 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Hello');
     await tester.pump();
     expect(find.text('Add a friend to share your thoughts'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
     await tester.pump();
     expect(find.text('Add a friend to share your thoughts'), findsOneWidget);
     expect(find.text('Hello'), findsOneWidget);
@@ -220,7 +244,10 @@ void main() {
       recorder.emitAmplitude(0.5);
       await tester.tap(find.text('Stop'));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('thought-composer-share')),
+      );
       await tester.pump();
       expect(submitted!.audience.kind, PostAudienceKind.allFriends);
       expect(submitted!.mediaDrafts.single.kind, 'voice');
@@ -243,7 +270,10 @@ void main() {
     );
     await tester.enterText(find.byType(TextField), 'One share');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
     await tester.pump();
     expect(share(tester).onPressed, isNull);
     expect(count, 1);
@@ -285,11 +315,40 @@ void main() {
     mime: 'video/mp4',
   );
 
-  List<String> stripPaths(WidgetTester tester) => tester
-      .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
-      .attachments
-      .map((file) => file.path)
-      .toList();
+  testWidgets(
+    'a picked photo shows whole inside the composer and the X takes it out',
+    (tester) async {
+      await tester.pumpWidget(
+        scene(
+          pick: () async => (drafts: const [photoOne], leftOut: false),
+          submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'Lake at dusk');
+      await tester.tap(find.text('Media'));
+      await finishPick(tester);
+
+      expect(shownPaths(tester), ['/tmp/one.jpg']);
+      expect(find.text('Fit'), findsNothing);
+      final photo = find.descendant(
+        of: find.byKey(const ValueKey('thought-photo-draft-0')),
+        matching: find.byType(Image),
+      );
+      expect(tester.widgetList<Image>(photo).map((image) => image.fit), [
+        BoxFit.cover,
+        BoxFit.contain,
+      ]);
+
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('thought-photo-draft-remove')),
+      );
+      await tester.pump();
+      expect(find.byType(ThoughtPhotoDraftPreview), findsNothing);
+      expect(find.text('Lake at dusk'), findsOneWidget);
+      expect(share(tester).onPressed, isNotNull);
+    },
+  );
 
   testWidgets('a mixed photo and video pick keeps photos and says so', (
     tester,
@@ -302,8 +361,8 @@ void main() {
     );
     expect(find.text(leftOutLine), findsNothing);
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
-    expect(stripPaths(tester), ['/tmp/one.jpg']);
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
   });
 
@@ -317,8 +376,8 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
-    expect(stripPaths(tester), ['/tmp/one.jpg']);
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/one.jpg']);
     expect(find.text(leftOutLine), findsOneWidget);
   });
 
@@ -337,14 +396,14 @@ void main() {
       ),
     );
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
+    await finishPick(tester);
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
-    expect(stripPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/one.jpg', '/tmp/two.jpg']);
     expect(find.text(leftOutLine), findsNothing);
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
-    expect(stripPaths(tester), ['/tmp/clip.mp4']);
+    await finishPick(tester);
+    expect(shownPaths(tester), ['/tmp/clip.mp4']);
   });
 
   testWidgets('a media picker failure is explained inside the sheet', (
@@ -359,7 +418,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Still here');
     await tester.pump();
     await tester.tap(find.text('Media'));
-    await finishPhotoPreview(tester);
+    await finishPick(tester);
     expect(find.text("Couldn't add your media. Try again."), findsOneWidget);
     expect(find.text('Send failed'), findsNothing);
     expect(find.text('Still here'), findsOneWidget);
@@ -374,7 +433,10 @@ void main() {
     );
     await tester.enterText(find.byType(TextField), 'Try me');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
     await tester.pump();
     expect(
       find.text('Not shared yet. Your thought is still here.'),
@@ -407,7 +469,10 @@ void main() {
     await recorder.triggerAutoStop();
     await tester.pump();
     expect(find.text('Voice attached'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+    await tapVisible(
+      tester,
+      find.byKey(const ValueKey('thought-composer-share')),
+    );
     await tester.pump();
     expect(submitted!.mediaDrafts.single.localFilePath, '/tmp/long.m4a');
     expect(submitted!.mediaDrafts.single.durationMs, 300000);
@@ -480,14 +545,14 @@ void main() {
       );
       await tester.enterText(find.byType(TextField), 'Half a thought');
       await tester.tap(find.text('Media'));
-      await finishPhotoPreview(tester);
+      await finishPick(tester);
       await tester.pumpWidget(const SizedBox.shrink());
       expect(closed, hasLength(1));
       expect(closed.single!.text, 'Half a thought');
       expect(closed.single!.mediaDrafts.single, same(photo));
       await tester.pumpWidget(scene(submit: keep, initialDraft: closed.single));
       expect(find.text('Half a thought'), findsOneWidget);
-      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(find.byType(ThoughtPhotoDraftPreview), findsOneWidget);
       expect(share(tester).onPressed, isNotNull);
     },
   );
