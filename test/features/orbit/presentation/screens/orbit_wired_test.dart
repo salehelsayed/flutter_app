@@ -199,7 +199,8 @@ void main() {
   setUp(() {
     identityRepo = FakeIdentityRepository();
     contactRepo = FakeContactRepository();
-    contactRequestRepo = FakeContactRequestRepository();
+    contactRequestRepo = FakeContactRequestRepository()
+      ..contactRepository = contactRepo;
     bridge = FakeBridge();
     p2pService = FakeP2PService();
     secureKeyStore = FakeSecureKeyStore();
@@ -3725,18 +3726,17 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
 
-      // Emit a contact request
-      fakeRequestListener.emitRequest(
-        ContactRequestModel(
-          peerId: 'requester-peer-id',
-          publicKey: 'requester-pk',
-          rendezvous: '/dns4/relay',
-          username: 'Charlie',
-          signature: 'req-sig',
-          receivedAt: DateTime.now().toUtc().toIso8601String(),
-          status: ContactRequestStatus.pending,
-        ),
+      final request = ContactRequestModel(
+        peerId: 'requester-peer-id',
+        publicKey: 'requester-pk',
+        rendezvous: '/dns4/relay',
+        username: 'Charlie',
+        signature: 'req-sig',
+        receivedAt: DateTime.now().toUtc().toIso8601String(),
+        status: ContactRequestStatus.pending,
       );
+      contactRequestRepo.seed([request]);
+      fakeRequestListener.emitRequest(request);
 
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
@@ -3767,7 +3767,7 @@ void main() {
           status: ContactRequestStatus.pending,
         );
         // PRE-SEED so acceptContactRequest.getRequest resolves the pending
-        // request (unseeded → notFound → neither success nor notPending → the
+        // request (unseeded → notFound → the
         // push branch never runs → false-negative RED).
         contactRequestRepo.seed([request]);
 
@@ -3807,7 +3807,7 @@ void main() {
     );
 
     // 215 TC-02: a FAILED accept (addContact throws) must NOT open a chat —
-    // navigation is gated on success/notPending.
+    // navigation requires a current accepted contact.
     testWidgets(
       'accept failure (addContact error) does NOT open a conversation',
       (tester) async {
@@ -3852,62 +3852,81 @@ void main() {
         // "no-nav" from "accept never fired".
         expect(find.text('Accept'), findsNothing);
         expect(find.byType(ConversationWired), findsNothing);
-      },
-    );
-
-    // 215 TC-08: an already-accepted request (notPending) still opens the chat,
-    // falling back to request.toContactModel() when the contact isn't cached.
-    testWidgets(
-      'accepting an already-accepted request still opens the conversation',
-      (tester) async {
-        setLargeTestSurface(tester);
-        suppressOverflowErrors();
-        identityRepo.seed(testIdentity);
-
-        final request = ContactRequestModel(
-          peerId: 'requester-peer-id',
-          publicKey: 'requester-pk',
-          rendezvous: '/dns4/relay',
-          username: 'Charlie',
-          signature: 'req-sig',
-          receivedAt: DateTime.now().toUtc().toIso8601String(),
-          status: ContactRequestStatus.accepted,
-        );
-        // Seeded as already-accepted → acceptContactRequest returns notPending;
-        // contact intentionally NOT cached → getContact null → toContactModel().
-        contactRequestRepo.seed([request]);
-
-        final fakeRequestListener = _FakeContactRequestListener(
-          requestRepo: contactRequestRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-        );
-
-        await tester.pumpWidget(
-          buildOrbitWired(contactRequestListener: fakeRequestListener),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-
-        fakeRequestListener.emitRequest(request);
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-
-        await tester.tap(find.text('Accept'));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 400));
-        await tester.pump();
-
-        expect(find.byType(ConversationWired), findsOneWidget);
+        expect(await contactRepo.getContact(request.peerId), isNull);
         expect(
-          tester
-              .widget<ConversationWired>(find.byType(ConversationWired))
-              .contact
-              .peerId,
-          'requester-peer-id',
+          (await contactRequestRepo.getRequest(request.peerId))!.status,
+          ContactRequestStatus.pending,
         );
       },
     );
+
+    for (final hasCurrentContact in [false, true]) {
+      testWidgets(
+        'already-accepted decision ${hasCurrentContact ? 'opens its current contact' : 'without a contact does not navigate'}',
+        (tester) async {
+          setLargeTestSurface(tester);
+          suppressOverflowErrors();
+          identityRepo.seed(testIdentity);
+          final request = ContactRequestModel(
+            peerId: 'requester-peer-id',
+            publicKey: 'requester-pk',
+            rendezvous: '/dns4/relay',
+            username: 'Charlie',
+            signature: 'req-sig',
+            receivedAt: DateTime.now().toUtc().toIso8601String(),
+            status: ContactRequestStatus.pending,
+          );
+          contactRequestRepo.seed([request]);
+          final fakeRequestListener = _FakeContactRequestListener(
+            requestRepo: contactRequestRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+          );
+          await tester.pumpWidget(
+            buildOrbitWired(contactRequestListener: fakeRequestListener),
+          );
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
+          fakeRequestListener.emitRequest(request);
+          await tester.pump(const Duration(milliseconds: 100));
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(find.text('Accept'), findsOneWidget);
+
+          // Another owner settles the displayed decision before this tap.
+          contactRequestRepo.seed([
+            request.copyWith(status: ContactRequestStatus.accepted),
+          ]);
+          if (hasCurrentContact) {
+            contactRepo.seed([request.toContactModel()]);
+          }
+          await tester.tap(find.text('Accept'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.pump();
+          expect(
+            find.byType(ConversationWired),
+            hasCurrentContact ? findsOneWidget : findsNothing,
+          );
+          expect(
+            await contactRepo.getContact(request.peerId),
+            hasCurrentContact ? isNotNull : isNull,
+          );
+          expect(
+            (await contactRequestRepo.getRequest(request.peerId))!.status,
+            ContactRequestStatus.accepted,
+          );
+          if (hasCurrentContact) {
+            expect(
+              tester
+                  .widget<ConversationWired>(find.byType(ConversationWired))
+                  .contact
+                  .peerId,
+              request.peerId,
+            );
+          }
+        },
+      );
+    }
 
     testWidgets('disposes stream subscriptions without errors', (tester) async {
       setLargeTestSurface(tester);

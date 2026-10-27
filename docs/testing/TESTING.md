@@ -2999,6 +2999,12 @@ the current pending decision before presentation. Blocked pending rows remain
 pending during passive replay. Resolver/materializer controls cover blocked
 peers with/without requests, removal/replacement during awaits and blocking or
 deletion before reciprocal/profile work. Notification sender-name copy is unchanged.
+Orbit widget fixtures must persist the pending row before fake listener emission
+and bind the request decision fake to the same contact repository. Paired
+already-accepted race controls require navigation with a current contact and no
+navigation without one; the failed-add control keeps the request pending.
+The 151-case Orbit preservation pass is retained as `orbit-decision-fixtures.log`
+in the artifact directory below.
 These cases and the receive, reciprocal-key, onboarding and shell preservation
 controls passed 252 host tests with zero failures/skips in
 `.codex-test-logs/contact-request-decisions-20261026/focused-ad-final.log`.
