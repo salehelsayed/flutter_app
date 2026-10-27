@@ -333,7 +333,7 @@ class OrbitScreen extends StatefulWidget {
   final ValueChanged<String>? onDepthThoughtDeparted;
 
   /// The 3D view came to rest on a ring, or back on flat.
-  final void Function(OrbitDepthLayer layer, String? frontPeerId)?
+  final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
@@ -635,7 +635,7 @@ class _OrbitScreenView extends StatelessWidget {
   final ValueChanged<String>? onDepthThoughtDeparted;
 
   /// The 3D view came to rest on a ring, or back on flat.
-  final void Function(OrbitDepthLayer layer, String? frontPeerId)?
+  final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
   onDepthSettled;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?

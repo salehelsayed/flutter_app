@@ -840,8 +840,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   }
 
   /// Steps two and three end only on what actually happened: 3D opened, then
-  /// it came to rest on a different friend.
-  void _onDepthSettled(OrbitDepthLayer layer, String? frontPeerId) {
+  /// a sideways turn brought a different friend to the front.
+  void _onDepthSettled(
+    OrbitDepthLayer layer,
+    String? frontPeerId,
+    bool turned,
+  ) {
     final wasShowing = _showsIntro;
     final step = _introStep;
     if (layer != _depthLayer) setState(() => _depthLayer = layer);
@@ -859,6 +863,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     } else if (step == OrbitIntroStep.turn && !open) {
       setState(() => _introStep = OrbitIntroStep.openDepth);
     } else if (step == OrbitIntroStep.turn &&
+        turned &&
         frontPeerId != null &&
         frontPeerId != _introTurnFrom) {
       _finishIntro();

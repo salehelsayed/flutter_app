@@ -973,6 +973,99 @@ void main() {
         },
       );
 
+      testWidgets('changing rings vertically is not the sideways turn', (
+        tester,
+      ) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final friends = [
+          testContact,
+          for (var i = 1; i < 7; i++)
+            testContact.copyWith(peerId: 'ring-peer-$i', username: 'Friend $i'),
+        ];
+        contactRepo.seed(friends);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        for (var i = 0; i < friends.length; i++) {
+          await posts.savePost(
+            thought('ring-thought-$i').copyWith(
+              authorPeerId: friends[i].peerId,
+              senderPeerId: friends[i].peerId,
+            ),
+          );
+        }
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await spread(tester);
+        await drag(tester, const Offset(0, 260));
+        expect(step('turn'), findsOneWidget);
+        await drag(tester, const Offset(0, 260));
+        final stage = tester.widget<Opacity>(
+          find.byKey(const ValueKey('orbit-depth-stage')),
+        );
+        expect(
+          (stage.child! as Semantics).properties.identifier,
+          contains('.outer.'),
+        );
+        expect(step('turn'), findsOneWidget);
+        expect(await secureKeyStore.read('orbit_intro_seen_v1'), isNull);
+        await finishThoughtCase(tester);
+      });
+
+      for (final reduce in [false, true]) {
+        testWidgets(
+          'a rebuild during 3D entry (reduce motion $reduce) is safe',
+          (tester) async {
+            final posts = await introScene(tester);
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump();
+            Widget scene(bool reduced) {
+              final base =
+                  buildOrbitWired(
+                        postRepository: posts,
+                        thoughtNowProvider: () => thoughtNow,
+                      )
+                      as MaterialApp;
+              return MaterialApp(
+                locale: base.locale,
+                localizationsDelegates: base.localizationsDelegates,
+                supportedLocales: base.supportedLocales,
+                theme: base.theme,
+                home: base.home,
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(disableAnimations: reduced),
+                  child: child!,
+                ),
+              );
+            }
+
+            await tester.pumpWidget(scene(false));
+            await pumpOrbitFrames(tester, count: 8);
+            await spread(tester);
+            await tester.timedDrag(
+              find.byType(OrbitDepthSurface),
+              const Offset(0, 260),
+              const Duration(seconds: 1),
+            );
+            await tester.pump(const Duration(milliseconds: 20));
+            await tester.pumpWidget(scene(reduce));
+            await pumpOrbitFrames(tester, count: 4);
+            expect(tester.takeException(), isNull);
+            await tester.pump(const Duration(seconds: 3));
+            await pumpOrbitFrames(tester, count: 4);
+            expect(step('turn'), findsOneWidget);
+            await finishThoughtCase(tester);
+          },
+        );
+      }
+
       testWidgets('Skip ends the intro for good', (tester) async {
         await introScene(tester);
         await tester.tap(find.byKey(const ValueKey('orbit-intro-skip')));
