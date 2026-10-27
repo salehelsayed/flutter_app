@@ -8872,8 +8872,10 @@ class _ConversationWiredState extends State<ConversationWired>
           contactUsername: _contact.username,
           connectionDate: _formatConnectionDate(),
           ownPeerId: _identity?.peerId,
-          messages: _messages,
-          callEntries: _callEntries,
+          // Call/live events can arrive before the initial latest page.
+          // Reveal the first timeline only when that page is ready.
+          messages: _initialLoadDone ? _messages : const [],
+          callEntries: _initialLoadDone ? _callEntries : const [],
           onSend: _onSend,
           onBack: _handleBackNavigation,
           scrollController: _scrollController,

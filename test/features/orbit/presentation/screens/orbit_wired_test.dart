@@ -29,6 +29,12 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/shared/widgets/tap_outside_hides_keyboard.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
+
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
@@ -360,6 +366,7 @@ void main() {
     Key? orbitKey,
     Locale locale = const Locale('en'),
     AudioRecorderService? audioRecorderService,
+    ConversationCallTimelineSource? callTimelineSource,
     MicPermissionGateway? micPermissionGateway,
   }) {
     final effectiveContactRepo = contactRepository ?? contactRepo;
@@ -390,6 +397,11 @@ void main() {
         _FakeGroupMessageListener(groupMessageStreamController.stream);
 
     final orbitWidget = OrbitWired(
+      directRouteAuthority: callTimelineSource == null
+          ? null
+          : DirectConversationRouteAuthority(
+              callTimelineSource: callTimelineSource,
+            ),
       key: orbitKey,
       callActivitySource: callActivitySource,
       identityRepo: identityRepo,
@@ -1924,6 +1936,176 @@ void main() {
         await finishThoughtCase(tester);
       },
     );
+
+    for (final variant in [
+      'short',
+      'paged',
+      'delayed',
+      'calls-first',
+      'old-repo-first',
+    ]) {
+      testWidgets('normal Orbit first-paint stays at live edge: ' + variant, (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(1080, 2400);
+        tester.view.devicePixelRatio = 2.75;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+        final repository = _InitialPageGateMessageRepository();
+        messageRepo = repository;
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final count = variant == 'short' ? 1 : 120;
+        final directory = Directory.systemTemp.createTempSync(
+          'chat-first-paint-',
+        );
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final png = base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        );
+        for (var i = 0; i < count; i++) {
+          final id = 'entry-' + i.toString();
+          final timestamp = thoughtNow
+              .subtract(Duration(minutes: count - i))
+              .toIso8601String();
+          await repository.saveMessage(
+            ConversationMessage(
+              id: id,
+              contactPeerId: testContact.peerId,
+              senderPeerId: i.isEven ? testContact.peerId : testIdentity.peerId,
+              text:
+                  'Entry message ' +
+                  i.toString() +
+                  ' ' +
+                  ('mixed history ' * (i % 6)),
+              timestamp: timestamp,
+              createdAt: timestamp,
+              status: 'delivered',
+              isIncoming: i.isEven,
+            ),
+          );
+          if (i % 7 == 0 || i == count - 1) {
+            final image = File(
+              directory.path + '/photo-' + i.toString() + '.png',
+            )..writeAsBytesSync(png);
+            await mediaAttachmentRepo.saveAttachment(
+              MediaAttachment(
+                id: 'image-' + i.toString(),
+                messageId: id,
+                mime: 'image/png',
+                size: png.length,
+                mediaType: 'image',
+                width: 720,
+                height: 960,
+                localPath: image.path,
+                downloadStatus: 'done',
+                createdAt: timestamp,
+              ),
+              owner: MediaOwnerLane.direct,
+            );
+          }
+        }
+        final calls = variant == 'calls-first'
+            ? _FirstPaintCallTimeline([
+                ConversationCallTimelineEntry(
+                  callId: 'older-call',
+                  contactPeerId: testContact.peerId,
+                  direction: ConversationCallDirection.incoming,
+                  status: ConversationCallStatus.completed,
+                  startedAt: thoughtNow.subtract(const Duration(hours: 3)),
+                  endedAt: thoughtNow
+                      .subtract(const Duration(hours: 3))
+                      .add(const Duration(seconds: 30)),
+                  duration: const Duration(seconds: 30),
+                ),
+              ])
+            : null;
+        await tester.pumpWidget(
+          TapOutsideHidesKeyboard(
+            child: buildOrbitWired(callTimelineSource: calls),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final gate =
+            ['delayed', 'calls-first', 'old-repo-first'].contains(variant)
+            ? Completer<void>()
+            : null;
+        repository.nextPageGate = gate;
+        final paints =
+            <({double offset, bool scrolling, int rows, String? newest})>[];
+        var recording = true;
+        addTearDown(() => recording = false);
+        // Persistent callbacks run after drawFrame's paint, before post-frame
+        // callbacks can hide a one-frame wrong offset by resetting the list.
+        tester.binding.addPersistentFrameCallback((_) {
+          if (!recording) return;
+          final list = find.byKey(const ValueKey('messages'));
+          if (list.evaluate().length != 1) return;
+          final controller = tester.widget<ListView>(list).controller!;
+          if (!controller.hasClients) return;
+          final screen = tester.widget<ConversationScreen>(
+            find.byType(ConversationScreen),
+          );
+          paints.add((
+            offset: controller.offset,
+            scrolling: controller.position.isScrollingNotifier.value,
+            rows: screen.messages.length,
+            newest: screen.messages.lastOrNull?.id,
+          ));
+        });
+        await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+        for (var frame = 0; frame < 80; frame++) {
+          if (frame == 6 && variant == 'old-repo-first') {
+            repository.debugEmitMessageChange(
+              (await repository.getMessage('entry-0'))!,
+            );
+          }
+          if (frame == 12) gate?.complete();
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        recording = false;
+        debugPrint('FIRST-PAINT ' + variant + ': ' + paints.toString());
+        expect(paints, isNotEmpty);
+        expect(
+          paints.map((p) => p.newest),
+          everyElement('entry-' + (count - 1).toString()),
+          reason:
+              'the first painted timeline must contain the actual newest message',
+        );
+        expect(
+          paints.map((p) => p.rows),
+          everyElement(greaterThanOrEqualTo(count < 50 ? count : 50)),
+          reason:
+              'do not paint a partial old timeline before the initial latest page is ready',
+        );
+        expect(
+          paints.map((p) => p.offset),
+          everyElement(0),
+          reason:
+              'the real Orbit route must paint its newest row before any post-frame scroll',
+        );
+        expect(
+          paints.map((p) => p.scrolling),
+          everyElement(false),
+          reason: 'opening an existing chat must not animate through history',
+        );
+        expect(
+          find
+              .byKey(ValueKey('msg-entry-' + (count - 1).toString()))
+              .hitTestable(),
+          findsOneWidget,
+        );
+        final chat = tester.widget<ConversationWired>(
+          find.byType(ConversationWired),
+        );
+        expect(chat.initialThoughtReply, isNull);
+        expect(chat.initialThoughtVoiceReply, isNull);
+        await finishThoughtCase(tester);
+      });
+    }
 
     Future<_OrbitThoughtPostRepository> photoThoughtForScroll() async {
       final directory = Directory.systemTemp.createTempSync('thought-scroll-');
@@ -12112,6 +12294,41 @@ class _HeldReadSecureKeyStore extends FakeSecureKeyStore {
 
 /// Only the card-to-chat UI cases need pending authored text projection. The
 /// adapter's custody/retry tests use the real production database repository.
+class _FirstPaintCallTimeline implements ConversationCallTimelineSource {
+  _FirstPaintCallTimeline(this.entries);
+  final List<ConversationCallTimelineEntry> entries;
+  @override
+  Future<List<ConversationCallTimelineEntry>> listCallsForContact(
+    String contactPeerId,
+  ) async => entries;
+  @override
+  Future<void> markCallsRead(String contactPeerId) async {}
+  @override
+  Stream<void> get changes => const Stream<void>.empty();
+}
+
+class _InitialPageGateMessageRepository extends InMemoryMessageRepository {
+  Completer<void>? nextPageGate;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String contactPeerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async {
+    if (beforeTimestamp == null && nextPageGate != null) {
+      final gate = nextPageGate!;
+      nextPageGate = null;
+      await gate.future;
+    }
+    return super.getMessagesPage(
+      contactPeerId,
+      limit: limit,
+      beforeTimestamp: beforeTimestamp,
+    );
+  }
+}
+
 class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
     implements AuthoredDirectTextIntentRepository {
   _ThoughtIntentMessageRepository(this.senderPeerId, {this.onIntentSaved});

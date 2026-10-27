@@ -2506,19 +2506,34 @@ A Thought opened from a conversation quote can cover an already mounted,
 scrolled conversation. Its reply uses the independent durable send callback,
 so it must restore the existing reversed list to offset zero while the card
 still covers it, then settle layout before popping the card. Deferring the
-only reset until after layout can leave a later offset correction. Fresh
-normal, text-Thought and voice-Thought routes already start at zero; they do
-not need a different initial-loading scroll policy. The focused
-`orbit_wired_test.dart` checks use a downloaded image Thought and 40 older
-quoted rows: first chat frame and subsequent frames stay at zero without
-scroll activity, text/voice replies become hit-testable, and a reply over a
-chat scrolled to 600 pixels returns at the live edge. Ordinary composer sends
-still animate from older history; reopened-card sends preserve the chat draft
-and send once. Baseline return failure and the eight focused passing controls
-are retained under `.audit/thought-reply-initial-bottom/` in
-`final-baseline-red.jsonl` and `narrow-fix-focused-green2.jsonl`.
-These widget checks prove positioning and local publication, not device
-rendering or remote voice delivery.
+only reset until after layout can leave a later offset correction. The
+downloaded-image/40-row controls in `orbit_wired_test.dart` preserve ordinary
+send animation, the chat draft and once-only sending. Their eight passing
+results and baseline 600-pixel return failure remain in
+`.audit/thought-reply-initial-bottom/final-baseline-red.jsonl` and
+`narrow-fix-focused-green2.jsonl` in that directory. Those controls sample after
+post-frame callbacks; their broader first-paint claim is **superseded** by
+the paint-time checks below.
+
+Normal Orbit entry must withhold the first timeline until its initial latest
+message page is ready. Older call rows and repository changes can arrive
+before that page. Painting them immediately flashes stale history, even
+while the reversed list's offset remains zero. Keep ingesting those events
+and merge them normally; gate only the view's messages/call entries with the
+existing `initialLoadDone` latch. Do not replace ordinary live-send scrolling.
+
+The five `normal Orbit first-paint` checks use the real Orbit route, app-root
+keyboard wrapper, short/paged mixed-photo history and a delayed initial page.
+A persistent-frame callback samples after paint and before post-frame resets:
+every painted timeline must already contain the newest message, stay at zero,
+and have no scroll activity. Both the early-call and older-repository-event
+cases fail on build 155's `208f198b9` before the view gate; the other controls
+pass. The RED/GREEN offsets remain zero, so these failures prove stale-content
+flashes, not an animated scroll. Eighteen focused tests pass with the gate,
+including the prior Thought controls and five terminal-call preservation cases.
+Evidence: `.audit/orbit-chat-first-frame/first-paint-baseline2.jsonl` and
+`initial-gate-focused-green.jsonl`. Device confirmation of the owner's symptom
+remains separate; widget checks do not certify remote voice delivery.
 
 A live text send can lose custody staging to concurrent recovery after both
 independently encrypt. An intent-bearing losing caller must not transition
