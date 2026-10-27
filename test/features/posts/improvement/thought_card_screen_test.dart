@@ -31,6 +31,7 @@ import '../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../../shared/bidi_layout_checks.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
 
 void main() {
@@ -1091,81 +1092,85 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('a call that cuts the recording leaves no file and no reply', timeout: const Timeout(Duration(seconds: 30)), (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final file = _tempFile('cut-by-call.m4a');
-    final recorder = FakeAudioRecorderService()..fakeOutputPath = file.path;
-    final voiceReplies = <ThoughtVoiceReply>[];
-    await openCard(
-      tester,
-      thought,
-      onReply: (_, _) {},
-      onVoiceReply: voiceReplies.add,
-      recorder: recorder,
-    );
-    await tester.tap(find.byType(VoiceRecordButton));
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(recorder.isRecording, isTrue);
+  testWidgets(
+    'a call that cuts the recording leaves no file and no reply',
+    timeout: const Timeout(Duration(seconds: 30)),
+    (tester) async {
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+      final file = _tempFile('cut-by-call.m4a');
+      final recorder = FakeAudioRecorderService()..fakeOutputPath = file.path;
+      final voiceReplies = <ThoughtVoiceReply>[];
+      await openCard(
+        tester,
+        thought,
+        onReply: (_, _) {},
+        onVoiceReply: voiceReplies.add,
+        recorder: recorder,
+      );
+      await tester.tap(find.byType(VoiceRecordButton));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(recorder.isRecording, isTrue);
 
-    var callGotMicrophone = false;
-    unawaited(
-      microphoneCaptureLeasesFor(
-        recorder,
-      ).prepareForCall().then((_) => callGotMicrophone = true),
-    );
-    for (var i = 0; i < 5; i++) {
-      await tester.pump(const Duration(milliseconds: 50));
-    }
-    await waitForDeletion(tester, file);
+      var callGotMicrophone = false;
+      unawaited(
+        microphoneCaptureLeasesFor(
+          recorder,
+        ).prepareForCall().then((_) => callGotMicrophone = true),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await waitForDeletion(tester, file);
 
-    expect(callGotMicrophone, isTrue);
+      expect(callGotMicrophone, isTrue);
 
-    expect(voiceReplies, isEmpty);
-    expect(file.existsSync(), isFalse);
-    expect(find.byType(ThoughtCardScreen), findsOneWidget);
-    await finish(tester);
-  });
+      expect(voiceReplies, isEmpty);
+      expect(file.existsSync(), isFalse);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      await finish(tester);
+    },
+  );
 
-  testWidgets('a recording that finishes after the card closed is removed', timeout: const Timeout(Duration(seconds: 30)), (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final file = _tempFile('after-close.m4a');
-    final stopGate = Completer<void>();
-    final recorder = FakeAudioRecorderService()
-      ..fakeOutputPath = file.path
-      ..stopGate = stopGate;
-    final voiceReplies = <ThoughtVoiceReply>[];
-    await openCard(
-      tester,
-      thought,
-      onReply: (_, _) {},
-      onVoiceReply: voiceReplies.add,
-      recorder: recorder,
-    );
-    final mic = find.byType(VoiceRecordButton);
-    await tester.tap(mic);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.tap(mic);
-    await tester.pump();
+  testWidgets(
+    'a recording that finishes after the card closed is removed',
+    timeout: const Timeout(Duration(seconds: 30)),
+    (tester) async {
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+      final file = _tempFile('after-close.m4a');
+      final stopGate = Completer<void>();
+      final recorder = FakeAudioRecorderService()
+        ..fakeOutputPath = file.path
+        ..stopGate = stopGate;
+      final voiceReplies = <ThoughtVoiceReply>[];
+      await openCard(
+        tester,
+        thought,
+        onReply: (_, _) {},
+        onVoiceReply: voiceReplies.add,
+        recorder: recorder,
+      );
+      final mic = find.byType(VoiceRecordButton);
+      await tester.tap(mic);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(mic);
+      await tester.pump();
 
-    navigator.currentState!.pop();
-    await tester.pumpAndSettle();
-    expect(find.byType(ThoughtCardScreen), findsNothing);
-    stopGate.complete();
-    await tester.pump();
-    await waitForDeletion(tester, file);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(ThoughtCardScreen), findsNothing);
+      stopGate.complete();
+      await tester.pump();
+      await waitForDeletion(tester, file);
 
-    expect(voiceReplies, isEmpty);
-    expect(file.existsSync(), isFalse);
-    await finish(tester);
-  });
+      expect(voiceReplies, isEmpty);
+      expect(file.existsSync(), isFalse);
+      await finish(tester);
+    },
+  );
 
   testWidgets('typing swaps the mic for Send, and no recorder means no mic', (
     tester,
@@ -1330,6 +1335,24 @@ void main() {
     );
     await finish(tester);
   });
+
+  for (final c in bidiCases) {
+    testWidgets('the card lays out mixed text: ${c.label}', (tester) async {
+      final thought = _thought(initialNow).copyWith(text: c.text);
+      await posts.savePost(thought);
+      await openCard(tester, thought);
+      await tester.pumpAndSettle();
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.text(c.text, findRichText: true),
+      );
+      expectBidiLayout(
+        c,
+        direction: paragraph.textDirection,
+        boxes: paragraph.getBoxesForSelection,
+      );
+      await finish(tester);
+    });
+  }
 
   testWidgets('an Arabic thought reads right to left in an English app', (
     tester,

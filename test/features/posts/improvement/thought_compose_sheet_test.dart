@@ -12,6 +12,7 @@ import 'package:flutter_app/features/posts/presentation/widgets/thought_photo_dr
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/bidi_layout_checks.dart';
 
 void main() {
   Widget scene({
@@ -652,6 +653,27 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     expect(closed, [null]);
   });
+
+  for (final c in bidiCases) {
+    testWidgets('the composer lays out mixed text: ${c.label}', (tester) async {
+      await tester.pumpWidget(
+        scene(submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen),
+      );
+      await tester.enterText(find.byType(TextField), c.text);
+      await tester.pump();
+      final editable = tester
+          .state<EditableTextState>(find.byType(EditableText))
+          .renderEditable;
+      expectBidiLayout(
+        c,
+        direction: editable.textDirection,
+        boxes: editable.getBoxesForSelection,
+        area: Offset.zero & editable.size,
+        // The field keeps room for the cursor at the line end.
+        tolerance: 4,
+      );
+    });
+  }
 
   testWidgets('emoji count as one character each on the toolbar', (
     tester,

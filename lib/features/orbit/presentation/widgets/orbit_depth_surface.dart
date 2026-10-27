@@ -1066,10 +1066,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                   if (post.text.isNotEmpty)
                     Padding(
                       padding: EdgeInsets.only(top: 12 * k),
-                      child: Text(
-                        post.text,
-                        textDirection: detectTextDirection(post.text),
-                        style: TextStyle(fontSize: 22 * k, height: 1.3),
+                      // Full width, so the text sits on its own side: an Arabic
+                      // thought on the right even in an English app.
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Text(
+                          post.text,
+                          key: ValueKey('orbit-depth-text-${post.id}'),
+                          textDirection: detectTextDirection(post.text),
+                          style: TextStyle(fontSize: 22 * k, height: 1.3),
+                        ),
                       ),
                     ),
                 ],

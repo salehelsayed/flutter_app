@@ -86,19 +86,24 @@ class ThoughtQuoteBlock extends StatelessWidget {
                     color: colors.textMuted,
                   ),
                 ),
-                Text(
-                  body,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textDirection: detectTextDirection(body),
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontStyle: live == null
-                        ? FontStyle.italic
-                        : FontStyle.normal,
-                    color: live == null
-                        ? colors.disabledForeground
-                        : colors.textPrimary,
+                // Full width, so the quote sits on its own side.
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    body,
+                    key: const ValueKey('thought-quote-text'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textDirection: detectTextDirection(body),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontStyle: live == null
+                          ? FontStyle.italic
+                          : FontStyle.normal,
+                      color: live == null
+                          ? colors.disabledForeground
+                          : colors.textPrimary,
+                    ),
                   ),
                 ),
               ],

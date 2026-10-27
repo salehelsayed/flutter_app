@@ -12,6 +12,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../../../shared/bidi_layout_checks.dart';
 import '../../support/depth_fixtures.dart';
 
 void main() {
@@ -1083,19 +1084,63 @@ void main() {
       ticks.dispose();
     },
   );
-  testWidgets('the 3D card lays the thought out in its own direction', (
-    tester,
-  ) async {
-    const arabic = 'مرحبا بالعالم';
-    thoughts['peer-1'] = depthThought(1, text: arabic);
-    await mount(tester);
-    await swipe(tester, const Offset(0, -220));
-    expect(
-      tester.renderObject<RenderParagraph>(find.text(arabic)).textDirection,
-      TextDirection.rtl,
-    );
-    await finish(tester);
-  });
+  for (final c in bidiCases) {
+    testWidgets('the 3D card lays out mixed text: ${c.label}', (tester) async {
+      thoughts['peer-1'] = depthThought(1, text: c.text);
+      await mount(tester);
+      await swipe(tester, const Offset(0, -220));
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.byKey(const ValueKey('orbit-depth-text-post-1')),
+      );
+      expectBidiLayout(
+        c,
+        direction: paragraph.textDirection,
+        boxes: paragraph.getBoxesForSelection,
+        area: tester.getRect(
+          find.byKey(const ValueKey('orbit-depth-card-post-1')),
+        ),
+        toGlobal: paragraph.localToGlobal,
+      );
+      await finish(tester);
+    });
+  }
+  for (final appRtl in [false, true]) {
+    for (final (text, direction) in [
+      ('مرحبا 🙂', TextDirection.rtl),
+      ('Hi 🙂', TextDirection.ltr),
+    ]) {
+      testWidgets(
+        'the 3D card puts a short ${direction.name} thought on its own side '
+        'in a ${appRtl ? 'right-to-left' : 'left-to-right'} app',
+        (tester) async {
+          rtl = appRtl;
+          thoughts['peer-1'] = depthThought(1, text: text);
+          await mount(tester);
+          await swipe(tester, const Offset(0, -220));
+          final paragraph = tester.renderObject<RenderParagraph>(
+            find.byKey(const ValueKey('orbit-depth-text-post-1')),
+          );
+          expect(paragraph.textDirection, direction);
+          final start = paragraph
+              .localToGlobal(
+                paragraph.getOffsetForCaret(
+                  const TextPosition(offset: 0),
+                  Rect.zero,
+                ),
+              )
+              .dx;
+          final area = tester.getRect(
+            find.byKey(const ValueKey('orbit-depth-card-post-1')),
+          );
+          expect(
+            start,
+            closeTo(direction == TextDirection.rtl ? area.right : area.left, 2),
+          );
+          await finish(tester);
+        },
+      );
+    }
+  }
 }
 
 class _TickCounter extends StatefulWidget {

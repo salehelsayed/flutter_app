@@ -1,8 +1,9 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/quote_preview_bar.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import '../../../../shared/bidi_layout_checks.dart';
 
 void main() {
   Widget wrap(Widget child) => MaterialApp(
@@ -10,6 +11,43 @@ void main() {
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(body: child),
   );
+
+  for (final appDirection in TextDirection.values) {
+    for (final c in bidiCases) {
+      testWidgets(
+        'the reply preview lays out mixed text in a ${appDirection.name} app: '
+        '${c.label}',
+        (tester) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              builder: (context, child) =>
+                  Directionality(textDirection: appDirection, child: child!),
+              home: Scaffold(body: QuotePreviewBar(text: c.text)),
+            ),
+          );
+          final paragraph = tester.renderObject<RenderParagraph>(
+            find.byKey(const ValueKey('quote-preview-text')),
+          );
+          expectBidiLayout(
+            c,
+            direction: paragraph.textDirection,
+            boxes: paragraph.getBoxesForSelection,
+            area: tester.getRect(
+              find
+                  .ancestor(
+                    of: find.byKey(const ValueKey('quote-preview-text')),
+                    matching: find.byType(Column),
+                  )
+                  .first,
+            ),
+            toGlobal: paragraph.localToGlobal,
+          );
+        },
+      );
+    }
+  }
 
   group('QuotePreviewBar', () {
     testWidgets('renders "Replying to" label', (tester) async {

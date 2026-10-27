@@ -16,6 +16,7 @@ import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualiz
 import 'package:flutter_app/features/orbit/presentation/widgets/overflow_badge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../../../../shared/bidi_layout_checks.dart';
 
 OrbitFriend _friend(int index) => OrbitFriend(
   contact: ContactModel(
@@ -139,6 +140,30 @@ void main() {
     },
   );
 
+  for (final c in bidiCases) {
+    testWidgets('a note bubble lays out mixed text: ${c.label}', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          OrbitThoughtNoteBubble(
+            authorName: 'Friend 0',
+            note: note('mixed', text: c.text),
+          ),
+        ),
+      );
+      final paragraph = tester.renderObject<RenderParagraph>(find.text(c.text));
+      expectBidiLayout(
+        c,
+        direction: paragraph.textDirection,
+        boxes: paragraph.getBoxesForSelection,
+        mayTruncate: true,
+      );
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 2));
+    });
+  }
+
   testWidgets('an Arabic note reads right to left in an English app', (
     tester,
   ) async {
@@ -156,43 +181,42 @@ void main() {
     expect(paragraph.textDirection, TextDirection.rtl);
   });
 
-  testWidgets(
-    'bubble width/ellipsis and heavier text for unseen',
-    (tester) async {
-      await tester.pumpWidget(
-        wrap(
-          OrbitThoughtNoteBubble(
-            authorName: 'Friend 0',
-            note: note('short', text: 'H'),
-          ),
+  testWidgets('bubble width/ellipsis and heavier text for unseen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      wrap(
+        OrbitThoughtNoteBubble(
+          authorName: 'Friend 0',
+          note: note('short', text: 'H'),
         ),
-      );
-      final shortWidth = tester
-          .getSize(find.byType(OrbitThoughtNoteBubble))
-          .width;
-      expect(shortWidth, 40);
-      expect(
-        tester.widget<Text>(find.text('H')).style!.fontWeight,
-        FontWeight.w600,
-      );
-      final long = List.filled(100, 'long thought').join(' ');
-      await tester.pumpWidget(
-        wrap(
-          OrbitThoughtNoteBubble(
-            authorName: 'Friend 0',
-            note: note('long', text: long, read: true),
-          ),
+      ),
+    );
+    final shortWidth = tester
+        .getSize(find.byType(OrbitThoughtNoteBubble))
+        .width;
+    expect(shortWidth, 40);
+    expect(
+      tester.widget<Text>(find.text('H')).style!.fontWeight,
+      FontWeight.w600,
+    );
+    final long = List.filled(100, 'long thought').join(' ');
+    await tester.pumpWidget(
+      wrap(
+        OrbitThoughtNoteBubble(
+          authorName: 'Friend 0',
+          note: note('long', text: long, read: true),
         ),
-      );
-      final text = tester.widget<Text>(find.text(long));
-      expect(tester.getSize(find.byType(OrbitThoughtNoteBubble)).width, 150);
-      expect(text.maxLines, 2);
-      expect(text.overflow, TextOverflow.ellipsis);
-      expect(text.style!.fontWeight, FontWeight.w400);
-      expect(text.style!.fontSize, 11.5);
-      expect(text.style!.height, 1.22);
-    },
-  );
+      ),
+    );
+    final text = tester.widget<Text>(find.text(long));
+    expect(tester.getSize(find.byType(OrbitThoughtNoteBubble)).width, 150);
+    expect(text.maxLines, 2);
+    expect(text.overflow, TextOverflow.ellipsis);
+    expect(text.style!.fontWeight, FontWeight.w400);
+    expect(text.style!.fontSize, 11.5);
+    expect(text.style!.height, 1.22);
+  });
 
   testWidgets(
     'an unseen note is outlined and read as new; seen is plain and dimmer',
@@ -365,7 +389,10 @@ void main() {
 
       await tester.pumpWidget(scene(0.3));
       expect(find.byType(OrbitThoughtNoteBubble), findsNWidgets(2));
-      expect(find.semantics.byLabel(RegExp('thought from', caseSensitive: false)), findsNothing);
+      expect(
+        find.semantics.byLabel(RegExp('thought from', caseSensitive: false)),
+        findsNothing,
+      );
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 2));
       semantics.dispose();

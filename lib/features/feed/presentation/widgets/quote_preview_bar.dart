@@ -54,17 +54,22 @@ class QuotePreviewBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  text,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  textDirection: detectTextDirection(text),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w400,
-                    color: isLightSurface
-                        ? readableColors.textSecondary
-                        : const Color.fromRGBO(255, 255, 255, 0.50),
+                // Full width, so the quote sits on its own side.
+                SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    text,
+                    key: const ValueKey('quote-preview-text'),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    textDirection: detectTextDirection(text),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: isLightSurface
+                          ? readableColors.textSecondary
+                          : const Color.fromRGBO(255, 255, 255, 0.50),
+                    ),
                   ),
                 ),
               ],
