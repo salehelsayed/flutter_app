@@ -326,25 +326,36 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     });
   }
 
+  /// The flat orbit hands over to the stage in the first 30% of the tilt, as
+  /// in the approved mockup, so the two never show half-faded on each other.
+  static double _handover(double tiltProgress) =>
+      (tiltProgress / .3).clamp(0.0, 1.0);
+
   Future<void> _spring(
     AnimationController controller,
     double target,
-    SpringDescription spring,
-  ) async {
+    SpringDescription spring, {
+    double velocity = 0,
+  }) async {
     if (_reduceMotion || (controller.value - target).abs() < .001) {
       controller.value = target;
       return;
     }
     await controller
-        .animateWith(SpringSimulation(spring, controller.value, target, 0))
+        .animateWith(
+          SpringSimulation(spring, controller.value, target, velocity),
+        )
         .orCancel;
     controller.value = target;
   }
 
+  /// [verticalVelocity] is the release speed, in tilt units per second, so a
+  /// flick glides into its stop instead of restarting from rest.
   Future<void> _settle(
     OrbitDepthLayer target, {
     OrbitDepthSeat? selected,
     bool markDeparture = true,
+    double verticalVelocity = 0,
   }) async {
     final generation = ++_settleGeneration;
     final landing = (
@@ -371,6 +382,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           _vertical,
           _stop(target),
           const SpringDescription(mass: 1, stiffness: 170, damping: 19),
+          velocity: verticalVelocity,
         ),
         _spring(
           _rotation,
@@ -568,7 +580,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           : value < 450
           ? OrbitDepthLayer.inner
           : OrbitDepthLayer.outer;
-      unawaited(_settle(target));
+      unawaited(_settle(target, verticalVelocity: direction * dy / _scale));
     } else if (gesture == OrbitDepthGesture.turn) {
       final dx = _velocity?.getVelocity().pixelsPerSecond.dx ?? 0;
       final coast = ((_rtl ? 1 : -1) * dx * .25 / (128 * _scale)).clamp(
@@ -651,7 +663,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       child: TickerMode(
                         enabled: !depth,
                         child: Opacity(
-                          opacity: 1 - (_vertical.value / 320).clamp(0.0, 1.0),
+                          opacity: 1 - _handover(_vertical.value / 320),
                           child: ScrollConfiguration(
                             behavior: _enabled
                                 ? ScrollConfiguration.of(context).copyWith(
@@ -716,7 +728,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         final (offset, near) = projectOrbitDepth(angle, radius, tilt);
         final front = seat.friend.peerId == _frontPeer && layer == _layer;
         final diameter =
-            40 *
+            (52 - 12 * tiltProgress) *
             k *
             scale *
             near *
@@ -881,13 +893,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     }
     faces.sort((a, b) => a.depth.compareTo(b.depth));
     final front = _front;
-    final slotSettled =
-        _overviewProgress.value < .99 &&
-        _fold.value < .99 &&
-        _gesture != OrbitDepthGesture.vertical;
+    final slotSettled = _overviewProgress.value < .99 && _fold.value < .99;
+    // Faces and the own photo shrink from flat to dial sizes as it tilts.
+    final selfSize = (76 - 24 * tiltProgress) * k;
     final cardVisible = front != null && slotSettled;
     final ringEmpty =
         slotSettled &&
+        _gesture != OrbitDepthGesture.vertical &&
         _layer != OrbitDepthLayer.flat &&
         !layout.inLayer(_layer).any((seat) => seat.thought != null);
     final slotTop = _anchor == OrbitDepthAnchor.top
@@ -898,7 +910,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         : 20 * k;
     return Opacity(
       key: const ValueKey('orbit-depth-stage'),
-      opacity: tiltProgress,
+      opacity: _handover(tiltProgress),
       child: Semantics(
         identifier: 'orbit.depth.${_layer.name}.${_anchor.name}',
         child: Stack(
@@ -913,13 +925,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             ),
             ...children,
             Positioned(
-              left: center.dx - 26 * k,
-              top: center.dy - 26 * k,
-              width: 52 * k,
-              height: 52 * k,
+              left: center.dx - selfSize / 2,
+              top: center.dy - selfSize / 2,
+              width: selfSize,
+              height: selfSize,
               child: UserAvatar(
                 peerId: widget.selfPeerId ?? '',
-                size: 52 * k,
+                size: selfSize,
                 avatarBytes: widget.selfAvatarBytes,
               ),
             ),
@@ -934,8 +946,11 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 top: slotTop,
                 bottom: slotBottom,
                 child: Opacity(
-                  opacity: ((1 - _fold.value) * (1 - _overviewProgress.value))
-                      .clamp(0, 1),
+                  opacity:
+                      ((1 - _fold.value) *
+                              (1 - _overviewProgress.value) *
+                              ((tiltProgress - .55) / .35).clamp(0.0, 1.0))
+                          .clamp(0, 1),
                   child: _card(front, k),
                 ),
               ),

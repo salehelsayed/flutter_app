@@ -641,6 +641,79 @@ void main() {
       expect(finalY, closeTo(105.89, .01));
     },
   );
+  group('2D to 3D handover matches the approved mockup', () {
+    double flatOpacity(WidgetTester tester) => tester
+        .widget<Opacity>(
+          find
+              .ancestor(
+                of: find.byKey(const ValueKey('flat-scroll')),
+                matching: find.byType(Opacity),
+              )
+              .first,
+        )
+        .opacity;
+    double stageOpacity(WidgetTester tester) => tester
+        .widget<Opacity>(find.byKey(const ValueKey('orbit-depth-stage')))
+        .opacity;
+    double selfSize(WidgetTester tester) => tester
+        .widget<UserAvatar>(
+          find.byWidgetPredicate(
+            (widget) => widget is UserAvatar && widget.peerId == '',
+          ),
+        )
+        .size;
+
+    testWidgets(
+      'mid-swipe the flat orbit is gone and the dial is solid, never both half-faded',
+      (tester) async {
+        await mount(tester);
+        final gesture = await tester.startGesture(const Offset(195, 350));
+        await gesture.moveBy(const Offset(0, -20));
+        await gesture.moveBy(const Offset(0, -40));
+        await tester.pump();
+        final early = (flatOpacity(tester), stageOpacity(tester));
+        await gesture.moveBy(const Offset(0, -120));
+        await tester.pump();
+        final mid = (flatOpacity(tester), stageOpacity(tester));
+        final midSelf = selfSize(tester);
+        await gesture.up();
+        await tester.pump(const Duration(seconds: 3));
+        final docked = selfSize(tester);
+        await finish(tester);
+
+        expect(early.$1 + early.$2, closeTo(1, .001));
+        expect(early.$2, inExclusiveRange(0, 1));
+        expect(mid, (0.0, 1.0));
+        expect(midSelf, inExclusiveRange(52, 76));
+        expect(docked, closeTo(52, .01));
+      },
+    );
+
+    testWidgets('the card fades out while swiping back, not all at once', (
+      tester,
+    ) async {
+      await mount(tester);
+      await swipe(tester, const Offset(0, -220));
+      expect(card(1), findsOneWidget);
+
+      final gesture = await tester.startGesture(const Offset(195, 300));
+      await gesture.moveBy(const Offset(0, 20));
+      await gesture.moveBy(const Offset(0, 80));
+      await tester.pump();
+      final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
+      final fading = tester
+          .widget<Opacity>(
+            find.descendant(of: slot, matching: find.byType(Opacity)).first,
+          )
+          .opacity;
+      await gesture.up();
+      await tester.pump(const Duration(seconds: 3));
+      await finish(tester);
+
+      expect(fading, inExclusiveRange(0, 1));
+    });
+  });
+
   testWidgets(
     'reverse vertical swipes traverse outer inner flat with a top card below its face',
     (tester) async {
