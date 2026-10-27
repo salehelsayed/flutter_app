@@ -54,6 +54,9 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onComposeThought;
 
+  /// A first-use label beside the "+", or null for none.
+  final String? composeHint;
+
   /// Persists the five geometry knobs. Null ⇒ no persistence (bare-screen pumps).
   final SecureKeyStore? secureKeyStore;
 
@@ -100,6 +103,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.nowProvider,
     this.onSelfAvatarTap,
     this.onComposeThought,
+    this.composeHint,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
@@ -930,6 +934,7 @@ class _InnerCircleInteractiveSurfaceState
                                       widget.onComposeThought == null
                                       ? null
                                       : _onComposeThought,
+                                  composeHint: widget.composeHint,
                                   geometry: _geometry,
                                   overflowExpanded: _overflowExpanded,
                                   onBadgeTap: _onBadgeTap,

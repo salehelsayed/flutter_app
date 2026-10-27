@@ -1242,6 +1242,62 @@ void main() {
       },
     );
 
+    testWidgets(
+      'the share hint shows until the composer first opens, then never again',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        final hint = find.byKey(const ValueKey('orbit-compose-hint'));
+        expect(hint, findsOneWidget);
+        expect(
+          find.descendant(of: hint, matching: find.text('Share a thought')),
+          findsOneWidget,
+        );
+
+        await tester.tap(hint);
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(ComposePostSheet), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await pumpOrbitFrames(tester, count: 6);
+        expect(hint, findsNothing);
+        expect(await secureKeyStore.read('orbit_thought_hint_seen_v1'), '1');
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        expect(hint, findsNothing);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'the plus is a 44 px target that stays off the centre of the own avatar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+        final plus = tester.getRect(
+          find.byKey(const ValueKey('orbit-compose-thought')),
+        );
+        expect(plus.size, const Size(44, 44));
+        expect(
+          plus.contains(
+            tester.getCenter(find.byKey(const ValueKey('orbit-self-node'))),
+          ),
+          isFalse,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('no eligible recipients keeps the thought draft available', (
       tester,
     ) async {

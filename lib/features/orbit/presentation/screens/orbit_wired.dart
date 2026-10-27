@@ -390,6 +390,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<String>? _readSubscription;
   StreamSubscription<String>? _groupReadSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
+
+  /// Starts true so the first-use hint never flashes before storage answers.
+  bool _thoughtHintSeen = true;
+  static const _thoughtHintSeenKey = 'orbit_thought_hint_seen_v1';
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
   int _introsCount = 0;
@@ -621,6 +625,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     widget.pendingPostTargetStore?.addListener(_onPendingThoughtTargetChanged);
     _loadIdentity();
     _loadQualityPreference();
+    unawaited(_loadThoughtHintSeen());
     _loadVideoQualityPreference();
     _loadOrbitData();
     _bindCallActivityChanges();
@@ -791,6 +796,23 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  Future<void> _loadThoughtHintSeen() async {
+    try {
+      final seen = await widget.secureKeyStore.read(_thoughtHintSeenKey);
+      if (mounted && seen == null) setState(() => _thoughtHintSeen = false);
+    } catch (_) {}
+  }
+
+  void _markThoughtHintSeen() {
+    if (_thoughtHintSeen) return;
+    setState(() => _thoughtHintSeen = true);
+    unawaited(
+      widget.secureKeyStore
+          .write(_thoughtHintSeenKey, '1')
+          .catchError((Object _) {}),
+    );
+  }
+
   Future<void> _loadQualityPreference() async {
     final pref = await loadImageQualityPreference(
       secureKeyStore: widget.secureKeyStore,
@@ -933,6 +955,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final identity = _identity;
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
+    _markThoughtHintSeen();
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
@@ -3668,6 +3691,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),
+      composeHint:
+          _thoughtPosts == null ||
+              _identity == null ||
+              _thoughtHintSeen ||
+              _thoughtsByPeerId.containsKey(_identity!.peerId)
+          ? null
+          : AppLocalizations.of(context)!.thought_compose_open,
       onThoughtsExpired: () => unawaited(_reloadThoughts()),
       thoughtNowProvider: widget.thoughtNowProvider,
       onFriendAvatarTap: _onFriendAvatarTap,

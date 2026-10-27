@@ -64,6 +64,9 @@ class OrbitalVisualization extends StatelessWidget {
   final VoidCallback? onSelfAvatarLongPress;
   final VoidCallback? onComposeThought;
 
+  /// A first-use label beside the "+", or null for none.
+  final String? composeHint;
+
   /// 198 — the five sculpt knobs (defaults ⇒ pre-198 geometry, INV-6).
   final OrbitGeometryPrefs geometry;
 
@@ -118,6 +121,7 @@ class OrbitalVisualization extends StatelessWidget {
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
     this.onComposeThought,
+    this.composeHint,
     this.geometry = OrbitGeometryPrefs.defaults,
     this.overflowExpanded = false,
     this.onBadgeTap,
@@ -493,25 +497,73 @@ class OrbitalVisualization extends StatelessWidget {
 
     if (selfPeerId != null && onComposeThought != null) {
       children.add(
+        // The 28 px disc keeps its place on the avatar; its 44 px target
+        // grows down and right, away from the avatar's own tap area.
         Positioned(
           left: cx + 4,
           top: cy + 4,
-          width: 28,
-          height: 28,
+          width: 44,
+          height: 44,
           child: IconButton(
             key: const ValueKey('orbit-compose-thought'),
             tooltip: l10n.thought_compose_open,
             onPressed: onComposeThought,
             padding: EdgeInsets.zero,
             style: IconButton.styleFrom(
-              backgroundColor: const Color(0xFF262626),
-              foregroundColor: const Color(0xFFF5F5F5),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
-            icon: const Icon(Icons.add, size: 20),
+            icon: Padding(
+              padding: const EdgeInsets.only(right: 16, bottom: 16),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF262626),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.add,
+                  size: 20,
+                  color: Color(0xFFF5F5F5),
+                ),
+              ),
+            ),
           ),
         ),
       );
+      final hint = composeHint;
+      if (hint != null) {
+        children.add(
+          Positioned(
+            left: cx + 36,
+            top: cy + 6,
+            child: ExcludeSemantics(
+              child: GestureDetector(
+                key: const ValueKey('orbit-compose-hint'),
+                onTap: onComposeThought,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF262626),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    hint,
+                    style: const TextStyle(
+                      color: Color(0xFFF5F5F5),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
     }
 
     // Seats — rings always; arcs only when expanded.
