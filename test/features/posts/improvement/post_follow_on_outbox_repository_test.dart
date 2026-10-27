@@ -7,6 +7,9 @@ import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
+import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
+import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/124_thought_photo_previews_and_view_receipts.dart';
 import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
 import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
 import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
@@ -57,6 +60,9 @@ void main() {
     await runPostsMediaUploadRecoveryMigration(db);
     await runPostsRepostEngagementStateMigration(db);
     await runPostsPassAvatarSnapshotsMigration(db);
+    await runMessagesTableMigration(db);
+    await runQuotedMessageIdMigration(db);
+    await runThoughtPhotoPreviewsAndViewReceiptsMigration(db);
   });
 
   tearDown(() async {

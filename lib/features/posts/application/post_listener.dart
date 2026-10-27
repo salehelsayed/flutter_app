@@ -17,6 +17,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/early_thought_retractions.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_retract_use_case.dart';
 import 'package:flutter_app/features/posts/application/handle_incoming_post_use_case.dart';
+import 'package:flutter_app/features/posts/application/handle_incoming_thought_view_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -27,6 +28,8 @@ class PostListener {
 
   /// Authors deleting a thought every friend was sent.
   final Stream<ChatMessage> postRetractStream;
+  final Stream<ChatMessage> postViewStream;
+  final Future<String?> Function()? getOwnPeerId;
   final PostRepository postRepo;
   final ContactRepository contactRepo;
   final Bridge? bridge;
@@ -53,11 +56,14 @@ class PostListener {
 
   StreamSubscription<ChatMessage>? _subscription;
   StreamSubscription<ChatMessage>? _retractSubscription;
+  StreamSubscription<ChatMessage>? _viewSubscription;
   final _postController = StreamController<PostModel>.broadcast();
 
   PostListener({
     required this.postCreateStream,
     this.postRetractStream = const Stream<ChatMessage>.empty(),
+    this.postViewStream = const Stream<ChatMessage>.empty(),
+    this.getOwnPeerId,
     required this.postRepo,
     required this.contactRepo,
     this.bridge,
@@ -85,6 +91,7 @@ class PostListener {
     }
     _subscription = postCreateStream.listen(_onMessage);
     _retractSubscription = postRetractStream.listen(_onRetract);
+    _viewSubscription = postViewStream.listen(_onView);
   }
 
   void stop() {
@@ -92,6 +99,34 @@ class PostListener {
     _subscription = null;
     _retractSubscription?.cancel();
     _retractSubscription = null;
+    _viewSubscription?.cancel();
+    _viewSubscription = null;
+  }
+
+  Future<void> _onView(ChatMessage message) async {
+    try {
+      final localPeerId = await getOwnPeerId?.call();
+      final secret = await getOwnMlKemSecretKey?.call();
+      final crypto = bridge;
+      if (localPeerId == null || secret == null || crypto == null) return;
+      await handleIncomingThoughtView(
+        message: message,
+        localPeerId: localPeerId,
+        postRepo: postRepo,
+        contactRepo: contactRepo,
+        bridge: crypto,
+        ownMlKemSecretKey: secret,
+        nowProvider: now,
+      );
+      await _maybeConfirmDirectNonce(message, ok: true);
+    } catch (error) {
+      await _maybeConfirmDirectNonce(message, ok: false);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'THOUGHT_VIEW_RECEIVE_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
   }
 
   Future<void> _onRetract(ChatMessage message) async {

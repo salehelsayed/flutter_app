@@ -8,15 +8,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
+import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
@@ -68,6 +73,12 @@ void main() {
     String authorName = 'Alice',
     bool messageable = true,
     void Function(String text, String postId)? onReply,
+    Future<ThoughtReplyStatus> Function(String, String, String)? sendReply,
+    Stream<ConversationMessage>? replyChanges,
+    VoidCallback? onOpenChat,
+    Future<void> Function(String)? onShown,
+    Future<ThoughtActivity> Function(String)? loadActivity,
+    Future<int> Function()? retryPosting,
     Future<void> Function(String postId)? onDelete,
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
@@ -93,7 +104,18 @@ void main() {
             postRepo: posts,
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
-            onReply: messageable ? (onReply ?? (_, _) {}) : null,
+            onReply: !messageable
+                ? null
+                : sendReply ??
+                      (text, postId, _) async {
+                        onReply?.call(text, postId);
+                        return ThoughtReplyStatus.sent;
+                      },
+            replyChanges: replyChanges,
+            onOpenChat: onOpenChat,
+            onShown: onShown,
+            loadActivity: loadActivity,
+            retryPosting: retryPosting,
             onDelete: onDelete,
             downloadMedia:
                 download ??
@@ -180,6 +202,141 @@ void main() {
     expect(posts.focusedIds, isEmpty);
     expect((await posts.getPost('thought-1'))!.isRead, isFalse);
     expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets(
+    'own posting retry stays in place and follows repository progress',
+    (tester) async {
+      final mine = _thought(initialNow).copyWith(
+        senderPeerId: 'local-peer',
+        authorPeerId: 'local-peer',
+        authorUsername: 'Me',
+        isIncoming: false,
+        deliveryStatus: 'failed',
+      );
+      await posts.savePost(mine);
+      final retry = Completer<int>();
+      var retries = 0;
+      await openCard(
+        tester,
+        mine,
+        messageable: false,
+        loadCurrent: () => posts.getPost(mine.id),
+        retryPosting: () {
+          retries++;
+          return retry.future;
+        },
+      );
+      expect(find.text('Send failed'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('thought-posting-retry')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('thought-posting-retry')));
+      expect(retries, 1);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      await posts.savePost(mine.copyWith(deliveryStatus: 'sent'));
+      retry.complete(1);
+      await tester.pumpAndSettle();
+      expect(find.text('sent'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-posting-retry')), findsNothing);
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'own activity names viewers and groups distinct reaction actors',
+    (tester) async {
+      final mine = _thought(initialNow).copyWith(
+        senderPeerId: 'local-peer',
+        authorPeerId: 'local-peer',
+        authorUsername: 'Me',
+        isIncoming: false,
+      );
+      await posts.savePost(mine);
+      await openCard(
+        tester,
+        mine,
+        messageable: false,
+        loadCurrent: () => posts.getPost(mine.id),
+        loadActivity: (_) async => (
+          viewers: [(peerId: 'sam', name: 'Sam'), (peerId: 'mo', name: 'Mo')],
+          reactions: [
+            (
+              reaction: ThoughtReaction.love,
+              participants: [
+                (peerId: 'sam', name: 'Sam'),
+                (peerId: 'mo', name: 'Mo'),
+                (peerId: 'kim', name: 'Kim'),
+              ],
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Seen by 2 friends'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('thought-activity-open')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sam · Mo'), findsOneWidget);
+      expect(find.text('Sam and 2 others reacted ❤️'), findsOneWidget);
+      expect(find.text('Sam · Mo · Kim'), findsOneWidget);
+      expect(posts.focusedIds, isEmpty);
+      await finish(tester);
+    },
+  );
+
+  testWidgets('a photo-only placeholder is not a view before content arrives', (
+    tester,
+  ) async {
+    final directory = Directory.systemTemp.createTempSync(
+      'thought-view-photo-',
+    );
+    addTearDown(() => directory.deleteSync(recursive: true));
+    final photo = File('${directory.path}/photo.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        ),
+      );
+    final thought = _thought(initialNow).copyWith(text: '', mediaKind: 'image');
+    await posts.savePost(thought);
+    final media = PostMediaAttachmentModel(
+      mediaId: 'view-photo',
+      postId: thought.id,
+      blobId: 'blob-photo',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 1,
+      createdAt: initialNow.toIso8601String(),
+    );
+    await posts.savePostMediaAttachment(media);
+    final downloaded = Completer<PostMediaAttachmentModel>();
+    final views = <String>[];
+    await openCard(
+      tester,
+      thought,
+      download: (_) => downloaded.future,
+      onShown: (id) async {
+        views.add(id);
+      },
+    );
+    await pumpMediaFrames(tester);
+    expect(
+      find.byKey(const ValueKey('thought-media-placeholder')),
+      findsOneWidget,
+    );
+    expect(views, isEmpty);
+    expect(posts.focusedIds, isEmpty);
+    await posts.updatePostMediaLocalPath(
+      media.mediaId,
+      photo.path,
+      postId: thought.id,
+    );
+    downloaded.complete(
+      media.copyWith(localPath: photo.path, downloadStatus: 'done'),
+    );
+    await pumpMediaFrames(tester);
+    expect(views, [thought.id]);
+    expect(posts.focusedIds, [thought.id]);
     await finish(tester);
   });
 
@@ -304,45 +461,45 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets(
-    'a typed reply is sent once, quoting the shown thought, after the card closes',
-    (tester) async {
-      final thought = _thought(initialNow);
-      await posts.savePost(thought);
-      final replies = <(String, String)>[];
-      var closedBeforeReply = false;
-      await openCard(
-        tester,
-        thought,
-        onReply: (text, postId) {
-          replies.add((text, postId));
-          closedBeforeReply = navigationObserver.poppedNames.contains(
-            'thought-card',
-          );
-        },
-      );
+  testWidgets('a typed reply sends once in place, quoting the shown thought', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final replies = <(String, String)>[];
+    var closedBeforeReply = false;
+    await openCard(
+      tester,
+      thought,
+      onReply: (text, postId) {
+        replies.add((text, postId));
+        closedBeforeReply = navigationObserver.poppedNames.contains(
+          'thought-card',
+        );
+      },
+    );
 
-      await tester.tap(find.byKey(const ValueKey('thought-reply-field')));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
-      await tester.enterText(
-        find.byKey(const ValueKey('thought-reply-field')),
-        '  count me in ',
-      );
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
-      await tester.tap(
-        find.byKey(const ValueKey('thought-reply-send')),
-        warnIfMissed: false,
-      );
-      await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('thought-reply-field')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-reply-field')),
+      '  count me in ',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+    await tester.tap(
+      find.byKey(const ValueKey('thought-reply-send')),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
 
-      expect(replies, [('count me in', 'thought-1')]);
-      expect(closedBeforeReply, isTrue);
-      expect(find.byType(ThoughtCardScreen, skipOffstage: false), findsNothing);
-      await finish(tester);
-    },
-  );
+    expect(replies, [('count me in', 'thought-1')]);
+    expect(closedBeforeReply, isFalse);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(find.text('sent'), findsOneWidget);
+    await finish(tester);
+  });
 
   testWidgets('a reaction is one tap and sends its glyph', (tester) async {
     final thought = _thought(initialNow);
@@ -364,7 +521,94 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(replies, [('🔥', 'thought-1')]);
-    expect(find.byType(ThoughtCardScreen, skipOffstage: false), findsNothing);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(find.text('sent'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('retry keeps the failed reply ID and text without closing', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final attempts = <(String, String, String)>[];
+    await openCard(
+      tester,
+      thought,
+      sendReply: (text, postId, messageId) async {
+        attempts.add((text, postId, messageId));
+        return attempts.length == 1
+            ? ThoughtReplyStatus.failed
+            : ThoughtReplyStatus.sent;
+      },
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('thought-reply-field')),
+      'count me in',
+    );
+    await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('thought-reply-retry')), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'count me in',
+    );
+    await tester.tap(find.byKey(const ValueKey('thought-reply-retry')));
+    await tester.pumpAndSettle();
+    expect(attempts, hasLength(2));
+    expect(attempts.last, attempts.first);
+    expect(find.text('sent'), findsOneWidget);
+    expect(find.byType(ThoughtCardScreen), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '',
+    );
+    await finish(tester);
+  });
+
+  testWidgets('a queued reply updates to Sent and chat opens only on request', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+    final changes = StreamController<ConversationMessage>.broadcast();
+    addTearDown(changes.close);
+    String? sentId;
+    var chatOpens = 0;
+    await openCard(
+      tester,
+      thought,
+      sendReply: (_, _, id) async {
+        sentId = id;
+        return ThoughtReplyStatus.queued;
+      },
+      replyChanges: changes.stream,
+      onOpenChat: () => chatOpens++,
+    );
+    await tester.tap(find.byKey(const ValueKey('thought-react-love')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sending...'), findsOneWidget);
+    expect(chatOpens, 0);
+    changes.add(
+      ConversationMessage(
+        id: sentId!,
+        contactPeerId: 'alice-peer',
+        senderPeerId: 'local-peer',
+        text: '❤️',
+        timestamp: now.toIso8601String(),
+        createdAt: now.toIso8601String(),
+        isIncoming: false,
+        status: 'inboxed',
+        quotedMessageId: 'thought:thought-1',
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('sent'), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-reply-retry')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
+    await tester.pumpAndSettle();
+    expect(chatOpens, 1);
+    expect(find.byType(ThoughtCardScreen), findsNothing);
     await finish(tester);
   });
 
@@ -754,11 +998,10 @@ void main() {
           'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
         ),
       );
-      await posts.savePostMediaAttachment(
-        _attachment(
-          'image',
-        ).copyWith(width: 800, height: 600, previewBase64: preview),
-      );
+      final pending = _attachment(
+        'image',
+      ).copyWith(width: 3000, height: 1000, previewBase64: preview);
+      await posts.savePostMediaAttachment(pending);
       final download = Completer<PostMediaAttachmentModel>();
 
       await openCard(tester, thought, download: (_) => download.future);
@@ -786,6 +1029,41 @@ void main() {
         ),
       );
       expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      final photo = _tempFile('preview-loaded.png', pngBytes: true);
+      await posts.updatePostMediaLocalPath(
+        pending.mediaId,
+        photo.path,
+        postId: pending.postId,
+      );
+      download.complete(
+        pending.copyWith(localPath: photo.path, downloadStatus: 'done'),
+      );
+      await pumpMediaFrames(tester);
+
+      expect(placeholder, findsNothing);
+      expect(find.byKey(const ValueKey('thought-photo-preview')), findsNothing);
+      final fullPhoto = tester.widget<MediaThumbnailImage>(
+        find.descendant(
+          of: find.byType(MediaGrid),
+          matching: find.byType(MediaThumbnailImage),
+        ),
+      );
+      expect(fullPhoto.mediaPath, photo.path);
+      expect((fullPhoto.fit, fullPhoto.cacheWidth), (BoxFit.contain, 1440));
+      final fullFill = tester.widget<Image>(
+        find.byKey(const ValueKey('thought-photo-fill')),
+      );
+      expect((fullFill.image as ResizeImage).imageProvider, FileImage(photo));
+      final frame = tester.getRect(
+        find
+            .descendant(
+              of: find.byType(MediaGrid),
+              matching: find.byType(AspectRatio),
+            )
+            .first,
+      );
+      expect(frame.width / frame.height, closeTo(3, .01));
       await finish(tester);
     },
   );

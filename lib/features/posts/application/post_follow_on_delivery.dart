@@ -6,6 +6,7 @@ import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_event.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_view_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 const Duration interactivePostFollowOnBudget = Duration(seconds: 4);
@@ -448,7 +449,8 @@ Future<PostFollowOnDeliveryResult> _loadPersistedPostFollowOnResult(
   );
   if (result.settlement == PostFollowOnSettlement.fullySettled) {
     final event = await postRepo.getFollowOnOutboxEvent(eventId);
-    if (event?.eventType == PostRetractEnvelope.type) {
+    if (event?.eventType == PostRetractEnvelope.type ||
+        event?.eventType == PostViewEnvelope.type) {
       await postRepo.deleteFollowOnOutboxEvent(eventId);
     }
   }

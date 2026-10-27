@@ -89,6 +89,8 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
@@ -466,12 +468,9 @@ class ConversationWired extends StatefulWidget {
   /// A reply typed on a thought card, sent once this chat is ready.
   final ThoughtReply? initialThoughtReply;
 
-  /// Opens a quoted thought's card over this chat. A reply typed there is
-  /// handed back to [replyHere] and sent in this chat.
-  final Future<void> Function(
-    String postId,
-    void Function(ThoughtReply reply) replyHere,
-  )?
+  /// Opens a quoted thought's card over this chat. Its async sender reports
+  /// the ordinary send result while keeping the card in place.
+  final Future<void> Function(String postId, ThoughtReplySender replyHere)?
   onOpenThought;
 
   /// The stored thoughts quoted here are read live from this repository and
@@ -8776,6 +8775,33 @@ class _ConversationWiredState extends State<ConversationWired>
     unawaited(_onSend(reply.text));
   }
 
+  Future<ThoughtReplyStatus> _sendThoughtReplyInPlace(
+    String text,
+    String postId,
+    String messageId,
+  ) async {
+    final posts = _thoughtPosts;
+    final contacts = widget.contactRepo;
+    final bridge = widget.bridge;
+    if (!mounted || posts == null || contacts == null || bridge == null) {
+      return ThoughtReplyStatus.failed;
+    }
+    return sendThoughtReply(
+      messageId: messageId,
+      postId: postId,
+      authorPeerId: _contact.peerId,
+      text: text,
+      postRepo: posts,
+      messageRepo: widget.messageRepo,
+      identityRepo: widget.identityRepo,
+      contactRepo: contacts,
+      p2pService: widget.p2pService,
+      bridge: bridge,
+      directEventFanout: widget.directEventFanout,
+      nowProvider: widget.thoughtNowProvider,
+    );
+  }
+
   void _sendInitialThoughtReplyWhenReady() {
     final reply = widget.initialThoughtReply;
     if (reply == null ||
@@ -8907,7 +8933,7 @@ class _ConversationWiredState extends State<ConversationWired>
           onOpenThought: widget.onOpenThought == null || _thoughtPosts == null
               ? null
               : (postId) => unawaited(
-                  widget.onOpenThought!(postId, _sendThoughtReplyHere),
+                  widget.onOpenThought!(postId, _sendThoughtReplyInPlace),
                 ),
           onDeleteMessage: _onDeleteMessage,
           // 231: direct received-media actions — every Save/Share/Info runs

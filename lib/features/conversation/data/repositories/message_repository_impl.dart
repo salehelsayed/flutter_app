@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
@@ -56,7 +57,10 @@ class MessageRepositoryImpl
         IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
-        ConversationReadEventSource {
+        ConversationReadEventSource,
+        ThoughtReactionMessageRepository {
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadThoughtReactionMessages;
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
   dbLoadMessagesForContact;
@@ -475,6 +479,7 @@ class MessageRepositoryImpl
   final Map<String, ConversationMessage> _messageSnapshots = {};
 
   MessageRepositoryImpl({
+    this.dbLoadThoughtReactionMessages,
     required this.dbInsertMessage,
     required this.dbLoadMessagesForContact,
     required this.dbLoadLatestMessageForContact,
@@ -884,6 +889,18 @@ class MessageRepositoryImpl
       rows.map((row) => ConversationMessage.fromMap(row)),
       contactPeerId,
     );
+  }
+
+  @override
+  Future<List<ConversationMessage>> loadThoughtReactionMessages(
+    String postId,
+  ) async {
+    final load = dbLoadThoughtReactionMessages;
+    if (load == null)
+      throw StateError('Thought reply lookup is not configured.');
+    return (await load(
+      postId,
+    )).map(ConversationMessage.fromMap).toList(growable: false);
   }
 
   @override

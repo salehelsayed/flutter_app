@@ -481,6 +481,7 @@ Future<void> dbDeletePostCascade(Database db, String postId) async {
     await _deleteRequiredPostRows(txn, 'post_pins', postId);
     await _deleteRequiredPostRows(txn, 'post_pin_dismissals', postId);
     await _deleteRequiredPostRows(txn, 'post_feed_state', postId);
+    await _deleteRequiredPostRows(txn, 'post_view_receipts', postId);
     await _deleteRequiredPostRows(txn, 'post_pass_avatar_snapshots', postId);
     await _deleteRequiredPostRows(txn, 'posts', postId);
   });

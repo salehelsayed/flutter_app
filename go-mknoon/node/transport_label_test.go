@@ -888,6 +888,7 @@ func TestShouldDeferDirectAck_ReactionAndDeletion(t *testing.T) {
 		{"introduction", false},    // legitimately fire-and-forget
 		{"contact_request", true},  // 171 TC-01: now deferred (cold-receiver durability)
 		{"post_create", true},      // plan 407: a thought is stored by Dart before the ack
+		{"post_view", true},        // first-view outbox releases only after Dart stores the receipt
 	}
 	for _, tc := range cases {
 		got := n.shouldDeferDirectAck(envelopeOfType(tc.typ))

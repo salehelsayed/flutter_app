@@ -7,16 +7,20 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:uuid/uuid.dart';
 
 /// One author's current thought, full screen.
 ///
@@ -32,6 +36,11 @@ class ThoughtCardScreen extends StatefulWidget {
     required this.onReply,
     required this.downloadMedia,
     this.onDelete,
+    this.onOpenChat,
+    this.replyChanges,
+    this.retryPosting,
+    this.onShown,
+    this.loadActivity,
     this.eligibilityChanges,
     this.nowProvider,
   });
@@ -43,9 +52,13 @@ class ThoughtCardScreen extends StatefulWidget {
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
 
-  /// Sends [text] to the author, quoting this thought, once the card has
-  /// closed. A reaction arrives as its lone glyph.
-  final void Function(String text, String postId)? onReply;
+  /// Sends an ordinary quoted reply in place. Retry keeps the same message ID.
+  final ThoughtReplySender? onReply;
+  final VoidCallback? onOpenChat;
+  final Stream<ConversationMessage>? replyChanges;
+  final Future<int> Function()? retryPosting;
+  final Future<void> Function(String postId)? onShown;
+  final Future<ThoughtActivity> Function(String postId)? loadActivity;
 
   /// Deletes the displayed thought for everyone. Completes once the local copy
   /// is gone; throws when it could not be deleted.
@@ -65,6 +78,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   List<PostMediaAttachmentModel> _media = const [];
   StreamSubscription<String>? _postSubscription;
   StreamSubscription<void>? _eligibilitySubscription;
+  StreamSubscription<ConversationMessage>? _replySubscription;
   Timer? _expiryTimer;
   Timer? _ageTimer;
   ModalRoute<dynamic>? _cardRoute;
@@ -85,6 +99,17 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   int _mediaReadGeneration = 0;
   final _replyController = TextEditingController();
   final _replyFocus = FocusNode();
+  String? _replyMessageId;
+  String? _submittedReply;
+  String? _replyPostId;
+  ThoughtReplyStatus? _replyStatus;
+  bool _sendingReply = false;
+  bool _retryingPost = false;
+  ThoughtActivity? _activity;
+  bool _activityLoading = false;
+  bool _activityFailed = false;
+  bool _activityExpanded = false;
+  int _activityGeneration = 0;
 
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
 
@@ -104,6 +129,16 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _eligibilitySubscription = widget.eligibilityChanges?.listen(
       (_) => _requestRefresh(),
     );
+    _replySubscription = widget.replyChanges?.listen((message) {
+      if (!_post.isIncoming) unawaited(_loadActivity());
+      if (!mounted ||
+          _closing ||
+          message.id != _replyMessageId ||
+          _replyPostId != _post.id) {
+        return;
+      }
+      setState(() => _replyStatus = ThoughtReplyStatus.fromMessage(message));
+    });
     _ageTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted || _closing) return;
       if (!_isLive) {
@@ -156,6 +191,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
 
   void _requestRefresh() {
     if (!mounted || _closing) return;
+    _activityGeneration++;
     _refreshAgain = true;
     if (!_refreshing) unawaited(_refresh());
   }
@@ -188,11 +224,22 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _post = current;
           _validated = true;
           _loadFailed = false;
-          if (changedPost) _media = const [];
+          if (changedPost) {
+            _media = const [];
+            _replyMessageId = null;
+            _submittedReply = null;
+            _replyPostId = null;
+            _replyStatus = null;
+            _sendingReply = false;
+            _replyController.clear();
+            _activity = null;
+            _activityExpanded = false;
+          }
         });
         _armExpiry();
         _markWhenShown();
         unawaited(_loadMedia(current.id));
+        if (!current.isIncoming) unawaited(_loadActivity());
       }
     } catch (_) {
       if (mounted && !_closing) setState(() => _loadFailed = true);
@@ -205,6 +252,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     final postId = _post.id;
     // The author does not "read" their own thought.
     if (!_post.isIncoming ||
+        !_hasVisibleContent ||
         _markedIds.contains(postId) ||
         !_markPendingIds.add(postId)) {
       return;
@@ -215,12 +263,18 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             _closing ||
             _post.id != postId ||
             _cardRoute?.isCurrent != true ||
+            !_hasVisibleContent ||
             !_isLive ||
             _loadFailed) {
           return;
         }
         await widget.postRepo.markFocused(postId);
         _markedIds.add(postId);
+        // A missing crypto/network prerequisite must not spin a local-focus
+        // change loop. The next card open can retry publishing the view.
+        try {
+          await widget.onShown?.call(postId);
+        } catch (_) {}
       } catch (_) {
         // The thought is already on screen; it stays unseen and is marked on
         // the next open.
@@ -228,6 +282,75 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         _markPendingIds.remove(postId);
       }
     });
+  }
+
+  bool get _hasVisibleContent =>
+      _post.text.trim().isNotEmpty ||
+      _media.any(
+        (attachment) =>
+            attachment.downloadStatus == 'done' &&
+            attachment.localPath != null &&
+            File(
+              MediaFileManager.resolveStoredPathSync(attachment.localPath!),
+            ).existsSync(),
+      );
+
+  Future<void> _loadActivity() async {
+    final load = widget.loadActivity;
+    if (load == null || !mounted || _closing || _post.isIncoming) return;
+    final postId = _post.id;
+    final generation = ++_activityGeneration;
+    setState(() {
+      _activityLoading = true;
+      _activityFailed = false;
+    });
+    try {
+      final activity = await load(postId);
+      if (!mounted ||
+          _closing ||
+          !_isLive ||
+          _post.id != postId ||
+          generation != _activityGeneration)
+        return;
+      setState(() {
+        _activity = activity;
+        _activityLoading = false;
+      });
+    } catch (_) {
+      if (!mounted ||
+          _closing ||
+          _post.id != postId ||
+          generation != _activityGeneration)
+        return;
+      setState(() {
+        _activity = null;
+        _activityLoading = false;
+        _activityFailed = true;
+      });
+    }
+  }
+
+  Future<void> _retryPosting() async {
+    final retry = widget.retryPosting;
+    if (retry == null || _retryingPost || _closing || !_isLive) return;
+    final postId = _post.id;
+    setState(() => _retryingPost = true);
+    try {
+      await retry();
+    } catch (_) {
+      if (mounted && !_closing) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.post_send_failed),
+          ),
+        );
+      }
+    } finally {
+      if (mounted && !_closing && _post.id == postId) {
+        setState(() => _retryingPost = false);
+        _requestRefresh();
+      }
+    }
   }
 
   Future<void> _loadMedia(String postId) async {
@@ -253,6 +376,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         _media = media;
         _mediaLoading = false;
       });
+      _markWhenShown();
       for (final attachment in media) {
         final localPath = attachment.localPath;
         final isLocal =
@@ -311,6 +435,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           .map((item) => item.mediaId == attachment.mediaId ? attachment : item)
           .toList(growable: false);
     });
+    _markWhenShown();
   }
 
   void _closeMediaViewer() {
@@ -447,6 +572,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     WidgetsBinding.instance.removeObserver(this);
     _postSubscription?.cancel();
     _eligibilitySubscription?.cancel();
+    _replySubscription?.cancel();
     _expiryTimer?.cancel();
     _ageTimer?.cancel();
     _replyController.dispose();
@@ -454,17 +580,45 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     super.dispose();
   }
 
-  void _sendReply(String text) {
+  Future<void> _sendReply(String text, {bool retry = false}) async {
     final onReply = widget.onReply;
     final trimmed = text.trim();
-    if (onReply == null || trimmed.isEmpty) return;
+    if (onReply == null || trimmed.isEmpty || _sendingReply || _closing) return;
     if (!_isLive) {
       _close();
       return;
     }
     _replyFocus.unfocus();
     final postId = _post.id;
-    _close(afterClose: () => onReply(trimmed, postId));
+    final messageId = retry ? _replyMessageId : const Uuid().v4();
+    if (messageId == null || (retry && _replyPostId != postId)) return;
+    setState(() {
+      _sendingReply = true;
+      _replyMessageId = messageId;
+      _submittedReply = trimmed;
+      _replyPostId = postId;
+      _replyStatus = ThoughtReplyStatus.queued;
+    });
+    ThoughtReplyStatus result;
+    try {
+      result = await onReply(trimmed, postId, messageId);
+    } catch (_) {
+      result = ThoughtReplyStatus.failed;
+    }
+    if (!mounted ||
+        _closing ||
+        _post.id != postId ||
+        _replyMessageId != messageId) {
+      return;
+    }
+    setState(() {
+      _sendingReply = false;
+      _replyStatus = result;
+      if (result != ThoughtReplyStatus.failed &&
+          _replyController.text.trim() == trimmed) {
+        _replyController.clear();
+      }
+    });
   }
 
   @override
@@ -726,89 +880,255 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   }) {
     final voice = _media.where((item) => item.kind == 'voice');
     final onReply = widget.onReply;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (showText && _post.text.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.sizeOf(context).height * 0.3,
-                ),
-                child: SingleChildScrollView(
-                  child: LinkableText(
-                    text: _post.text,
-                    textDirection: detectTextDirection(_post.text),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: typing ? 18 : 21,
-                      height: 1.3,
-                      fontWeight: FontWeight.w600,
-                      shadows: const [
-                        Shadow(color: Color(0x59000000), blurRadius: 8),
-                      ],
-                    ),
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (showText && _post.text.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * 0.3,
+              ),
+              child: SingleChildScrollView(
+                child: LinkableText(
+                  text: _post.text,
+                  textDirection: detectTextDirection(_post.text),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: typing ? 18 : 21,
+                    height: 1.3,
+                    fontWeight: FontWeight.w600,
+                    shadows: const [
+                      Shadow(color: Color(0x59000000), blurRadius: 8),
+                    ],
                   ),
                 ),
               ),
             ),
-          for (final attachment in voice)
+          ),
+        for (final attachment in voice)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: AudioPlayerWidget(
+              key: ValueKey('thought-voice-${attachment.mediaId}'),
+              attachment: attachment.toSharedMediaAttachment(),
+              onRetryUnavailableMedia: () => unawaited(_download(attachment)),
+            ),
+          ),
+        if (!_post.isIncoming) ...[
+          _postingStatus(l10n),
+          if (widget.loadActivity != null) _ownActivity(l10n),
+        ],
+        if (onReply != null) ...[
+          if (!typing)
             Padding(
               padding: const EdgeInsets.only(bottom: 12),
-              child: AudioPlayerWidget(
-                key: ValueKey('thought-voice-${attachment.mediaId}'),
-                attachment: attachment.toSharedMediaAttachment(),
-                onRetryUnavailableMedia: () => unawaited(_download(attachment)),
+              child: Row(
+                children: [
+                  for (final reaction in ThoughtReaction.values) ...[
+                    _ReactionButton(
+                      key: ValueKey('thought-react-${reaction.name}'),
+                      reaction: reaction,
+                      label: switch (reaction) {
+                        ThoughtReaction.love => l10n.thought_react_love,
+                        ThoughtReaction.laugh => l10n.thought_react_laugh,
+                        ThoughtReaction.fire => l10n.thought_react_fire,
+                        ThoughtReaction.applause => l10n.thought_react_applause,
+                      },
+                      onPressed: _sendingReply
+                          ? null
+                          : () => unawaited(_sendReply(reaction.glyph)),
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                ],
               ),
             ),
-          if (onReply != null) ...[
-            if (!typing)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Row(
+          _ReplyField(
+            controller: _replyController,
+            focusNode: _replyFocus,
+            hint: l10n.thought_reply_hint(widget.authorName),
+            sendLabel: l10n.thought_reply_send,
+            enabled: !_sendingReply,
+            onSend: () => unawaited(_sendReply(_replyController.text)),
+          ),
+          if (_replyStatus case final status?)
+            Row(
+              key: const ValueKey('thought-reply-status'),
+              children: [
+                Expanded(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(switch (status) {
+                      ThoughtReplyStatus.sent => l10n.message_status_sent,
+                      ThoughtReplyStatus.queued => l10n.post_sending,
+                      ThoughtReplyStatus.failed => l10n.error_send_message,
+                    }, style: const TextStyle(color: Colors.white)),
+                  ),
+                ),
+                if (!_sendingReply && status != ThoughtReplyStatus.sent)
+                  TextButton(
+                    key: const ValueKey('thought-reply-retry'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.white),
+                    onPressed: () =>
+                        unawaited(_sendReply(_submittedReply!, retry: true)),
+                    child: Text(l10n.btn_retry),
+                  ),
+              ],
+            ),
+          if (widget.onOpenChat != null)
+            TextButton.icon(
+              key: const ValueKey('thought-open-chat'),
+              style: TextButton.styleFrom(foregroundColor: Colors.white),
+              onPressed: () => _close(afterClose: widget.onOpenChat),
+              icon: const Icon(Icons.chat_bubble_outline, size: 18),
+              label: Text(l10n.orbit_node_open_chat(widget.authorName)),
+            ),
+        ] else if (widget.onDelete != null)
+          OutlinedButton.icon(
+            key: const ValueKey('thought-delete'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.6)),
+              minimumSize: const Size.fromHeight(48),
+            ),
+            onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
+            icon: const Icon(Icons.delete_outline),
+            label: Text(l10n.thought_delete),
+          ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+      child: _post.isIncoming
+          ? content
+          : ConstrainedBox(
+              // Keep activity within the inset reserved by the thought's text.
+              constraints: BoxConstraints(
+                maxHeight: (188 - MediaQuery.paddingOf(context).bottom)
+                    .clamp(0.0, 188.0)
+                    .toDouble(),
+              ),
+              child: SingleChildScrollView(primary: false, child: content),
+            ),
+    );
+  }
+
+  Widget _postingStatus(AppLocalizations l10n) {
+    final status = _retryingPost ? 'sending' : _post.deliveryStatus;
+    final label = switch (status) {
+      'sending' =>
+        _post.mediaKind != 'none' && _media.isEmpty
+            ? l10n.post_uploading
+            : l10n.post_sending,
+      'partial' => l10n.post_partial,
+      'failed' => l10n.post_send_failed,
+      'sent' => l10n.message_status_sent,
+      _ => null,
+    };
+    if (label == null) return const SizedBox.shrink();
+    return Row(
+      key: const ValueKey('thought-posting-status'),
+      children: [
+        Expanded(
+          child: Semantics(
+            liveRegion: true,
+            child: Text(label, style: const TextStyle(color: Colors.white)),
+          ),
+        ),
+        if (status != 'sent' && widget.retryPosting != null)
+          TextButton(
+            key: const ValueKey('thought-posting-retry'),
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: _retryingPost ? null : () => unawaited(_retryPosting()),
+            child: Text(l10n.btn_retry),
+          ),
+      ],
+    );
+  }
+
+  Widget _ownActivity(AppLocalizations l10n) {
+    final activity = _activity;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextButton.icon(
+          key: const ValueKey('thought-activity-open'),
+          style: TextButton.styleFrom(foregroundColor: Colors.white),
+          onPressed: _activityLoading
+              ? null
+              : () {
+                  if (_activityFailed) {
+                    unawaited(_loadActivity());
+                  } else {
+                    setState(() => _activityExpanded = !_activityExpanded);
+                  }
+                },
+          icon: const Icon(Icons.visibility_outlined, size: 18),
+          label: Text(
+            _activityFailed
+                ? l10n.btn_retry
+                : activity == null
+                ? l10n.thought_activity_title
+                : l10n.thought_seen_count(activity.viewers.length),
+          ),
+        ),
+        if (_activityExpanded && activity != null)
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.22,
+            ),
+            child: SingleChildScrollView(
+              key: const ValueKey('thought-activity-details'),
+              primary: false,
+              child: DefaultTextStyle(
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  height: 1.5,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (final reaction in ThoughtReaction.values) ...[
-                      _ReactionButton(
-                        key: ValueKey('thought-react-${reaction.name}'),
-                        reaction: reaction,
-                        label: switch (reaction) {
-                          ThoughtReaction.love => l10n.thought_react_love,
-                          ThoughtReaction.laugh => l10n.thought_react_laugh,
-                          ThoughtReaction.fire => l10n.thought_react_fire,
-                          ThoughtReaction.applause =>
-                            l10n.thought_react_applause,
-                        },
-                        onPressed: () => _sendReply(reaction.glyph),
+                    Text(
+                      l10n.thought_seen_title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      activity.viewers.isEmpty
+                          ? l10n.thought_seen_count(0)
+                          : activity.viewers
+                                .map((viewer) => viewer.name)
+                                .join(' · '),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      l10n.group_reactions_title,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    if (activity.reactions.isEmpty)
+                      Text(l10n.thought_activity_empty),
+                    for (final group in activity.reactions) ...[
+                      Text(
+                        l10n.thought_activity_group(
+                          group.participants.first.name,
+                          group.participants.length - 1,
+                          group.reaction.glyph,
+                        ),
                       ),
-                      const SizedBox(width: 10),
+                      Text(
+                        group.participants
+                            .map((actor) => actor.name)
+                            .join(' · '),
+                      ),
                     ],
                   ],
                 ),
               ),
-            _ReplyField(
-              controller: _replyController,
-              focusNode: _replyFocus,
-              hint: l10n.thought_reply_hint(widget.authorName),
-              sendLabel: l10n.thought_reply_send,
-              onSend: () => _sendReply(_replyController.text),
             ),
-          ] else if (widget.onDelete != null)
-            OutlinedButton.icon(
-              key: const ValueKey('thought-delete'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: BorderSide(color: Colors.white.withValues(alpha: 0.6)),
-                minimumSize: const Size.fromHeight(48),
-              ),
-              onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
-              icon: const Icon(Icons.delete_outline),
-              label: Text(l10n.thought_delete),
-            ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -956,7 +1276,7 @@ class _ReactionButton extends StatelessWidget {
 
   final ThoughtReaction reaction;
   final String label;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) => Semantics(
@@ -990,6 +1310,7 @@ class _ReplyField extends StatelessWidget {
     required this.hint,
     required this.sendLabel,
     required this.onSend,
+    required this.enabled,
   });
 
   final TextEditingController controller;
@@ -997,10 +1318,11 @@ class _ReplyField extends StatelessWidget {
   final String hint;
   final String sendLabel;
   final VoidCallback onSend;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final canSend = controller.text.trim().isNotEmpty;
+    final canSend = enabled && controller.text.trim().isNotEmpty;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: focusNode.hasFocus ? 0.22 : 0.16),
@@ -1013,6 +1335,7 @@ class _ReplyField extends StatelessWidget {
             child: TextField(
               key: const ValueKey('thought-reply-field'),
               controller: controller,
+              enabled: enabled,
               focusNode: focusNode,
               minLines: 1,
               maxLines: 4,

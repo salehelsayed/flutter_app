@@ -143,6 +143,10 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
+import 'package:flutter_app/features/posts/application/publish_thought_view_use_case.dart';
+import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'orbit_screen.dart';
@@ -158,6 +162,7 @@ class OrbitWired extends StatefulWidget {
   final MessageRepository messageRepo;
   final PostRepository? postRepository;
   final DateTime Function()? thoughtNowProvider;
+  final Future<int> Function()? retryThoughtPosting;
 
   final MediaAttachmentRepository mediaAttachmentRepo;
 
@@ -257,6 +262,7 @@ class OrbitWired extends StatefulWidget {
     required this.messageRepo,
     this.postRepository,
     this.thoughtNowProvider,
+    this.retryThoughtPosting,
     required this.mediaAttachmentRepo,
     this.callActivitySource,
     required this.chatMessageListener,
@@ -1187,7 +1193,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
-    void Function(ThoughtReply reply)? replyInChat,
+    ThoughtReplySender? replyInChat,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1265,19 +1271,56 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             ),
             onReply: contact == null
                 ? null
-                : (text, postId) {
-                    final reply = ThoughtReply(text: text, postId: postId);
-                    if (replyInChat != null) {
-                      replyInChat(reply);
-                    } else if (mounted) {
-                      unawaited(
-                        _openConversationForContact(
-                          contact,
-                          thoughtReply: reply,
-                        ),
-                      );
+                : replyInChat ??
+                      (text, postId, messageId) => sendThoughtReply(
+                        messageId: messageId,
+                        postId: postId,
+                        authorPeerId: contact.peerId,
+                        text: text,
+                        postRepo: repository,
+                        messageRepo: widget.messageRepo,
+                        identityRepo: widget.identityRepo,
+                        contactRepo: widget.contactRepo,
+                        p2pService: widget.p2pService,
+                        bridge: widget.bridge,
+                        directEventFanout: widget
+                            .directRouteAuthority
+                            .resolvedDirectEventFanout,
+                        nowProvider: widget.thoughtNowProvider,
+                      ),
+            replyChanges: widget.messageRepo is MessageRepositoryChangeSource
+                ? (widget.messageRepo as MessageRepositoryChangeSource)
+                      .messageChanges
+                : null,
+            onOpenChat: contact == null
+                ? null
+                : () {
+                    if (replyInChat == null && mounted) {
+                      unawaited(_openConversationForContact(contact));
                     }
                   },
+            retryPosting: isOwn ? widget.retryThoughtPosting : null,
+            onShown: isOwn
+                ? null
+                : (shownId) => publishThoughtView(
+                    postId: shownId,
+                    viewerPeerId: identity.peerId,
+                    postRepo: repository,
+                    contactRepo: widget.contactRepo,
+                    p2pService: widget.p2pService,
+                    bridge: widget.bridge,
+                    nowProvider: widget.thoughtNowProvider,
+                  ),
+            loadActivity: !isOwn
+                ? null
+                : (ownId) => loadThoughtActivity(
+                    postId: ownId,
+                    localPeerId: identity.peerId,
+                    postRepo: repository,
+                    messageRepo: widget.messageRepo,
+                    contactRepo: widget.contactRepo,
+                    nowProvider: widget.thoughtNowProvider,
+                  ),
             onDelete: !isOwn
                 ? null
                 : (postId) async {

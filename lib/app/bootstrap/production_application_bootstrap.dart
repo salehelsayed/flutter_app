@@ -132,6 +132,7 @@ import 'package:flutter_app/core/database/helpers/post_reactions_db_helpers.dart
 import 'package:flutter_app/core/database/helpers/post_repost_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/thought_views_db_helpers.dart';
 import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
 import 'package:flutter_app/features/introduction/data/repositories/intro_review_seen_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
@@ -1446,6 +1447,8 @@ final class ProductionApplicationBootstrap
     // Create message repository
     late final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
     final messageRepository = MessageRepositoryImpl(
+      dbLoadThoughtReactionMessages: (postId) =>
+          dbLoadThoughtReactionMessages(db, postId),
       dbCancelAuthoredDirectTextIntent: (row) =>
           dbCancelAuthoredDirectTextIntent(db, row),
       dbSaveAuthoredDirectTextIntent: (row) =>
@@ -2208,6 +2211,30 @@ final class ProductionApplicationBootstrap
     );
 
     final postRepository = PostRepositoryImpl(
+      dbLoadThoughtViews: (postId) => dbLoadThoughtViews(db, postId),
+      dbQueueThoughtView:
+          ({
+            required receipt,
+            required event,
+            required recipient,
+            required authorPeerId,
+            required nowIso,
+          }) => dbQueueThoughtView(
+            db,
+            receipt: receipt,
+            event: event,
+            recipient: recipient,
+            authorPeerId: authorPeerId,
+            nowIso: nowIso,
+          ),
+      dbRecordIncomingThoughtView:
+          ({required receipt, required localPeerId, required nowIso}) =>
+              dbRecordIncomingThoughtView(
+                db,
+                receipt: receipt,
+                localPeerId: localPeerId,
+                nowIso: nowIso,
+              ),
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(db, postId),
       dbLoadPostsByIds: (postIds) => dbLoadPostsByIds(db, postIds),
@@ -6885,6 +6912,8 @@ final class ProductionApplicationBootstrap
     }
 
     final postListener = PostListener(
+      postViewStream: messageRouter.postViewStream,
+      getOwnPeerId: () async => (await repository.loadIdentity())?.peerId,
       mediaFileManager: mediaFileManager,
       postCreateStream: messageRouter.postCreateStream,
       postRetractStream: messageRouter.postRetractStream,

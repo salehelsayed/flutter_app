@@ -24,6 +24,9 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pending_child_event.dart';
 import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
+import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
+import 'package:flutter_app/core/database/migrations/124_thought_photo_previews_and_view_receipts.dart';
 
 void main() {
   late Database db;
@@ -46,6 +49,9 @@ void main() {
     await runPostsRepostMediaCryptoMigration(db);
     await runPostsPassAvatarSnapshotsMigration(db);
     await runPostMediaAttachmentCryptoColumnsMigration(db);
+    await runMessagesTableMigration(db);
+    await runQuotedMessageIdMigration(db);
+    await runThoughtPhotoPreviewsAndViewReceiptsMigration(db);
     repository = PostRepositoryImpl(
       dbInsertPost: (row) => dbInsertPost(db, row),
       dbLoadPost: (postId) => dbLoadPost(

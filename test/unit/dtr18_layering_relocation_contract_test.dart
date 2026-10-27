@@ -249,8 +249,10 @@ const _privacySha256 =
 // Plan 407 thought replies (owner-approved 10-26): the notification-opened chat
 // gets the same post repository for thought quotes as every other chat.
 // Application, notification routing, pause, detach and resume owners remain in place.
+// Thoughts 128: one owner-approved Orbit retry binding reuses the existing
+// post-delivery worker and its media-upload prerequisite.
 const _applicationRootNormalizedSha256 =
-    '0133d73e873b223b4cf00b69ed8bcdb7f571600e1d9f75c9d399112c2b3ef238';
+    '37bce9217726e2c68ea8ae96bfa6bd944f869cc755d2a6ea20d11e55a98a4ffd';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -326,6 +328,8 @@ const _applicationRootNormalizedSha256 =
 // retry ownership on the same app-owned request repository. Both pins below
 // retain the exact historical database callback; bootstrap-pin-proof.json
 // under contact-request-decisions-20261026 reconstructs the prior identities.
+// Thoughts 128: owner-approved additive view/reaction repository callbacks and
+// the view listener stream retain the same database and startup owners.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -438,7 +442,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    '70a1234489aa3084f9aba81f10f65cc20d6607e6d2bbce7bf37d9428da757f06';
+    'd4589b24147d513fc42f6b9570fc310770a39aea36365af7a8259440c72a6bae';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -472,8 +476,9 @@ const _productionBootstrapNormalizedSha256 =
 // Combined main erasure/recovery and Thoughts wiring retain the historical callback.
 // The same contact-request requireFresh argument changes only the reviewed remainder.
 // The same retry composition leaves the historical notification callback exact.
+// The same additive Thoughts bindings leave the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'd647bd41b56f08a1dc71a9bb47d835a330da7437fb34c76bafc96586aede96c4';
+    '0cd9f009fbc2b49914d24798708ee4cfc764e2aab8e492bbfad02dd1f5bb42dd';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

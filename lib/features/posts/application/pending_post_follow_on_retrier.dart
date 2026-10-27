@@ -8,6 +8,7 @@ import 'package:flutter_app/features/posts/application/legacy_post_feature_gate.
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_job.dart';
 import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
+import 'package:flutter_app/features/posts/domain/models/post_view_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
 class PendingPostFollowOnRetrier {
@@ -124,7 +125,7 @@ class PendingPostFollowOnRetrier {
   }
 }
 
-/// Retries queued thought retractions. Every other follow-on type is legacy
+/// Retries queued thought retractions and encrypted views. Other types are legacy
 /// Posts and is dropped unsent.
 Future<int> retryPendingPostFollowOns({
   required PostRepository postRepo,
@@ -134,22 +135,27 @@ Future<int> retryPendingPostFollowOns({
   DateTime Function()? nowProvider,
 }) async {
   final now = (nowProvider ?? DateTime.now)().toUtc();
-  final retractions = <PostFollowOnOutboxJob>[];
+  final pending = <PostFollowOnOutboxJob>[];
   for (final job in await postRepo.loadRetryableFollowOnOutboxJobs()) {
-    if (job.event.eventType != PostRetractEnvelope.type) {
+    DateTime? expiry;
+    if (job.event.eventType == PostRetractEnvelope.type) {
+      final retraction = PostRetractEnvelope.fromJson(job.event.rawEnvelope);
+      if (retraction != null)
+        expiry = ThoughtLifetime.expiresAt(retraction.postCreatedAt);
+    } else if (job.event.eventType == PostViewEnvelope.type) {
+      expiry = PostViewEnvelope.queuedExpiry(job.event.rawEnvelope);
+    } else {
       rejectLegacyPostFeature(job.event.eventType);
       continue;
     }
-    final retraction = PostRetractEnvelope.fromJson(job.event.rawEnvelope);
-    if (retraction == null ||
-        ThoughtLifetime.isExpired(retraction.postCreatedAt, now)) {
+    if (expiry == null || !expiry.isAfter(now)) {
       // Every copy of the thought has expired on its own by now.
       await postRepo.deleteFollowOnOutboxEvent(job.event.eventId);
       continue;
     }
-    retractions.add(job);
+    pending.add(job);
   }
-  if (retractions.isEmpty) {
+  if (pending.isEmpty) {
     return 0;
   }
 
@@ -161,7 +167,7 @@ Future<int> retryPendingPostFollowOns({
     return 0;
   }
 
-  for (final job in retractions) {
+  for (final job in pending) {
     await deliverQueuedPostFollowOn(
       postRepo: postRepo,
       p2pService: p2pService,
@@ -170,7 +176,7 @@ Future<int> retryPendingPostFollowOns({
       deliveries: job.recipientDeliveries,
     );
   }
-  return retractions.length;
+  return pending.length;
 }
 
 Future<bool> _allowsPostFollowOnNetworkSideEffects({

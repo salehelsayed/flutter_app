@@ -16,8 +16,26 @@ import 'package:flutter_app/features/posts/domain/models/post_pass_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_origin_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_pin_state_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
+import 'package:flutter_app/features/posts/domain/repositories/thought_view_repository.dart';
+import 'package:flutter_app/features/posts/domain/models/thought_view_receipt.dart';
 
-class PostRepositoryImpl implements PostRepository {
+class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadThoughtViews;
+  final Future<bool> Function({
+    required Map<String, Object?> receipt,
+    required Map<String, Object?> event,
+    required Map<String, Object?> recipient,
+    required String authorPeerId,
+    required String nowIso,
+  })?
+  dbQueueThoughtView;
+  final Future<bool> Function({
+    required Map<String, Object?> receipt,
+    required String localPeerId,
+    required String nowIso,
+  })?
+  dbRecordIncomingThoughtView;
   final Future<void> Function(Map<String, Object?> row) dbInsertPost;
   final Future<Map<String, Object?>?> Function(String postId) dbLoadPost;
   final Future<List<Map<String, Object?>>> Function(List<String> postIds)?
@@ -146,6 +164,9 @@ class PostRepositoryImpl implements PostRepository {
       StreamController<String>.broadcast();
 
   PostRepositoryImpl({
+    this.dbLoadThoughtViews,
+    this.dbQueueThoughtView,
+    this.dbRecordIncomingThoughtView,
     required this.dbInsertPost,
     required this.dbLoadPost,
     this.dbLoadPostsByIds,
@@ -216,6 +237,41 @@ class PostRepositoryImpl implements PostRepository {
 
   @override
   Stream<String> get postChanges => _postChangesController.stream;
+
+  @override
+  Future<List<ThoughtViewReceipt>> loadThoughtViews(String postId) async =>
+      (await _require(dbLoadThoughtViews, 'Thought views are not configured.')(
+        postId,
+      )).map(ThoughtViewReceipt.fromMap).toList(growable: false);
+
+  @override
+  Future<bool> queueThoughtView({
+    required ThoughtViewReceipt receipt,
+    required PostFollowOnOutboxEvent event,
+    required PostFollowOnOutboxRecipientDelivery recipient,
+    required String authorPeerId,
+    required String nowIso,
+  }) async => _require(dbQueueThoughtView, 'Thought views are not configured.')(
+    receipt: receipt.toMap(),
+    event: event.toMap(),
+    recipient: recipient.toMap(),
+    authorPeerId: authorPeerId,
+    nowIso: nowIso,
+  );
+
+  @override
+  Future<bool> recordIncomingThoughtView({
+    required ThoughtViewReceipt receipt,
+    required String localPeerId,
+    required String nowIso,
+  }) async {
+    final inserted = await _require(
+      dbRecordIncomingThoughtView,
+      'Thought views are not configured.',
+    )(receipt: receipt.toMap(), localPeerId: localPeerId, nowIso: nowIso);
+    if (inserted) _postChangesController.add(receipt.postId);
+    return inserted;
+  }
 
   @override
   Future<void> savePost(PostModel post) async {

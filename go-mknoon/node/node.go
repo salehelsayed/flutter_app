@@ -2171,7 +2171,7 @@ func messageEnvelopeType(msgBytes []byte) string {
 
 func requiresCommittedAckReserve(msgBytes []byte) bool {
 	switch messageEnvelopeType(msgBytes) {
-	case "chat_message", "message_reaction", "message_deletion", "contact_request", "post_create":
+	case "chat_message", "message_reaction", "message_deletion", "contact_request", "post_create", "post_view":
 		return true
 	default:
 		return false
@@ -2190,7 +2190,9 @@ func (n *Node) shouldDeferDirectAck(msgBytes []byte) bool {
 	// sender falls back to the inbox -> the request is durably delivered + auto-
 	// added on replay. A post_create (plan 407 thought) has the same shape: the
 	// sender counts it delivered only on this ack, so the ack must wait for
-	// Dart's PostListener to store it. Other types (introductions, …) are
+	// Dart's PostListener to store it. A post_view also has durable receiver
+	// state; acknowledging before its receipt is stored loses the first view.
+	// Other types (introductions, …) are
 	// legitimately fire-and-forget and ack immediately.
 	if !requiresCommittedAckReserve(msgBytes) {
 		return false

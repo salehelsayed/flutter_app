@@ -63,6 +63,23 @@ class _P2PInboxPort {
 }
 
 class _P2PInboxCoordinator {
+  static bool _isEncryptedThoughtViewEnvelope(String message) {
+    try {
+      final value = jsonDecode(message);
+      if (value case {
+        'type': 'post_view',
+        'version': '2',
+        'encrypted': final Map<String, dynamic> encrypted,
+      }) {
+        return ['kem', 'ciphertext', 'nonce'].every(
+          (key) =>
+              encrypted[key] is String && (encrypted[key] as String).isNotEmpty,
+        );
+      }
+    } catch (_) {}
+    return false;
+  }
+
   static bool _isInitialDirectNotificationEnvelope(String message) {
     try {
       final decoded = jsonDecode(message);
@@ -2609,7 +2626,8 @@ class _P2PInboxCoordinator {
     }
 
     try {
-      var suppressNotification = false;
+      // A view receipt updates activity; it is never a new-message alert.
+      var suppressNotification = _isEncryptedThoughtViewEnvelope(message);
       final proveDelivered = _shouldSuppressDirectInboxNotification;
       if (custodyKind == AckCustodyKind.directTextV108 &&
           proveDelivered != null &&

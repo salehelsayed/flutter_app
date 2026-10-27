@@ -2142,6 +2142,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
+        retryThoughtPosting: widget.pendingPostDeliveryRetrier.retryNow,
         directRouteAuthority: _directRouteAuthority,
         callActivitySource: widget.orbitCallActivitySource,
         resolveCallWakeHandle: widget.resolveCallWakeHandle,

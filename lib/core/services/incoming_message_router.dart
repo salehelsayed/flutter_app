@@ -36,6 +36,7 @@ class IncomingMessageRouter {
   final _postPinUpdateController = StreamController<ChatMessage>.broadcast();
   final _postPinRemoveController = StreamController<ChatMessage>.broadcast();
   final _postRetractController = StreamController<ChatMessage>.broadcast();
+  final _postViewController = StreamController<ChatMessage>.broadcast();
   final _deliveryReceiptController = StreamController<ChatMessage>.broadcast();
   final _unknownController = StreamController<ChatMessage>.broadcast();
 
@@ -113,6 +114,8 @@ class IncomingMessageRouter {
 
   /// Stream of incoming post_retract messages (an author deleting a thought).
   Stream<ChatMessage> get postRetractStream => _postRetractController.stream;
+
+  Stream<ChatMessage> get postViewStream => _postViewController.stream;
 
   /// Stream of incoming delivery_receipt messages (115 P2 — receipts flip
   /// sender-side 'inboxed' rows to 'delivered').
@@ -230,6 +233,8 @@ class IncomingMessageRouter {
           _postCreateController.add(message);
         case 'post_retract':
           _postRetractController.add(message);
+        case 'post_view':
+          _postViewController.add(message);
         case 'post_comment':
         case 'post_reaction':
         case 'post_comment_reaction':
@@ -304,6 +309,7 @@ class IncomingMessageRouter {
     _postPinUpdateController.close();
     _postPinRemoveController.close();
     _postRetractController.close();
+    _postViewController.close();
     _deliveryReceiptController.close();
     _unknownController.close();
   }

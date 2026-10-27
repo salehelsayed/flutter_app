@@ -27,6 +27,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart'
@@ -1401,6 +1402,7 @@ void main() {
       required DateTime Function() clock,
     }) async {
       setLargeTestSurface(tester);
+      messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
       identityRepo.seed(testIdentity);
       contactRepo.seed([testContact]);
       await tester.pumpWidget(
@@ -1415,6 +1417,9 @@ void main() {
       );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await pumpOrbitFrames(tester, count: 12);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
       await pumpOrbitFrames(tester, count: 12);
       expect(
         find.descendant(
@@ -1539,6 +1544,9 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
         await pumpOrbitFrames(tester, count: 12);
 
+        expect(find.byType(ThoughtCardScreen), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
+        await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsNothing);
         expect(find.byType(ConversationWired), findsOneWidget);
         expect(
@@ -11390,6 +11398,97 @@ class _HeldReadSecureKeyStore extends FakeSecureKeyStore {
     await _gate.future;
     return snapshot;
   }
+}
+
+/// Only the card-to-chat UI cases need pending authored text projection. The
+/// adapter's custody/retry tests use the real production database repository.
+class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
+    implements AuthoredDirectTextIntentRepository {
+  _ThoughtIntentMessageRepository(this.senderPeerId);
+
+  final String senderPeerId;
+  final _intents = <String, AuthoredDirectTextIntent>{};
+
+  @override
+  bool get supportsAuthoredDirectTextIntents => true;
+
+  @override
+  Future<bool> saveAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    if (_intents.containsKey(intent.id) ||
+        await super.getMessage(intent.id) != null) {
+      return false;
+    }
+    _intents[intent.id] = intent;
+    debugEmitMessageChange(intent.toMessage(senderPeerId));
+    return true;
+  }
+
+  @override
+  Future<bool> cancelAuthoredDirectTextIntent(
+    AuthoredDirectTextIntent intent,
+  ) async {
+    if (_intents[intent.id]?.token != intent.token) return false;
+    _intents.remove(intent.id);
+    return true;
+  }
+
+  @override
+  Future<List<AuthoredDirectTextIntent>>
+  loadAuthoredDirectTextIntents() async =>
+      _intents.values.toList(growable: false);
+
+  List<ConversationMessage> _withIntents(
+    List<ConversationMessage> rows,
+    String peerId, {
+    String? beforeTimestamp,
+    int? limit,
+  }) {
+    final byId = {for (final row in rows) row.id: row};
+    for (final intent in _intents.values) {
+      if (intent.contactPeerId == peerId &&
+          (beforeTimestamp == null ||
+              intent.timestamp.compareTo(beforeTimestamp) < 0)) {
+        byId.putIfAbsent(intent.id, () => intent.toMessage(senderPeerId));
+      }
+    }
+    final sorted = byId.values.toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return limit != null && sorted.length > limit
+        ? sorted.sublist(sorted.length - limit)
+        : sorted;
+  }
+
+  @override
+  Future<List<ConversationMessage>> getMessagesForContact(
+    String peerId,
+  ) async => _withIntents(await super.getMessagesForContact(peerId), peerId);
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String peerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async => _withIntents(
+    await super.getMessagesPage(
+      peerId,
+      limit: limit,
+      beforeTimestamp: beforeTimestamp,
+    ),
+    peerId,
+    beforeTimestamp: beforeTimestamp,
+    limit: limit,
+  );
+
+  @override
+  Future<int> getMessageCountForContact(String peerId) async =>
+      (await getMessagesForContact(peerId)).length;
+
+  @override
+  Future<ConversationMessage?> getLatestMessageForContact(
+    String peerId,
+  ) async => (await getMessagesForContact(peerId)).lastOrNull;
 }
 
 class _OrbitThoughtPostRepository extends InMemoryPostRepository {
