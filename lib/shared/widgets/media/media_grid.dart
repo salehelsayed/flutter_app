@@ -26,9 +26,10 @@ class MediaGrid extends StatelessWidget {
   final String? ownedMediaPeerId;
   final Map<String, String> renderedSemanticsLabels;
 
-  /// Opt-in for thoughts: a single photo or video keeps its own shape
-  /// (clamped between 9:16 and 16:9) and stays at most this tall. Null keeps
-  /// the 4:3 frame chat uses.
+  /// Opt-in for thoughts: a single photo or video keeps its own shape, whole,
+  /// and stays at most this tall. The thought card fills the space around it
+  /// with a blurred copy, so nothing is cropped. Null keeps the 4:3 frame chat
+  /// uses.
   final double? singleMaxHeight;
 
   const MediaGrid({
@@ -71,12 +72,13 @@ class MediaGrid extends StatelessWidget {
     }
     final width = media.single.width ?? 0;
     final height = media.single.height ?? 0;
-    final ratio = width > 0 && height > 0
-        ? (width / height).clamp(9 / 16, 16 / 9).toDouble()
-        : 4 / 3;
+    final ratio = width > 0 && height > 0 ? width / height : 4 / 3;
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight),
-      child: AspectRatio(aspectRatio: ratio, child: _cell(0)),
+      child: AspectRatio(
+        aspectRatio: ratio,
+        child: _cell(0, fit: BoxFit.contain, cacheWidth: _fullScreenWidth),
+      ),
     );
   }
 
@@ -148,8 +150,14 @@ class MediaGrid extends StatelessWidget {
     );
   }
 
-  Widget _cell(int index) {
+  /// Decode width for a thought's single full-screen photo: sharp on large
+  /// phones without decoding a camera original at full size.
+  static const _fullScreenWidth = 1440;
+
+  Widget _cell(int index, {BoxFit fit = BoxFit.cover, int cacheWidth = 400}) {
     return MediaGridCell(
+      fit: fit,
+      cacheWidth: cacheWidth,
       attachment: media[index],
       onTap: onTap != null ? () => onTap!(index) : null,
       onLongPress: onLongPressItem != null

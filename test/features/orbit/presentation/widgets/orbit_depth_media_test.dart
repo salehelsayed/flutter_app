@@ -162,7 +162,7 @@ void main() {
   for (final (width, height, ratio) in const [
     (720, 1280, 16 / 9),
     (1920, 1080, 9 / 16),
-    (200, 2000, 16 / 9),
+    (200, 2000, 2000 / 200),
     (null, null, 3 / 4),
   ]) {
     testWidgets(

@@ -790,6 +790,37 @@ void main() {
     },
   );
 
+  testWidgets('a panorama keeps its whole width instead of being cropped', (
+    tester,
+  ) async {
+    final photo = _tempFile('pano.png', pngBytes: true);
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(
+      _attachment('image').copyWith(
+        width: 3000,
+        height: 1000,
+        localPath: photo.path,
+        downloadStatus: 'done',
+      ),
+    );
+
+    await openCard(tester, thought);
+    await pumpMediaFrames(tester);
+
+    final rect = tester.getRect(
+      find
+          .descendant(
+            of: find.byType(MediaGrid),
+            matching: find.byType(AspectRatio),
+          )
+          .first,
+    );
+    expect(rect.width / rect.height, closeTo(3, .01));
+    expect(find.byKey(const ValueKey('thought-photo-fill')), findsOneWidget);
+    await finish(tester);
+  });
+
   testWidgets('an uploading multi-photo thought holds its place too', (
     tester,
   ) async {

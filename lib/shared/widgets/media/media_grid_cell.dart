@@ -32,6 +32,11 @@ class MediaGridCell extends StatelessWidget {
   final VideoThumbnailResolver? videoThumbnailResolver;
   final String? renderedSemanticsLabel;
 
+  /// How a downloaded photo fills the cell, and the width it is decoded at.
+  /// Chat tiles crop small copies; a thought's full-screen photo shows whole.
+  final BoxFit fit;
+  final int cacheWidth;
+
   /// 128 (round 5): the conversation dir id (1:1 contact peerId, or groupId) the
   /// durable owned media copy is keyed under (`media/<id>/<blob>.<ext>`). When
   /// the displayed `localPath` is stale/transient (e.g. the deleted optimistic
@@ -53,6 +58,8 @@ class MediaGridCell extends StatelessWidget {
     this.videoThumbnailResolver,
     this.ownedMediaPeerId,
     this.renderedSemanticsLabel,
+    this.fit = BoxFit.cover,
+    this.cacheWidth = 400,
   });
 
   @override
@@ -271,8 +278,8 @@ class MediaGridCell extends StatelessWidget {
             _resolvedExistingLocalPath ??
             MediaFileManager.resolveStoredPathSync(attachment.localPath!),
         mediaType: attachment.mediaType,
-        fit: BoxFit.cover,
-        cacheWidth: 400,
+        fit: fit,
+        cacheWidth: cacheWidth,
         placeholder: isVideo
             ? Container(color: const Color.fromRGBO(0, 0, 0, 0.60))
             : _buildLoadingPlaceholder(context),

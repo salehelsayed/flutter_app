@@ -10,6 +10,7 @@ import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
@@ -301,6 +302,48 @@ void main() {
       final ar = tester.widget<AspectRatio>(find.byType(AspectRatio));
       expect(ar.aspectRatio, closeTo(4 / 3, 0.01));
     });
+
+    testWidgets('a wide chat photo still gets the cropped 4:3 tile', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        wrap(
+          MediaGrid(media: [_makeMedia(0).copyWith(width: 3000, height: 1000)]),
+        ),
+      );
+      expect(
+        tester.widget<AspectRatio>(find.byType(AspectRatio)).aspectRatio,
+        closeTo(4 / 3, 0.01),
+      );
+      final cell = tester.widget<MediaGridCell>(find.byType(MediaGridCell));
+      expect((cell.fit, cell.cacheWidth), (BoxFit.cover, 400));
+    });
+
+    for (final (width, height, ratio) in const [
+      (3000, 1000, 3.0),
+      (500, 4000, 0.125),
+      (null, null, 4 / 3),
+    ]) {
+      testWidgets(
+        'a thought photo ${width}x$height shows whole at ratio $ratio',
+        (tester) async {
+          await tester.pumpWidget(
+            wrap(
+              MediaGrid(
+                media: [_makeMedia(0).copyWith(width: width, height: height)],
+                singleMaxHeight: 800,
+              ),
+            ),
+          );
+          expect(
+            tester.widget<AspectRatio>(find.byType(AspectRatio)).aspectRatio,
+            closeTo(ratio, 0.001),
+          );
+          final cell = tester.widget<MediaGridCell>(find.byType(MediaGridCell));
+          expect((cell.fit, cell.cacheWidth), (BoxFit.contain, 1440));
+        },
+      );
+    }
 
     testWidgets('renders 2 items side by side', (tester) async {
       await tester.pumpWidget(

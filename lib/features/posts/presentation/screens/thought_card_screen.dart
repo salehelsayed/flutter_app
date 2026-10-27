@@ -614,9 +614,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       return _MediaPlaceholder(
         key: const ValueKey('thought-media-placeholder'),
         preview: _pendingPreview(visual),
-        aspectRatio: width > 0 && height > 0
-            ? (width / height).clamp(9 / 16, 16 / 9).toDouble()
-            : 3 / 4,
+        aspectRatio: width > 0 && height > 0 ? width / height : 3 / 4,
         failed: visual.isEmpty && _mediaLoadFailed && !_mediaLoading,
         onRetry: () => unawaited(_loadMedia(_post.id)),
         retryLabel: l10n.btn_retry,
