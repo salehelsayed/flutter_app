@@ -1035,10 +1035,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     final length = _textController.text.characters.length;
     final over = length > _thoughtMaxLength;
     final error = Theme.of(context).colorScheme.error;
-    // White text fails on the bright dark-theme green.
-    final onAccent = rc.accent.computeLuminance() > .3
-        ? const Color(0xFF0A0A0F)
-        : Colors.white;
+    final onAccent = _onAccent(rc.accent);
     return Padding(
       padding: EdgeInsets.only(
         top: MediaQuery.paddingOf(context).top + 12,
@@ -1266,7 +1263,7 @@ class _ToolButton extends StatelessWidget {
       constraints: const BoxConstraints.tightFor(width: 44, height: 44),
       style: IconButton.styleFrom(
         backgroundColor: filled ? rc.accent : rc.composerInputFill,
-        foregroundColor: filled ? rc.accentIcon : rc.accent,
+        foregroundColor: filled ? _onAccent(rc.accent) : rc.accent,
         disabledBackgroundColor: rc.composerInputFill,
         disabledForegroundColor: rc.disabledForeground,
         side: filled ? null : BorderSide(color: rc.divider),
@@ -1275,6 +1272,10 @@ class _ToolButton extends StatelessWidget {
     );
   }
 }
+
+/// Text or an icon on the accent: white fails on the bright dark-theme green.
+Color _onAccent(Color accent) =>
+    accent.computeLuminance() > .3 ? const Color(0xFF0A0A0F) : Colors.white;
 
 Widget? _noCounter(
   BuildContext context, {

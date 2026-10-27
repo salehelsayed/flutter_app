@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -716,6 +717,57 @@ void main() {
     expect(find.byTooltip('Media'), findsOneWidget);
     expect(find.byTooltip('Voice'), findsOneWidget);
   });
+
+  for (final preset in const [
+    BackgroundReadableColors.dark,
+    BackgroundReadableColors.representativeLight,
+  ]) {
+    testWidgets('Share and Stop stay readable on the accent '
+        '(${preset.isLightSurface ? 'light' : 'dark'} theme)', (tester) async {
+      final recorder = FakeAudioRecorderService();
+      addTearDown(recorder.dispose);
+      await tester.pumpWidget(
+        scene(
+          submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
+          recorder: recorder,
+          theme: ThemeData(extensions: [preset]),
+        ),
+      );
+      await tester.enterText(find.byType(TextField), 'Lake at dusk');
+      await tester.tap(find.byTooltip('Voice'));
+      await tester.pumpAndSettle();
+
+      double contrast(Color a, Color b) {
+        final la = a.computeLuminance();
+        final lb = b.computeLuminance();
+        return (math.max(la, lb) + .05) / (math.min(la, lb) + .05);
+      }
+
+      final stop = tester.widget<IconButton>(
+        find.descendant(
+          of: find.byKey(const ValueKey('thought-composer-voice-stop')),
+          matching: find.byType(IconButton),
+        ),
+      );
+      expect(
+        contrast(
+          stop.style!.foregroundColor!.resolve({})!,
+          stop.style!.backgroundColor!.resolve({})!,
+        ),
+        greaterThanOrEqualTo(3),
+      );
+      final shareStyle = share(tester).style!;
+      expect(
+        contrast(
+          shareStyle.foregroundColor!.resolve({})!,
+          shareStyle.backgroundColor!.resolve({})!,
+        ),
+        greaterThanOrEqualTo(4.5),
+      );
+      await tester.tap(find.byTooltip('Stop'));
+      await tester.pumpAndSettle();
+    });
+  }
 
   for (final rtl in [false, true]) {
     testWidgets('the mic sits at the end and recording grows out of it '
