@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -32,6 +33,8 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
@@ -98,6 +101,7 @@ import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/fake_group_dissolve_preflight.dart';
 import '../../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
@@ -594,6 +598,86 @@ void main() {
     }
 
     await tester.tap(acceptButton);
+  }
+
+  for (final thoughtsOn in [false, true]) {
+    testWidgets(
+      'Settings Scan paste reaches Feed with Thoughts ${thoughtsOn ? 'on' : 'off'}',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressOverflowErrors();
+        suppressNavAssetErrors();
+        debugThoughtsEnabledOverride = thoughtsOn;
+        debugOrbitDepthEnabledOverride = false;
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        bridge.responses['payload.sign'] = {'ok': true, 'signature': 'fakeSig'};
+        bridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'ephPubBase64',
+          'ciphertext': 'ctBase64',
+          'nonce': 'nonceBase64',
+        };
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        final shell = AppShellController(initialTab: AppShellTab.orbit);
+        addTearDown(shell.dispose);
+        final scanned = TestEd25519Identity.fromSeedByte(0x51);
+        final qrData = jsonEncode({
+          'ns': scanned.peerId,
+          'pk': scanned.publicKey,
+          'rv': '/dns4/relay/tcp/443/p2p/relay',
+          'ts': DateTime.now().toUtc().toIso8601String(),
+          'un': 'Scanned friend',
+          'sig': 'valid-sig',
+        });
+        try {
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              appShellController: shell,
+              pendingPostTargetStore: PendingPostTargetStore(),
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          tester
+              .widget<OrbitScreen>(find.byType(OrbitScreen))
+              .onOpenSettings!();
+          await pumpOrbitFrames(tester, count: 8);
+          expect(find.byType(SettingsWired), findsOneWidget);
+          await tester.ensureVisible(find.text('Scan'));
+          await tester.tap(find.text('Scan'));
+          await pumpOrbitFrames(tester, count: 8);
+          expect(find.byType(QRScannerScreen), findsOneWidget);
+          await tester.tap(find.text('Paste QR Data'));
+          await pumpOrbitFrames(tester);
+          await tester.enterText(
+            find.descendant(
+              of: find.byType(AlertDialog),
+              matching: find.byType(TextField),
+            ),
+            qrData,
+          );
+          await tester.tap(find.text('Submit'));
+          await pumpOrbitFrames(tester, count: 8);
+          expect(find.text('Added to your circle!'), findsOneWidget);
+          expect(await contactRepo.getContact(scanned.peerId), isNotNull);
+          await tester.tap(find.text('OK'));
+          await pumpOrbitFrames(tester, count: 10);
+          expect(tester.takeException(), isNull);
+          expect(find.byType(FeedWired), findsOneWidget);
+          expect(
+            tester.widget<FeedWired>(find.byType(FeedWired)).postRepository,
+            same(posts),
+          );
+          expect(find.byType(SettingsWired), findsNothing);
+        } finally {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(const Duration(seconds: 6));
+        }
+      },
+    );
   }
 
   testWidgets(

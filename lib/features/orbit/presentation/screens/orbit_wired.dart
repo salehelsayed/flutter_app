@@ -3470,7 +3470,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               contactRequestRepository: widget.contactRequestRepo,
               contactRequestListener: widget.contactRequestListener,
               messageRepository: widget.messageRepo,
-              postRepository: _thoughtPosts,
+              postRepository: widget.postRepository,
               mediaAttachmentRepository: widget.mediaAttachmentRepo,
               chatMessageListener: widget.chatMessageListener,
               identityRepository: widget.identityRepo,

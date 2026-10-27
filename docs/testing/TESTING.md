@@ -404,6 +404,19 @@ scanner's request plus a retry about one second later; the owner superseded
 that duplicate-send expectation on 2026-10-24. Original route evidence remains
 in `.codex-test-logs/beta-test-android-20261007/`.
 
+The build-128 Thoughts hide switch must gate presentation, while the Settings
+scanner still forwards Orbit's underlying `postRepository` to its Feed handoff.
+Passing the nullable `_thoughtPosts` view getter instead added the scanned
+contact and showed success, then threw after OK with Thoughts off. That argument
+changed in `ab97d1220`; the required Feed repository guard predates it. Paired
+widget cases follow actual Settings → Scan → Paste → Submit → OK with Thoughts
+off/on, retain the added contact and require Feed to receive the same repository
+without an exception. Signature verification is mocked; this is navigation
+proof, with native camera and signed-artifact validation separate. Keep the
+causal failure and preservation results under
+`.codex-test-logs/settings-qr-post-repository-20261027/` (`qr-route-red.log`,
+`qr-route-green.log`, `qr-focused.log` and `qr-source-provenance.json`).
+
 Equivalent background contact requests now share an in-flight/accepted
 transmission for 30 seconds per P2P service. Equivalence binds the signed material,
 target and recipient key, including exact wake-token/call-grant values, while
