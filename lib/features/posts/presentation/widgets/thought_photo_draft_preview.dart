@@ -1,11 +1,10 @@
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 /// The picked photos inside the Thought composer, drawn the way friends will
-/// see them on the card: the whole photo over a blurred copy of itself. Each
-/// has an X to take it out. There is no separate framing step.
+/// see them on the card: the whole photo on black. Each has an X to take it
+/// out. There is no separate framing step.
 class ThoughtPhotoDraftPreview extends StatelessWidget {
   const ThoughtPhotoDraftPreview({
     super.key,
@@ -66,21 +65,7 @@ class _PhotoTile extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-            child: ColorFiltered(
-              colorFilter: const ColorFilter.mode(
-                Color(0x66000000),
-                BlendMode.darken,
-              ),
-              child: Image(
-                image: ResizeImage.resizeIfNeeded(120, null, image),
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    const ColoredBox(color: Colors.black),
-              ),
-            ),
-          ),
+          const ColoredBox(color: Colors.black),
           Image(
             image: ResizeImage.resizeIfNeeded(1440, null, image),
             fit: BoxFit.contain,

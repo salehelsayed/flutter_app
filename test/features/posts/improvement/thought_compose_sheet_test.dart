@@ -335,9 +335,9 @@ void main() {
         matching: find.byType(Image),
       );
       expect(tester.widgetList<Image>(photo).map((image) => image.fit), [
-        BoxFit.cover,
         BoxFit.contain,
       ]);
+      expect(find.byType(ImageFiltered), findsNothing);
 
       await tapVisible(
         tester,

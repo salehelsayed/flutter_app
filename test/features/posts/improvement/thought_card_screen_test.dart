@@ -21,7 +21,6 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
-import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
@@ -738,7 +737,7 @@ void main() {
   );
 
   testWidgets(
-    'downloads encrypted photo metadata through the supplied existing downloader and opens the shared viewer',
+    'downloads encrypted photo metadata through the supplied existing downloader and shows the whole photo on the card',
     (tester) async {
       final photo = _tempFile('photo.png', pngBytes: true);
       final thought = _thought(initialNow).copyWith(mediaKind: 'image');
@@ -768,21 +767,19 @@ void main() {
       expect(downloads, hasLength(1));
       expect(downloads.single.encryptionKeyBase64, 'private-key');
       expect(downloads.single.encryptionNonce, 'nonce');
-      final grid = tester.widget<MediaGrid>(find.byType(MediaGrid));
-      expect(grid.media.single.localPath, photo.path);
-      expect(grid.media.single.downloadStatus, 'done');
-      final fill = tester.widget<Image>(
-        find.byKey(const ValueKey('thought-photo-fill')),
+      final full = find.byKey(const ValueKey('thought-photo-full'));
+      final image = tester.widget<Image>(full);
+      expect((image.image, image.fit), (FileImage(photo), BoxFit.contain));
+      expect(
+        tester.getRect(full),
+        tester.getRect(find.byKey(const ValueKey('thought-card-screen'))),
       );
-      expect((fill.image as ResizeImage).imageProvider, FileImage(photo));
-      grid.onTap!(0);
+      expect(find.byType(MediaGrid), findsNothing);
+      expect(find.byType(ImageFiltered), findsNothing);
+      expect(find.byKey(const ValueKey('thought-life-bar')), findsNothing);
+      await tester.tap(full, warnIfMissed: false);
       await pumpMediaFrames(tester);
-      final viewer = tester.widget<FullScreenTypedMediaViewer>(
-        find.byType(FullScreenTypedMediaViewer),
-      );
-      expect(viewer.items.single.attachmentId, 'blob-image');
-      expect(viewer.items.single.capabilities.allowed, isEmpty);
-      expect(viewer.items.single.owner, isNull);
+      expect(find.byType(FullScreenTypedMediaViewer), findsNothing);
       await finish(tester);
     },
   );
@@ -827,14 +824,7 @@ void main() {
       await tester.tap(retry);
       await pumpMediaFrames(tester);
       expect(attempts, 2);
-      expect(
-        tester
-            .widget<MediaGrid>(find.byType(MediaGrid))
-            .media
-            .single
-            .downloadStatus,
-        'done',
-      );
+      expect(find.byKey(const ValueKey('thought-photo-full')), findsOneWidget);
       await finish(tester);
     },
   );
@@ -983,12 +973,12 @@ void main() {
     );
     expect(find.byType(MediaGrid), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byKey(const ValueKey('thought-photo-fill')), findsNothing);
+    expect(find.byType(ImageFiltered), findsNothing);
     await finish(tester);
   });
 
   testWidgets(
-    "a photo on its way shows the sender's preview blurred, then the photo",
+    "a photo on its way shows the sender's preview blurred, then the whole photo",
     (tester) async {
       final thought = _thought(initialNow).copyWith(mediaKind: 'image');
       await posts.savePost(thought);
@@ -1016,17 +1006,7 @@ void main() {
         ),
         findsOneWidget,
       );
-      final fill = tester.widget<Image>(
-        find.byKey(const ValueKey('thought-photo-fill')),
-      );
-      expect(
-        (fill.image as ResizeImage).imageProvider,
-        isA<MemoryImage>().having(
-          (image) => base64Encode(image.bytes),
-          'bytes',
-          preview,
-        ),
-      );
+      expect(find.byType(ImageFiltered), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
 
       final photo = _tempFile('preview-loaded.png', pngBytes: true);
@@ -1042,27 +1022,11 @@ void main() {
 
       expect(placeholder, findsNothing);
       expect(find.byKey(const ValueKey('thought-photo-preview')), findsNothing);
-      final fullPhoto = tester.widget<MediaThumbnailImage>(
-        find.descendant(
-          of: find.byType(MediaGrid),
-          matching: find.byType(MediaThumbnailImage),
-        ),
+      final full = tester.widget<Image>(
+        find.byKey(const ValueKey('thought-photo-full')),
       );
-      expect(fullPhoto.mediaPath, photo.path);
-      expect((fullPhoto.fit, fullPhoto.cacheWidth), (BoxFit.contain, 1440));
-      final fullFill = tester.widget<Image>(
-        find.byKey(const ValueKey('thought-photo-fill')),
-      );
-      expect((fullFill.image as ResizeImage).imageProvider, FileImage(photo));
-      final frame = tester.getRect(
-        find
-            .descendant(
-              of: find.byType(MediaGrid),
-              matching: find.byType(AspectRatio),
-            )
-            .first,
-      );
-      expect(frame.width / frame.height, closeTo(3, .01));
+      expect((full.image, full.fit), (FileImage(photo), BoxFit.contain));
+      expect(find.byType(ImageFiltered), findsNothing);
       await finish(tester);
     },
   );
@@ -1085,16 +1049,13 @@ void main() {
     await openCard(tester, thought);
     await pumpMediaFrames(tester);
 
-    final rect = tester.getRect(
-      find
-          .descendant(
-            of: find.byType(MediaGrid),
-            matching: find.byType(AspectRatio),
-          )
-          .first,
+    final full = find.byKey(const ValueKey('thought-photo-full'));
+    expect(tester.widget<Image>(full).fit, BoxFit.contain);
+    expect(
+      tester.getRect(full),
+      tester.getRect(find.byKey(const ValueKey('thought-card-screen'))),
     );
-    expect(rect.width / rect.height, closeTo(3, .01));
-    expect(find.byKey(const ValueKey('thought-photo-fill')), findsOneWidget);
+    expect(find.byType(ImageFiltered), findsNothing);
     await finish(tester);
   });
 
@@ -1137,14 +1098,16 @@ void main() {
   ) async {
     final photo = _tempFile('expires.png', pngBytes: true);
     final thought = _thought(initialNow).copyWith(
-      mediaKind: 'image',
+      mediaKind: 'image_carousel',
       expiresAt: initialNow.add(const Duration(seconds: 10)).toIso8601String(),
     );
     await posts.savePost(thought);
+    final first = _attachment(
+      'image',
+    ).copyWith(localPath: photo.path, downloadStatus: 'done');
+    await posts.savePostMediaAttachment(first);
     await posts.savePostMediaAttachment(
-      _attachment(
-        'image',
-      ).copyWith(localPath: photo.path, downloadStatus: 'done'),
+      first.copyWith(mediaId: 'media-image-2', blobId: 'blob-image-2'),
     );
     await openCard(tester, thought);
     tester.widget<MediaGrid>(find.byType(MediaGrid)).onTap!(0);

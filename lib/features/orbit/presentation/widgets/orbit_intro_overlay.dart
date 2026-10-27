@@ -70,86 +70,79 @@ class _OrbitIntroOverlayState extends State<OrbitIntroOverlay>
         IgnorePointer(
           child: ColoredBox(
             color: const Color(0x8C000000),
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                AnimatedBuilder(
-                  animation: _hand,
-                  builder: (context, _) => _Hand(
-                    step: widget.step,
-                    progress: Curves.easeInOut.transform(
-                      (_hand.value / .7).clamp(0.0, 1.0),
-                    ),
-                  ),
+            child: AnimatedBuilder(
+              animation: _hand,
+              builder: (context, _) => _Hand(
+                step: widget.step,
+                progress: Curves.easeInOut.transform(
+                  (_hand.value / .7).clamp(0.0, 1.0),
                 ),
-                Align(
-                  alignment: const Alignment(0, .55),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          title,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          body,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Color(0xFFD7DBE0),
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            for (final step in OrbitIntroStep.values)
-                              Container(
-                                width: 7,
-                                height: 7,
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 3,
-                                ),
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: step == widget.step
-                                      ? const Color(0xFF7FD8CC)
-                                      : const Color(0xFF5A6270),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
-        SafeArea(
-          child: Align(
-            alignment: AlignmentDirectional.topEnd,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: TextButton(
-                key: const ValueKey('orbit-intro-skip'),
-                onPressed: widget.onSkip,
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: const Color(0x24FFFFFF),
-                  minimumSize: const Size(64, 44),
+        Align(
+          alignment: const Alignment(0, .55),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IgnorePointer(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        body,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Color(0xFFD7DBE0),
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final step in OrbitIntroStep.values)
+                            Container(
+                              width: 7,
+                              height: 7,
+                              margin: const EdgeInsets.symmetric(horizontal: 3),
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: step == widget.step
+                                    ? const Color(0xFF7FD8CC)
+                                    : const Color(0xFF5A6270),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-                child: Text(l10n.orbit_intro_skip),
-              ),
+                const SizedBox(height: 12),
+                TextButton(
+                  key: const ValueKey('orbit-intro-skip'),
+                  onPressed: widget.onSkip,
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    backgroundColor: const Color(0x24FFFFFF),
+                    minimumSize: const Size(64, 44),
+                  ),
+                  child: Text(l10n.orbit_intro_skip),
+                ),
+              ],
             ),
           ),
         ),

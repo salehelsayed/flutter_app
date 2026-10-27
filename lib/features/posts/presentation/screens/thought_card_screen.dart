@@ -665,10 +665,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                           ),
                         ),
                 ),
-                if (_localPhoto(visual) case final photo?)
-                  _BlurredFill(image: FileImage(File(photo)))
-                else if (_pendingPreview(visual) case final preview?)
-                  _BlurredFill(image: MemoryImage(preview)),
                 if (hasVisual)
                   Center(child: _visualMedia(l10n, visual))
                 else
@@ -785,7 +781,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         retryLabel: l10n.btn_retry,
       );
     }
-    return MediaGrid(
+    final grid = MediaGrid(
       media: visual
           .map((attachment) => attachment.toSharedMediaAttachment())
           .toList(growable: false),
@@ -798,18 +794,24 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         if (original != null) unawaited(_download(original));
       },
     );
+    // One photo fills the card the way the full-size viewer shows it: whole,
+    // on black, with no separate viewer behind a tap.
+    if (_localPhoto(visual) case final photo?) {
+      return SizedBox.expand(
+        child: Image.file(
+          File(photo),
+          key: const ValueKey('thought-photo-full'),
+          fit: BoxFit.contain,
+          errorBuilder: (_, _, _) => grid,
+        ),
+      );
+    }
+    return grid;
   }
 
   Widget _topChrome(AppLocalizations l10n) {
-    final created = DateTime.tryParse(_post.createdAt)?.toUtc();
     final expiry = DateTime.tryParse(_post.expiresAt)?.toUtc();
-    final total = created != null && expiry != null
-        ? expiry.difference(created)
-        : Duration.zero;
     final left = expiry?.difference(_now) ?? Duration.zero;
-    final lifeLeft = total.inSeconds <= 0
-        ? 0.0
-        : (left.inSeconds / total.inSeconds).clamp(0.0, 1.0);
     final goneIn = left.inMinutes >= 60
         ? l10n.thought_gone_in_hours(left.inHours)
         : l10n.thought_gone_in_minutes(left.inMinutes.clamp(1, 59));
@@ -818,20 +820,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(2),
-              child: LinearProgressIndicator(
-                key: const ValueKey('thought-life-bar'),
-                value: lifeLeft,
-                minHeight: 3,
-                color: Colors.white,
-                backgroundColor: Colors.white.withValues(alpha: 0.35),
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
           Row(
             children: [
               CircleAvatar(
@@ -1176,34 +1164,6 @@ class _Scrim extends StatelessWidget {
                 Colors.transparent,
               ],
             ),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-/// The photo itself, blurred and dimmed, filling the screen behind it.
-class _BlurredFill extends StatelessWidget {
-  const _BlurredFill({required this.image});
-
-  final ImageProvider image;
-
-  @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: ClipRect(
-      child: ImageFiltered(
-        imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-        child: ColorFiltered(
-          colorFilter: const ColorFilter.mode(
-            Color(0x66000000),
-            BlendMode.darken,
-          ),
-          child: Image(
-            image: ResizeImage.resizeIfNeeded(120, null, image),
-            key: const ValueKey('thought-photo-fill'),
-            fit: BoxFit.cover,
-            errorBuilder: (_, _, _) => const SizedBox.shrink(),
           ),
         ),
       ),

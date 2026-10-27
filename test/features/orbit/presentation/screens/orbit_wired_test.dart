@@ -89,6 +89,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/pending_group_i
 import 'package:flutter_app/features/orbit/presentation/widgets/friends_filter_toggle.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_thought_note_bubble.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_view_toggle_button.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
@@ -819,6 +820,7 @@ void main() {
       Future<_OrbitThoughtPostRepository> introScene(
         WidgetTester tester, {
         bool withThoughts = true,
+        Locale locale = const Locale('en'),
       }) async {
         setLargeTestSurface(tester);
         identityRepo.seed(testIdentity);
@@ -842,6 +844,7 @@ void main() {
           buildOrbitWired(
             postRepository: posts,
             thoughtNowProvider: () => thoughtNow,
+            locale: locale,
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
@@ -1064,6 +1067,56 @@ void main() {
             await finishThoughtCase(tester);
           },
         );
+      }
+
+      for (final (name, size) in [
+        ('iPhone 11', Size(414, 896)),
+        ('iPhone 13', Size(390, 844)),
+        ('Pixel 6', Size(412, 915)),
+      ]) {
+        for (final locale in const [Locale('en'), Locale('ar')]) {
+          testWidgets(
+            'Skip covers no Orbit control on $name (${locale.languageCode})',
+            (tester) async {
+              await introScene(tester, locale: locale);
+              tester.view.physicalSize = size * 3;
+              tester.view.padding = const FakeViewPadding(
+                top: 47 * 3,
+                bottom: 34 * 3,
+              );
+              addTearDown(tester.view.resetPadding);
+              await pumpOrbitFrames(tester, count: 4);
+              final skip = find.byKey(const ValueKey('orbit-intro-skip'));
+              final skipRect = tester.getRect(skip);
+              final controls = find.byWidgetPredicate(
+                (w) =>
+                    w is IconButton ||
+                    w is ButtonStyleButton ||
+                    w is FloatingActionButton ||
+                    w is OrbitViewToggleButton ||
+                    const [
+                      ValueKey('orbit-compose-thought'),
+                      ValueKey('expandable-fab-toggle'),
+                      ValueKey('orbit-connection-indicator'),
+                      ValueKey('orbit-settings-button'),
+                      ValueKey('orbit-find-pill'),
+                    ].contains(w.key),
+              );
+              final covered = [
+                for (final element in controls.evaluate())
+                  if (element.widget.key !=
+                          const ValueKey('orbit-intro-skip') &&
+                      tester
+                          .getRect(find.byElementPredicate((e) => e == element))
+                          .overlaps(skipRect))
+                    element.widget.key ?? element.widget.runtimeType,
+              ];
+              expect(controls.evaluate().length, greaterThan(1));
+              expect(covered, isEmpty);
+              await finishThoughtCase(tester);
+            },
+          );
+        }
       }
 
       testWidgets('Skip ends the intro for good', (tester) async {
