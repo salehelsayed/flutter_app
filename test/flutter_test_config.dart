@@ -45,7 +45,7 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   var counter = 0;
   setUp(() {
     // Tests cover the features as dev builds run them; a test that proves the
-    // store build switches them off itself.
+    // switched-off build turns them off itself.
     debugThoughtsEnabledOverride = true;
     debugOrbitDepthEnabledOverride = true;
     final stamp = '${DateTime.now().microsecondsSinceEpoch}_${counter++}';

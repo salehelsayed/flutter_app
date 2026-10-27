@@ -248,7 +248,7 @@ void main() {
   });
 
   test(
-    'store build: with thoughts switched off it stores the thought and posts no card',
+    'switched off: with thoughts switched off it stores the thought and posts no card',
     () async {
       debugThoughtsEnabledOverride = false;
       contacts.addTestContact(_contact('peer-bob', 'Bob'));

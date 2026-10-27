@@ -9,7 +9,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 const iosThoughtsSwitchKey = 'thoughts_enabled_v1';
 
 /// Mirrors [thoughtsEnabled] into the keychain shared with the extension. Run
-/// on every start, so a store build installed over a dev build clears it.
+/// on every start, so a build with Thoughts off installed over one with them on
+/// clears it.
 Future<void> publishThoughtsSwitchForIos(SecureKeyStore sharedStore) async {
   try {
     if (thoughtsEnabled) {

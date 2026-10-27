@@ -820,7 +820,7 @@ void main() {
     );
 
     testWidgets(
-      'store build: with thoughts switched off a thought reply or reaction is a plain message',
+      'switched off: with thoughts switched off a thought reply or reaction is a plain message',
       (tester) async {
         debugThoughtsEnabledOverride = false;
         final now = DateTime.utc(2026, 10, 26, 12);

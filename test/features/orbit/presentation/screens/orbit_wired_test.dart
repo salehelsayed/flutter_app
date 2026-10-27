@@ -810,7 +810,7 @@ void main() {
     );
 
     testWidgets(
-      'store build: with thoughts and 3D switched off a friend thought shows nowhere and nothing opens',
+      'switched off: with thoughts and 3D switched off a friend thought shows nowhere and nothing opens',
       (tester) async {
         debugThoughtsEnabledOverride = false;
         debugOrbitDepthEnabledOverride = false;

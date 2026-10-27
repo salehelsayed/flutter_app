@@ -6372,7 +6372,7 @@ void main() {
       );
 
       test(
-        'store build: with thoughts switched off a thought push shows nothing',
+        'switched off: with thoughts switched off a thought push shows nothing',
         () async {
           debugThoughtsEnabledOverride = false;
           mockNotificationsPlugin();
