@@ -52,7 +52,7 @@ class InMemoryContactRequestRepository implements ContactRequestRepository {
         if (contact.isBlocked && existingContactOnly) {
           return ContactRequestDecisionResult.blocked;
         }
-        if (accept && !contact.isBlocked && !existingContactOnly) {
+        if (!contact.isBlocked) {
           await beforeMarkAccepted?.call();
         }
         await updateStatus(current.peerId, ContactRequestStatus.accepted);

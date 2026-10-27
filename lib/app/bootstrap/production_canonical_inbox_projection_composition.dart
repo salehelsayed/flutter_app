@@ -53,6 +53,7 @@ import 'package:flutter_app/features/account_migration/application/account_migra
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/features/contact_request/application/recover_intro_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/sql_contact_repair_repository.dart';
@@ -228,6 +229,7 @@ buildProductionCanonicalInboxProjectionComposition({
     final contactRequestRepository = _buildContactRequestRepository(
       database,
       contactRepository,
+      secureKeyStore,
     );
     late final Future<int> Function(String peerId)
     projectDirectConversationRead;
@@ -959,6 +961,7 @@ ContactRepositoryImpl _buildContactRepository(Database database) =>
 ContactRequestRepositoryImpl _buildContactRequestRepository(
   Database database,
   ContactRepositoryImpl contactRepository,
+  SecureKeyStore secureKeyStore,
 ) => ContactRequestRepositoryImpl(
   dbLoadPendingRequests: () => dbLoadPendingRequests(database),
   dbLoadRequest: (peerId) => dbLoadRequest(database, peerId),
@@ -972,7 +975,11 @@ ContactRequestRepositoryImpl _buildContactRequestRepository(
         expected,
         accept,
         existingOnly,
-        before,
+        before ??
+            () => queueMlKemReannouncePeer(
+              secureKeyStore,
+              expected['peer_id'] as String,
+            ),
         beforeCreateContact: () => contactRepository.prepareContactCreation(
           expected['peer_id'] as String,
         ),

@@ -2979,6 +2979,17 @@ The five original CR-013/017 gap cases are enabled. Keep the durable key marker
 before accepted status, with network/profile work outside the transaction.
 Projection controls require orphan transport authority retired before a new
 contact write and current committed authority/eligibility published afterward.
+Passive legacy settlement also awaits the existing durable ML-KEM marker hook
+before accepted, including attach, queued presentation and resolver reconciliation.
+Both production compositions supply that hook; an explicit acceptance hook takes
+precedence. A complete remote ML-KEM key is not an outbound retry obligation.
+The SQL regression injects marker-write failure and requires pending to survive,
+then observes pending through a second SQL connection while the successful marker
+hook is held before accepted. Reopening SQL and reconstructing the fake secure
+store from its persisted contents lets the normal retry send once and drain the
+marker. Its causal failure and 118-case focused pass are retained as
+`passive-marker-red.log` and `passive-marker-final.log` under the same artifact
+directory below. This does not certify native secure-storage persistence.
 
 Feed, Orbit, FTE and notification consent pass the displayed request through
 that decision boundary. Success requires a real current unblocked contact;

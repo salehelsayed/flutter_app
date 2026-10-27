@@ -74,7 +74,7 @@ Future<ContactRequestDecisionResult> dbDecideContactRequest(
         if (blocked && existingContactOnly) {
           return ContactRequestDecisionResult.blocked;
         }
-        if (accept && !blocked && !existingContactOnly) {
+        if (!blocked) {
           await beforeMarkAccepted?.call();
         }
         await mark('accepted');

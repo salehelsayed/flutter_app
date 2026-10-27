@@ -304,6 +304,7 @@ import 'package:flutter_app/features/posts/application/pending_post_follow_on_re
 import 'package:flutter_app/features/posts/application/pending_post_media_upload_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/key_exchange_retrier.dart';
 import 'package:flutter_app/features/contact_request/application/wake_token_pending_marker.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
 import 'package:flutter_app/core/debug/e2e_test_mode.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
@@ -1091,7 +1092,11 @@ final class ProductionApplicationBootstrap
             expected,
             accept,
             existingOnly,
-            before,
+            before ??
+                () => queueMlKemReannouncePeer(
+                  secureKeyStore,
+                  expected['peer_id'] as String,
+                ),
             beforeCreateContact: () => contactRepository.prepareContactCreation(
               expected['peer_id'] as String,
             ),

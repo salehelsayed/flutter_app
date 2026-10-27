@@ -11,9 +11,12 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/features/contact_request/application/accept_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contact_request/application/mlkem_reannounce_marker.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -127,6 +130,173 @@ void main() {
   });
 
   group('CR-013 accepting survives a crash halfway through', () {
+    test(
+      'passive legacy settlement durably owns reciprocal retry before accepted',
+      () async {
+        var keyStore = FakeSecureKeyStore();
+        var failMarker = true;
+        var markerCalls = 0;
+        Completer<void>? markerQueued;
+        Completer<void>? releaseMarker;
+        late Completer<ContactRequestDecisionResult> decisionFinished;
+        final request = ContactRequestModel(
+          peerId: _bobId.peerId,
+          publicKey: _bobId.publicKey,
+          rendezvous: '/dns4/relay',
+          username: 'Bob',
+          signature: 'legacy-signed-request',
+          receivedAt: '2026-10-27T00:00:00.000Z',
+          mlKemPublicKey: 'complete-remote-mlkem',
+        );
+        var contacts = _buildContactRepo(aliceDb);
+        await contacts.addContact(request.toContactModel());
+        await dbUpsertRequest(aliceDb, request.toMap());
+        expect(await readMlKemReannounceMarker(keyStore), isEmpty);
+        final reader = await _openDb(aliceDbPath);
+        addTearDown(reader.close);
+        final requests = ContactRequestRepositoryImpl(
+          dbLoadPendingRequests: () => dbLoadPendingRequests(aliceDb),
+          dbLoadRequest: (peerId) => dbLoadRequest(aliceDb, peerId),
+          dbUpsertRequest: (row) => dbUpsertRequest(aliceDb, row),
+          dbUpdateRequestStatus: (peerId, status) =>
+              dbUpdateRequestStatus(aliceDb, peerId, status),
+          dbDeleteRequest: (peerId) => dbDeleteRequest(aliceDb, peerId),
+          dbRequestExists: (peerId) => dbRequestExists(aliceDb, peerId),
+          dbDecideRequest: (expected, accept, existingOnly, before) async {
+            final result = await dbDecideContactRequest(
+              aliceDb,
+              expected,
+              accept,
+              existingOnly,
+              before ??
+                  () async {
+                    markerCalls++;
+                    if (failMarker) {
+                      throw StateError('marker storage unavailable');
+                    }
+                    await queueMlKemReannouncePeer(
+                      keyStore,
+                      expected['peer_id'] as String,
+                    );
+                    markerQueued?.complete();
+                    await releaseMarker?.future;
+                  },
+            );
+            decisionFinished.complete(result);
+            return result;
+          },
+        );
+        final bridge = Ed25519ContactRequestBridge(_cryptoBus);
+        Future<void> attach() async {
+          decisionFinished = Completer<ContactRequestDecisionResult>();
+          final listener = ContactRequestListener(
+            contactRequestStream: const Stream.empty(),
+            requestRepo: requests,
+            contactRepo: contacts,
+            bridge: bridge,
+            getOwnPeerId: () => _aliceId.peerId,
+            downloadProfilePictureFn: _settledAvatar,
+          );
+          final prompts = <ContactRequestModel>[];
+          final subscription = listener.requestStream.listen(prompts.add);
+          try {
+            final decision = await decisionFinished.future;
+            expect(
+              decision,
+              failMarker
+                  ? ContactRequestDecisionResult.updateStatusError
+                  : ContactRequestDecisionResult.alreadyAccepted,
+            );
+            expect(prompts, isEmpty);
+          } finally {
+            await subscription.cancel();
+            listener.dispose();
+          }
+        }
+
+        await attach();
+        expect(markerCalls, 1);
+        expect(await readMlKemReannounceMarker(keyStore), isEmpty);
+        expect(
+          (await requests.getRequest(request.peerId))!.status,
+          ContactRequestStatus.pending,
+        );
+
+        failMarker = false;
+        markerQueued = Completer<void>();
+        releaseMarker = Completer<void>();
+        addTearDown(() {
+          if (!releaseMarker!.isCompleted) releaseMarker.complete();
+        });
+        final settling = attach();
+        await markerQueued.future;
+        expect(await readMlKemReannounceMarker(keyStore), [request.peerId]);
+        expect(
+          (await dbLoadRequest(reader, request.peerId))!['status'],
+          'pending',
+        );
+        releaseMarker.complete();
+        await settling;
+        expect(markerCalls, 2);
+        expect(
+          (await requests.getRequest(request.peerId))!.status,
+          ContactRequestStatus.accepted,
+        );
+        expect(
+          (await contacts.getContact(request.peerId))!.mlKemPublicKey,
+          'complete-remote-mlkem',
+        );
+
+        final durableContents = await keyStore.readAll();
+        keyStore = FakeSecureKeyStore();
+        for (final entry in durableContents.entries) {
+          await keyStore.write(entry.key, entry.value);
+        }
+        await aliceDb.close();
+        aliceDb = await _openDb(aliceDbPath);
+        contacts = _buildContactRepo(aliceDb);
+        final identities = _buildIdentityRepo(aliceDb, keyStore);
+        await identities.saveIdentity(
+          testIdentityModel(
+            _aliceId,
+            username: 'Alice',
+            mlKemPublicKey: 'own-mlkem',
+          ),
+        );
+        final sender = FakeP2PService(
+          peerId: _aliceId.peerId,
+          network: network,
+        );
+        final receiver = FakeP2PService(
+          peerId: _bobId.peerId,
+          network: network,
+        );
+        addTearDown(sender.dispose);
+        addTearDown(receiver.dispose);
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: contacts,
+            identityRepo: identities,
+            p2pService: sender,
+            bridge: bridge,
+            secureKeyStore: keyStore,
+          ),
+          1,
+        );
+        expect(await readMlKemReannounceMarker(keyStore), isEmpty);
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: contacts,
+            identityRepo: identities,
+            p2pService: sender,
+            bridge: bridge,
+            secureKeyStore: keyStore,
+          ),
+          0,
+        );
+      },
+    );
+
     test(
       'a failed SQL decision rolls back the contact, and retry survives restart without re-prompting',
       () async {
