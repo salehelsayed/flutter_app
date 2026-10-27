@@ -3788,10 +3788,12 @@ later iOS test-fixture and documentation changes have separate proof.
 
 Step 4's production depth tests are `orbit_depth_geometry_test.dart`,
 `orbit_depth_surface_test.dart`, and `orbit_depth_media_test.dart`, with real
-Orbit/Feed wiring assertions in their existing screen test files. Build depth
-seats from `computeOrbitLayout` before filtering groups: groups leave their
-original holes, partial rings retain their spread, and arc friends stay behind
-the outer overflow control. Arrival chooses the first unseen thought; a
+Orbit/Feed wiring assertions in their existing screen test files. Depth
+seats come from `computeOrbitLayout` after friends with a live thought are
+moved to the front (owner 10-27): they sit next to each other, filling the
+inner ring before the next one, so no thought sits between empty seats;
+partial rings retain their spread, and arc friends stay behind the outer
+overflow control. Arrival chooses the first unseen thought; a
 committed departure writes the exact displayed post ID, while a folded card or
 overview bubble must not make a replacement thought a read target. Binding-clock
 expiry tests need a second live peer and must assert its face rotates to the

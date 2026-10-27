@@ -28,21 +28,31 @@ class OrbitDepthLayout {
   final List<OrbitDepthSeat> seats;
   final OrbitBadgeSlot? overflow;
 
+  /// Friends with a live thought take the first seats, side by side: the
+  /// inner ring fills first and only then the next one. Everyone else follows
+  /// in their usual order, so no thought sits between empty seats.
   factory OrbitDepthLayout.fromItems(
     List<OrbitItem> items,
     Map<String, PostModel> thoughts,
     DateTime now, {
     bool mirrored = false,
   }) {
+    bool hasThought(OrbitItem item) =>
+        item is OrbitFriendItem &&
+        liveOrbitDepthThought(thoughts[item.friend.peerId], now) != null;
+    final seated = [
+      ...items.where(hasThought),
+      ...items.where((item) => !hasThought(item)),
+    ];
     final layout = computeOrbitLayout(
-      memberCount: items.length,
+      memberCount: seated.length,
       geometry: OrbitGeometryPrefs.defaults,
       mirrored: mirrored,
     );
     return OrbitDepthLayout([
       for (final placement in layout.seats)
         if (placement.kind != OrbitSeatKind.arc)
-          if (items[placement.index] case final OrbitFriendItem item)
+          if (seated[placement.index] case final OrbitFriendItem item)
             OrbitDepthSeat(
               item.friend,
               placement,

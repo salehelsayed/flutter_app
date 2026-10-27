@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-    'ring membership keeps group holes and never promotes overflow friends',
+    'friends with thoughts fill the inner ring side by side, a group never leaves a hole',
     () {
       final items = <OrbitItem>[
         for (var i = 0; i < 16; i++) OrbitFriendItem(depthFriend(i)),
@@ -32,21 +32,24 @@ void main() {
       expect(
         layout
             .inLayer(OrbitDepthLayer.inner)
-            .map((seat) => seat.placement.index),
-        [0, 1, 3, 4],
+            .map((seat) => (seat.placement.index, seat.friend.peerId)),
+        [
+          (0, 'peer-0'),
+          (1, 'peer-1'),
+          (2, 'peer-3'),
+          (3, 'peer-4'),
+          (4, 'peer-5'),
+        ],
       );
       expect(
-        layout
-            .inLayer(OrbitDepthLayer.outer)
-            .map((seat) => seat.placement.index),
-        [5, 6, 7, 8, 9, 10, 11, 12],
+        layout.inLayer(OrbitDepthLayer.outer).map((seat) => seat.friend.peerId),
+        [for (var i = 6; i <= 13; i++) 'peer-$i'],
       );
       expect(
-        layout.seats.any((seat) => seat.friend.peerId == 'peer-13'),
+        layout.seats.any((seat) => seat.friend.peerId == 'peer-14'),
         isFalse,
       );
       expect(layout.overflow!.overflowCount, 3);
-      // Five actual source slots, rather than four re-spread friends.
       expect(
         layout.seats[1].placement.angle,
         closeTo(-math.pi / 2 + 2 * math.pi / 5, 1e-9),
@@ -65,7 +68,7 @@ void main() {
     expect(rtl.seats[1].placement.dy, closeTo(ltr.seats[1].placement.dy, 1e-9));
   });
   test(
-    'missing and expired thoughts retain empty seats and arrival chooses first unseen',
+    'live thoughts sit next to each other ahead of empty seats; arrival chooses first unseen',
     () {
       final layout = OrbitDepthLayout.fromItems(
         [for (var i = 0; i < 5; i++) OrbitFriendItem(depthFriend(i))],
@@ -76,9 +79,20 @@ void main() {
         },
         depthNow,
       );
-      expect(layout.seats.length, 5);
-      expect(layout.seats[1].thought, isNull);
-      expect(layout.seats[2].thought, isNull);
+      expect(layout.seats.map((seat) => seat.friend.peerId), [
+        'peer-0',
+        'peer-3',
+        'peer-1',
+        'peer-2',
+        'peer-4',
+      ]);
+      expect(layout.seats.map((seat) => seat.thought?.id), [
+        'post-0',
+        'post-3',
+        null,
+        null,
+        null,
+      ]);
       expect(orbitDepthArrival(layout.seats, 0)!.friend.peerId, 'peer-3');
       expect(
         orbitDepthNearest(
@@ -104,9 +118,11 @@ void main() {
         {'peer-3': depthThought(3)},
         depthNow,
       );
+      // Seated with peer-1's thought first; a reseat during a gesture keeps
+      // every face where it is.
       expect(later.seats.map((seat) => seat.friend.peerId), [
-        'peer-0',
         'peer-1',
+        'peer-0',
         'peer-3',
         'peer-4',
       ]);
