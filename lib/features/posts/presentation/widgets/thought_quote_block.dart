@@ -89,38 +89,49 @@ class ThoughtQuoteBlock extends StatelessWidget {
                     color: colors.textMuted,
                   ),
                 ),
-                // Full width, so the quote sits on its own side.
+                // Full width, so the quote sits on its own side. A blank line
+                // reserves the resolved caption's font metrics while loading.
                 SizedBox(
                   width: double.infinity,
-                  child: pending
-                      ? Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: Container(
-                            key: const ValueKey('thought-quote-loading'),
-                            width: 72,
-                            height: 14,
-                            decoration: BoxDecoration(
-                              color: colors.divider,
-                              borderRadius: BorderRadius.circular(3),
+                  child: Stack(
+                    fit: StackFit.passthrough,
+                    children: [
+                      Text(
+                        pending ? ' ' : body,
+                        key: const ValueKey('thought-quote-text'),
+                        semanticsLabel: pending ? '' : null,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textDirection: pending
+                            ? Directionality.of(context)
+                            : detectTextDirection(body),
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontStyle: live == null && !pending
+                              ? FontStyle.italic
+                              : FontStyle.normal,
+                          color: live == null
+                              ? colors.disabledForeground
+                              : colors.textPrimary,
+                        ),
+                      ),
+                      if (pending)
+                        Positioned.fill(
+                          child: Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Container(
+                              key: const ValueKey('thought-quote-loading'),
+                              width: 72,
+                              height: 14,
+                              decoration: BoxDecoration(
+                                color: colors.divider,
+                                borderRadius: BorderRadius.circular(3),
+                              ),
                             ),
                           ),
-                        )
-                      : Text(
-                          body,
-                          key: const ValueKey('thought-quote-text'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textDirection: detectTextDirection(body),
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontStyle: live == null
-                                ? FontStyle.italic
-                                : FontStyle.normal,
-                            color: live == null
-                                ? colors.disabledForeground
-                                : colors.textPrimary,
-                          ),
                         ),
+                    ],
+                  ),
                 ),
               ],
             ),

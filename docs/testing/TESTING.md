@@ -2564,9 +2564,31 @@ IDs; both public Wired APIs and the group handoff stay unchanged.
 Evidence: `.audit/thought-quote-loading/pending-quote-red2.jsonl`,
 `quote-route-preservation-green.jsonl`,
 `quote-block-preservation-green.jsonl`, and
-`composition-contract-green.jsonl` in that directory. The Pixel quote flash
-persisted on build 156 per the same device-owner report; the neutral quote
-placeholder still needs confirmation on the next device candidate.
+`composition-contract-green.jsonl` in that directory. Kayan's build 157 Pixel
+recording report (`m-c054022a`, seq 69056, `px157_red.mp4`) identifies a remaining
+roughly 12px list shift as the neutral placeholder resolves. Device confirmation
+of the height correction below remains with Kayan/flutter_app.
+
+Pending and resolved quotes must reserve the same caption line metrics, outer
+padding and 30px thumbnail slot. A fixed 14px decorative loading bar cannot own
+the caption height: inherited line height and text scaling made the real chat
+quote grow from 54px to 66px at 140% scale on `1946a8cbb`, with the whole message
+row growing from 234px to 246px. A blank Text now reserves the resolved caption's
+metrics; the neutral bar overlays that line without determining layout. The
+resolved Text remains full width for its independent bidi alignment.
+
+Twelve real ConversationScreen/LetterCard cases assert exact quote and message
+row height equality for photo/text-only quotes, English/Arabic and 100/140/200%
+text scaling. All pass, alongside 25 route/screen controls, 12 image/bidi quote
+controls and three composition contracts (52 focused checks, zero skips).
+Evidence: `.audit/thought-quote-height/equal-height-red.jsonl`,
+`height-equality-green2.jsonl`, `height-route-preservation-green.jsonl`,
+`height-block-preservation-green.jsonl` and `height-composition-green.jsonl`.
+The first green attempt retained four 200% errors from the separate inline
+timestamp Row overflowing at Pixel width, also present in the baseline run.
+The additional 200% quote checks use a wider 524 logical-pixel viewport; the
+causal 100/140% cases retain Pixel width (393 logical pixels). This does not
+validate or fix the narrow-screen 200% timestamp layout.
 
 A live text send can lose custody staging to concurrent recovery after both
 independently encrypt. An intent-bearing losing caller must not transition

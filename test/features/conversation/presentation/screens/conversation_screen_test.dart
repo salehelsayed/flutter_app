@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -38,6 +39,8 @@ void main() {
   Widget buildTestWidget({
     List<ConversationMessage> messages = const [],
     Map<String, ThoughtQuotePreview?> thoughtQuotes = const {},
+    Set<String> loadingThoughtQuoteIds = const {},
+    TextScaler? textScaler,
     DateTime? thoughtNow,
     Locale locale = const Locale('en'),
     ValueChanged<String>? onSend,
@@ -81,6 +84,12 @@ void main() {
       locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
+      builder: textScaler == null
+          ? null
+          : (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+              child: child!,
+            ),
       home: Scaffold(
         body: ConversationScreen(
           contactPeerId: '12D3KooWTestPeerId1234567890',
@@ -122,6 +131,7 @@ void main() {
           backgroundPreference: backgroundPreference,
           onPrivateMediaPolicyChanged: onPrivateMediaPolicyChanged,
           thoughtQuotes: thoughtQuotes,
+          loadingThoughtQuoteIds: loadingThoughtQuoteIds,
           thoughtNow: thoughtNow,
         ),
       ),
@@ -751,6 +761,120 @@ void main() {
       expect(find.text('Original text'), findsWidgets);
       expect(find.text('Message unavailable'), findsOneWidget);
     });
+
+    for (final mediaKind in ['image', 'none']) {
+      for (final scale in [1.0, 1.4, 2.0]) {
+        for (final language in ['en', 'ar']) {
+          testWidgets(
+            'a pending quote keeps its resolved height: ' +
+                mediaKind +
+                ' ' +
+                scale.toString() +
+                ' ' +
+                language,
+            (tester) async {
+              // Keep the causal 140% case at Pixel width. At 200%, use a
+              // wider viewport: the separate inline timestamp currently
+              // overflows at Pixel width before this quote can be checked.
+              tester.view.physicalSize = Size(scale == 2.0 ? 1440 : 1080, 2400);
+              tester.view.devicePixelRatio = 2.75;
+              addTearDown(() {
+                tester.view.resetPhysicalSize();
+                tester.view.resetDevicePixelRatio();
+              });
+              final now = DateTime.utc(2026, 10, 27, 12);
+              final directory = Directory.systemTemp.createTempSync(
+                'quote-height-',
+              );
+              addTearDown(() => directory.deleteSync(recursive: true));
+              final photo = File(directory.path + '/photo.png')
+                ..writeAsBytesSync(
+                  base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+                  ),
+                );
+              final messages = [
+                makeMessage(
+                  id: 'height-reply',
+                  text: 'A reply below this thought',
+                  isIncoming: false,
+                  quotedMessageId: 'thought:lake',
+                ),
+              ];
+              Widget scene({required bool pending}) => buildTestWidget(
+                messages: messages,
+                initialLoadDone: true,
+                locale: Locale(language),
+                textScaler: TextScaler.linear(scale),
+                loadingThoughtQuoteIds: pending ? {'lake'} : const {},
+                thoughtNow: now,
+                thoughtQuotes: pending
+                    ? const {}
+                    : {
+                        'lake': ThoughtQuotePreview(
+                          text: language == 'ar'
+                              ? 'غروب الشمس على البحيرة'
+                              : 'Sunset at the lake?',
+                          mediaKind: mediaKind,
+                          expiresAt: now.add(const Duration(hours: 1)),
+                          imagePath: mediaKind == 'image' ? photo.path : null,
+                        ),
+                      },
+              );
+              await tester.pumpWidget(scene(pending: true));
+              await pumpFrames(tester);
+              final quote = find.byKey(const ValueKey('thought-quote-block'));
+              final row = find.byKey(const ValueKey('msg-height-reply'));
+              final pendingQuoteHeight = tester.getSize(quote).height;
+              final pendingRowHeight = tester.getSize(row).height;
+              expect(
+                find.byKey(const ValueKey('thought-quote-loading')),
+                findsOneWidget,
+              );
+              await tester.pumpWidget(scene(pending: false));
+              await pumpFrames(tester);
+              final resolvedQuoteHeight = tester.getSize(quote).height;
+              final resolvedRowHeight = tester.getSize(row).height;
+              debugPrint(
+                'QUOTE-HEIGHT ' +
+                    mediaKind +
+                    ' ' +
+                    scale.toString() +
+                    ' ' +
+                    language +
+                    ': quote ' +
+                    pendingQuoteHeight.toString() +
+                    ' -> ' +
+                    resolvedQuoteHeight.toString() +
+                    '; row ' +
+                    pendingRowHeight.toString() +
+                    ' -> ' +
+                    resolvedRowHeight.toString(),
+              );
+              expect(
+                pendingQuoteHeight,
+                resolvedQuoteHeight,
+                reason:
+                    'resolving a quote must not change the reserved quote height',
+              );
+              expect(
+                pendingRowHeight,
+                resolvedRowHeight,
+                reason: 'resolving a quote must not reflow the chat list',
+              );
+              expect(
+                find.byKey(const ValueKey('thought-quote-loading')),
+                findsNothing,
+              );
+              expect(
+                find.byKey(const ValueKey('thought-quote-photo')),
+                mediaKind == 'image' ? findsOneWidget : findsNothing,
+              );
+            },
+          );
+        }
+      }
+    }
 
     testWidgets(
       'a thought quote shows the live thought, then no longer available',
