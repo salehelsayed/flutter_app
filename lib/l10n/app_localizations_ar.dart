@@ -545,9 +545,6 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
-  String get thought_reply_send => 'إرسال الرد';
-
-  @override
   String get thought_close => 'إغلاق';
 
   @override

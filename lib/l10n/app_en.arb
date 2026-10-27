@@ -223,8 +223,6 @@
   "@thought_activity_group": {"placeholders": {"name": {"type": "String"}, "count": {"type": "int"}, "glyph": {"type": "String"}}},
   "thought_reply_hint": "Reply to {name}…",
   "@thought_reply_hint": {"placeholders": {"name": {"type": "String"}}, "description": "Thought card: reply field over a friend's thought"},
-  "thought_reply_send": "Send reply",
-  "@thought_reply_send": {"description": "Thought card: send button label for screen readers"},
   "thought_close": "Close",
   "@thought_close": {"description": "Thought card: close button label for screen readers"},
   "thought_gone_in_hours": "gone in {hours} h",

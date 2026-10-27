@@ -952,12 +952,6 @@ abstract class AppLocalizations {
   /// **'Reply to {name}…'**
   String thought_reply_hint(String name);
 
-  /// Thought card: send button label for screen readers
-  ///
-  /// In en, this message translates to:
-  /// **'Send reply'**
-  String get thought_reply_send;
-
   /// Thought card: close button label for screen readers
   ///
   /// In en, this message translates to:

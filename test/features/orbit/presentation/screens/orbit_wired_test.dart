@@ -1380,7 +1380,7 @@ void main() {
           find.text('My own live thought', findRichText: true),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
+        expect(_replyField, findsNothing);
         expect(posts.focusedIds, isEmpty);
 
         Navigator.of(tester.element(find.byType(ThoughtCardScreen))).pop();
@@ -1762,12 +1762,9 @@ void main() {
       await pumpOrbitFrames(tester, count: 8);
       await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
       await pumpOrbitFrames(tester, count: 8);
-      await tester.enterText(
-        find.byKey(const ValueKey('thought-reply-field')),
-        'count me in',
-      );
+      await tester.enterText(_replyField, 'count me in');
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+      await tester.tap(_replySend);
       await pumpOrbitFrames(tester, count: 12);
       expect(find.byType(ThoughtCardScreen), findsNothing);
       expect(find.byType(ConversationWired), findsOneWidget);
@@ -1888,12 +1885,9 @@ void main() {
         await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
 
-        await tester.enterText(
-          find.byKey(const ValueKey('thought-reply-field')),
-          'bringing snacks',
-        );
+        await tester.enterText(_replyField, 'bringing snacks');
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await tester.tap(_replySend);
         await pumpOrbitFrames(tester, count: 12);
 
         expect(find.byType(ThoughtCardScreen), findsNothing);
@@ -1982,12 +1976,9 @@ void main() {
         await pumpOrbitFrames(tester, count: 8);
         await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
         await pumpOrbitFrames(tester, count: 8);
-        await tester.enterText(
-          find.byKey(const ValueKey('thought-reply-field')),
-          'count me in',
-        );
+        await tester.enterText(_replyField, 'count me in');
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await tester.tap(_replySend);
         await pumpOrbitFrames(tester, count: 12);
         expect(find.byType(ThoughtCardScreen), findsNothing);
         expect(posts.heldCount, greaterThan(0));
@@ -2079,16 +2070,10 @@ void main() {
         expect(posts.focusedIds, ['latest-thought']);
         expect((await posts.getPost('latest-thought'))!.isRead, isTrue);
 
-        await tester.enterText(
-          find.byKey(const ValueKey('thought-reply-field')),
-          'count me in',
-        );
+        await tester.enterText(_replyField, 'count me in');
         await tester.pump();
-        await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
-        await tester.tap(
-          find.byKey(const ValueKey('thought-reply-send')),
-          warnIfMissed: false,
-        );
+        await tester.tap(_replySend);
+        await tester.tap(_replySend, warnIfMissed: false);
         await pumpOrbitFrames(tester, count: 12);
         expect(find.byType(ThoughtCardScreen), findsNothing);
         expect(find.byType(ConversationWired), findsOneWidget);
@@ -2358,7 +2343,7 @@ void main() {
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
 
         await tester.pump(const Duration(seconds: 5));
-        expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
+        expect(_replyField, findsNothing);
         // Content closes at expiry; allow the ordinary route's reverse
         // transition to dispose its offstage widget before asserting absence.
         await pumpOrbitFrames(tester, count: 8);
@@ -11949,3 +11934,18 @@ class _CountingCallActivitySource implements OrbitCallActivitySource {
     return const <String, int>{};
   }
 }
+
+Finder get _replyField => find.descendant(
+  of: find.byKey(const ValueKey('thought-reply-composer')),
+  matching: find.byType(TextField),
+);
+
+Finder get _replySend => find
+    .ancestor(
+      of: find.descendant(
+        of: find.byKey(const ValueKey('thought-reply-composer')),
+        matching: find.byIcon(Icons.arrow_upward_rounded),
+      ),
+      matching: find.byType(GestureDetector),
+    )
+    .first;

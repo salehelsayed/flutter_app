@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -161,7 +162,7 @@ void main() {
       expect(find.byType(PostCard), findsNothing);
       expect(find.byIcon(Icons.favorite_border), findsNothing);
       expect(find.byIcon(Icons.comment_outlined), findsNothing);
-      expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
+      expect(_replyField, findsOneWidget);
       expect(find.text('Reply to Alice…'), findsOneWidget);
       await finish(tester);
     },
@@ -195,7 +196,7 @@ void main() {
     expect(find.text('You'), findsOneWidget);
     expect(find.text('2h ago · gone in 22 h'), findsOneWidget);
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-reply-field')), findsNothing);
+    expect(_replyField, findsNothing);
     expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
     expect(find.byType(FilledButton), findsNothing);
     expect(posts.focusedIds, isEmpty);
@@ -482,19 +483,13 @@ void main() {
       onOpenChat: () => chatOpens++,
     );
 
-    await tester.tap(find.byKey(const ValueKey('thought-reply-field')));
+    await tester.tap(_replyField);
     await tester.pump();
     expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
-    await tester.enterText(
-      find.byKey(const ValueKey('thought-reply-field')),
-      '  count me in ',
-    );
+    await tester.enterText(_replyField, '  count me in ');
     await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
-    await tester.tap(
-      find.byKey(const ValueKey('thought-reply-send')),
-      warnIfMissed: false,
-    );
+    await tester.tap(_replySend);
+    await tester.tap(_replySend, warnIfMissed: false);
     await tester.pumpAndSettle();
 
     expect(replies, [('count me in', 'thought-1')]);
@@ -518,12 +513,7 @@ void main() {
       onReply: (text, postId) => replies.add((text, postId)),
     );
 
-    expect(
-      tester
-          .widget<IconButton>(find.byKey(const ValueKey('thought-reply-send')))
-          .onPressed,
-      isNull,
-    );
+    expect(tester.widget<GestureDetector>(_replySend).onTap, isNull);
     await tester.tap(find.byKey(const ValueKey('thought-react-fire')));
     await tester.pumpAndSettle();
 
@@ -564,51 +554,51 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('a queued reply updates to Sent and chat opens only on request', (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final changes = StreamController<ConversationMessage>.broadcast();
-    addTearDown(changes.close);
-    String? sentId;
-    var chatOpens = 0;
-    await openCard(
-      tester,
-      thought,
-      sendReply: (_, _, id) async {
-        sentId = id;
-        return ThoughtReplyStatus.queued;
-      },
-      replyChanges: changes.stream,
-      onOpenChat: () => chatOpens++,
-    );
-    await tester.tap(find.byKey(const ValueKey('thought-react-love')));
-    await tester.pumpAndSettle();
-    expect(find.text('Sending...'), findsOneWidget);
-    expect(chatOpens, 0);
-    changes.add(
-      ConversationMessage(
-        id: sentId!,
-        contactPeerId: 'alice-peer',
-        senderPeerId: 'local-peer',
-        text: '❤️',
-        timestamp: now.toIso8601String(),
-        createdAt: now.toIso8601String(),
-        isIncoming: false,
-        status: 'inboxed',
-        quotedMessageId: 'thought:thought-1',
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('sent'), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-reply-retry')), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
-    await tester.pumpAndSettle();
-    expect(chatOpens, 1);
-    expect(find.byType(ThoughtCardScreen), findsNothing);
-    await finish(tester);
-  });
+  testWidgets(
+    'a queued reply updates to Sent with no separate open-chat line',
+    (tester) async {
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+      final changes = StreamController<ConversationMessage>.broadcast();
+      addTearDown(changes.close);
+      String? sentId;
+      var chatOpens = 0;
+      await openCard(
+        tester,
+        thought,
+        sendReply: (_, _, id) async {
+          sentId = id;
+          return ThoughtReplyStatus.queued;
+        },
+        replyChanges: changes.stream,
+        onOpenChat: () => chatOpens++,
+      );
+      await tester.tap(find.byKey(const ValueKey('thought-react-love')));
+      await tester.pumpAndSettle();
+      expect(find.text('Sending...'), findsOneWidget);
+      expect(chatOpens, 0);
+      changes.add(
+        ConversationMessage(
+          id: sentId!,
+          contactPeerId: 'alice-peer',
+          senderPeerId: 'local-peer',
+          text: '❤️',
+          timestamp: now.toIso8601String(),
+          createdAt: now.toIso8601String(),
+          isIncoming: false,
+          status: 'inboxed',
+          quotedMessageId: 'thought:thought-1',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('sent'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-reply-retry')), findsNothing);
+      expect(find.byKey(const ValueKey('thought-open-chat')), findsNothing);
+      expect(find.text('Open chat with Alice'), findsNothing);
+      expect(chatOpens, 0);
+      await finish(tester);
+    },
+  );
 
   testWidgets(
     'initial stale item and later arrivals resolve to only the newest thought',
@@ -922,7 +912,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(find.byKey(const ValueKey('thought-reply-field')), findsOneWidget);
+    expect(_replyField, findsOneWidget);
     await finish(tester);
   });
 
@@ -1030,6 +1020,83 @@ void main() {
       await finish(tester);
     },
   );
+
+  Future<void> openPhotoCard(WidgetTester tester) async {
+    final photo = _tempFile('immersive.png', pngBytes: true);
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(
+      _attachment(
+        'image',
+      ).copyWith(localPath: photo.path, downloadStatus: 'done'),
+    );
+    await openCard(tester, thought, onReply: (_, _) {});
+    await pumpMediaFrames(tester);
+  }
+
+  testWidgets('the reply box is the chat composer without its +', (
+    tester,
+  ) async {
+    await openPhotoCard(tester);
+
+    final composer = find.byKey(const ValueKey('thought-reply-composer'));
+    expect(tester.widget(composer), isA<ComposeArea>());
+    expect(find.byKey(const ValueKey('composer-attach-button')), findsNothing);
+    expect(
+      find.descendant(of: composer, matching: find.text('Reply to Alice…')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('thought-open-chat')), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('a tap on the photo shows it alone, a second tap brings back '
+      'the card', (tester) async {
+    await openPhotoCard(tester);
+    final photo = find.byKey(const ValueKey('thought-photo-full'));
+    final chrome = [
+      find.byKey(const ValueKey('thought-reply-composer')),
+      find.byKey(const ValueKey('thought-age')),
+      find.byKey(const ValueKey('thought-react-love')),
+    ];
+    for (final part in chrome) {
+      expect(part, findsOneWidget);
+    }
+
+    await tester.tap(photo);
+    await tester.pump();
+    for (final part in chrome) {
+      expect(part, findsNothing);
+    }
+    expect(photo, findsOneWidget);
+
+    await tester.tap(photo);
+    await tester.pump();
+    for (final part in chrome) {
+      expect(part, findsOneWidget);
+    }
+    await finish(tester);
+  });
+
+  testWidgets('with the keyboard open a tap on the photo only closes it', (
+    tester,
+  ) async {
+    await openPhotoCard(tester);
+    await tester.tap(_replyField);
+    await tester.pump();
+    expect(tester.widget<TextField>(_replyField).focusNode!.hasFocus, isTrue);
+
+    await tester.tapAt(
+      tester.getCenter(find.byKey(const ValueKey('thought-photo-full'))),
+    );
+    await tester.pump();
+    expect(tester.widget<TextField>(_replyField).focusNode!.hasFocus, isFalse);
+    expect(
+      find.byKey(const ValueKey('thought-reply-composer')),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
 
   testWidgets('a panorama keeps its whole width instead of being cropped', (
     tester,
@@ -1221,3 +1288,18 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
     super.didPop(route, previousRoute);
   }
 }
+
+Finder get _replyField => find.descendant(
+  of: find.byKey(const ValueKey('thought-reply-composer')),
+  matching: find.byType(TextField),
+);
+
+Finder get _replySend => find
+    .ancestor(
+      of: find.descendant(
+        of: find.byKey(const ValueKey('thought-reply-composer')),
+        matching: find.byIcon(Icons.arrow_upward_rounded),
+      ),
+      matching: find.byType(GestureDetector),
+    )
+    .first;

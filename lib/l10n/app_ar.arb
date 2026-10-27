@@ -212,7 +212,6 @@
   "thought_activity_empty": "لا توجد تفاعلات بعد",
   "thought_activity_group": "{count, plural, =0{تفاعل {name} بـ {glyph}} =1{{name} وشخص آخر تفاعلا بـ {glyph}} other{{name} و{count} آخرون تفاعلوا بـ {glyph}}}",
   "thought_reply_hint": "رُدّ على {name}…",
-  "thought_reply_send": "إرسال الرد",
   "thought_close": "إغلاق",
   "thought_gone_in_hours": "تختفي بعد {hours} س",
   "thought_gone_in_minutes": "تختفي بعد {minutes} د",

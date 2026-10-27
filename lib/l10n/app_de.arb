@@ -212,7 +212,6 @@
   "thought_activity_empty": "Noch keine Reaktionen",
   "thought_activity_group": "{count, plural, =0{{name} hat mit {glyph} reagiert} =1{{name} und 1 weitere Person haben mit {glyph} reagiert} other{{name} und {count} weitere Personen haben mit {glyph} reagiert}}",
   "thought_reply_hint": "{name} antworten…",
-  "thought_reply_send": "Antwort senden",
   "thought_close": "Schließen",
   "thought_gone_in_hours": "weg in {hours} Std.",
   "thought_gone_in_minutes": "weg in {minutes} Min.",

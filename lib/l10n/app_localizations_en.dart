@@ -535,9 +535,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get thought_reply_send => 'Send reply';
-
-  @override
   String get thought_close => 'Close';
 
   @override

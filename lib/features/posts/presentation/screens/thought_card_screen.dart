@@ -7,6 +7,7 @@ import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -101,6 +102,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   final _replyFocus = FocusNode();
   String? _replyMessageId;
   String? _submittedReply;
+
+  /// The photo alone, with every control hidden, after a tap on it.
+  bool _immersive = false;
   String? _replyPostId;
   ThoughtReplyStatus? _replyStatus;
   bool _sendingReply = false;
@@ -669,29 +673,35 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                   Center(child: _visualMedia(l10n, visual))
                 else
                   _centeredText(),
-                const _Scrim(top: true),
-                const _Scrim(top: false),
-                AnimatedOpacity(
-                  opacity: typing ? 1 : 0,
-                  duration: const Duration(milliseconds: 180),
-                  child: IgnorePointer(
-                    ignoring: !typing,
-                    child: GestureDetector(
-                      key: const ValueKey('thought-reply-dismiss'),
-                      onTap: _replyFocus.unfocus,
-                      child: const ColoredBox(color: Color(0x61000000)),
+                if (!_immersive) ...[
+                  const _Scrim(top: true),
+                  const _Scrim(top: false),
+                  AnimatedOpacity(
+                    opacity: typing ? 1 : 0,
+                    duration: const Duration(milliseconds: 180),
+                    child: IgnorePointer(
+                      ignoring: !typing,
+                      child: GestureDetector(
+                        key: const ValueKey('thought-reply-dismiss'),
+                        onTap: _replyFocus.unfocus,
+                        child: const ColoredBox(color: Color(0x61000000)),
+                      ),
                     ),
                   ),
-                ),
-                SafeArea(
-                  child: Column(
-                    children: [
-                      _topChrome(l10n),
-                      const Spacer(),
-                      _bottomChrome(l10n, showText: hasVisual, typing: typing),
-                    ],
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        _topChrome(l10n),
+                        const Spacer(),
+                        _bottomChrome(
+                          l10n,
+                          showText: hasVisual,
+                          typing: typing,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
     );
@@ -795,14 +805,19 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       },
     );
     // One photo fills the card the way the full-size viewer shows it: whole,
-    // on black, with no separate viewer behind a tap.
+    // on black. A tap shows it alone and a second tap brings the card back.
     if (_localPhoto(visual) case final photo?) {
-      return SizedBox.expand(
-        child: Image.file(
-          File(photo),
-          key: const ValueKey('thought-photo-full'),
-          fit: BoxFit.contain,
-          errorBuilder: (_, _, _) => grid,
+      return GestureDetector(
+        key: const ValueKey('thought-photo-toggle'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _immersive = !_immersive),
+        child: SizedBox.expand(
+          child: Image.file(
+            File(photo),
+            key: const ValueKey('thought-photo-full'),
+            fit: BoxFit.contain,
+            errorBuilder: (_, _, _) => grid,
+          ),
         ),
       );
     }
@@ -944,14 +959,15 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 ],
               ),
             ),
-          _ReplyField(
+          ComposeArea(
+            key: const ValueKey('thought-reply-composer'),
             controller: _replyController,
             focusNode: _replyFocus,
-            hint: l10n.thought_reply_hint(widget.authorName),
-            sendLabel: l10n.thought_reply_send,
-            enabled: !_sendingReply,
-            onSend: () =>
-                unawaited(_sendReply(_replyController.text, openChat: true)),
+            hintText: l10n.thought_reply_hint(widget.authorName),
+            showAttachButton: false,
+            clearOnSend: false,
+            isSending: _sendingReply,
+            onSend: (text) => unawaited(_sendReply(text, openChat: true)),
           ),
           if (_replyStatus case final status?)
             Row(
@@ -976,14 +992,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                     child: Text(l10n.btn_retry),
                   ),
               ],
-            ),
-          if (widget.onOpenChat != null)
-            TextButton.icon(
-              key: const ValueKey('thought-open-chat'),
-              style: TextButton.styleFrom(foregroundColor: Colors.white),
-              onPressed: () => _close(afterClose: widget.onOpenChat),
-              icon: const Icon(Icons.chat_bubble_outline, size: 18),
-              label: Text(l10n.orbit_node_open_chat(widget.authorName)),
             ),
         ] else if (widget.onDelete != null)
           OutlinedButton.icon(
@@ -1273,79 +1281,4 @@ class _ReactionButton extends StatelessWidget {
       ),
     ),
   );
-}
-
-class _ReplyField extends StatelessWidget {
-  const _ReplyField({
-    required this.controller,
-    required this.focusNode,
-    required this.hint,
-    required this.sendLabel,
-    required this.onSend,
-    required this.enabled,
-  });
-
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final String hint;
-  final String sendLabel;
-  final VoidCallback onSend;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final canSend = enabled && controller.text.trim().isNotEmpty;
-    return TextFieldTapRegion(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(
-            alpha: focusNode.hasFocus ? 0.22 : 0.16,
-          ),
-          borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.28)),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                key: const ValueKey('thought-reply-field'),
-                controller: controller,
-                enabled: enabled,
-                focusNode: focusNode,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => onSend(),
-                style: const TextStyle(color: Colors.white, fontSize: 15),
-                cursorColor: Colors.white,
-                decoration: InputDecoration(
-                  hintText: hint,
-                  hintStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.85),
-                  ),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.fromLTRB(18, 13, 8, 13),
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.all(5),
-              child: IconButton.filled(
-                key: const ValueKey('thought-reply-send'),
-                tooltip: sendLabel,
-                onPressed: canSend ? onSend : null,
-                style: IconButton.styleFrom(
-                  backgroundColor: const Color(0xFF0F766E),
-                  disabledBackgroundColor: Colors.white,
-                  foregroundColor: Colors.white,
-                  disabledForegroundColor: const Color(0xFF0F766E),
-                ),
-                icon: const Icon(Icons.send_rounded, size: 20),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }

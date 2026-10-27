@@ -549,9 +549,6 @@ class AppLocalizationsDe extends AppLocalizations {
   }
 
   @override
-  String get thought_reply_send => 'Antwort senden';
-
-  @override
   String get thought_close => 'Schließen';
 
   @override
