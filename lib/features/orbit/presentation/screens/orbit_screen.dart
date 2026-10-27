@@ -321,6 +321,9 @@ class OrbitScreen extends StatefulWidget {
 
   /// A first-use label beside the "+", or null for none.
   final String? composeHint;
+
+  /// The user spread two fingers to show the thought notes.
+  final VoidCallback? onThoughtsSpread;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final Map<String, PostModel> depthThoughtsByPeerId;
   final bool depthActive;
@@ -410,6 +413,7 @@ class OrbitScreen extends StatefulWidget {
     this.onSelfAvatarTap,
     this.onComposeThought,
     this.composeHint,
+    this.onThoughtsSpread,
     this.thoughtsByPeerId = const {},
     this.depthThoughtsByPeerId = const {},
     this.depthActive = true,
@@ -529,6 +533,7 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onSelfAvatarTap: widget.onSelfAvatarTap,
     onComposeThought: widget.onComposeThought,
     composeHint: widget.composeHint,
+    onThoughtsSpread: widget.onThoughtsSpread,
     thoughtsByPeerId: widget.thoughtsByPeerId,
     depthThoughtsByPeerId: widget.depthThoughtsByPeerId,
     depthActive: widget.depthActive,
@@ -612,6 +617,9 @@ class _OrbitScreenView extends StatelessWidget {
 
   /// A first-use label beside the "+", or null for none.
   final String? composeHint;
+
+  /// The user spread two fingers to show the thought notes.
+  final VoidCallback? onThoughtsSpread;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final Map<String, PostModel> depthThoughtsByPeerId;
   final bool depthActive;
@@ -707,6 +715,7 @@ class _OrbitScreenView extends StatelessWidget {
     this.onSelfAvatarTap,
     this.onComposeThought,
     this.composeHint,
+    this.onThoughtsSpread,
     this.thoughtsByPeerId = const {},
     this.depthThoughtsByPeerId = const {},
     this.depthActive = true,
@@ -1197,6 +1206,7 @@ class _OrbitScreenView extends StatelessWidget {
           onSelfAvatarTap: onSelfAvatarTap,
           onComposeThought: onComposeThought,
           composeHint: composeHint,
+          onThoughtsSpread: onThoughtsSpread,
           thoughtsByPeerId: thoughtsByPeerId,
           onThoughtTap: onThoughtTap,
           onThoughtsExpired: onThoughtsExpired,

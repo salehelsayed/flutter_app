@@ -454,6 +454,48 @@ abstract class AppLocalizations {
   /// **'Sharing replaces the thought you have up now'**
   String get thought_compose_replaces;
 
+  /// No description provided for @orbit_intro_spread_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Spread to show thoughts'**
+  String get orbit_intro_spread_title;
+
+  /// No description provided for @orbit_intro_spread_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinch in to hide them again.'**
+  String get orbit_intro_spread_body;
+
+  /// No description provided for @orbit_intro_open_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe down to open thoughts'**
+  String get orbit_intro_open_title;
+
+  /// No description provided for @orbit_intro_open_body.
+  ///
+  /// In en, this message translates to:
+  /// **'See your friends\' thoughts and photos up close.'**
+  String get orbit_intro_open_body;
+
+  /// No description provided for @orbit_intro_turn_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Swipe sideways for the next friend'**
+  String get orbit_intro_turn_title;
+
+  /// No description provided for @orbit_intro_turn_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Tap a photo to see it full size. Swipe back up to return.'**
+  String get orbit_intro_turn_body;
+
+  /// No description provided for @orbit_intro_skip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get orbit_intro_skip;
+
   /// No description provided for @thought_compose_nobody_to_share_with.
   ///
   /// In en, this message translates to:

@@ -196,6 +196,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_replaces => 'المشاركة تستبدل خاطرتك الحالية';
 
   @override
+  String get orbit_intro_spread_title => 'باعد بإصبعيك لإظهار الخواطر';
+
+  @override
+  String get orbit_intro_spread_body => 'اضمم إصبعيك لإخفائها مرة أخرى.';
+
+  @override
+  String get orbit_intro_open_title => 'اسحب للأسفل لفتح الخواطر';
+
+  @override
+  String get orbit_intro_open_body => 'شاهد خواطر أصدقائك وصورهم عن قرب.';
+
+  @override
+  String get orbit_intro_turn_title => 'اسحب جانبًا للصديق التالي';
+
+  @override
+  String get orbit_intro_turn_body =>
+      'اضغط على صورة لرؤيتها بالحجم الكامل. اسحب للأعلى للعودة.';
+
+  @override
+  String get orbit_intro_skip => 'تخطٍّ';
+
+  @override
   String get thought_compose_nobody_to_share_with => 'أضف صديقًا لتشارك خواطرك';
 
   @override

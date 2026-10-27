@@ -39,6 +39,7 @@ import 'package:flutter_app/features/feed/presentation/screens/feed_wired.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_screen.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_intro_overlay.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/feed/domain/models/feed_route_changes.dart';
 import 'package:flutter_app/features/feed/presentation/widgets/feed_navigation_bar.dart';
@@ -811,6 +812,146 @@ void main() {
         await finishThoughtCase(tester);
       },
     );
+
+    group('Orbit intro', () {
+      Finder step(String name) => find.byKey(ValueKey('orbit-intro-$name'));
+
+      Future<_OrbitThoughtPostRepository> introScene(
+        WidgetTester tester, {
+        bool withThoughts = true,
+      }) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final second = testContact.copyWith(
+          peerId: 'depth-second',
+          username: 'Second',
+        );
+        contactRepo.seed([testContact, second]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        if (withThoughts) {
+          await posts.savePost(thought('depth-first'));
+          await posts.savePost(
+            thought('depth-second-post').copyWith(
+              authorPeerId: second.peerId,
+              senderPeerId: second.peerId,
+            ),
+          );
+        }
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        return posts;
+      }
+
+      Future<void> spread(WidgetTester tester) async {
+        final center = tester.getCenter(find.byType(OrbitDepthSurface));
+        final a = await tester.startGesture(center - const Offset(40, 0));
+        final b = await tester.startGesture(
+          center + const Offset(40, 0),
+          pointer: 7,
+        );
+        await tester.pump();
+        await a.moveBy(const Offset(-40, 0));
+        await b.moveBy(const Offset(40, 0));
+        await tester.pump();
+        await a.up();
+        await b.up();
+        await pumpOrbitFrames(tester, count: 6);
+      }
+
+      testWidgets(
+        'each step waits for its real gesture, then the intro never returns',
+        (tester) async {
+          final posts = await introScene(tester);
+          expect(step('spread'), findsOneWidget);
+          await pumpOrbitFrames(tester, count: 10);
+          expect(step('spread'), findsOneWidget);
+
+          await spread(tester);
+          expect(step('openDepth'), findsOneWidget);
+
+          await tester.timedDrag(
+            find.byType(OrbitDepthSurface),
+            const Offset(0, 260),
+            const Duration(seconds: 1),
+          );
+          await pumpOrbitFrames(tester, count: 30);
+          expect(step('turn'), findsOneWidget);
+
+          await tester.timedDrag(
+            find.byType(OrbitDepthSurface),
+            const Offset(-240, 0),
+            const Duration(seconds: 1),
+          );
+          await pumpOrbitFrames(tester, count: 30);
+          expect(find.byType(OrbitIntroOverlay), findsNothing);
+          expect(await secureKeyStore.read('orbit_intro_seen_v1'), '1');
+          expect(
+            find.byKey(const ValueKey('orbit-depth-card-depth-second-post')),
+            findsOneWidget,
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              thoughtNowProvider: () => thoughtNow,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 8);
+          expect(find.byType(OrbitIntroOverlay), findsNothing);
+          await finishThoughtCase(tester);
+        },
+      );
+
+      testWidgets('Skip ends the intro for good', (tester) async {
+        await introScene(tester);
+        await tester.tap(find.byKey(const ValueKey('orbit-intro-skip')));
+        await pumpOrbitFrames(tester, count: 4);
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        expect(await secureKeyStore.read('orbit_intro_seen_v1'), '1');
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets('the intro stays hidden until storage answers', (
+        tester,
+      ) async {
+        final held = _HeldReadSecureKeyStore('orbit_intro_seen_v1');
+        secureKeyStore = held;
+        await introScene(tester);
+        expect(held.heldReads, 1);
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        held.release();
+        await pumpOrbitFrames(tester, count: 4);
+        expect(step('spread'), findsOneWidget);
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets('no friend thought, no intro yet', (tester) async {
+        await introScene(tester, withThoughts: false);
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        await finishThoughtCase(tester);
+      });
+
+      testWidgets('switched off: no intro without 3D or without Thoughts', (
+        tester,
+      ) async {
+        debugOrbitDepthEnabledOverride = false;
+        await introScene(tester);
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        await tester.pumpWidget(const SizedBox.shrink());
+        debugOrbitDepthEnabledOverride = true;
+        debugThoughtsEnabledOverride = false;
+        await introScene(tester);
+        expect(find.byType(OrbitIntroOverlay), findsNothing);
+        await finishThoughtCase(tester);
+      });
+    });
 
     testWidgets(
       'switched off: with thoughts and 3D switched off a friend thought shows nowhere and nothing opens',

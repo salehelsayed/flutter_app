@@ -79,6 +79,7 @@ import 'package:flutter_app/features/contacts/application/delete_contact_use_cas
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_intro_overlay.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
@@ -402,6 +403,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   /// The composer has opened in this session; a late initial read is ignored.
   bool _thoughtComposerOpened = false;
+
+  /// The Orbit intro: starts seen so it never flashes before storage answers.
+  bool _introSeen = true;
+  OrbitIntroStep _introStep = OrbitIntroStep.spread;
+  static const _introSeenKey = 'orbit_intro_seen_v1';
   static const _thoughtHintSeenKey = 'orbit_thought_hint_seen_v1';
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
@@ -635,6 +641,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     _loadIdentity();
     _loadQualityPreference();
     unawaited(_loadThoughtHintSeen());
+    unawaited(_loadIntroSeen());
     _loadVideoQualityPreference();
     _loadOrbitData();
     _bindCallActivityChanges();
@@ -803,6 +810,38 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       _invitesDirty = false;
       unawaited(_loadPendingGroupInvites());
     }
+  }
+
+  Future<void> _loadIntroSeen() async {
+    try {
+      final seen = await widget.secureKeyStore.read(_introSeenKey);
+      if (mounted && seen == null) setState(() => _introSeen = false);
+    } catch (_) {}
+  }
+
+  bool get _showsIntro =>
+      !_introSeen &&
+      thoughtsEnabled &&
+      orbitDepthEnabled &&
+      _viewMode == OrbitViewMode.innerCircle &&
+      _depthThoughtsByPeerId.isNotEmpty;
+
+  /// Moves the intro on only when [done] is the gesture it is waiting for.
+  void _introDid(OrbitIntroStep done) {
+    if (!_showsIntro || _introStep != done) return;
+    if (done == OrbitIntroStep.turn) {
+      _finishIntro();
+    } else {
+      setState(() => _introStep = OrbitIntroStep.values[done.index + 1]);
+    }
+  }
+
+  void _finishIntro() {
+    if (_introSeen) return;
+    setState(() => _introSeen = true);
+    unawaited(
+      widget.secureKeyStore.write(_introSeenKey, '1').catchError((Object _) {}),
+    );
   }
 
   Future<void> _loadThoughtHintSeen() async {
@@ -3712,7 +3751,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final historyBrowser = callSource is CallHistoryBrowsingSource
         ? (callSource as CallHistoryBrowsingSource).callHistoryBrowser
         : null;
-    return OrbitScreen(
+    final orbit = OrbitScreen(
       headerProjectionListenable: _headerProjectionNotifier,
       listProjectionListenable: _listProjectionNotifier,
       scrollController: _scrollController,
@@ -3727,9 +3766,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       depthThoughtsByPeerId: _depthThoughtsByPeerId,
       depthActive: _isOrbitActive,
       onDepthBackActionChanged: (action) => _depthStepBack = action,
-      onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
-      onDepthThoughtDeparted: (postId) =>
-          unawaited(_markDepthThoughtSeen(postId)),
+      onDepthOwnsHostGestureChanged: (owns) {
+        widget.onDepthOwnsHostGestureChanged?.call(owns);
+        if (owns) _introDid(OrbitIntroStep.openDepth);
+      },
+      onDepthThoughtDeparted: (postId) {
+        unawaited(_markDepthThoughtSeen(postId));
+        _introDid(OrbitIntroStep.turn);
+      },
+      onThoughtsSpread: () => _introDid(OrbitIntroStep.spread),
       loadDepthMedia: _loadDepthMedia,
       downloadDepthMedia: _thoughtPosts == null
           ? null
@@ -3796,6 +3841,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onOpenSettings: _onOpenSettings,
       onOpenCalls: historyBrowser == null ? null : _onOpenCalls,
       p2pService: widget.p2pService,
+    );
+    // A stable Stack: ending the intro must not rebuild Orbit and drop 3D.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        orbit,
+        if (_showsIntro)
+          OrbitIntroOverlay(step: _introStep, onSkip: _finishIntro),
+      ],
     );
   }
 

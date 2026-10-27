@@ -201,6 +201,29 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sharing replaces the thought you have up now';
 
   @override
+  String get orbit_intro_spread_title => 'Spread to show thoughts';
+
+  @override
+  String get orbit_intro_spread_body => 'Pinch in to hide them again.';
+
+  @override
+  String get orbit_intro_open_title => 'Swipe down to open thoughts';
+
+  @override
+  String get orbit_intro_open_body =>
+      'See your friends\' thoughts and photos up close.';
+
+  @override
+  String get orbit_intro_turn_title => 'Swipe sideways for the next friend';
+
+  @override
+  String get orbit_intro_turn_body =>
+      'Tap a photo to see it full size. Swipe back up to return.';
+
+  @override
+  String get orbit_intro_skip => 'Skip';
+
+  @override
   String get thought_compose_nobody_to_share_with =>
       'Add a friend to share your thoughts';
 

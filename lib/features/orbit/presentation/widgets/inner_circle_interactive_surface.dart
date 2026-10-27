@@ -57,6 +57,9 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   /// A first-use label beside the "+", or null for none.
   final String? composeHint;
 
+  /// The user spread two fingers to show the thought notes.
+  final VoidCallback? onThoughtsSpread;
+
   /// Persists the five geometry knobs. Null ⇒ no persistence (bare-screen pumps).
   final SecureKeyStore? secureKeyStore;
 
@@ -104,6 +107,7 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.onSelfAvatarTap,
     this.onComposeThought,
     this.composeHint,
+    this.onThoughtsSpread,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
     this.resetSignal,
@@ -291,6 +295,7 @@ class _InnerCircleInteractiveSurfaceState
       _setThoughtsVisible(false);
     } else if (ratio > 1.12) {
       _setThoughtsVisible(true);
+      widget.onThoughtsSpread?.call();
     }
   }
 

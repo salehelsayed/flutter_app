@@ -207,6 +207,33 @@ class AppLocalizationsDe extends AppLocalizations {
       'Teilen ersetzt deinen aktuellen Gedanken';
 
   @override
+  String get orbit_intro_spread_title =>
+      'Auseinanderziehen, um Gedanken zu zeigen';
+
+  @override
+  String get orbit_intro_spread_body =>
+      'Zusammenziehen blendet sie wieder aus.';
+
+  @override
+  String get orbit_intro_open_title =>
+      'Nach unten wischen, um Gedanken zu öffnen';
+
+  @override
+  String get orbit_intro_open_body =>
+      'Sieh die Gedanken und Fotos deiner Freunde aus der Nähe.';
+
+  @override
+  String get orbit_intro_turn_title =>
+      'Zur Seite wischen für den nächsten Freund';
+
+  @override
+  String get orbit_intro_turn_body =>
+      'Tippe auf ein Foto, um es groß zu sehen. Wische zurück nach oben.';
+
+  @override
+  String get orbit_intro_skip => 'Überspringen';
+
+  @override
   String get thought_compose_nobody_to_share_with =>
       'Füge einen Freund hinzu, um Gedanken zu teilen';
 
