@@ -75,9 +75,10 @@ persisted counts and returning intersections. Never use `kill -9` for release.
    > Our relay can collect approximate weekly totals of Thoughts and their
    > senders, including senders seen in an earlier week within an eight-week
    > window. This counter uses routing metadata already needed for delivery;
-   > it does not open encrypted Thought content. It retains bounded aggregate
-   > sketches for up to eight weeks, with no additional stored sender IDs,
-   > Thought IDs, recipients or content. Direct-only activity is not counted.
+   > it does not open encrypted Thought content. It stores aggregate sketches
+   > covering at most eight weekly buckets, with no additional stored sender
+   > IDs, Thought IDs, recipients or content. Disabling collection stops updates
+   > but does not itself erase existing sketches. Direct-only activity is not counted.
 
 3. Obtain explicit owner release approval. First test the same candidate on
    Hetzner `2.29.62.121`, **after coordinating with Codex-UI**: its current
