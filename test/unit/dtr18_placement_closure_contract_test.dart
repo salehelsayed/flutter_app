@@ -109,7 +109,9 @@ const _relocations = <String, List<String>>{
     // same cached message snapshot after persistence; no owner changes layer.
     // DC-004 adds authored-text intent delegates, token forwarding and pending
     // projections to this same data adapter; placement is unchanged.
-    '6b8cb9bd4771a4e5711ac12baab58b5c4284d577beeeb8535ef05eac83ee569b',
+    // Thoughts128 adds the Thought-reaction message lookup delegate to this
+    // same data adapter; placement is unchanged.
+    '1684680d864a6b0b6a0f984039b23b7db597430a62469998d3c4cae2e42f2761',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -231,7 +233,9 @@ const _relocations = <String, List<String>>{
   'lib/features/posts/domain/repositories/'
       'post_repository_impl.dart': <String>[
     'lib/features/posts/data/repositories/post_repository_impl.dart',
-    '03861eb24e4f09afbd96b215351ff78b1e4c9eb64a247a194fe81fd3245e919b',
+    // Thoughts 128 adds view receipts and photo previews in this same data
+    // adapter; placement is unchanged.
+    '1ff25d408a984092c2d550d48c53f76f2bf499432b023e1621a82b22b3d918e7',
   ],
 };
 
