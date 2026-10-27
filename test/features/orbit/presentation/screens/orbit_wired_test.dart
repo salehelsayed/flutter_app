@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -91,6 +92,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/presentation/widgets/connection_status_indicator.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_route_target.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
@@ -1303,6 +1305,47 @@ void main() {
       of: find.byKey(const ValueKey('thought-quote-block')),
       matching: find.text('No longer available'),
     );
+
+    testWidgets('a reply to a photo thought quotes the photo itself', (
+      tester,
+    ) async {
+      final directory = Directory.systemTemp.createTempSync('thought-quote-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final photo = File('${directory.path}/lake.png')
+        ..writeAsBytesSync(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          ),
+        );
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('lake', text: 'Sunset at the lake?', mediaKind: 'image'),
+      );
+      await posts.savePostMediaAttachment(
+        PostMediaAttachmentModel(
+          mediaId: 'media-lake',
+          postId: 'lake',
+          blobId: 'blob-lake',
+          kind: 'image',
+          mime: 'image/png',
+          sizeBytes: 100,
+          createdAt: thoughtNow.toIso8601String(),
+          localPath: photo.path,
+          downloadStatus: 'done',
+        ),
+      );
+      await replyFromCard(tester, posts, clock: () => thoughtNow);
+
+      final thumbnail = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const ValueKey('thought-quote-block')),
+          matching: find.byKey(const ValueKey('thought-quote-photo')),
+        ),
+      );
+      expect((thumbnail.image as ResizeImage).imageProvider, FileImage(photo));
+      await finishThoughtCase(tester);
+    });
 
     testWidgets('a quoted thought its author deletes leaves the open chat', (
       tester,

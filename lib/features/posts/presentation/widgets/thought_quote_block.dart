@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
@@ -32,6 +34,16 @@ class ThoughtQuoteBlock extends StatelessWidget {
         : live.text.trim().isNotEmpty
         ? live.text.trim()
         : mediaLabel(live.mediaKind);
+    final icon = Icon(
+      switch (live?.mediaKind) {
+        'image' => Icons.photo_outlined,
+        'video' => Icons.videocam_outlined,
+        'voice' => Icons.mic_none,
+        _ => Icons.auto_awesome_outlined,
+      },
+      size: 16,
+      color: colors.textMuted,
+    );
     return Container(
       key: const ValueKey('thought-quote-block'),
       padding: const EdgeInsets.all(8),
@@ -44,20 +56,20 @@ class ThoughtQuoteBlock extends StatelessWidget {
           Container(
             width: 30,
             height: 30,
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               color: colors.divider,
             ),
-            child: Icon(
-              switch (live?.mediaKind) {
-                'image' => Icons.photo_outlined,
-                'video' => Icons.videocam_outlined,
-                'voice' => Icons.mic_none,
-                _ => Icons.auto_awesome_outlined,
-              },
-              size: 16,
-              color: colors.textMuted,
-            ),
+            child: live?.imagePath == null
+                ? icon
+                : Image.file(
+                    File(live!.imagePath!),
+                    key: const ValueKey('thought-quote-photo'),
+                    fit: BoxFit.cover,
+                    cacheWidth: 96,
+                    errorBuilder: (_, _, _) => icon,
+                  ),
           ),
           const SizedBox(width: 8),
           Expanded(

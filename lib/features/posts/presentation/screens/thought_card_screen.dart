@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -497,6 +498,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                           ),
                         ),
                 ),
+                if (_localPhoto(visual) case final photo?)
+                  _BlurredFill(path: photo),
                 if (hasVisual)
                   Center(child: _visualMedia(l10n, visual))
                 else
@@ -527,6 +530,19 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               ],
             ),
     );
+  }
+
+  /// The photo of a one-photo thought, once it is on this phone.
+  String? _localPhoto(List<PostMediaAttachmentModel> visual) {
+    if (visual.length != 1) return null;
+    final photo = visual.single;
+    final localPath = photo.localPath;
+    if (photo.kind != 'image' ||
+        photo.downloadStatus != 'done' ||
+        localPath == null) {
+      return null;
+    }
+    return MediaFileManager.resolveStoredPathSync(localPath);
   }
 
   bool get _expectsVisualMedia =>
@@ -568,11 +584,23 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     List<PostMediaAttachmentModel> visual,
   ) {
     final height = MediaQuery.sizeOf(context).height;
-    if (visual.isEmpty) {
-      // Rows not here yet: hold the photo's place instead of a spinner.
+    final single = visual.length == 1 ? visual.single : null;
+    final photoPending =
+        single != null &&
+        single.kind == 'image' &&
+        _localPhoto(visual) == null &&
+        single.downloadStatus != 'failed';
+    if (visual.isEmpty || photoPending) {
+      // Not here yet: hold the photo's place, in its own shape, instead of a
+      // spinner.
+      final width = single?.width ?? 0;
+      final height = single?.height ?? 0;
       return _MediaPlaceholder(
         key: const ValueKey('thought-media-placeholder'),
-        failed: _mediaLoadFailed && !_mediaLoading,
+        aspectRatio: width > 0 && height > 0
+            ? (width / height).clamp(9 / 16, 16 / 9).toDouble()
+            : 3 / 4,
+        failed: visual.isEmpty && _mediaLoadFailed && !_mediaLoading,
         onRetry: () => unawaited(_loadMedia(_post.id)),
         retryLabel: l10n.btn_retry,
       );
@@ -808,21 +836,52 @@ class _Scrim extends StatelessWidget {
   );
 }
 
+/// The photo itself, blurred and dimmed, filling the screen behind it.
+class _BlurredFill extends StatelessWidget {
+  const _BlurredFill({required this.path});
+
+  final String path;
+
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: ClipRect(
+      child: ImageFiltered(
+        imageFilter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+        child: ColorFiltered(
+          colorFilter: const ColorFilter.mode(
+            Color(0x66000000),
+            BlendMode.darken,
+          ),
+          child: Image.file(
+            File(path),
+            key: const ValueKey('thought-photo-fill'),
+            fit: BoxFit.cover,
+            cacheWidth: 120,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class _MediaPlaceholder extends StatelessWidget {
   const _MediaPlaceholder({
     super.key,
+    required this.aspectRatio,
     required this.failed,
     required this.onRetry,
     required this.retryLabel,
   });
 
+  final double aspectRatio;
   final bool failed;
   final VoidCallback onRetry;
   final String retryLabel;
 
   @override
   Widget build(BuildContext context) => AspectRatio(
-    aspectRatio: 3 / 4,
+    aspectRatio: aspectRatio,
     child: DecoratedBox(
       decoration: const BoxDecoration(
         gradient: LinearGradient(

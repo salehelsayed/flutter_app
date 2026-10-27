@@ -44,6 +44,7 @@ class ThoughtQuotePreview {
     required this.text,
     required this.mediaKind,
     required this.expiresAt,
+    this.imagePath,
   });
 
   final String text;
@@ -51,6 +52,9 @@ class ThoughtQuotePreview {
   /// 'none', 'image', 'video' or 'voice', as on the stored thought.
   final String mediaKind;
   final DateTime expiresAt;
+
+  /// The thought's first photo, once it is on this phone.
+  final String? imagePath;
 
   bool isLiveAt(DateTime now) => expiresAt.isAfter(now);
 }

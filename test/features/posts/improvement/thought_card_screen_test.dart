@@ -524,6 +524,10 @@ void main() {
       final grid = tester.widget<MediaGrid>(find.byType(MediaGrid));
       expect(grid.media.single.localPath, photo.path);
       expect(grid.media.single.downloadStatus, 'done');
+      final fill = tester.widget<Image>(
+        find.byKey(const ValueKey('thought-photo-fill')),
+      );
+      expect((fill.image as ResizeImage).imageProvider, FileImage(photo));
       grid.onTap!(0);
       await pumpMediaFrames(tester);
       final viewer = tester.widget<FullScreenTypedMediaViewer>(
@@ -691,6 +695,38 @@ void main() {
       await finish(tester);
     },
   );
+
+  testWidgets('a photo still downloading holds its own shape, not a spinner', (
+    tester,
+  ) async {
+    final thought = _thought(initialNow).copyWith(mediaKind: 'image');
+    await posts.savePost(thought);
+    await posts.savePostMediaAttachment(
+      _attachment('image').copyWith(width: 800, height: 600),
+    );
+    final download = Completer<PostMediaAttachmentModel>();
+
+    await openCard(tester, thought, download: (_) => download.future);
+    await pumpMediaFrames(tester);
+
+    final placeholder = find.byKey(const ValueKey('thought-media-placeholder'));
+    expect(placeholder, findsOneWidget);
+    expect(
+      tester
+          .widget<AspectRatio>(
+            find.descendant(
+              of: placeholder,
+              matching: find.byType(AspectRatio),
+            ),
+          )
+          .aspectRatio,
+      4 / 3,
+    );
+    expect(find.byType(MediaGrid), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('thought-photo-fill')), findsNothing);
+    await finish(tester);
+  });
 
   testWidgets('an uploading multi-photo thought holds its place too', (
     tester,

@@ -8690,7 +8690,10 @@ class _ConversationWiredState extends State<ConversationWired>
       repository
           .getPost(postId)
           .then<PostModel?>((post) => post, onError: (_) => null)
-          .then((post) {
+          .then((post) async {
+            final imagePath = post == null
+                ? null
+                : await _thoughtQuoteImagePath(repository, postId);
             if (!mounted || _thoughtQuoteLoads[postId] != load) return;
             final expiresAt = DateTime.tryParse(post?.expiresAt ?? '');
             setState(() {
@@ -8700,11 +8703,37 @@ class _ConversationWiredState extends State<ConversationWired>
                       text: post.text,
                       mediaKind: post.mediaKind,
                       expiresAt: expiresAt.toUtc(),
+                      imagePath: imagePath,
                     );
             });
             _armThoughtExpiry();
           }),
     );
+  }
+
+  Future<String?> _thoughtQuoteImagePath(
+    PostRepository repository,
+    String postId,
+  ) async {
+    try {
+      final media = await repository.loadPostMediaAttachments(postId);
+      final photos =
+          media
+              .where(
+                (item) =>
+                    item.kind == 'image' &&
+                    item.downloadStatus == 'done' &&
+                    item.localPath != null,
+              )
+              .toList()
+            ..sort((a, b) => a.position.compareTo(b.position));
+      final photo = photos.firstOrNull;
+      return photo == null
+          ? null
+          : MediaFileManager.resolveStoredPathSync(photo.localPath!);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Rebuilds at the next quote expiry so an idle chat drops its text on time.
