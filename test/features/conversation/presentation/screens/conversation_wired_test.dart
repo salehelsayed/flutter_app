@@ -6685,7 +6685,17 @@ void main() {
 
       messageRepo.firstPageGate.complete();
       await tester.pump(const Duration(milliseconds: 500));
-      await tester.pump(const Duration(milliseconds: 500));
+      // Completing the page must reveal it on that rebuild, without needing
+      // another frame or a later message/reaction event to open the gate.
+      final screen = tester.widget<ConversationScreen>(
+        find.byType(ConversationScreen),
+      );
+      debugPrint(
+        'INITIAL-PAGE-REVEAL ready=${screen.initialLoadDone} '
+        'rows=${screen.messages.length} '
+        'nextFrame=${tester.binding.hasScheduledFrame}',
+      );
+      expect(screen.initialLoadDone, isTrue);
 
       expect(
         find.byKey(const ValueKey('conversation-loading-shell')),
@@ -9782,16 +9792,18 @@ void main() {
         chatListener.emitIncomingMessage(
           staleMessage.copyWith(media: [repairedAttachment]),
         );
-        await pumpUntil(
-          tester,
-          () => tester
-              .widget<ConversationScreen>(find.byType(ConversationScreen))
-              .messages
-              .any(
-                (message) =>
-                    message.id == messageId &&
-                    message.media.single.downloadStatus == 'done',
-              ),
+        // Deliver the broadcast repair before releasing the stale page. It
+        // updates the retained model, but the initial-history gate must keep
+        // this partial timeline hidden until that page completes.
+        await tester.pump();
+        final pendingScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        expect(pendingScreen.initialLoadDone, isFalse);
+        expect(pendingScreen.messages, isEmpty);
+        expect(
+          find.byKey(const ValueKey('conversation-loading-shell')),
+          findsOneWidget,
         );
 
         messageRepo.getMessagesPageGate!.complete();

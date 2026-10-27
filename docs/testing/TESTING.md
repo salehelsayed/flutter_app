@@ -2520,10 +2520,12 @@ message page is ready. Older call rows and repository changes can arrive
 before that page. Painting them immediately flashes stale history, even
 while the reversed list's offset remains zero. Keep ingesting those events
 and merge them normally; gate only the view's messages/call entries with the
-existing `initialLoadDone` latch. Register readiness before awaiting reaction
-reads, so chips can fill in later. The first gate candidate `f1bcf3b14` kept
+existing `initialLoadDone` latch. Publish the completed page and readiness in
+the same state update, before awaiting reactions; seeded pages are ready in
+initState. Keep only notification-render timing post-frame. The first gate
+candidate `f1bcf3b14` kept
 the latch behind reaction I/O; `held-reactions-red.jsonl` **refutes** that
-dependency, which is superseded by scheduling the reveal before the await.
+dependency, which is superseded by publishing readiness before the await.
 Do not replace ordinary live-send scrolling.
 
 The six `normal Orbit first-paint` checks use the real Orbit route, app-root
@@ -2544,6 +2546,21 @@ in that directory. Kayan/flutter_app's Pixel recording report
 rows: the loading shell goes directly to newest history. This is device-owner
 evidence, not a device run by Codex-UI; widget checks do not certify remote
 voice delivery.
+
+Deferring readiness until post-frame creates an extra hidden frame even after
+the page has loaded. On `39a462fe6`, the unchanged hydrated-media test fails
+with `firstWhere` finding no row; the delayed-page probe reports
+`ready=false rows=0 nextFrame=true` after one pump. A next frame is scheduled,
+so this proves an extra-frame regression, not an indefinitely stuck skeleton.
+The loading test now requires the completed page on that first rebuild. All
+210 cases in the whole `conversation_wired_test.dart` pass with readiness
+published atomically. The stale-page/streamed-repair race delivers its broadcast
+before releasing the stale read, checks that the partial timeline remains
+hidden, then retains every final attachment/repair assertion after reveal.
+Evidence: `.audit/chat-initial-reveal/existing-hydration-red.jsonl`,
+`single-frame-red.jsonl` and `whole-wired-green2.jsonl`; the first whole run's
+209 passes and obsolete partial-view expectation failure remain in
+`whole-wired-green.jsonl`.
 
 A quoted Thought has a pending first lookup separately from a completed,
 unavailable result. The quote loader records started IDs before awaiting the
@@ -5560,6 +5577,15 @@ visible and cannot become an ordinary first-attempt PASS.
   GAP is superseded by the bounded absence window above. Its active camera
   regression observes the persisted waiting state without Retry, recovers on
   the second request, and preserves the full image, caption and replay dedup.
+  Its open-chat image check pumps the batched incoming-stream post-frame flush
+  and then the repaint that flush schedules. If no image exists after the flush,
+  a next frame must already be scheduled; no additional repository event or
+  recovery trigger is allowed to make the image visible. Awaiting the hydrated
+  stream alone does not mean its updated bubble has painted. The image decode,
+  download-status, exact-byte and retry assertions remain intact. First-attempt
+  and corrected whole-file receipts are in
+  `.audit/chat-initial-reveal/whole-camera-green.jsonl` and
+  `whole-camera-green2.jsonl`.
   The default single-peer configuration alone does not establish a real
   multi-relay device topology; controlled native replies prove this host leg.
   Raw first attempts and final check receipts are retained in

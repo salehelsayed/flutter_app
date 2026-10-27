@@ -1529,11 +1529,11 @@ class _ConversationWiredState extends State<ConversationWired>
     if (widget.initialMessages != null) {
       _messages = widget.initialMessages!;
       _hasMoreOlderMessages = _messages.length >= _pageSize;
+      _initialLoadDone = true;
       _scrollToBottom();
       _markAsRead();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          setState(() => _initialLoadDone = true);
           _emitNotificationTapTimingIfNeeded();
         }
       });
@@ -2194,6 +2194,9 @@ class _ConversationWiredState extends State<ConversationWired>
             _upsertMessageById(_mergeLoadedMessageWithCurrentState(message));
           }
           _hasMoreOlderMessages = messages.length >= _pageSize;
+          // Publish the completed page and its display gate together. Waiting
+          // until after this frame would leave a ready page hidden for a frame.
+          _initialLoadDone = true;
         });
         emitFlowEvent(
           layer: 'FL',
@@ -2201,10 +2204,9 @@ class _ConversationWiredState extends State<ConversationWired>
           details: {'count': messages.length},
         );
         _scrollToBottom();
-        // The initial history is ready; reaction chips can fill in later.
+        // Measure the rendered history; reaction chips can fill in later.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
-            setState(() => _initialLoadDone = true);
             _emitNotificationTapTimingIfNeeded();
           }
         });

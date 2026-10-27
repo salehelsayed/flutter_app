@@ -676,6 +676,17 @@ void main() {
               const Duration(seconds: 30),
             );
             if (openChat) {
+              // The incoming stream is batched at post-frame: first flush its
+              // retained rows, then paint the rebuild it schedules. No new
+              // repository/recovery event should be needed to show the image.
+              await tester.pump();
+              debugPrint(
+                'CAMERA-REPAIR-PAINT images=${find.byType(Image).evaluate().length} '
+                'nextFrame=${tester.binding.hasScheduledFrame}',
+              );
+              if (find.byType(Image).evaluate().isEmpty) {
+                expect(tester.binding.hasScheduledFrame, isTrue);
+              }
               await tester.pump();
               final image = find.byType(Image).first;
               await precacheImage(
