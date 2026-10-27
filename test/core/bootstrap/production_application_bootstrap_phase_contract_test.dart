@@ -145,6 +145,15 @@ const _expectedSendChatMessageCallers =
           freshIntent: 'true',
         ),
       ],
+      // A Thought reply first persists an authored intent with the card's ID.
+      // Its initial send must opt that preassigned ID into fresh text custody;
+      // an existing failed message uses the separate canonical retry branch.
+      'lib/features/posts/application/send_thought_reply_use_case.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.preassignedIdFresh,
+          freshIntent: 'true',
+        ),
+      ],
       'lib/features/share/application/share_batch_delivery_coordinator.dart': [
         _ExpectedSendChatMessageCaller(
           kind: _SendChatMessageCallerKind.generatedIdFresh,

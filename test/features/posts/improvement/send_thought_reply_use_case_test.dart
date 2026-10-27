@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/authored_direct_text_intent.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -183,6 +184,97 @@ void main() {
       expect(await send(), ThoughtReplyStatus.sent);
       expect(await fixture.db.query('messages'), hasLength(1));
       expect(encryptedPayloads, hasLength(1));
+    },
+  );
+
+  test(
+    'fresh reply refuses egress until message and encrypted custody commit together',
+    () async {
+      await fixture.db.execute('''
+        CREATE TRIGGER reject_thought_reply_custody
+        BEFORE INSERT ON direct_inbox_custody_outbox
+        BEGIN
+          SELECT RAISE(ABORT, 'test-only custody admission refusal');
+        END
+      ''');
+
+      expect(await send(), ThoughtReplyStatus.queued);
+      final intent =
+          (await fixture.messageRepo.loadAuthoredDirectTextIntents()).single;
+      expect(intent.id, _messageId);
+      expect(intent.quotedMessageId, _quoteId);
+      expect(await fixture.db.query('messages'), isEmpty);
+      expect(await fixture.messageRepo.loadDirectInboxCustody(), isEmpty);
+      expect(encryptedPayloads, hasLength(1));
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+
+      fixture = await fixture.reopen();
+      expect(
+        (await fixture.messageRepo.loadAuthoredDirectTextIntents()).single
+            .toMap(),
+        intent.toMap(),
+      );
+      await fixture.db.execute('DROP TRIGGER reject_thought_reply_custody');
+      expect(await send(), ThoughtReplyStatus.sent);
+      final message = (await fixture.messageRepo.getMessage(_messageId))!;
+      expect(message.text, intent.text);
+      expect(message.quotedMessageId, _quoteId);
+      expect(await fixture.db.query('messages'), hasLength(1));
+      expect(
+        await fixture.messageRepo.loadAuthoredDirectTextIntents(),
+        isEmpty,
+      );
+      // A live ACK does not discharge the independent inbox obligation.
+      final custody =
+          (await fixture.messageRepo.loadDirectInboxCustody()).single;
+      expect(custody.messageId, _messageId);
+      expect(custody.recipientPeerId, _author);
+      // Ciphertext belongs to the immutable custody owner, independently of
+      // the mutable chat-message projection.
+      final envelope = jsonDecode(custody.wireEnvelope) as Map<String, dynamic>;
+      expect(envelope['type'], 'chat_message');
+      expect(envelope['version'], '2');
+      expect(envelope['id'], _messageId);
+      expect(envelope['senderPeerId'], _local);
+      expect(envelope.containsKey('payload'), isFalse);
+      expect(envelope['encrypted']['ciphertext'], 'opaque-test-ciphertext-2');
+      expect(encryptedPayloads.last['quotedMessageId'], _quoteId);
+      expect(message.status, 'delivered');
+      expect(encryptedPayloads, hasLength(2));
+
+      fixture = await fixture.reopen();
+      expect(
+        (await fixture.messageRepo.loadDirectInboxCustody()).single.toMap(),
+        custody.toMap(),
+      );
+      expect(
+        await drainDirectInboxCustodyOutbox(
+          custodyRepository: fixture.messageRepo,
+          storeInAckCustodyInboxDetailed:
+              service.storeInAckCustodyInboxDetailed,
+        ),
+        1,
+      );
+      expect(await fixture.messageRepo.loadDirectInboxCustody(), isEmpty);
+      expect(
+        network.retrieveInbox(_author).single['message'],
+        custody.wireEnvelope,
+      );
+      expect(
+        (await fixture.messageRepo.getMessage(_messageId))!.status,
+        'delivered',
+      );
+      expect(encryptedPayloads, hasLength(2));
+      final deliveries = network.deliverCallCount;
+      final stores = network.storeInInboxCallCount;
+      final encryptions = encryptedPayloads.length;
+
+      expect(await send(), ThoughtReplyStatus.sent);
+      expect(await fixture.db.query('messages'), hasLength(1));
+      expect(network.deliverCallCount, deliveries);
+      expect(network.storeInInboxCallCount, stores);
+      expect(encryptedPayloads, hasLength(encryptions));
     },
   );
 
