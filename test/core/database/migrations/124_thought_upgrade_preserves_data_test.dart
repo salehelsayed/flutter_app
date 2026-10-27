@@ -89,6 +89,8 @@ void main() {
       await old.insert('post_recipients', {
         'post_id': 'kept-thought',
         'recipient_peer_id': 'fixture-friend',
+        'delivery_owner_kind': 'post',
+        'delivery_owner_id': 'kept-thought',
         'delivery_status': 'sent',
         'last_attempt_at': createdAt,
         'delivery_path': 'direct',
