@@ -2152,6 +2152,20 @@ receipts. Evidence: `production-bootstrap-migration-20260927/`
 and `wave2-flow-identity-causal-001.log`. This repair does not certify the
 remaining routing scenarios or change any original harness.
 
+App-level outside-tap keyboard dismissal must distinguish a tap from the
+pointer's whole path, not just its final displacement. A scroll that returns
+near its starting point must keep focus; crossing touch slop or cancelling the
+pointer retires that tap. Composer media/voice controls belong to the field's
+`TextFieldTapRegion`, while surrounding content remains outside. The registered
+`tap_outside_hides_keyboard_test.dart` cases preserve outside-tap dismissal,
+Send focus, drag/long-press behavior and both regressions. On source `65ed9218c`,
+those 18 cases plus the unchanged 12 causal/control probes passed (30 passes,
+zero failures/skips). The original enabled-wrapper regressions failed in all
+three mobile widget variants while their disabled-wrapper controls passed.
+Source identity and retained raw-log references are in
+`.audit/thoughts-128-codex/keyboard-review-65ed-verification.json`. These are host
+widget results, not evidence from installed phones.
+
 Keyboard dismissal intentionally drops composer focus; flows that dismiss it
 must re-tap the composer before `inputText`. The five-message direct batch stays
 in the chat, with one composer tap before each entry and no keyboard dismissal
