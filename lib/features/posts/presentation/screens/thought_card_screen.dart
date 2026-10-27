@@ -580,7 +580,11 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     super.dispose();
   }
 
-  Future<void> _sendReply(String text, {bool retry = false}) async {
+  Future<void> _sendReply(
+    String text, {
+    bool retry = false,
+    bool openChat = false,
+  }) async {
     final onReply = widget.onReply;
     final trimmed = text.trim();
     if (onReply == null || trimmed.isEmpty || _sendingReply || _closing) return;
@@ -601,7 +605,14 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     });
     ThoughtReplyStatus result;
     try {
-      result = await onReply(trimmed, postId, messageId);
+      final sending = Future<ThoughtReplyStatus>.sync(
+        () => onReply(trimmed, postId, messageId),
+      );
+      // The same durable send continues after the card closes. Chat projects
+      // its authored intent immediately, then shows normal delivery and retry.
+      // Closing synchronously fences double taps; opening chat never re-sends.
+      if (openChat) _close(afterClose: widget.onOpenChat);
+      result = await sending;
     } catch (_) {
       result = ThoughtReplyStatus.failed;
     }
@@ -951,7 +962,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             hint: l10n.thought_reply_hint(widget.authorName),
             sendLabel: l10n.thought_reply_send,
             enabled: !_sendingReply,
-            onSend: () => unawaited(_sendReply(_replyController.text)),
+            onSend: () =>
+                unawaited(_sendReply(_replyController.text, openChat: true)),
           ),
           if (_replyStatus case final status?)
             Row(

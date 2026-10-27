@@ -461,22 +461,26 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('a typed reply sends once in place, quoting the shown thought', (
+  testWidgets('a typed reply sends once and opens chat without waiting', (
     tester,
   ) async {
     final thought = _thought(initialNow);
     await posts.savePost(thought);
     final replies = <(String, String)>[];
     var closedBeforeReply = false;
+    var chatOpens = 0;
+    final sending = Completer<ThoughtReplyStatus>();
     await openCard(
       tester,
       thought,
-      onReply: (text, postId) {
+      sendReply: (text, postId, _) {
         replies.add((text, postId));
         closedBeforeReply = navigationObserver.poppedNames.contains(
           'thought-card',
         );
+        return sending.future;
       },
+      onOpenChat: () => chatOpens++,
     );
 
     await tester.tap(find.byKey(const ValueKey('thought-reply-field')));
@@ -496,8 +500,12 @@ void main() {
 
     expect(replies, [('count me in', 'thought-1')]);
     expect(closedBeforeReply, isFalse);
-    expect(find.byType(ThoughtCardScreen), findsOneWidget);
-    expect(find.text('sent'), findsOneWidget);
+    expect(chatOpens, 1);
+    expect(find.byType(ThoughtCardScreen), findsNothing);
+    sending.complete(ThoughtReplyStatus.failed);
+    await tester.pump();
+    expect(chatOpens, 1);
+    expect(tester.takeException(), isNull);
     await finish(tester);
   });
 
@@ -526,9 +534,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('retry keeps the failed reply ID and text without closing', (
-    tester,
-  ) async {
+  testWidgets('reaction retry keeps the same ID and glyph', (tester) async {
     final thought = _thought(initialNow);
     await posts.savePost(thought);
     final attempts = <(String, String, String)>[];
@@ -542,22 +548,14 @@ void main() {
             : ThoughtReplyStatus.sent;
       },
     );
-    await tester.enterText(
-      find.byKey(const ValueKey('thought-reply-field')),
-      'count me in',
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+    await tester.tap(find.byKey(const ValueKey('thought-react-fire')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('thought-reply-retry')), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      'count me in',
-    );
     await tester.tap(find.byKey(const ValueKey('thought-reply-retry')));
     await tester.pumpAndSettle();
     expect(attempts, hasLength(2));
     expect(attempts.last, attempts.first);
+    expect(attempts.first.$1, '🔥');
     expect(find.text('sent'), findsOneWidget);
     expect(find.byType(ThoughtCardScreen), findsOneWidget);
     expect(

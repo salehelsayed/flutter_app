@@ -1418,9 +1418,8 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
       await pumpOrbitFrames(tester, count: 12);
-      expect(find.byType(ThoughtCardScreen), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
-      await pumpOrbitFrames(tester, count: 12);
+      expect(find.byType(ThoughtCardScreen), findsNothing);
+      expect(find.byType(ConversationWired), findsOneWidget);
       expect(
         find.descendant(
           of: find.byKey(const ValueKey('thought-quote-block')),
@@ -1525,12 +1524,14 @@ void main() {
     );
 
     testWidgets(
-      'tapping a live quote reopens the thought and a reply stays in this chat',
+      'a typed reply to a reopened quote returns to the same chat once',
       (tester) async {
         final posts = _OrbitThoughtPostRepository();
         addTearDown(posts.dispose);
         await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
         await replyFromCard(tester, posts, clock: () => thoughtNow);
+        await tester.enterText(find.byType(TextField), 'unsent chat draft');
+        await tester.pump();
 
         await tester.tap(find.byKey(const ValueKey('thought-quote-open')));
         await pumpOrbitFrames(tester, count: 8);
@@ -1544,9 +1545,6 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
         await pumpOrbitFrames(tester, count: 12);
 
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
-        await pumpOrbitFrames(tester, count: 8);
         expect(find.byType(ThoughtCardScreen), findsNothing);
         expect(find.byType(ConversationWired), findsOneWidget);
         expect(
@@ -1554,6 +1552,19 @@ void main() {
           findsNWidgets(2),
         );
         expect(find.text('bringing snacks'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'unsent chat draft',
+        );
+        final replies = await messageRepo.getMessagesForContact(
+          testContact.peerId,
+        );
+        expect(replies, hasLength(2));
+        expect(replies.map((message) => message.id).toSet(), hasLength(2));
+        expect(
+          replies.every((message) => message.quotedMessageId == 'thought:lake'),
+          isTrue,
+        );
         await finishThoughtCase(tester);
       },
     );
@@ -1602,10 +1613,13 @@ void main() {
       'a thought deleted while the chat is still looking it up leaves the chat',
       (tester) async {
         setLargeTestSurface(tester);
-        messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
         identityRepo.seed(testIdentity);
         contactRepo.seed([testContact]);
         final posts = _HeldSnapshotLookupRepository('lake');
+        messageRepo = _ThoughtIntentMessageRepository(
+          testIdentity.peerId,
+          onIntentSaved: () => posts.holding = true,
+        );
         addTearDown(posts.dispose);
         await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
         await tester.pumpWidget(
@@ -1624,10 +1638,7 @@ void main() {
         await tester.pump();
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
         await pumpOrbitFrames(tester, count: 12);
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-        posts.holding = true;
-        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
-        await pumpOrbitFrames(tester, count: 12);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
         expect(posts.heldCount, greaterThan(0));
 
         await posts.deletePostCascade('lake');
@@ -1723,10 +1734,13 @@ void main() {
         );
         await tester.pump();
         await tester.tap(find.byKey(const ValueKey('thought-reply-send')));
+        await tester.tap(
+          find.byKey(const ValueKey('thought-reply-send')),
+          warnIfMissed: false,
+        );
         await pumpOrbitFrames(tester, count: 12);
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-        await tester.tap(find.byKey(const ValueKey('thought-open-chat')));
-        await pumpOrbitFrames(tester, count: 12);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsOneWidget);
         final messageChat = tester.widget<ConversationWired>(
           find.byType(ConversationWired),
         );
@@ -11414,7 +11428,9 @@ class _HeldReadSecureKeyStore extends FakeSecureKeyStore {
 /// adapter's custody/retry tests use the real production database repository.
 class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
     implements AuthoredDirectTextIntentRepository {
-  _ThoughtIntentMessageRepository(this.senderPeerId);
+  _ThoughtIntentMessageRepository(this.senderPeerId, {this.onIntentSaved});
+
+  final VoidCallback? onIntentSaved;
 
   final String senderPeerId;
   final _intents = <String, AuthoredDirectTextIntent>{};
@@ -11431,6 +11447,7 @@ class _ThoughtIntentMessageRepository extends InMemoryMessageRepository
       return false;
     }
     _intents[intent.id] = intent;
+    onIntentSaved?.call();
     debugEmitMessageChange(intent.toMessage(senderPeerId));
     return true;
   }

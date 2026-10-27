@@ -18,7 +18,7 @@ landed coverage, and are not duplicated in this preparation branch.
 | A | Clear posting status and one-tap retry, including photos/offline | Codex-UI's pending `thought_card_screen_test.dart` case `own posting retry stays in place and follows repository progress`; existing retry/media delivery suites remain separate. | Integrate author tests; prove actual offline photo retry once on the final pair. |
 | B | Bigger plus target; first-use hint retires permanently | `test/features/orbit/presentation/widgets/orbital_visualization_test.dart:131` now requires a 44-point target and taps its outer corner separately from the self-avatar. `test/features/orbit/presentation/screens/orbit_wired_test.dart:1245` covers hint persistence; `:1278` covers composer-open before the stored flag loads. | Run the strengthened host assertion; confirm edge taps and persisted hint behavior on the final installed UI. |
 | C | Replacement explanation and all-friends/24-hour explanation | `test/features/posts/improvement/thought_compose_sheet_test.dart:50`, `:78`, `:245`; Orbit's own-thought composer case at `orbit_wired_test.dart:1333`. | Read the actual composer with and without an existing Thought during the final run. |
-| D | Reply/reaction sends in place with Sent/Retry; chat opens only on request | Codex-UI's pending card cases cover in-place sends, retry with the same reply ID/text, and queued-to-Sent progress. The base's old close-before-reply test must be replaced by that author change. | Integrate author tests; prove receiver delivery, one reply after retry, and explicit Open chat on the final pair. |
+| D | Typed reply closes the card and opens the friend's chat; reactions stay in place | Owner preview feedback supersedes the earlier in-place typed flow. Card tests cover one close/handoff on repeated taps and reaction retry with the same ID/glyph. Orbit tests cover the quoted reply visible in the chat and same-chat quote reopen. | Send a typed reply from 3D and 2D entries; require the quoted message in the friend's chat, normal pending/failure retry, and no duplicate. Reactions retain in-place Sent/Retry. |
 | E | A live chat quote reopens the Thought; a reply stays in the same chat | `orbit_wired_test.dart:1522` is the same-chat integration case; `:1553` covers a missing Thought. `:1474` covers a quote thumbnail arriving after download; `:1577`, `:1593`, `:1632` cover removal/races/deadline. | Reopen the quote and reply in the installed chat; no duplicate conversation. |
 | F | Group reactions from distinct friends | Folded into H. Codex-UI's pending own-activity card case covers viewers and grouped distinct actors. | Integrate H; check actor deduplication and grouped copy. Three actors cannot be established by only the requested two-peer device topology, so keep the grouped-count assertion in host tests. |
 | G | Unseen notes are distinct beyond bold and labelled as new | `test/features/orbit/presentation/widgets/orbit_thought_notes_test.dart:197` checks outline, semantics and seen styling; `:330` covers the labelled note action. | Observe an unseen note, then its seen state; preserve accessible labels. |
@@ -108,12 +108,14 @@ devices. Keep original attempts and source/configuration/artifact identities.
    Require clear pending/failure state. Restore connectivity and tap retry once;
    require progress, one final Thought and the matching recipient photo. The
    card stays open; repeated taps do not create duplicate sends.
-6. **In-place reply and reaction, then quote reopen.** Send from the friend's
-   card without leaving it; observe Sent. Exercise a recoverable failure and
-   Retry without changing the reply or creating a duplicate. Open chat only by
-   its explicit action, check the photo quote thumbnail (including late download
-   refresh), tap its live quote, and reply again to that same chat. A deleted or
-   unavailable Thought must not reopen a stale card.
+6. **Reply opens chat; reactions stay in place.** Send a typed reply from the
+   friend's card in 3D and 2D Orbit. Require the card to close and the friend's
+   chat to show the new quoted reply at the bottom, using ordinary sending/sent
+   state and chat retry after failure. Repeated taps must not send or navigate
+   twice. Check the photo quote thumbnail (including late download refresh), tap
+   its live quote, and reply again to the same chat without a second route.
+   A reaction stays on the card with Sent/Retry and reuses its ID on retry.
+   A deleted or unavailable Thought must not reopen a stale card.
 7. **Actual views and reactions.** On the author, delivery alone must not add a
    viewer. A recipient looking only at a photo placeholder must not add one;
    displaying the real Thought must. Reopen/retry once and require one viewer
@@ -137,7 +139,7 @@ the matching checklist legs, and preserve host/device proof as separate fields.
 | TH-003 | Thought entry, first-use hint, replacement and photo framing (B/C/J) | `orbital_visualization_test.dart`; `orbit_wired_test.dart`; `thought_compose_sheet_test.dart`; author's `thought_photo_preview_test.dart` | 2–3 |
 | TH-004 | Offline photo posting progress and one-tap retry (A) | Codex-UI's posting card cases; existing delivery/retry suites | 5 |
 | TH-005 | Encrypted preview, true-ratio photo and late quote thumbnail (I) | `post_create_envelope_media_keys_test.dart`; `post_create_encrypted_media_integration_test.dart`; `thought_card_screen_test.dart`; `thought_quote_block_test.dart`; Orbit's late-download quote case | 4 and 6 |
-| TH-006 | In-place reply/reaction Retry and same-chat quote reopen (D/E) | Codex-UI's in-place/retry cases; `orbit_wired_test.dart` live/gone quote cases | 6 |
+| TH-006 | Typed reply opens chat; reaction Retry stays in place; same-chat quote reopen (D/E) | `thought_card_screen_test.dart` one-handoff/reaction-retry cases; `orbit_wired_test.dart` visible quoted reply and live/gone quote cases | 6 |
 | TH-007 | Actual viewers and deduplicated grouped reactions (F/H) | Codex-UI's receipt/own-activity/placeholder cases and delivery persistence tests; migration receipt uniqueness case | 7; multi-actor grouping host-only in this topology |
 | TH-008 | DB123→124 preserves identity, chat, Thought and cached photo | Both `124_*_test.dart` migration files and `full_migration_chain_test.dart` | 1 and 8, only if installed baseline is actually123 |
 
