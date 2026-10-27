@@ -298,8 +298,14 @@ Claude-UI owns the planned app DB v125 `metrics_opt_out` post-row field,
 default 0. Creation captures the switch; switching OFF also marks the user's
 own posts with undelivered recipients. The bit is one-way per Thought: switching
 back ON never clears an older true value. Every recipient/retry rebuilds from
-that durable row, so a later copy cannot become eligible after an opted-out copy.
-Already accepted contributions remain counted; the app wording is “from now on”.
+that durable row, so newly built copies cannot become eligible after an
+opted-out decision. A copy already serialized/submitted while ON can still
+arrive after OFF, including after a newer opted-out copy. A row update cannot
+recall in-flight bytes, and the stateless relay admission rule cannot establish
+an acceptance-time cutoff. Already submitted requests may complete/count;
+previously counted contributions remain. This engineering nuance was sent to
+Claude-UI and Kayan in `m-8a45642a`; keep the withdrawal wording precise rather
+than adding a cancellation/barrier mechanism for this counter.
 
 A previously counted Thought cannot be subtracted from an HLL; the relay will
 not retain individual history to undo it. The seven-day global OFF deletion
