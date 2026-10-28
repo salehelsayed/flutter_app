@@ -284,6 +284,7 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+        GemmaPreviewChannel.register(flutterEngine.dartExecutor.binaryMessenger, applicationContext)
         // 180: native jmDNS mDNS resolver — MethodChannel start/stop + an
         // EventChannel streaming resolved peers. Android-only; the Dart side
         // (BonsoirDiscoveryService) gates it off on iOS and behind the

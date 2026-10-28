@@ -130,6 +130,10 @@ class LetterCard extends StatelessWidget {
   /// and other private bubbles preserve their existing layout.
   final bool hugPrivateContentBubble;
 
+  /// TRANSLATE_PREVIEW: drawn under each voice player, such as the
+  /// "Transcribe" link. Null draws nothing.
+  final Widget Function(MediaAttachment audio)? audioFooterBuilder;
+
   /// Privacy-safe presentation mounted inside the decorated message body.
   /// When present, ordinary media/audio renderers are suppressed so private
   /// bytes can never be projected into the conversation scroll.
@@ -188,6 +192,7 @@ class LetterCard extends StatelessWidget {
     this.transportStatusGlyph = false,
     this.hugPrivateContentBubble = false,
     this.privateContentSlot,
+    this.audioFooterBuilder,
     this.decoratedBodyKey,
     this.messageUploadProgress,
   });
@@ -224,6 +229,16 @@ class LetterCard extends StatelessWidget {
       !isDeleted &&
       transport != 'system' &&
       transport != 'unknown';
+
+  Widget _withAudioFooter(MediaAttachment audio, Widget player) {
+    final footer = audioFooterBuilder;
+    if (footer == null) return player;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [player, footer(audio)],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -471,14 +486,17 @@ class LetterCard extends StatelessWidget {
               : const <MediaAttachment>[])
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-          child: AudioPlayerWidget(
-            key: ValueKey(audio.id),
-            attachment: audio,
-            onRetryUnavailableMedia: onRetryUnavailableMedia != null
-                ? () => onRetryUnavailableMedia!(audio.id)
-                : null,
-            requireVerifiedContentHash: requireVerifiedContentHash,
-            renderedSemanticsLabel: mediaRenderedSemanticsLabels[audio.id],
+          child: _withAudioFooter(
+            audio,
+            AudioPlayerWidget(
+              key: ValueKey(audio.id),
+              attachment: audio,
+              onRetryUnavailableMedia: onRetryUnavailableMedia != null
+                  ? () => onRetryUnavailableMedia!(audio.id)
+                  : null,
+              requireVerifiedContentHash: requireVerifiedContentHash,
+              renderedSemanticsLabel: mediaRenderedSemanticsLabels[audio.id],
+            ),
           ),
         ),
       // Documents (414)

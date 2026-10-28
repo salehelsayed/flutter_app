@@ -40,6 +40,8 @@ import 'package:flutter_app/features/conversation/presentation/widgets/date_sepa
 import 'package:flutter_app/features/conversation/presentation/widgets/empty_conversation_state.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
@@ -495,6 +497,20 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen>
     with RouteAware {
+  /// TRANSLATE_PREVIEW: "Transcribe" under a received voice message once its
+  /// file is on this phone.
+  Widget _transcribePreview(MediaAttachment audio) {
+    final localPath = audio.localPath;
+    if (audio.downloadStatus != 'done' || localPath == null) {
+      return const SizedBox.shrink();
+    }
+    return TranscribePreview(
+      key: ValueKey('transcribe-preview-${audio.id}'),
+      audioPath: MediaFileManager.resolveStoredPathSync(localPath),
+      ai: translatePreviewAi,
+    );
+  }
+
   bool _shouldRequestComposerFocus = false;
   // Initial history is static. Live additions keep their wrapper for as long
   // as the row is retained, so later rebuilds cannot interrupt the animation
@@ -1626,6 +1642,12 @@ class _ConversationScreenState extends State<ConversationScreen>
                     ? ValueKey('private-media-decorated-body-${message.id}')
                     : null,
                 privateContentSlot: privateContentSlotFactory?.call(),
+                audioFooterBuilder:
+                    translatePreviewEnabled &&
+                        message.isIncoming &&
+                        !message.isDeleted
+                    ? _transcribePreview
+                    : null,
                 reactions: message.isDeleted ? const [] : messageReactions,
                 ownPeerId: widget.ownPeerId,
                 onLongPress: onLongPress,

@@ -1,9 +1,11 @@
+import AVFoundation
 import Flutter
 import FirebaseCore
 import FirebaseMessaging
 import CoreFoundation
 import CryptoKit
 import Darwin
+import os
 import os.log
 import UIKit
 import UserNotifications
@@ -892,6 +894,7 @@ final class IosSetupReadinessEntryCoordinator {
   private var migrationBackgroundTask: UIBackgroundTaskIdentifier = .invalid
   private let diskSpaceChannelName = "mknoon/disk_space"
   private var diskSpaceChannel: FlutterMethodChannel?
+  private var gemmaPreviewChannel: FlutterMethodChannel?
   private let appGroupPathChannelName = "mknoon/app_group_path"
   private var appGroupPathChannel: FlutterMethodChannel?
   private var receivedMediaEgressCoordinator: ReceivedMediaEgressCoordinator?
@@ -1227,6 +1230,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupIosAppVisibilityBridge(messenger: messenger)
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
+    setupGemmaPreviewBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
     receivedMediaEgressCoordinator = ReceivedMediaEgressCoordinator(messenger: messenger)
     setupPrivateMediaProtectionBridge(messenger: messenger)
@@ -1932,6 +1936,7 @@ final class IosSetupReadinessEntryCoordinator {
     setupIosAppVisibilityBridge(messenger: controller.binaryMessenger)
     setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
+    setupGemmaPreviewBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
     setupPrivateMediaProtectionBridge(messenger: controller.binaryMessenger)
     setupIosCallLifecycleBridges(messenger: controller.binaryMessenger)
@@ -2018,6 +2023,96 @@ final class IosSetupReadinessEntryCoordinator {
       self?.handleDiskSpaceMethodCall(call, result: result)
     }
     diskSpaceChannel = channel
+  }
+
+  // TRANSLATE_PREVIEW: memory figures for the GEMMA_PREVIEW log line, and a
+  // voice message decoded to mono 16-bit PCM for the on-device model. Dart only
+  // calls it when the preview is built in.
+  private func setupGemmaPreviewBridge(messenger: FlutterBinaryMessenger) {
+    if gemmaPreviewChannel != nil {
+      return
+    }
+    let channel = FlutterMethodChannel(
+      name: "mknoon/gemma_preview",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "memory":
+        result(Self.gemmaPreviewMemory())
+      case "decodePcm":
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String, !path.isEmpty else {
+          result(FlutterError(code: "bad_args", message: "path is required", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+          do {
+            let decoded = try Self.gemmaPreviewDecodePcm(path: path)
+            DispatchQueue.main.async { result(decoded) }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(code: "decode_failed", message: "\(error)", details: nil))
+            }
+          }
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    gemmaPreviewChannel = channel
+  }
+
+  private static func gemmaPreviewMemory() -> [String: Any] {
+    var memory: [String: Any] = ["availableBytes": Int(os_proc_available_memory())]
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(
+      MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size
+    )
+    let status = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+      }
+    }
+    if status == KERN_SUCCESS {
+      memory["footprintBytes"] = Int(info.phys_footprint)
+      memory["peakFootprintBytes"] = Int(info.ledger_phys_footprint_peak)
+    }
+    return memory
+  }
+
+  private static func gemmaPreviewDecodePcm(path: String) throws -> [String: Any] {
+    let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+    let format = file.processingFormat
+    guard let buffer = AVAudioPCMBuffer(
+      pcmFormat: format,
+      frameCapacity: AVAudioFrameCount(file.length)
+    ) else {
+      throw NSError(domain: "GemmaPreview", code: 1)
+    }
+    try file.read(into: buffer)
+    guard let channels = buffer.floatChannelData else {
+      throw NSError(domain: "GemmaPreview", code: 2)
+    }
+    let frames = Int(buffer.frameLength)
+    let channelCount = Int(format.channelCount)
+    var pcm = Data(count: frames * 2)
+    pcm.withUnsafeMutableBytes { raw in
+      let out = raw.bindMemory(to: Int16.self)
+      for frame in 0..<frames {
+        var sum: Float = 0
+        for channel in 0..<channelCount {
+          sum += channels[channel][frame]
+        }
+        let sample = max(-1, min(1, sum / Float(channelCount)))
+        out[frame] = Int16(sample * 32767).littleEndian
+      }
+    }
+    return [
+      "pcm": FlutterStandardTypedData(bytes: pcm),
+      "sampleRate": Int(format.sampleRate),
+      "channels": 1,
+    ]
   }
 
   // 04-P0 SI-5: expose the shared app-group container path to Dart so the

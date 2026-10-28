@@ -84,6 +84,10 @@ dependencies:
 
   sqflite_common: any
   file_picker: ^11.0.3
+  # TRANSLATE_PREVIEW: on-device Gemma 4 E2B translation and transcription.
+  # Only loaded when built with --dart-define=TRANSLATE_PREVIEW=true.
+  flutter_edge_ai: 2.5.4
+  flutter_edge_ai_litertlm: 1.19.0
 dependency_overrides:
   # R2-4: local Android transcoder update and compression-state cleanup.
   video_compress:

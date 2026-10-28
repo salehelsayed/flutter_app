@@ -19,6 +19,8 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -847,20 +849,42 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     ),
   );
 
+  /// TRANSLATE_PREVIEW: the "Translate" link under the thought's text. Without
+  /// the flag the text is returned as it is.
+  Widget _withTranslatePreview(Widget text, {bool stretch = false}) {
+    if (!translatePreviewEnabled) return text;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: stretch
+          ? CrossAxisAlignment.stretch
+          : CrossAxisAlignment.center,
+      children: [
+        text,
+        TranslatePreview(
+          text: _post.text,
+          ai: translatePreviewAi,
+          color: Colors.white,
+        ),
+      ],
+    );
+  }
+
   Widget _centeredText() => Center(
     child: Padding(
       padding: const EdgeInsets.fromLTRB(28, 120, 28, 200),
       child: SingleChildScrollView(
         child: DefaultTextStyle.merge(
           textAlign: TextAlign.center,
-          child: LinkableText(
-            text: _post.text,
-            textDirection: detectTextDirection(_post.text),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              height: 1.25,
-              fontWeight: FontWeight.w600,
+          child: _withTranslatePreview(
+            LinkableText(
+              text: _post.text,
+              textDirection: detectTextDirection(_post.text),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                height: 1.25,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ),
@@ -1007,18 +1031,21 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 maxHeight: MediaQuery.sizeOf(context).height * 0.3,
               ),
               child: SingleChildScrollView(
-                child: LinkableText(
-                  text: _post.text,
-                  textDirection: detectTextDirection(_post.text),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: typing ? 18 : 21,
-                    height: 1.3,
-                    fontWeight: FontWeight.w600,
-                    shadows: const [
-                      Shadow(color: Color(0x59000000), blurRadius: 8),
-                    ],
+                child: _withTranslatePreview(
+                  LinkableText(
+                    text: _post.text,
+                    textDirection: detectTextDirection(_post.text),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: typing ? 18 : 21,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                      shadows: const [
+                        Shadow(color: Color(0x59000000), blurRadius: 8),
+                      ],
+                    ),
                   ),
+                  stretch: true,
                 ),
               ),
             ),

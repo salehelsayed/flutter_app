@@ -19,6 +19,7 @@ import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -1407,6 +1408,69 @@ void main() {
     expect(find.text('orbit-home'), findsOneWidget);
     await finish(tester);
   });
+
+  group('TRANSLATE_PREVIEW', () {
+    tearDown(() {
+      debugTranslatePreviewEnabledOverride = null;
+      debugOnDeviceAiOverride = null;
+    });
+
+    testWidgets('without the flag a foreign thought has no Translate', (
+      tester,
+    ) async {
+      tester.platformDispatcher.localeTestValue = const Locale('de');
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+      expect(kTranslatePreviewEnabled, isFalse);
+      final thought = _thought(initialNow);
+      await posts.savePost(thought);
+
+      await openCard(tester, thought);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+      expect(find.text('Translate'), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('with the flag a foreign thought shows Translate under it, '
+        'and the translation keeps the original', (tester) async {
+      tester.platformDispatcher.localeTestValue = const Locale('de');
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+      debugTranslatePreviewEnabledOverride = true;
+      final ai = _FakeTranslator();
+      debugOnDeviceAiOverride = ai;
+      final thought = _thought(initialNow).copyWith(text: 'How are you today?');
+      await posts.savePost(thought);
+
+      await openCard(tester, thought);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Translate'));
+      await tester.pumpAndSettle();
+
+      expect(ai.requests, ['German: How are you today?']);
+      expect(
+        find.text('How are you today?', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.text('Wie geht es dir heute?'), findsOneWidget);
+      expect(find.text('Auto-translated, may be wrong'), findsOneWidget);
+      expect(find.text('Show original'), findsOneWidget);
+      await finish(tester);
+    });
+  });
+}
+
+class _FakeTranslator implements OnDeviceAi {
+  final requests = <String>[];
+
+  @override
+  Future<String> translate(String text, {required String languageName}) async {
+    requests.add('$languageName: $text');
+    return 'Wie geht es dir heute?';
+  }
+
+  @override
+  Future<String> transcribe(String audioPath) => throw UnimplementedError();
 }
 
 const _alice = ContactModel(
