@@ -98,6 +98,82 @@ func TestThoughtMetricsInboxFanoutRetryDedup(t *testing.T) {
 	assertThoughtWeek(t, m, "2026-W44", 3, 2)
 }
 
+func TestThoughtMetricsOptOutAdmissionPreservesInboxDelivery(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		flag     string
+		eligible bool
+	}{
+		{"absent", "", true},
+		{"false", "false", true},
+		{"whitespace_false", "  false  ", true},
+		{"true", "true", false},
+		{"null", "null", false},
+		{"string_false", `"false"`, false},
+		{"number", "0", false},
+		{"object", "{}", false},
+		{"array", "[]", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+			m := newTestThoughtMetrics(t, &now)
+			installThoughtMetrics(t, m)
+			inbox := NewInboxStore(nil)
+			entry := thoughtMetricEntry("thought-opt-out-"+tc.name, "author-opt-out-"+tc.name, now)
+			if tc.flag != "" {
+				entry.Message = strings.TrimSuffix(entry.Message, "}") + `,"thoughts_metrics_opt_out":` + tc.flag + "}"
+			}
+			for _, recipient := range []string{"recipient-one", "recipient-two"} {
+				for retry := 0; retry < 2; retry++ {
+					if _, err := inbox.Store(recipient, entry); err != nil {
+						t.Fatal(err)
+					}
+				}
+				delivered := inbox.Retrieve(recipient, 100)
+				if len(delivered) != 2 {
+					t.Fatalf("withdrawal flag changed accepted retry delivery: %+v", delivered)
+				}
+				for _, got := range delivered {
+					if got.Message != entry.Message || got.From != entry.From {
+						t.Fatalf("withdrawal flag changed inbox payload: %+v", got)
+					}
+				}
+			}
+			want := uint64(0)
+			if tc.eligible {
+				want = 1
+			}
+			assertThoughtWeek(t, m, "2026-W44", want, want)
+		})
+	}
+}
+
+func TestThoughtMetricsOptOutDoesNotRecallSubmittedEligibleCopy(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	m := newTestThoughtMetrics(t, &now)
+	installThoughtMetrics(t, m)
+	inbox := NewInboxStore(nil)
+	eligible := thoughtMetricEntry("thought-in-flight", "author-in-flight", now)
+	optedOut := eligible
+	optedOut.Message = strings.TrimSuffix(eligible.Message, "}") + `,"thoughts_metrics_opt_out":true}`
+	for i, entry := range []inboxMessage{optedOut, eligible, optedOut} {
+		if _, err := inbox.Store("recipient", entry); err != nil {
+			t.Fatal(err)
+		}
+		if got := inbox.Retrieve("recipient", 100); len(got) != 1 || got[0].Message != entry.Message {
+			t.Fatalf("in-flight copy was not delivered: %+v", got)
+		}
+		want := uint64(1)
+		if i == 0 {
+			want = 0
+		}
+		assertThoughtWeek(t, m, "2026-W44", want, want)
+	}
+	// Stateless admission neither recalls the older eligible copy nor subtracts
+	// its contribution when a later opted-out retry is accepted.
+	assertThoughtWeek(t, m, "2026-W44", 1, 1)
+}
+
 type thoughtFailingInboxBackend struct{ InboxBackend }
 
 func (b thoughtFailingInboxBackend) Store(string, inboxMessage) (InboxStoreResult, error) {
@@ -249,7 +325,7 @@ func TestThoughtMetricsScrapeContractAndWriteFailureRecovery(t *testing.T) {
 		`relay_thoughts_weekly_estimated{week="2026-W44"} 1`,
 		`relay_thought_posters_weekly_estimated{week="2026-W44"} 1`,
 		`relay_thought_returning_posters_weekly_estimated{week="2026-W44"} 0`,
-		"relay_thoughts_snapshot_healthy 0", "Lower-bound coverage", "direct-only", "Estimated",
+		"relay_thoughts_snapshot_healthy 0", "Lower-bound coverage", "direct-only", "Estimated", "eligible", "opted-out",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing scrape contract %q", want)

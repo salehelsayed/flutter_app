@@ -201,13 +201,19 @@ func (m *thoughtMetrics) rotateLocked() {
 // Only existing outer routing metadata is read; no encrypted content is opened.
 func (m *thoughtMetrics) record(entry inboxMessage) {
 	var envelope struct {
-		Type    string `json:"type"`
-		PostID  string `json:"post_id"`
-		Sender  string `json:"sender_peer_id"`
-		Created string `json:"created_at"`
+		Type          string          `json:"type"`
+		PostID        string          `json:"post_id"`
+		Sender        string          `json:"sender_peer_id"`
+		Created       string          `json:"created_at"`
+		MetricsOptOut json.RawMessage `json:"thoughts_metrics_opt_out"`
 	}
 	if json.Unmarshal([]byte(entry.Message), &envelope) != nil || envelope.Type != "post_create" ||
 		envelope.PostID == "" || entry.From == "" || envelope.Sender != entry.From {
+		return
+	}
+	// Only absent or explicit false is eligible. RawMessage preserves null and
+	// other invalid types so malformed withdrawal flags cannot opt back in.
+	if len(envelope.MetricsOptOut) > 0 && !bytes.Equal(bytes.TrimSpace(envelope.MetricsOptOut), []byte("false")) {
 		return
 	}
 	created, err := time.Parse(time.RFC3339Nano, envelope.Created)
@@ -322,9 +328,9 @@ func (m *thoughtMetrics) snapshot() ([]thoughtEstimate, bool) {
 	return result, healthy
 }
 
-var thoughtPostsDesc = prometheus.NewDesc("relay_thoughts_weekly_estimated", "Estimated distinct relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage: direct-only deliveries are unseen; HLL estimates may err in either direction.", []string{"week"}, nil)
-var thoughtPostersDesc = prometheus.NewDesc("relay_thought_posters_weekly_estimated", "Estimated distinct senders of relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage, not verified people.", []string{"week"}, nil)
-var thoughtReturningDesc = prometheus.NewDesc("relay_thought_returning_posters_weekly_estimated", "Estimated senders in this authored UTC ISO week and any earlier retained week (eight-week window). Not all-time returning people; direct-only deliveries are unseen; small-cohort HLL intersection estimates can err.", []string{"week"}, nil)
+var thoughtPostsDesc = prometheus.NewDesc("relay_thoughts_weekly_estimated", "Estimated distinct eligible relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage: opted-out and direct-only deliveries are unseen; HLL estimates may err in either direction.", []string{"week"}, nil)
+var thoughtPostersDesc = prometheus.NewDesc("relay_thought_posters_weekly_estimated", "Estimated distinct senders of eligible relay-inboxed Thoughts by authored UTC ISO week. Lower-bound coverage, not verified people.", []string{"week"}, nil)
+var thoughtReturningDesc = prometheus.NewDesc("relay_thought_returning_posters_weekly_estimated", "Estimated senders of eligible relay-inboxed Thoughts in this authored UTC ISO week and any earlier retained week (eight-week window). Not all-time returning people; opted-out and direct-only deliveries are unseen; small-cohort HLL intersection estimates can err.", []string{"week"}, nil)
 var thoughtSnapshotDesc = prometheus.NewDesc("relay_thoughts_snapshot_healthy", "Last aggregate snapshot write succeeded (1) or failed (0). New updates are buffered until periodic/shutdown flush. Missing Thought series mean unavailable, not zero.", nil, nil)
 
 func (m *thoughtMetrics) Describe(ch chan<- *prometheus.Desc) {

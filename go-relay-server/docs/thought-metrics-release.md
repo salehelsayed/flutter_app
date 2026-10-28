@@ -6,9 +6,11 @@ review; a separate explicit owner approval is required at release time.
 
 **Build 129 only.** Kayan's owner decision `m-1d69c2f5` (2026-10-27) adds a
 separate in-app “Thoughts metrics” withdrawal switch. Do not activate the counter
-for build 128. The relay opt-out admission change is planned below and is not
-implemented by the hardening commit alone. Full hardening validation and frozen
-builds are paused by `m-e77eb4b7`; the earlier artifact is superseded.
+for build 128. The relay opt-out admission change is implemented below; the
+hardening commit alone does not include it. Kayan's partial resume in the reply
+to `m-9a79d135` permits implementation and guarded focused Go tests. Full relay
+validation and frozen builds remain on hold until the AWS device lanes finish
+and Kayan explicitly releases that hold; the earlier artifact is superseded.
 
 ## Candidate and behavior
 
@@ -49,7 +51,8 @@ Thought IDs still use the existing unkeyed HLL input; do not claim every possibl
 known-item membership inference is prevented.
 
 The enabled counter reads only already-routed outer `post_create` metadata after
-accepted inbox storage. It retains dense p14 HLL registers for distinct posts
+accepted inbox storage, excluding opted-out or malformed-flag envelopes before
+hashing. It retains dense p14 HLL registers for eligible distinct posts
 and senders in at most eight authored Monday-UTC ISO weeks. Fanout/retries use
 the same logical ID; direct-only deliveries remain unseen. Weekly senders are
 relay-observed sender IDs, not verified people or all app activity.
@@ -66,8 +69,8 @@ differential privacy guarantee. Small-cohort errors are measured by the
 synthetic `TestThoughtMetricsReturningSmallCohortAccuracy` cases, rather than
 claiming that the HLL single-cardinality error is the intersection error.
 
-Verified hardening race results: 16 top-level cases and nine accuracy subcases,
-zero failures/skips. Each pattern has 128 trials and two measured pilot weeks
+Verified hardened 129 race results: 18 top-level cases and 18 subcases (nine
+admission and nine accuracy), zero failures/skips. Each accuracy pattern has 128 trials and two measured pilot weeks
 (256 estimates per table row). Results below take the worst pattern for each
 weekly sender count; all-returning uses a fixed cohort, while all-new/rotating
 also stress larger prior unions. This is not a guarantee for arbitrary IDs or
@@ -80,7 +83,12 @@ weeks, and all-new cohorts can produce false positive returning estimates.
 | 100 | 1 sender | 4 senders |
 
 Raw JSON and every keyed pattern's mean/p95/max are retained under
-`.codex-test-logs/relay-thought-hardening-20261027/`. The earlier unkeyed
+`.codex-test-logs/relay-thought-hardening-20261027/` and the opt-out receipts under
+`.codex-test-logs/relay-thought-optout-20261028/`. The latter preserves the first
+run's incorrect retry-delivery test assertion and its correction: InboxStore
+retains both accepted retry copies while the HLL counts one logical eligible
+Thought. The fresh corrected run passes under the unchanged resource guard.
+The earlier unkeyed
 run does not certify this hardened candidate. Dense p14 is preserved;
 no sparse per-input representation or exact production sender set is introduced.
 
@@ -226,8 +234,14 @@ If readiness, durability, identity, custody probes or restart stability fail,
 retain diagnostics, restore the exact verified v1.11.2 backup with `install -m0755`,
 verify its SHA, restore only the release-owned drop-in to its prior state, run
 `daemon-reload`, restart only `relay-server`, and repeat durability/client checks.
-Do not restore the older v1.11.1 backup by accident, delete the HLL snapshot or
-reset Redis/inbox data. Record the failed attempt and rollback outcome.
+Do not restore the older v1.11.1 backup by accident or reset Redis/inbox data.
+Rollback also ends this collection epoch: complete and verify snapshot-only
+deletion within seven days of switch-off. Prefer a clean counter-OFF restart
+of the candidate before restoring v1.11.2. If that is not possible, the approved
+release operator must remove only the resolved `thoughts-metrics.json` regular
+file, sync its parent directory and verify absence; v1.11.2 has no OFF-startup
+cleanup and must not be assumed to perform it. Preserve identity, media and all
+custody data. Record the failed attempt, deletion evidence and rollback outcome.
 
 To stop collection while retaining v1.11.3, set the dedicated enable flag to
 `false`, daemon-reload and cleanly restart **within seven days of switch-off**.
@@ -280,14 +294,14 @@ collector can legitimately report zero; absent series are unavailable. Returning
 counts are approximate observed-sender intersections, with the tested cohort
 error and the retention/coverage limits above, not engagement percentages.
 
-## Build 129 relay opt-out contract (agreed; implementation paused)
+## Build 129 relay opt-out contract
 
 Agreed with Claude-UI in `m-d467a3cf` after `m-1d69c2f5`: a top-level JSON boolean
 `thoughts_metrics_opt_out: true` in the existing outer `post_create` routing
 metadata, next to `post_id`, `sender_peer_id` and `created_at`, outside encrypted
 content. App-owned seam: `PostCreateEnvelope.buildEncryptedEnvelope`.
 
-The planned relay change checks this flag after accepted inbox storage, before
+The relay checks this flag after accepted inbox storage, before
 hashing or updating either sketch. True skips both post/sender contributions;
 false/absent preserves existing eligibility; the app omits the key while ON.
 Any nonboolean (including JSON null) skips counting while message delivery remains
@@ -314,7 +328,9 @@ The present collector reads only `post_create`: chat replies/quotedMessageId,
 reactions, views and `post_pass` are ignored and have no engagement metric in
 this task. Do not add opt-out fields to those unrelated types for this counter.
 
-Kayan approved implementation only **after the resource pause ends**, in the
-reply to `m-2324c926`. The relay opt-out code and focused skip/preservation cases
-are not implemented or validated yet. The hardening source review remains scoped to its fixed
-commit; this 129 plan does not reopen the earlier source review.
+Kayan authorized implementation and guarded focused testing in the partial
+resume reply to `m-9a79d135`. Actual inbox tests cover absent/false eligibility,
+true/null/other-type exclusion, unchanged fanout/retry delivery and the delayed
+eligible-copy boundary. Full relay validation and frozen builds remain held.
+The hardening source review remains scoped to its fixed commit; the opt-out
+delta needs its own scoped review rather than reopening settled findings.
