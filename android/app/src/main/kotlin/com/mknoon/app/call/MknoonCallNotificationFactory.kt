@@ -50,7 +50,7 @@ internal class AndroidMknoonCallPendingIntentFactory(
     }
 
     override fun answerActivity(nativeCallId: UUID): PendingIntent {
-        val intent = Intent(applicationContext, MainActivity::class.java)
+        val intent = Intent(applicationContext, MknoonCallAnswerActivity::class.java)
             .setAction(MknoonCallActionReceiver.ACTION_ANSWER)
             .setData(Uri.parse("mknoon-call-answer://local/$nativeCallId"))
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)

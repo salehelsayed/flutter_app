@@ -8631,6 +8631,19 @@ visible and cannot become an ordinary first-attempt PASS.
   dark status inset, legible white icons and retained cream body/dark navigation
   handle. The visual review is separate from the passing digital-audio and
   cleanup result; the original preference and secure keyguard were restored.
+  Notification Answer consent is owned by the non-exported native
+  `MknoonCallAnswerActivity`, reached through the immutable exact-call activity
+  PendingIntent. Exported `MainActivity` cold/warm intents only display the call;
+  the private entry reuses the existing live-call/expiry/duplicate validation and
+  forwards `OPEN_INCOMING`, never Answer authority. `MknoonCallAnswerActivityTest`
+  reproduces unauthorized `ANSWER_REQUESTED` on both public paths (expected 0,
+  actual 1), then verifies refusal, private-entry replay idempotence, no direct
+  audio activation and stale-call rejection (four passing tests, no skips).
+  The test shadows Flutter's superclass lifecycle to exclude JNI while running
+  the real activity/presentation/controller paths. Receipts are retained under
+  `.codex-test-logs/call-fixes-h1-h2-m2-20261029/h1-second-attempt/` and `h1-green/`;
+  the earlier fixture compilation failure remains in `h1-first-attempt/`.
+  This JVM evidence does not certify lockscreen pixels or signed-device behavior.
   Cold native ringing screenshots also exposed a generic identity/avatar until
   foreground projection arrived. Authenticated headless admission already has
   the sender and local contact record; display fields must cross that existing

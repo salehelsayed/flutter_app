@@ -36,6 +36,11 @@
             android:name="io.flutter.embedding.android.EnableImpeller"
             android:value="false" />
         <activity
+            android:name=".call.MknoonCallAnswerActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"

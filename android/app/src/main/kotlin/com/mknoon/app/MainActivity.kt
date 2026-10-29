@@ -81,10 +81,10 @@ class MainActivity : FlutterActivity() {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
         }
         super.onCreate(savedInstanceState)
-        // A recreated activity receives the original intent again. Restore its
-        // safe call surface, but only a fresh launch may request Answer.
+        // This exported entry only displays the exact call. Notification Answer
+        // consent is consumed by the private MknoonCallAnswerActivity.
         incomingCallPresentation = MknoonIncomingCallPresentation(this).also {
-            it.onIntent(intent, answerFromIntent = savedInstanceState == null)
+            it.onIntent(intent, answerFromIntent = false)
         }
     }
 
@@ -333,7 +333,7 @@ class MainActivity : FlutterActivity() {
      * the static catcher.
      */
     override fun onNewIntent(intent: Intent) {
-        incomingCallPresentation?.onIntent(intent, answerFromIntent = true)
+        incomingCallPresentation?.onIntent(intent, answerFromIntent = false)
         // 414 (F2): same guard as onCreate, before the share plugin's listener.
         ShareIntentReadabilityGuard.sanitize(intent) {
             ShareIntentReadabilityGuard.canRead(contentResolver, it)
