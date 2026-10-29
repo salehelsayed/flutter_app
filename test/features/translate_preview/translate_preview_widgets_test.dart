@@ -48,7 +48,7 @@ void main() {
 
     await tester.tap(find.text('Übersetzung anzeigen'));
     await tester.pump();
-    expect(find.text('Translating…'), findsOneWidget);
+    expect(find.text('Wird übersetzt…'), findsOneWidget);
     expect(ai.translations, [
       (text: 'How are you today?', languageName: 'German'),
     ]);
@@ -173,5 +173,34 @@ void main() {
     await tester.pump();
     expect(find.text("Couldn't transcribe"), findsOneWidget);
     expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets('A German app shows the busy and failure labels in German', (
+    tester,
+  ) async {
+    final ai = _FakeAi();
+    await tester.pumpWidget(
+      _host(
+        Column(
+          children: [
+            TranslatePreview(text: 'مرحبا كيف حالك', ai: ai),
+            TranscribePreview(audioPath: '/tmp/voice.m4a', ai: ai),
+          ],
+        ),
+        locale: const Locale('de'),
+      ),
+    );
+
+    await tester.tap(find.text('Übersetzung anzeigen'));
+    await tester.tap(find.text('Abschreiben'));
+    await tester.pump();
+    expect(find.text('Wird übersetzt…'), findsOneWidget);
+    expect(find.text('Wird abgeschrieben…'), findsOneWidget);
+
+    ai.next.completeError(StateError('model missing'));
+    await tester.pump();
+    expect(find.text('Übersetzen fehlgeschlagen'), findsOneWidget);
+    expect(find.text('Abschreiben fehlgeschlagen'), findsOneWidget);
+    expect(find.text('Erneut versuchen'), findsNWidgets(2));
   });
 }

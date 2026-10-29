@@ -7688,6 +7688,30 @@ abstract class AppLocalizations {
   /// **'Try again'**
   String get translator_try_again;
 
+  /// Shown while a message is being translated.
+  ///
+  /// In en, this message translates to:
+  /// **'Translating…'**
+  String get translator_translating;
+
+  /// Shown when translating a message failed; followed by Try again.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t translate'**
+  String get translator_translate_failed;
+
+  /// Shown while a voice message is turned into text.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcribing…'**
+  String get translator_transcribing;
+
+  /// Shown when turning a voice message into text failed; followed by Try again.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t transcribe'**
+  String get translator_transcribe_failed;
+
   /// Download sheet title.
   ///
   /// In en, this message translates to:

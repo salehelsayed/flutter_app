@@ -51,8 +51,8 @@ class TranslatePreview extends StatelessWidget {
         key: ValueKey('translate-preview:$target:$text'),
         labels: _Labels(
           action: l10n.translator_see_translation,
-          busy: 'Translating…',
-          failure: "Couldn't translate",
+          busy: l10n.translator_translating,
+          failure: l10n.translator_translate_failed,
           hide: l10n.translator_hide,
         ),
         run: () => ai.translate(text, languageName: languageName),
@@ -91,8 +91,8 @@ class TranscribePreview extends StatelessWidget {
       ready: () => _AiAction(
         labels: _Labels(
           action: l10n.translator_transcribe,
-          busy: 'Transcribing…',
-          failure: "Couldn't transcribe",
+          busy: l10n.translator_transcribing,
+          failure: l10n.translator_transcribe_failed,
         ),
         run: () => ai.transcribe(audioPath),
         color: color,

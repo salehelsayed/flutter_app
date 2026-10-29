@@ -4680,6 +4680,18 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_try_again => 'حاول مجددًا';
 
   @override
+  String get translator_translating => 'جارٍ الترجمة…';
+
+  @override
+  String get translator_translate_failed => 'تعذّرت الترجمة';
+
+  @override
+  String get translator_transcribing => 'جارٍ التفريغ النصي…';
+
+  @override
+  String get translator_transcribe_failed => 'تعذّر التفريغ النصي';
+
+  @override
   String get translator_sheet_title => 'مترجمك الخاص';
 
   @override

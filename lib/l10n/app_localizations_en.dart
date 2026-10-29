@@ -4614,6 +4614,18 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_try_again => 'Try again';
 
   @override
+  String get translator_translating => 'Translating…';
+
+  @override
+  String get translator_translate_failed => 'Couldn\'t translate';
+
+  @override
+  String get translator_transcribing => 'Transcribing…';
+
+  @override
+  String get translator_transcribe_failed => 'Couldn\'t transcribe';
+
+  @override
   String get translator_sheet_title => 'Your private translator';
 
   @override

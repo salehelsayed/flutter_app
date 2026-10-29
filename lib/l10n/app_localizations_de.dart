@@ -4723,6 +4723,18 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_try_again => 'Erneut versuchen';
 
   @override
+  String get translator_translating => 'Wird übersetzt…';
+
+  @override
+  String get translator_translate_failed => 'Übersetzen fehlgeschlagen';
+
+  @override
+  String get translator_transcribing => 'Wird abgeschrieben…';
+
+  @override
+  String get translator_transcribe_failed => 'Abschreiben fehlgeschlagen';
+
+  @override
   String get translator_sheet_title => 'Dein privater Übersetzer';
 
   @override
