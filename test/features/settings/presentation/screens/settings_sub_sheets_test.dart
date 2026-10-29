@@ -4,24 +4,31 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_recovery_phrase_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/safety_support_sheet.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
 import '../../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../../conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
+import '../../../translate_preview/fake_model_delivery_controller.dart';
 
 /// 209 — the focused sub-sheets the One-Screen rows open (background, photo
 /// quality, video quality, recovery phrase). Each sheet hosts the EXISTING
@@ -58,6 +65,8 @@ void main() {
     String mnemonic = twelveWords,
     ThemeData? themeOverride,
     bool callPrivacyAvailable = false,
+    MediaStorageManager? mediaStorageManager,
+    Future<List<MediaStorageScopeOption>> Function()? mediaStorageScopesProvider,
   }) async {
     final repo =
         identityRepo ??
@@ -102,6 +111,8 @@ void main() {
           imageProcessor: ImageProcessor(),
           appShellController: shell,
           postsPrivacySettingsRepository: privacyRepo,
+          mediaStorageManager: mediaStorageManager,
+          mediaStorageScopesProvider: mediaStorageScopesProvider,
         ),
       ),
     );
@@ -121,6 +132,66 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets('translator Free up space opens Storage from Settings', (
+    tester,
+  ) async {
+    final translator = FakeModelDeliveryController(
+      const ModelNotEnoughSpace(
+        totalBytes: 2600000000,
+        neededBytes: 2800000000,
+        freeBytes: 1100000000,
+      ),
+    );
+    debugTranslatePreviewEnabledOverride = true;
+    debugModelDeliveryOverride = translator;
+    addTearDown(() {
+      debugTranslatePreviewEnabledOverride = null;
+      debugModelDeliveryOverride = null;
+      translator.state.dispose();
+      translator.allowMobileData.dispose();
+    });
+    await pumpWired(
+      tester,
+      mediaStorageManager: MediaStorageManager(
+        repository: FakeMediaAttachmentRepository(),
+        documentsDirectoryProvider: () async => '/unused-storage-navigation',
+      ),
+      mediaStorageScopesProvider: () async => const [
+        MediaStorageScopeOption(
+          scope: MediaLibraryScope.direct('storage-peer'),
+          label: 'Omar',
+        ),
+      ],
+    );
+    await openSheet(tester, 'settings-row-media-storage');
+    final mediaSheetRoute = ModalRoute.of(
+      tester.element(find.byType(MediaStorageUsageSection)),
+    );
+    await tester.ensureVisible(find.text('Get'));
+    await tester.tap(find.text('Get'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Your private translator'), findsOneWidget);
+
+    await tester.tap(find.text('Free up space'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final currentStorage = find.byType(MediaStorageUsageSection).evaluate().where(
+      (element) => ModalRoute.of(element)?.isCurrent == true,
+    );
+    expect(currentStorage, hasLength(1));
+    expect(
+      ModalRoute.of(currentStorage.single),
+      isNot(same(mediaSheetRoute)),
+      reason: 'Free up space must open Storage, not just dismiss the offer',
+    );
+    expect(find.text('Storage usage').hitTestable(), findsOneWidget);
+    expect(find.text('Omar').hitTestable(), findsOneWidget);
+    expect(find.text('Your private translator'), findsNothing);
+    expect(translator.calls, isEmpty);
+  });
 
   testWidgets(
     'secure grant precedes recovery sheet and survives dismiss animation',

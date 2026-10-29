@@ -222,34 +222,50 @@ void main() {
     expect(controller.calls, ['pause']);
   });
 
-  for (final (name, state) in [
-    (
-      'waiting for Wi-Fi',
-      const ModelWaitingForWifi(receivedBytes: 1100000000, totalBytes: _total),
-    ),
-    (
-      'paused',
-      const ModelPaused(receivedBytes: 1100000000, totalBytes: _total),
-    ),
-  ]) {
-    testWidgets('3c $name: Use mobile data continues on mobile data', (
+  testWidgets('3c waiting for Wi-Fi: Use mobile data continues on mobile data', (
+    tester,
+  ) async {
+    final controller = await _openSheet(
       tester,
-    ) async {
-      final controller = await _openSheet(tester, state);
-      expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
-      expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
-      expect(find.text('paused'), findsOneWidget);
-      expect(
-        find.text("It picks up where it stopped when you're back on Wi-Fi."),
-        findsOneWidget,
-      );
-      await tester.tap(find.text('Use mobile data'));
-      expect(controller.calls, ['start(allowMobileData: true)']);
-      await tester.tap(find.text('Close'));
-      await tester.pumpAndSettle();
-      expect(find.text('Waiting for Wi-Fi'), findsNothing);
-    });
-  }
+      const ModelWaitingForWifi(receivedBytes: 1100000000, totalBytes: _total),
+    );
+    expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
+    expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
+    expect(find.text('paused'), findsOneWidget);
+    expect(
+      find.text("It picks up where it stopped when you're back on Wi-Fi."),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Use mobile data'));
+    expect(controller.calls, ['start(allowMobileData: true)']);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    expect(find.text('Waiting for Wi-Fi'), findsNothing);
+  });
+
+  testWidgets('manual Pause with mobile data allowed shows Paused and Resume '
+      'without changing consent', (tester) async {
+    final controller = await _openSheet(
+      tester,
+      const ModelDownloading(receivedBytes: 1100000000, totalBytes: _total),
+    );
+    controller.allowMobileData.value = true;
+    await tester.tap(find.text('Pause'));
+    controller.state.value = const ModelPaused(
+      receivedBytes: 1100000000,
+      totalBytes: _total,
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Paused'), findsOneWidget);
+    expect(find.text('Translation paused · 42%'), findsOneWidget);
+    expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
+    expect(find.text('Waiting for Wi-Fi'), findsNothing);
+    expect(find.text('Use mobile data'), findsNothing);
+    await tester.tap(find.text('Resume'));
+    expect(controller.calls, ['pause', 'resume']);
+    expect(controller.allowMobileData.value, isTrue);
+  });
 
   testWidgets('3d failed: Try again retries, Not now closes', (tester) async {
     final controller = await _openSheet(tester, const ModelFailed());
