@@ -5406,6 +5406,27 @@ visible and cannot become an ordinary first-attempt PASS.
   See `go-relay-server/docs/thought-metrics-release.md` for the default-off
   release preparation and the separate approval/privacy/staging prerequisites.
 
+- **Background motion scheduling:** the default-on Moving background preference
+  is stored separately from the wallpaper and loaded into AppShellController
+  before startup routing. AmbientBackground combines that preference with both
+  OS motion flags, resumed lifecycle state and TickerMode visibility. Only the
+  backgrounds receive the gated MediaQuery; content retains its original motion
+  and accessibility policy. The existing Cosmic/Mirror Cosmic static branches
+  stop their controllers and clocks; Aurora stops its own loop, and Signal is
+  already static. `background_motion_lifecycle_test.dart` checks queued frame
+  callbacks for all animated treatments, covered routes, initial paused mounts,
+  resume, switching and OS precedence. Before the fix, all three paused cases
+  retained one queued callback rather than zero. Settings integration tests
+  retain persistence, failed-save rollback, serialized writes, modal refresh and
+  app-state publication after Settings disposal. The switch lives inside the
+  existing Background chooser: adding a main-page row caused 65 pixels of scroll
+  on the existing 390x844 no-scroll contract. The final 296-case focused run and
+  touched-file analysis pass; original failures and final logs remain in
+  `.codex-test-logs/background-motion-129/` in the delivering checkout. Scheduler
+  tests do not establish Pixel CPU, FPS, thermal or battery improvements; those
+  need matched device measurements. Broad curated and device lanes remain
+  separate from this focused host evidence.
+
 - **Settings, consent, group creation and update recovery boundaries:** recovery
   phrase visibility is page-owned but its modal sheet must also rebuild when
   inactive/hidden/paused conceals it. A visual blur does not exclude phrase

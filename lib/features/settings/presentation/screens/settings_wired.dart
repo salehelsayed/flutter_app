@@ -44,6 +44,7 @@ import 'package:flutter_app/features/settings/domain/models/media_download_prefe
 import 'package:flutter_app/features/settings/application/media_download_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/background_choice_control.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/moving_background_settings_row.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
@@ -137,6 +138,11 @@ class _SettingsWiredState extends State<SettingsWired>
   BackgroundPreference _currentBackgroundPreference =
       BackgroundPreference.defaultBackground;
   String? _backgroundPreferenceError;
+  bool _backgroundMotionEnabled = true;
+  bool _isBackgroundMotionLoading = true;
+  bool _isBackgroundMotionSaving = false;
+  String? _backgroundMotionError;
+  VoidCallback? _backgroundSheetTick;
   ImageQualityPreference _currentQuality = ImageQualityPreference.compressed;
   ImageQualityPreference _currentVideoQuality =
       ImageQualityPreference.compressed;
@@ -171,6 +177,9 @@ class _SettingsWiredState extends State<SettingsWired>
     emitFlowEvent(layer: 'FL', event: 'SETTINGS_FL_SCREEN_INIT', details: {});
     _loadIdentity();
     _loadBackgroundPreference();
+    _backgroundMotionEnabled =
+        widget.appShellController.backgroundMotionEnabled;
+    _loadBackgroundMotionEnabled();
     _loadQualityPreference();
     _loadVideoQualityPreference();
     _loadMediaDownloadPreferences();
@@ -363,6 +372,54 @@ class _SettingsWiredState extends State<SettingsWired>
           'error': e.toString(),
         },
       );
+    }
+  }
+
+  Future<void> _loadBackgroundMotionEnabled() async {
+    try {
+      final enabled = await loadBackgroundMotionEnabled(
+        secureKeyStore: widget.secureKeyStore,
+      );
+      if (!mounted) return;
+      widget.appShellController.setBackgroundMotionEnabled(enabled);
+      setState(() => _backgroundMotionEnabled = enabled);
+    } finally {
+      if (mounted) {
+        setState(() => _isBackgroundMotionLoading = false);
+        _backgroundSheetTick?.call();
+      }
+    }
+  }
+
+  Future<void> _onBackgroundMotionChanged(bool enabled) async {
+    if (_isBackgroundMotionLoading || _isBackgroundMotionSaving) return;
+    final controller = widget.appShellController;
+    final previous = _backgroundMotionEnabled;
+    setState(() {
+      _backgroundMotionEnabled = enabled;
+      _isBackgroundMotionSaving = true;
+      _backgroundMotionError = null;
+    });
+    _backgroundSheetTick?.call();
+    try {
+      await saveBackgroundMotionEnabled(
+        secureKeyStore: widget.secureKeyStore,
+        enabled: enabled,
+      );
+      controller.setBackgroundMotionEnabled(enabled);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _backgroundMotionEnabled = previous;
+        _backgroundMotionError = AppLocalizations.of(
+          context,
+        )!.settings_background_save_fail;
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isBackgroundMotionSaving = false);
+        _backgroundSheetTick?.call();
+      }
     }
   }
 
@@ -798,25 +855,45 @@ class _SettingsWiredState extends State<SettingsWired>
     ),
   );
 
-  Future<void> _openBackgroundSheet() {
-    return _showSettingsSheet(
-      builder: (sheetContext, setSheetState) => BackgroundChoiceControl(
-        value: _currentBackgroundPreference,
-        errorText: _backgroundPreferenceError,
-        onChanged: (newPreference) async {
-          // The EXISTING handler is the single mechanism (persist + shell
-          // propagation + failure revert + telemetry). On success the sheet
-          // closes to the updated row; on failure it stays up with the error.
-          await _onBackgroundPreferenceChanged(newPreference);
-          if (!mounted || !sheetContext.mounted) return;
-          if (_backgroundPreferenceError != null) {
-            setSheetState(() {});
-            return;
-          }
-          Navigator.of(sheetContext).pop();
+  Future<void> _openBackgroundSheet() async {
+    try {
+      await _showSettingsSheet(
+        builder: (sheetContext, setSheetState) {
+          _backgroundSheetTick = () {
+            if (sheetContext.mounted) setSheetState(() {});
+          };
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              BackgroundChoiceControl(
+                value: _currentBackgroundPreference,
+                errorText: _backgroundPreferenceError,
+                onChanged: (newPreference) async {
+                  // Preserve wallpaper selection and sheet-close behavior.
+                  await _onBackgroundPreferenceChanged(newPreference);
+                  if (!mounted || !sheetContext.mounted) return;
+                  if (_backgroundPreferenceError != null) {
+                    setSheetState(() {});
+                    return;
+                  }
+                  Navigator.of(sheetContext).pop();
+                },
+              ),
+              MovingBackgroundSettingsRow(
+                enabled: _backgroundMotionEnabled,
+                onChanged:
+                    _isBackgroundMotionLoading || _isBackgroundMotionSaving
+                    ? null
+                    : _onBackgroundMotionChanged,
+                errorText: _backgroundMotionError,
+              ),
+            ],
+          );
         },
-      ),
-    );
+      );
+    } finally {
+      _backgroundSheetTick = null;
+    }
   }
 
   Future<void> _openPhotoQualitySheet() {

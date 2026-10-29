@@ -614,6 +614,8 @@
   "settings_group_exit_diagnostic_ex10": "Local group deletion is incomplete.",
   "settings_group_exit_diagnostic_ex99": "An unexpected group-exit result occurred.",
   "settings_background": "Background",
+  "settings_moving_background": "Moving background",
+  "settings_moving_background_desc": "Turn off to save battery",
   "settings_background_default": "Default",
   "settings_background_default_desc": "Mirrored cosmic drift with soft color blooms.",
   "settings_background_cosmic": "Cosmic",

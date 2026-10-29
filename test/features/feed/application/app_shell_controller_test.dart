@@ -4,6 +4,29 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('motion defaults on and only changes notify as background events', () {
+    final controller = AppShellController();
+    addTearDown(controller.dispose);
+    final kinds = <AppShellChangeKind>[];
+    controller.addListener(() => kinds.add(controller.lastChangeKind));
+    expect(controller.backgroundMotionEnabled, isTrue);
+    controller.setBackgroundMotionEnabled(true);
+    expect(kinds, isEmpty);
+    controller.setBackgroundMotionEnabled(false);
+    expect(controller.backgroundMotionEnabled, isFalse);
+    expect(
+      controller.backgroundPreference,
+      BackgroundPreference.defaultBackground,
+    );
+    controller.setBackgroundMotionEnabled(false);
+    expect(kinds, [AppShellChangeKind.background]);
+    controller.setBackgroundMotionEnabled(true);
+    expect(kinds, [
+      AppShellChangeKind.background,
+      AppShellChangeKind.background,
+    ]);
+  });
+
   group('AppShellController change-kind discrimination (163)', () {
     test(
       'TC-163-01: setBackgroundPreference and switchTo notify DISTINCT change kinds',
@@ -21,18 +44,12 @@ void main() {
 
         // A background change signals a BACKGROUND kind only.
         controller.setBackgroundPreference(BackgroundPreference.cosmic);
-        expect(kinds, [
-          AppShellChangeKind.tab,
-          AppShellChangeKind.background,
-        ]);
+        expect(kinds, [AppShellChangeKind.tab, AppShellChangeKind.background]);
 
         // No-op guards fire nothing: same tab, same preference → no notify.
         controller.switchTo(AppShellTab.orbit);
         controller.setBackgroundPreference(BackgroundPreference.cosmic);
-        expect(kinds, [
-          AppShellChangeKind.tab,
-          AppShellChangeKind.background,
-        ]);
+        expect(kinds, [AppShellChangeKind.tab, AppShellChangeKind.background]);
 
         // The inverse routing also holds: a second tab change is a TAB kind.
         controller.switchTo(AppShellTab.feed);

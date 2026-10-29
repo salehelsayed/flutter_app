@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
+import 'package:flutter_app/core/theme/app_shell_theme_binding.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
@@ -52,16 +53,20 @@ class AmbientBackground extends StatefulWidget {
 }
 
 class _AmbientBackgroundState extends State<AmbientBackground>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late AnimationController _controller;
 
   /// 156 QW-3: OS reduce-motion preference, read from MediaQuery in
   /// [didChangeDependencies] (mirrors cosmic_background).
   bool _motionDisabled = false;
+  bool _appResumed = true;
 
   @override
   void initState() {
     super.initState();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    _appResumed = lifecycle == null || lifecycle == AppLifecycleState.resumed;
+    WidgetsBinding.instance.addObserver(this);
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 8),
@@ -83,20 +88,30 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final resumed = state == AppLifecycleState.resumed;
+    if (_appResumed == resumed) return;
+    setState(() {
+      _appResumed = resumed;
+      _syncMotionPreference();
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
   }
 
-  /// 156 QW-3: honor OS reduce-motion on EVERY ambient surface (previously only
-  /// the feed surface, via [AmbientBackground.reduceMotion], honored it). Reads
-  /// `disableAnimations` / `accessibleNavigation` like cosmic_background and
-  /// starts/stops the ambient loop. SCOPED to this widget only — the production
-  /// friend-profile and first-open orbits run their own `..repeat()` controllers
-  /// and are intentionally NOT gated here (user-required).
+  /// Stop background loops whenever the app, route, OS, or saved preference
+  /// disallows motion. Content animations keep their original MediaQuery.
   void _syncMotionPreference() {
     final mediaQuery = MediaQuery.maybeOf(context);
     _motionDisabled =
+        !BackgroundMotionScope.enabledOf(context) ||
+        !_appResumed ||
+        !TickerMode.valuesOf(context).enabled ||
         (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
 
@@ -121,17 +136,20 @@ class _AmbientBackgroundState extends State<AmbientBackground>
         ? FeedTokens.light
         : FeedTokens.dark;
     final theme = Theme.of(context);
+    final originalMediaQuery =
+        MediaQuery.maybeOf(context) ?? const MediaQueryData();
+    final content = MediaQuery(data: originalMediaQuery, child: widget.child);
     final themedBackground = switch (widget.preference) {
       BackgroundPreference.defaultBackground => CosmicBackgroundMirrored(
-        child: widget.child,
+        child: content,
       ),
-      BackgroundPreference.cosmic => CosmicBackground(child: widget.child),
+      BackgroundPreference.cosmic => CosmicBackground(child: content),
       BackgroundPreference.aurora => _DefaultAmbientBackground(
         animation: _controller,
-        child: widget.child,
+        child: content,
       ),
       BackgroundPreference.daylightLagoon => DaylightLagoonBackground(
-        child: widget.child,
+        child: content,
       ),
     };
 
@@ -149,7 +167,10 @@ class _AmbientBackgroundState extends State<AmbientBackground>
             feedTokens,
           ],
         ),
-        child: themedBackground,
+        child: MediaQuery(
+          data: originalMediaQuery.copyWith(disableAnimations: _motionDisabled),
+          child: themedBackground,
+        ),
       ),
     );
   }
@@ -162,8 +183,8 @@ class _AmbientBackgroundState extends State<AmbientBackground>
   /// treatment, (b) this is a chat/group surface (158 critic-2:
   /// idle-glow suppression so the always-mounted chrome BackdropFilters stay
   /// cacheable at rest), (c) this is the feed surface AND [reduceMotion] is
-  /// requested, or (d) the OS reduce-motion preference is on (156 QW-3, applies
-  /// to ALL ambient surfaces). Each clause is additive (OR-combined) — none
+  /// requested, or (d) the app, route, OS, or saved preference disables motion.
+  /// Each clause is additive (OR-combined) — none
   /// short-circuits another. When gated off the controller stays at value 0 →
   /// the static final glow frame is rendered.
   bool get _shouldAnimate {

@@ -1966,6 +1966,18 @@ abstract class AppLocalizations {
   /// **'Background'**
   String get settings_background;
 
+  /// No description provided for @settings_moving_background.
+  ///
+  /// In en, this message translates to:
+  /// **'Moving background'**
+  String get settings_moving_background;
+
+  /// No description provided for @settings_moving_background_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn off to save battery'**
+  String get settings_moving_background_desc;
+
   /// No description provided for @settings_background_default.
   ///
   /// In en, this message translates to:

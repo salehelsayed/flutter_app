@@ -34,6 +34,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/features/settings/application/background_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
@@ -284,6 +285,29 @@ class _FailingWriteSecureKeyStore extends FakeSecureKeyStore {
   Future<void> write(String key, String value) async {
     throw StateError('write failed');
   }
+}
+
+class _DeferredMotionWriteStore extends FakeSecureKeyStore {
+  final pending = Completer<void>();
+  int writes = 0;
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == backgroundMotionEnabledStorageKey) {
+      writes++;
+      await pending.future;
+    }
+    await super.write(key, value);
+  }
+}
+
+class _DeferredMotionReadStore extends FakeSecureKeyStore {
+  final pending = Completer<String?>();
+
+  @override
+  Future<String?> read(String key) => key == backgroundMotionEnabledStorageKey
+      ? pending.future
+      : super.read(key);
 }
 
 void main() {
@@ -858,6 +882,186 @@ void main() {
     await settleSheetClose(tester);
 
     expect(await store.read('background_preference'), 'default');
+  });
+
+  testWidgets('moving background persists off and reloads after reopening', (
+    tester,
+  ) async {
+    final store = FakeSecureKeyStore();
+    final shell = AppShellController();
+    addTearDown(shell.dispose);
+    final identityRepo = FakeIdentityRepository(makeIdentity());
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      secureKeyStore: store,
+      appShellController: shell,
+    );
+    await openSheet(tester, 'settings-row-background');
+    final toggle = find.byKey(
+      const ValueKey('settings-moving-background-switch'),
+    );
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    expect(find.text('Turn off to save battery'), findsOneWidget);
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await store.read(backgroundMotionEnabledStorageKey), 'false');
+    expect(shell.backgroundMotionEnabled, isFalse);
+    expect(shell.backgroundPreference, BackgroundPreference.defaultBackground);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    final reopenedShell = AppShellController();
+    addTearDown(reopenedShell.dispose);
+    await pumpScreen(
+      tester,
+      identityRepo: identityRepo,
+      secureKeyStore: store,
+      appShellController: reopenedShell,
+    );
+    await openSheet(tester, 'settings-row-background');
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(reopenedShell.backgroundMotionEnabled, isFalse);
+  });
+
+  testWidgets('moving background save failure restores value and shows error', (
+    tester,
+  ) async {
+    final shell = AppShellController();
+    addTearDown(shell.dispose);
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: _FailingWriteSecureKeyStore(),
+      appShellController: shell,
+    );
+    await openSheet(tester, 'settings-row-background');
+    final toggle = find.byKey(
+      const ValueKey('settings-moving-background-switch'),
+    );
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+    expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+    expect(shell.backgroundMotionEnabled, isTrue);
+    expect(find.text("Couldn't save. Try again."), findsOneWidget);
+  });
+
+  testWidgets(
+    'moving background blocks concurrent writes until save completes',
+    (tester) async {
+      final store = _DeferredMotionWriteStore();
+      final shell = AppShellController();
+      addTearDown(shell.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        appShellController: shell,
+      );
+      await openSheet(tester, 'settings-row-background');
+      final toggle = find.byKey(
+        const ValueKey('settings-moving-background-switch'),
+      );
+      final change = tester.widget<Switch>(toggle).onChanged!;
+      change(false);
+      change(true);
+      await tester.pump();
+      expect(store.writes, 1);
+      expect(tester.widget<Switch>(toggle).onChanged, isNull);
+      expect(shell.backgroundMotionEnabled, isTrue);
+      store.pending.complete();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await store.read(backgroundMotionEnabledStorageKey), 'false');
+      expect(shell.backgroundMotionEnabled, isFalse);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+    },
+  );
+
+  testWidgets('open background chooser refreshes when motion load completes', (
+    tester,
+  ) async {
+    final store = _DeferredMotionReadStore();
+    final shell = AppShellController();
+    addTearDown(shell.dispose);
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: store,
+      appShellController: shell,
+    );
+    await openSheet(tester, 'settings-row-background');
+    final toggle = find.byKey(
+      const ValueKey('settings-moving-background-switch'),
+    );
+    expect(tester.widget<Switch>(toggle).onChanged, isNull);
+    store.pending.complete('false');
+    await tester.pump();
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+    expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+    expect(shell.backgroundMotionEnabled, isFalse);
+  });
+
+  testWidgets(
+    'opening and cancelling background chooser does not save motion',
+    (tester) async {
+      final store = FakeSecureKeyStore();
+      final shell = AppShellController();
+      addTearDown(shell.dispose);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        appShellController: shell,
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-moving-background-switch'),
+      );
+      expect(toggle, findsNothing);
+      await openSheet(tester, 'settings-row-background');
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      Navigator.of(tester.element(toggle)).pop();
+      await settleSheetClose(tester);
+      expect(toggle, findsNothing);
+      expect(await store.read(backgroundMotionEnabledStorageKey), isNull);
+      expect(shell.backgroundMotionEnabled, isTrue);
+      expect(
+        find.byKey(const ValueKey('settings-row-background')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets('pending motion save still updates app after Settings disposes', (
+    tester,
+  ) async {
+    final store = _DeferredMotionWriteStore();
+    final shell = AppShellController();
+    addTearDown(shell.dispose);
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      secureKeyStore: store,
+      appShellController: shell,
+    );
+    await openSheet(tester, 'settings-row-background');
+    final toggle = find.byKey(
+      const ValueKey('settings-moving-background-switch'),
+    );
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+    expect(store.writes, 1);
+    expect(shell.backgroundMotionEnabled, isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(find.byType(SettingsWired), findsNothing);
+
+    store.pending.complete();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(await store.read(backgroundMotionEnabledStorageKey), 'false');
+    expect(shell.backgroundMotionEnabled, isFalse);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('loads and persists cosmic background selection via sheet', (

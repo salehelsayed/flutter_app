@@ -4,7 +4,56 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 
+class _FailingMotionStore extends FakeSecureKeyStore {
+  @override
+  Future<String?> read(String key) async => throw StateError('read failed');
+
+  @override
+  Future<void> write(String key, String value) async =>
+      throw StateError('write failed');
+}
+
 void main() {
+  group('background motion persistence', () {
+    test('missing and unknown values default on', () async {
+      final store = FakeSecureKeyStore();
+      expect(await loadBackgroundMotionEnabled(secureKeyStore: store), isTrue);
+      await store.write(backgroundMotionEnabledStorageKey, 'future-value');
+      expect(await loadBackgroundMotionEnabled(secureKeyStore: store), isTrue);
+    });
+
+    test(
+      'off and on round-trip without changing wallpaper selection',
+      () async {
+        final store = FakeSecureKeyStore();
+        await store.write(BackgroundPreference.storageKey, 'aurora');
+        for (final enabled in [false, true]) {
+          await saveBackgroundMotionEnabled(
+            secureKeyStore: store,
+            enabled: enabled,
+          );
+          expect(
+            await loadBackgroundMotionEnabled(secureKeyStore: store),
+            enabled,
+          );
+          expect(await store.read(BackgroundPreference.storageKey), 'aurora');
+        }
+      },
+    );
+
+    test('read and write failures remain observable to callers', () async {
+      final store = _FailingMotionStore();
+      await expectLater(
+        loadBackgroundMotionEnabled(secureKeyStore: store),
+        throwsStateError,
+      );
+      await expectLater(
+        saveBackgroundMotionEnabled(secureKeyStore: store, enabled: false),
+        throwsStateError,
+      );
+    });
+  });
+
   group('BackgroundPreference', () {
     test('serializes background preferences to storage strings', () {
       expect(
