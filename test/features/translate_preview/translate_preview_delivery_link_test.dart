@@ -30,8 +30,9 @@ class _RecordingAi implements OnDeviceAi {
 
 Future<(FakeModelDeliveryController, _RecordingAi)> _pumpLinks(
   WidgetTester tester,
-  ModelDeliveryState state,
-) async {
+  ModelDeliveryState state, {
+  VoidCallback? onFreeUpSpace,
+}) async {
   final controller = FakeModelDeliveryController(state);
   final ai = _RecordingAi();
   await tester.pumpWidget(
@@ -43,11 +44,13 @@ Future<(FakeModelDeliveryController, _RecordingAi)> _pumpLinks(
               text: _arabicThought,
               ai: ai,
               delivery: controller,
+              onFreeUpSpace: onFreeUpSpace,
             ),
             TranscribePreview(
               audioPath: '/tmp/voice.m4a',
               ai: ai,
               delivery: controller,
+              onFreeUpSpace: onFreeUpSpace,
             ),
           ],
         ),
@@ -88,9 +91,31 @@ void main() {
     expect(controller.calls, isEmpty);
   });
 
-  testWidgets('not enough space: the link opens the greyed offer', (
-    tester,
-  ) async {
+  testWidgets('not enough space: the link opens the greyed offer, Free up '
+      'space closes it and opens the host Storage section', (tester) async {
+    var storageOpened = 0;
+    final (controller, _) = await _pumpLinks(
+      tester,
+      const ModelNotEnoughSpace(
+        totalBytes: _total,
+        neededBytes: 2800000000,
+        freeBytes: 1100000000,
+      ),
+      onFreeUpSpace: () => storageOpened++,
+    );
+    await tester.tap(find.text('See translation'));
+    await tester.pumpAndSettle();
+    expect(find.text('Needs 2.8 GB'), findsOneWidget);
+    await tester.tap(find.text('Free up space'));
+    await tester.pumpAndSettle();
+    expect(storageOpened, 1);
+    expect(find.text('Needs 2.8 GB'), findsNothing);
+    expect(controller.calls, isEmpty);
+  });
+
+  testWidgets('voice message, not enough space: Free up space opens the host '
+      'Storage section', (tester) async {
+    var storageOpened = 0;
     await _pumpLinks(
       tester,
       const ModelNotEnoughSpace(
@@ -98,11 +123,13 @@ void main() {
         neededBytes: 2800000000,
         freeBytes: 1100000000,
       ),
+      onFreeUpSpace: () => storageOpened++,
     );
-    await tester.tap(find.text('See translation'));
+    await tester.tap(find.text('Transcribe'));
     await tester.pumpAndSettle();
-    expect(find.text('Needs 2.8 GB'), findsOneWidget);
-    expect(find.text('Free up space'), findsOneWidget);
+    await tester.tap(find.text('Free up space'));
+    await tester.pumpAndSettle();
+    expect(storageOpened, 1);
   });
 
   testWidgets('3b downloading: every link reads the progress and reopens the '

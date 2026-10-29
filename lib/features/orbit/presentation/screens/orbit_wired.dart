@@ -17,6 +17,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_storage_manager.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/media_storage_usage_section.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -599,6 +601,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    if (translatePreviewEnabled) {
+      translatePreviewOpenStorage = _openMediaStorageForTranslator;
+    }
     _filterTab = widget.initialFilterTab ?? 'all';
     // 193 design lock: a non-null initialFilterTab (intro-notification route,
     // 'intros'/'archived' harnesses) opens directly on the all-chats surface so
@@ -955,13 +960,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               // 229: storage management for the Media & storage sheet —
               // injected by hosts/tests, else built over this orbit's own
               // repositories.
-              mediaStorageManager:
-                  widget.mediaStorageManager ??
-                  MediaStorageManager(
-                    repository: widget.mediaAttachmentRepo,
-                    documentsDirectoryProvider: () async =>
-                        (await getApplicationDocumentsDirectory()).path,
-                  ),
+              mediaStorageManager: _mediaStorageManager(),
               mediaStorageScopesProvider:
                   widget.mediaStorageScopesProvider ?? _loadMediaStorageScopes,
             ),
@@ -975,6 +974,37 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   /// 229: the scopes the Media & storage sheet can measure/clear — one per
   /// active contact (direct lane) and one per group (discussions AND
   /// announcements share the group lane).
+  MediaStorageManager _mediaStorageManager() =>
+      widget.mediaStorageManager ??
+      MediaStorageManager(
+        repository: widget.mediaAttachmentRepo,
+        documentsDirectoryProvider: () async =>
+            (await getApplicationDocumentsDirectory()).path,
+      );
+
+  /// "Free up space" in the translator download sheet opens the same storage
+  /// totals and Clear actions as Settings > Media & storage.
+  void _openMediaStorageForTranslator() {
+    if (!mounted) return;
+    unawaited(
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (_) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(16, 0, 16, 16),
+            child: MediaStorageUsageSection(
+              manager: _mediaStorageManager(),
+              loadScopes:
+                  widget.mediaStorageScopesProvider ?? _loadMediaStorageScopes,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<List<MediaStorageScopeOption>> _loadMediaStorageScopes() async {
     final options = <MediaStorageScopeOption>[];
     try {
@@ -3758,6 +3788,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    if (translatePreviewOpenStorage == _openMediaStorageForTranslator) {
+      translatePreviewOpenStorage = null;
+    }
     _thoughtSubscription?.cancel();
     widget.pendingPostTargetStore?.removeListener(
       _onPendingThoughtTargetChanged,

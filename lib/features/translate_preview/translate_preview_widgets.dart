@@ -8,6 +8,10 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+/// Opens the existing Storage section from a link's download sheet. The
+/// Orbit screen registers it because it owns the storage manager and scopes.
+VoidCallback? translatePreviewOpenStorage;
+
 /// A small "See translation" link under [text]. Shows nothing when [text] is
 /// already in the user's Mknoon language, is Arabizi, or the language has no
 /// prompt name. The original stays where it is; the translation appears below
@@ -18,6 +22,7 @@ class TranslatePreview extends StatelessWidget {
     required this.text,
     required this.ai,
     this.delivery,
+    this.onFreeUpSpace,
     this.color,
   });
 
@@ -26,6 +31,7 @@ class TranslatePreview extends StatelessWidget {
 
   /// Null means the model is already on the phone.
   final ModelDeliveryController? delivery;
+  final VoidCallback? onFreeUpSpace;
   final Color? color;
 
   @override
@@ -38,6 +44,7 @@ class TranslatePreview extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return _DeliveryGate(
       delivery: delivery,
+      onFreeUpSpace: onFreeUpSpace,
       action: l10n.translator_see_translation,
       color: color,
       ready: () => _AiAction(
@@ -63,12 +70,14 @@ class TranscribePreview extends StatelessWidget {
     required this.audioPath,
     required this.ai,
     this.delivery,
+    this.onFreeUpSpace,
     this.color,
   });
 
   final String audioPath;
   final OnDeviceAi ai;
   final ModelDeliveryController? delivery;
+  final VoidCallback? onFreeUpSpace;
   final Color? color;
 
   @override
@@ -76,6 +85,7 @@ class TranscribePreview extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return _DeliveryGate(
       delivery: delivery,
+      onFreeUpSpace: onFreeUpSpace,
       action: l10n.translator_transcribe,
       color: color,
       ready: () => _AiAction(
@@ -90,6 +100,7 @@ class TranscribePreview extends StatelessWidget {
           text: transcript,
           ai: ai,
           delivery: delivery,
+          onFreeUpSpace: onFreeUpSpace,
           color: color,
         ),
       ),
@@ -104,10 +115,12 @@ class _DeliveryGate extends StatelessWidget {
     required this.delivery,
     required this.action,
     required this.ready,
+    this.onFreeUpSpace,
     this.color,
   });
 
   final ModelDeliveryController? delivery;
+  final VoidCallback? onFreeUpSpace;
   final String action;
   final Widget Function() ready;
   final Color? color;
@@ -121,7 +134,11 @@ class _DeliveryGate extends StatelessWidget {
       builder: (context, state, _) {
         final l10n = AppLocalizations.of(context)!;
         void openSheet() => unawaited(
-          showPrivateTranslatorSheet(context, controller: controller),
+          showPrivateTranslatorSheet(
+            context,
+            controller: controller,
+            onFreeUpSpace: onFreeUpSpace,
+          ),
         );
         final base = color ?? DefaultTextStyle.of(context).style.color;
         final link = switch (state) {

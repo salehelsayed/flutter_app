@@ -510,6 +510,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       audioPath: MediaFileManager.resolveStoredPathSync(localPath),
       ai: translatePreviewAi,
       delivery: translatePreviewDelivery,
+      onFreeUpSpace: translatePreviewOpenStorage,
     );
   }
 

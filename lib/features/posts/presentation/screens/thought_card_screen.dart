@@ -865,6 +865,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           text: _post.text,
           ai: translatePreviewAi,
           delivery: translatePreviewDelivery,
+          onFreeUpSpace: translatePreviewOpenStorage,
           color: Colors.white,
         ),
       ],
