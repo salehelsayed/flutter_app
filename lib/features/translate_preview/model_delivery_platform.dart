@@ -5,6 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:background_downloader/background_downloader.dart';
+import 'package:clock/clock.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
@@ -179,21 +180,72 @@ Future<bool> _verifyModelFile(
   return digest.toString() == expected.sha256;
 }
 
+// The native resume runner can discard its partial on an early DNS failure.
+// This runs in the SDK headless engine, so it must not call Flutter plugins.
+@pragma('vm:entry-point')
+Future<TaskStatusUpdate?> _beforeAndroidModelDeliveryStart(Task task) async {
+  try {
+    final uri = Uri.parse(task.url);
+    if (uri.scheme != 'https' || uri.host != 'updates.mknoon.xyz') {
+      return TaskStatusUpdate(task, TaskStatus.paused);
+    }
+    final deadline = clock.now().add(const Duration(seconds: 20));
+    while (clock.now().isBefore(deadline)) {
+      final remaining = deadline.difference(clock.now());
+      final timeout = remaining < const Duration(seconds: 4)
+          ? remaining
+          : const Duration(seconds: 4);
+      final client = HttpClient();
+      try {
+        final ready = await (() async {
+          final request = await client.headUrl(uri);
+          request.followRedirects = false;
+          final response = await request.close();
+          await response.drain<void>();
+          return response.statusCode >= 200 && response.statusCode < 300;
+        })().timeout(timeout);
+        if (ready) return null;
+      } on Object {
+        // Wi-Fi availability can precede usable DNS/TLS/origin connectivity.
+      } finally {
+        client.close(force: true);
+      }
+      final wait = deadline.difference(clock.now());
+      if (wait > Duration.zero) {
+        await Future<void>.delayed(
+          wait < const Duration(seconds: 1) ? wait : const Duration(seconds: 1),
+        );
+      }
+    }
+  } on Object {
+    // The SDK treats a thrown hook as permission to continue. Fail closed.
+  }
+  return TaskStatusUpdate(task, TaskStatus.paused);
+}
+
 final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   BackgroundModelDeliveryTransport({
     FileDownloader? downloader,
+    PersistentStorage? resumeStorage,
+    Future<List<Directory>> Function()? partialDirectories,
     bool? isIOS,
     Duration cancellationTimeout = const Duration(seconds: 30),
     Duration cancellationSettleInterval = const Duration(seconds: 1),
     Future<String> Function(DownloadTask)? destinationPath,
   }) : _downloader = downloader ?? FileDownloader(),
+       _resumeStorage = resumeStorage ?? LocalStorePersistentStorage(),
+       _partialDirectories = partialDirectories ?? _androidPartialDirectories,
        _isIOS = isIOS ?? Platform.isIOS,
+       _useAndroidGate = isIOS == null ? Platform.isAndroid : !isIOS,
        _cancellationTimeout = cancellationTimeout,
        _cancellationSettleInterval = cancellationSettleInterval,
        _destinationPath = destinationPath ?? ((task) => task.filePath());
 
   final FileDownloader _downloader;
+  final PersistentStorage _resumeStorage;
+  final Future<List<Directory>> Function() _partialDirectories;
   final bool _isIOS;
+  final bool _useAndroidGate;
   final Duration _cancellationTimeout;
   final Duration _cancellationSettleInterval;
   final Future<String> Function(DownloadTask) _destinationPath;
@@ -202,6 +254,59 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   final _sizes = <String, int>{};
   final _cancellations = <String, Completer<TaskStatus>>{};
   final _settledStatuses = <String, TaskStatus>{};
+  final _partialPaths = <String, Set<String>>{};
+  final _partialCaptures = <String, Future<void>>{};
+  Future<List<String>>? _partialRoots;
+
+  static Future<List<Directory>> _androidPartialDirectories() async => [
+    await getApplicationSupportDirectory(),
+    await getTemporaryDirectory(),
+  ];
+
+  Future<String?> _safePartialPath(String path) async {
+    final file = File(path);
+    if (await FileSystemEntity.type(path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      return null;
+    }
+    final canonical = await file.resolveSymbolicLinks();
+    final resolved = File(canonical);
+    if (!RegExp(
+      r'^com\.bbflight\.background_downloader-?\d+$',
+    ).hasMatch(resolved.uri.pathSegments.last)) {
+      return null;
+    }
+    final roots = await (_partialRoots ??= (() async => [
+      for (final directory in await _partialDirectories())
+        await directory.resolveSymbolicLinks(),
+    ])());
+    return roots.contains(resolved.parent.path) ? canonical : null;
+  }
+
+  Future<void> _rememberPartial(DownloadTask task) async {
+    if (!_useAndroidGate || !_owns(task)) return;
+    await _downloader.ready;
+    await _resumeStorage.initialize();
+    final resume = await _resumeStorage.retrieveResumeData(task.taskId);
+    if (resume == null || resume.taskId != task.taskId || !_owns(resume.task)) {
+      return;
+    }
+    final path = await _safePartialPath(resume.tempFilepath);
+    if (path != null) {
+      (_partialPaths[task.taskId] ??= <String>{}).add(path);
+    }
+  }
+
+  Future<void> _awaitPartialCaptures(String taskId) async {
+    while (true) {
+      final pending = _partialCaptures[taskId];
+      if (pending == null) return;
+      await pending;
+      if (identical(_partialCaptures[taskId], pending)) {
+        _partialCaptures.remove(taskId);
+      }
+    }
+  }
 
   @override
   Stream<ModelTransferEvent> get events => _events.stream;
@@ -244,6 +349,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       if (_owns(task)) _tasks[task.taskId] = task as DownloadTask;
     }
     for (final id in _tasks.keys.toList()) {
+      await _rememberPartial(_tasks[id]!);
       if (id == ownedTaskId) continue;
       await cancel(id);
       await forget(id);
@@ -299,6 +405,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       retries: 3,
       transferHints: {TransferHint.largeFile},
       headers: {'Accept-Encoding': 'identity'},
+      options: _useAndroidGate
+          ? TaskOptions(beforeTaskStart: _beforeAndroidModelDeliveryStart)
+          : null,
     );
     _tasks[taskId] = task;
     _settledStatuses.remove(taskId);
@@ -333,7 +442,15 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     // iOS resumes from opaque resumeData, which retains the old request policy.
     // Returning false asks the owner to cancel and create a fresh scoped task.
     if (_isIOS && task.requiresWiFi != requiresWiFi) return false;
-    final resumed = task.copyWith(requiresWiFi: requiresWiFi);
+    await _rememberPartial(task);
+    final resumed = task.copyWith(
+      requiresWiFi: requiresWiFi,
+      options:
+          task.options ??
+          (_useAndroidGate
+              ? TaskOptions(beforeTaskStart: _beforeAndroidModelDeliveryStart)
+              : null),
+    );
     _settledStatuses.remove(taskId);
     _tasks[taskId] = resumed;
     return _downloader.resume(resumed);
@@ -347,6 +464,8 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     try {
       final task = await _task(taskId);
       if (task == null) return;
+      // Cancellation clears SDK resume metadata, sometimes without its file.
+      await _rememberPartial(task);
       for (var attempt = 0; attempt < 2; attempt++) {
         final native = await _downloader.taskForId(taskId);
         final record = await _downloader.database.recordForId(taskId);
@@ -389,53 +508,88 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     DownloadTask task,
     TaskStatus status,
   ) async {
-    if (_isIOS || status == TaskStatus.complete) return;
+    await _awaitPartialCaptures(task.taskId);
+    if (_isIOS) return;
     // WorkManager cancel/"canceled" does not join its synchronous file writer.
     // The pinned SDK exposes no join. Use the bounded filesystem-settle fallback:
-    // remove a stable owned destination, then require two quiet absent samples.
+    // remove stable owned files, then require two quiet absent samples.
     // A late recreation resets settlement and is deleted again before returning.
-    final destination = File(await _destinationPath(task));
+    final destination = status == TaskStatus.complete
+        ? null
+        : await _destinationPath(task);
+    if (destination == null && (_partialPaths[task.taskId]?.isEmpty ?? true)) {
+      return;
+    }
     final watch = Stopwatch()..start();
-    FileStat? previous;
+    final previous = <String, FileStat>{};
     var absentSamples = 0;
     while (watch.elapsed < _cancellationTimeout) {
       await Future<void>.delayed(_cancellationSettleInterval);
       if (await _downloader.taskForId(task.taskId) != null) {
         absentSamples = 0;
-        previous = null;
+        previous.clear();
         continue;
       }
-      final stat = await destination.stat();
-      if (stat.type == FileSystemEntityType.notFound) {
-        previous = null;
-        if (++absentSamples >= 2) return;
-      } else {
-        absentSamples = 0;
-        if (previous?.size == stat.size &&
-            previous?.modified == stat.modified) {
-          await destination.delete();
-          previous = null;
+      await _awaitPartialCaptures(task.taskId);
+      final paths = <String>{
+        ?destination,
+        ...(_partialPaths[task.taskId] ?? <String>{}),
+      };
+      var allAbsent = true;
+      for (final path in paths) {
+        final file = File(path);
+        final stat = await file.stat();
+        if (stat.type == FileSystemEntityType.notFound) {
+          previous.remove(path);
         } else {
-          previous = stat;
+          allAbsent = false;
+          if (previous[path]?.size == stat.size &&
+              previous[path]?.modified == stat.modified) {
+            if (path != destination && await _safePartialPath(path) != path) {
+              throw FileSystemException('Translator partial ownership changed');
+            }
+            await file.delete();
+            previous.remove(path);
+          } else {
+            previous[path] = stat;
+          }
         }
       }
+      await _awaitPartialCaptures(task.taskId);
+      if (!paths.containsAll(_partialPaths[task.taskId] ?? <String>{})) {
+        allAbsent = false;
+      }
+      absentSamples = allAbsent ? absentSamples + 1 : 0;
+      if (absentSamples >= 2) return;
     }
     throw TimeoutException('Translator destination did not settle');
   }
 
   @override
   Future<void> forget(String taskId) async {
+    await _awaitPartialCaptures(taskId);
     if (await _task(taskId) != null) {
       await _downloader.database.deleteRecordWithId(taskId);
     }
+    await _awaitPartialCaptures(taskId);
     _tasks.remove(taskId);
     _sizes.remove(taskId);
     _settledStatuses.remove(taskId);
+    _partialPaths.remove(taskId);
   }
 
   void _onStatus(TaskStatusUpdate update) {
     if (!_owns(update.task) || _events.isClosed) return;
     _tasks[update.task.taskId] = update.task as DownloadTask;
+    final capture = _rememberPartial(update.task as DownloadTask).catchError((
+      Object _,
+    ) {
+      // Remove retries the snapshot synchronously before canceling its task.
+    });
+    _partialCaptures[update.task.taskId] =
+        (_partialCaptures[update.task.taskId] ?? Future<void>.value()).then(
+          (_) => capture,
+        );
     if (update.status.isFinalState || update.status == TaskStatus.paused) {
       _settledStatuses[update.task.taskId] = update.status;
     }

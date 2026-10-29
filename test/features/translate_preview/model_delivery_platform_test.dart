@@ -33,11 +33,15 @@ void main() {
   tearDown(() => destinations.delete(recursive: true));
   BackgroundModelDeliveryTransport createTransport({
     required FileDownloader downloader,
+    PersistentStorage? resumeStorage,
+    Future<List<Directory>> Function()? partialDirectories,
     bool? isIOS,
     Duration cancellationTimeout = const Duration(seconds: 30),
     Future<String> Function(DownloadTask)? destinationPath,
   }) => BackgroundModelDeliveryTransport(
     downloader: downloader,
+    resumeStorage: resumeStorage ?? _ResumeStorage(),
+    partialDirectories: partialDirectories ?? () async => [destinations],
     isIOS: isIOS,
     cancellationTimeout: cancellationTimeout,
     cancellationSettleInterval: const Duration(milliseconds: 2),
@@ -96,7 +100,7 @@ void main() {
     'native reconnect waits for origin readiness and retains its partial offset',
     () async {
       final downloader = _Downloader();
-      final transport = createTransport(downloader: downloader);
+      final transport = createTransport(downloader: downloader, isIOS: false);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -104,7 +108,7 @@ void main() {
         manifest: _manifest(),
         requiresWiFi: true,
       );
-      final task = downloader.enqueued.single;
+      final task = Task.createFromJson(downloader.enqueued.single.toJson());
       final partial = File('${destinations.path}/resume-partial');
       await partial.writeAsBytes(List.filled(80, 1));
       final origin = _RecoveringOrigin();
@@ -150,6 +154,64 @@ void main() {
   );
 
   test(
+    'unready origin exhausts the full budget and pauses without native entry',
+    () async {
+      final downloader = _Downloader();
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      await transport.enqueue(
+        taskId: 'one',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      final task = downloader.enqueued.single;
+      final partial = File('${destinations.path}/retained-partial');
+      await partial.writeAsBytes(List.filled(80, 1));
+      final origin = _RecoveringOrigin(recoverOnProbe: false);
+      fakeAsync((clock) {
+        var completed = false;
+        TaskStatusUpdate? result;
+        HttpOverrides.runZoned(
+          () async => task.options?.beforeTaskStartCallBack?.call(task),
+          createHttpClient: (_) => _OriginClient(origin),
+        ).then((value) {
+          result = value;
+          completed = true;
+        });
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 19));
+        expect(completed, isFalse);
+        expect(partial.lengthSync(), 80);
+        clock.elapse(const Duration(seconds: 1));
+        expect(completed, isTrue);
+        expect(result?.status, TaskStatus.paused);
+        expect(result?.task.taskId, task.taskId);
+        expect(partial.lengthSync(), 80);
+        expect(origin.closedClients, origin.probes);
+      });
+    },
+  );
+
+  test('unexpected IO setup errors pause instead of failing open', () async {
+    final downloader = _Downloader();
+    final transport = createTransport(downloader: downloader, isIOS: false);
+    addTearDown(transport.dispose);
+    await transport.initialize(null);
+    await transport.enqueue(
+      taskId: 'one',
+      manifest: _manifest(),
+      requiresWiFi: true,
+    );
+    final task = downloader.enqueued.single;
+    final result = await HttpOverrides.runZoned(
+      () async => task.options?.beforeTaskStartCallBack?.call(task),
+      createHttpClient: (_) => throw StateError('IO setup failed'),
+    );
+    expect(result?.status, TaskStatus.paused);
+  });
+
+  test(
     'iOS unchanged policy resumes partial; changed policy requests scoped restart',
     () async {
       final downloader = _Downloader();
@@ -166,6 +228,10 @@ void main() {
       expect(await transport.resume('one', requiresWiFi: true), isFalse);
       expect(downloader.resumed, hasLength(1));
       expect(downloader.enqueued, hasLength(1));
+      expect(
+        downloader.enqueued.single.options?.beforeTaskStartCallBack,
+        isNull,
+      );
     },
   );
 
@@ -184,6 +250,34 @@ void main() {
       expect(await transport.resume('one', requiresWiFi: true), isTrue);
       expect(downloader.resumed.single.taskId, 'one');
       expect(downloader.resumed.single.requiresWiFi, isTrue);
+    },
+  );
+
+  test(
+    'legacy restored Android partial gains the gate on explicit resume',
+    () async {
+      final downloader = _Downloader();
+      final task = _ownedTask('legacy');
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.paused,
+        .8,
+        100,
+      );
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(transport.dispose);
+      await transport.initialize(task.taskId);
+      expect(await transport.resume(task.taskId, requiresWiFi: true), isTrue);
+      final resumed = downloader.resumed.single;
+      expect(resumed.taskId, task.taskId);
+      expect(resumed.requiresWiFi, isTrue);
+      final origin = _RecoveringOrigin()..ready = true;
+      final result = await HttpOverrides.runZoned(
+        () async => resumed.options?.beforeTaskStartCallBack?.call(resumed),
+        createHttpClient: (_) => _OriginClient(origin),
+      );
+      expect(result, isNull);
+      expect(origin.probes, 1);
     },
   );
 
@@ -476,6 +570,229 @@ void main() {
   );
 
   test(
+    'metadata-only cancellation removes only its mapped Android partial',
+    () async {
+      final downloader = _Downloader();
+      final storage = _ResumeStorage();
+      final task = _ownedTask('one');
+      final partial = File(
+        '${destinations.path}/com.bbflight.background_downloader-123',
+      );
+      final unrelated = File(
+        '${destinations.path}/com.bbflight.background_downloader456',
+      );
+      await partial.writeAsBytes(List.filled(80, 1));
+      await unrelated.writeAsString('another task');
+      storage.records[task.taskId] = ResumeData(task, partial.path, 80);
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.paused,
+        .8,
+        100,
+      );
+      downloader.active[task.taskId] = task;
+      final transport = createTransport(
+        downloader: downloader,
+        isIOS: false,
+        resumeStorage: storage,
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(task.taskId);
+      downloader.onCancel = (id) async {
+        storage.records.remove(id); // SDK clears metadata but leaves the file.
+        downloader.emit(task, TaskStatus.canceled);
+        return true;
+      };
+      await transport.cancel(task.taskId);
+      await transport.forget(task.taskId);
+      expect(await partial.exists(), isFalse);
+      expect(await unrelated.readAsString(), 'another task');
+    },
+  );
+
+  test(
+    'Android canceled ACK precedes a mapped partial writer and recreation settles',
+    () async {
+      final downloader = _Downloader();
+      final storage = _ResumeStorage();
+      final task = _ownedTask('one');
+      final partial = File(
+        '${destinations.path}/com.bbflight.background_downloader321',
+      );
+      await partial.writeAsString('first partial');
+      storage.records[task.taskId] = ResumeData(task, partial.path, 13);
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.running,
+        .5,
+        100,
+      );
+      downloader.active[task.taskId] = task;
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: storage,
+        isIOS: false,
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(task.taskId);
+      var acknowledged = false;
+      var recreated = false;
+      downloader.onCancel = (_) async {
+        storage.records.clear();
+        downloader.emit(task, TaskStatus.canceled);
+        acknowledged = true;
+        return true;
+      };
+      downloader.onTaskForId = (id) async {
+        if (acknowledged && !recreated && !await partial.exists()) {
+          expect(downloader.db.deleted, isEmpty);
+          await partial.writeAsString('late partial writer');
+          recreated = true;
+        }
+        return downloader.active[id];
+      };
+      await transport.cancel(task.taskId);
+      expect(recreated, isTrue);
+      expect(await partial.exists(), isFalse);
+      await transport.forget(task.taskId);
+      expect(downloader.db.deleted, [task.taskId]);
+    },
+  );
+
+  test(
+    'forget waits for an in-flight status snapshot before dropping ownership',
+    () async {
+      final downloader = _Downloader();
+      final storage = _ResumeStorage();
+      final transport = createTransport(
+        downloader: downloader,
+        resumeStorage: storage,
+        isIOS: false,
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      await transport.enqueue(
+        taskId: 'one',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      final task = downloader.enqueued.single;
+      final partial = File(
+        '${destinations.path}/com.bbflight.background_downloader654',
+      );
+      await partial.writeAsString('mapped partial');
+      final started = Completer<void>();
+      final snapshot = Completer<ResumeData?>();
+      storage.onRetrieve = (_) {
+        started.complete();
+        return snapshot.future;
+      };
+      downloader.emit(task, TaskStatus.complete);
+      await started.future;
+      var forgotten = false;
+      final forget = transport.forget(task.taskId).then((_) {
+        forgotten = true;
+      });
+      await Future<void>.delayed(
+        Duration.zero,
+      ); // Drain already-queued microtasks.
+      expect(forgotten, isFalse);
+      expect(downloader.db.deleted, isEmpty);
+      snapshot.complete(ResumeData(task, partial.path, 13));
+      await forget;
+      expect(forgotten, isTrue);
+      expect(downloader.db.deleted, [task.taskId]);
+    },
+  );
+
+  test(
+    'remembered mapped partial survives SDK metadata loss until cleanup',
+    () async {
+      final downloader = _Downloader();
+      final storage = _ResumeStorage();
+      final task = _ownedTask('one');
+      final partial = File(
+        '${destinations.path}/com.bbflight.background_downloader123',
+      );
+      await partial.writeAsBytes(List.filled(80, 1));
+      storage.records[task.taskId] = ResumeData(task, partial.path, 80);
+      downloader.db.records[task.taskId] = TaskRecord(
+        task,
+        TaskStatus.waitingToRetry,
+        -4,
+        100,
+      );
+      final transport = createTransport(
+        downloader: downloader,
+        isIOS: false,
+        resumeStorage: storage,
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(task.taskId);
+      storage.records.clear();
+      downloader.emit(task, TaskStatus.failed);
+      await transport.cancel(task.taskId);
+      expect(await partial.exists(), isFalse);
+    },
+  );
+
+  test(
+    'cleanup rejects foreign tasks, outside roots, unsafe names and symlinks',
+    () async {
+      final outside = await Directory.systemTemp.createTemp(
+        'translator-foreign-',
+      );
+      addTearDown(() => outside.delete(recursive: true));
+      final downloader = _Downloader();
+      final storage = _ResumeStorage();
+      final task = _ownedTask('one');
+      final foreign = File(
+        '${outside.path}/com.bbflight.background_downloader123',
+      );
+      final plain = File('${destinations.path}/keep-me');
+      final wrongTask = File(
+        '${destinations.path}/com.bbflight.background_downloader456',
+      );
+      final link = Link(
+        '${destinations.path}/com.bbflight.background_downloader789',
+      );
+      await foreign.writeAsString('outside');
+      await plain.writeAsString('plain');
+      await wrongTask.writeAsString('foreign task');
+      await link.create(foreign.path);
+      final transport = createTransport(
+        downloader: downloader,
+        isIOS: false,
+        resumeStorage: storage,
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      for (final resume in [
+        ResumeData(task, foreign.path, 7),
+        ResumeData(task, plain.path, 5),
+        ResumeData(task.copyWith(group: 'smart_downloads'), wrongTask.path, 12),
+        ResumeData(task.copyWith(taskId: 'other'), wrongTask.path, 12),
+        ResumeData(task, link.path, 7),
+      ]) {
+        storage.records[task.taskId] = resume;
+        downloader.db.records[task.taskId] = TaskRecord(
+          task,
+          TaskStatus.paused,
+          .5,
+          100,
+        );
+        downloader.active[task.taskId] = task;
+        await transport.cancel(task.taskId);
+        await transport.forget(task.taskId);
+      }
+      expect(await foreign.readAsString(), 'outside');
+      expect(await plain.readAsString(), 'plain');
+      expect(await wrongTask.readAsString(), 'foreign task');
+      expect(await link.exists(), isTrue);
+    },
+  );
+
+  test(
     'storage checks exact size/hash and removes only its owned directory',
     () async {
       final root = await Directory.systemTemp.createTemp(
@@ -599,6 +916,8 @@ class _Downloader extends Fake implements FileDownloader {
   @override
   Database get database => db;
   @override
+  Future<bool> get ready async => true;
+  @override
   FileDownloader registerCallbacks({
     String group = 'default',
     TaskStatusCallback? taskStatusCallback,
@@ -689,8 +1008,11 @@ class _Downloader extends Fake implements FileDownloader {
 }
 
 class _RecoveringOrigin {
+  _RecoveringOrigin({this.recoverOnProbe = true});
+  final bool recoverOnProbe;
   bool ready = false;
   int probes = 0;
+  int closedClients = 0;
 }
 
 class _OriginClient extends Fake implements HttpClient {
@@ -710,7 +1032,10 @@ class _OriginClient extends Fake implements HttpClient {
   }
 
   @override
-  void close({bool force = false}) {}
+  void close({bool force = false}) {
+    expect(force, isTrue);
+    origin.closedClients++;
+  }
 }
 
 class _OriginRequest extends Fake implements HttpClientRequest {
@@ -720,9 +1045,10 @@ class _OriginRequest extends Fake implements HttpClientRequest {
   bool followRedirects = true;
   @override
   Future<HttpClientResponse> close() async {
+    expect(followRedirects, isFalse);
     origin.probes++;
     if (!origin.ready) {
-      origin.ready = true;
+      origin.ready = origin.recoverOnProbe;
       throw const SocketException('Host lookup not ready');
     }
     return _OriginResponse();
@@ -735,4 +1061,14 @@ class _OriginResponse extends Fake implements HttpClientResponse {
   @override
   Future<E> drain<E>([E? futureValue]) =>
       const Stream<List<int>>.empty().drain<E>(futureValue);
+}
+
+class _ResumeStorage extends Fake implements PersistentStorage {
+  final records = <String, ResumeData>{};
+  Future<ResumeData?> Function(String)? onRetrieve;
+  @override
+  Future<void> initialize() async {}
+  @override
+  Future<ResumeData?> retrieveResumeData(String taskId) async =>
+      onRetrieve == null ? records[taskId] : await onRetrieve!(taskId);
 }

@@ -10443,13 +10443,13 @@ State an investigation area separately from a proven root cause.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.
-  The model-delivery regressions include 22 core and 14 adapter/storage cases, all
+  The model-delivery regressions include 22 core and 23 adapter/storage cases, all
   passing with fake connectivity/downloader/storage and tiny real files for
   size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
   outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
   storage admission/refresh, capability re-verification, cancellation completion
   and owned-directory removal. The combined `affected-translate-preview` lane
-  passed 206 cases with zero failures/skips, including immediate sheet
+  passed 217 cases with zero failures/skips, including immediate sheet
   presentation during a delayed read-only space refresh and preserving original
   content. The earlier integration's 330-case workflow pass remains separate;
   workflow was not rerun for the review-fix candidate.
@@ -10459,8 +10459,8 @@ State an investigation area separately from a proven root cause.
   background transfer, cellular-byte policy, URLSession quiescence, backup
   exclusion or inference on a device. The iOS backup hook passed Swift parsing
   only. Pinned background_downloader 9.6.4 clears resume data after exhausted
-  failure, so Try again restarts then; unchanged-policy paused downloads retain
-  resumability. A changed iOS network policy requires a fresh request because
+  failure, so Try again restarts then; a usable stored pause record can resume
+  without a policy change. A changed iOS network policy requires a fresh request because
   native resume data retains the original policy. Opaque iOS URLSession partial
   caches remain OS-owned; app-support removal does not promise immediate OS-cache
   reclamation. Android's synthetic canceled callback and WorkManager cancel ACK
@@ -10472,6 +10472,39 @@ State an investigation area separately from a proven root cause.
   SDK database rows, callbacks during native lookup, and mobile-consent
   revocation while resume awaits its callback. Failed-copy assertions in all
   three locales avoid promising retained progress after a fresh retry.
+  Pixel 6/API 37 evidence on build 172 (`bbdbf5d73`) exposed a distinct Android
+  reconnect defect: a resumed runner initializes `serverAcceptsRanges` false;
+  DNS failure before a response reaches `prepResumeAfterFailure`, which deletes
+  the existing partial. The SDK retry retains the now-stale path and restarts
+  from zero. The app's Wi-Fi listener only renders state; it does not initiate
+  that retry. The scoped mitigation is an Android task `beforeTaskStart` hook,
+  which also covers SDK re-enqueues: pure `dart:io` HEAD readiness probes wait
+  up to 20 seconds before native resume, then return paused if still unreachable.
+  The headless SDK engine disables plugin registration, so this hook must not
+  use connectivity/path-provider/preferences plugins. It cannot prevent a new
+  failure after a successful probe. Early pausing preserves physical bytes, but
+  native timeout/input-only resume data is not always published to Dart storage;
+  later app resume is therefore not universally guaranteed. Legacy queued tasks
+  acquire the hook only on an explicit app resume or a fresh task.
+  SDK cancellation while waiting to retry can clear metadata without deleting
+  its Android partial. Cleanup snapshots exact owned `ResumeData` paths before
+  cancellation, checks canonical app-support/cache roots and SDK filenames, then
+  settles destination and captured partial writers before forgetting ownership.
+  The public SDK storage read is best-effort/non-atomic and may internally create
+  an empty metadata key; it is not a promise to recover all old orphans. Files
+  whose ownership mapping was already erased cannot justify a shared-cache sweep.
+  The reported 0.83 GiB post-Remove gap remains unverified pending device inventory.
+  Original device evidence is in
+  `.codex-test-logs/translate-129-20261029/devices/pixel_step3_resume_logcat_excerpt.txt`;
+  the targeted host repro changes offset 80 to 0 without the hook and retains 80
+  with it (`.codex-test-logs/model-resume-172-20261029/resume-{red,green}.log`).
+  The 217-case preview run includes localized busy/failure labels and
+  transcription-specific voice-link wording. Its lane passed with flat swap-outs;
+  `focused-final/results.json` in the resume evidence directory records its source
+  identity and selected-file counts. After the final owner-approved German
+  "Transkribieren" wording, only the two requested UI files were rerun: all 17
+  cases passed (`resume-final-german-ui.log`). The full lane was not rerun after
+  that final copy change and an equivalent null-aware-element lint correction.
   Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
   `core-behavior-first-receipt.json`, `core-platform-behavior-receipt.json`,
   `focused-final/partial.json`, `focused-preview-recovery/results.json`,
