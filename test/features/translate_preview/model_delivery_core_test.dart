@@ -14,6 +14,28 @@ final _manifest = ModelDeliveryManifest.fromJson({
   'minAppBuild': 129,
 });
 
+ModelDeliveryFileIdentity _fileIdentity({
+  int size = 100,
+  int modified = 1,
+  int changed = 1,
+}) => ModelDeliveryFileIdentity(
+  canonicalPath: '/owned/gemma.litertlm',
+  sizeBytes: size,
+  modifiedMicros: modified,
+  changedMicros: changed,
+);
+
+ModelDeliveryRecord _verifiedRecord() => ModelDeliveryRecord(
+  manifest: _manifest,
+  taskId: 'verified',
+  phase: ModelDeliveryPhase.ready,
+  receivedBytes: 100,
+  verification: ModelDeliveryVerification(
+    expectedSha256: _manifest.sha256,
+    identity: _fileIdentity(),
+  ),
+);
+
 void main() {
   test(
     'unsupported capability never enqueues; consent alone is not opt-in',
@@ -223,6 +245,7 @@ void main() {
       await firstReady;
       expect(first.storage.verifications, 1);
       final storage = first.storage;
+      storage.record = ModelDeliveryRecord.fromJson(storage.record!.toJson());
       final taskId = first.id;
       await first.dispose();
 
@@ -243,12 +266,143 @@ void main() {
       );
       final restarted = _Harness(controller, storage, network, transport);
       addTearDown(restarted.dispose);
+      final states = <ModelDeliveryState>[];
+      controller.state.addListener(() => states.add(controller.state.value));
       await controller.initialize();
-      await _nextState<ModelReady>(controller.state);
+      expect(controller.state.value, isA<ModelReady>());
+      expect(states.whereType<ModelDownloading>(), isEmpty);
       expect(await controller.verifiedModelPath(), '/owned/gemma.litertlm');
       expect(storage.verifications, 1);
       expect(transport.enqueues, isEmpty);
       expect(transport.resumes, isEmpty);
+    },
+  );
+
+  test(
+    'legacy Ready record is verified once before a cache stamp is saved',
+    () async {
+      final verification = Completer<bool>();
+      final h = await _Harness.create(
+        record: _verifiedRecord().copyWith(clearVerification: true),
+        verification: verification,
+      );
+      addTearDown(h.dispose);
+      expect(h.controller.state.value, isA<ModelDownloading>());
+      final ready = _nextState<ModelReady>(h.controller.state);
+      verification.complete(true);
+      await ready;
+      expect(h.storage.verifications, 1);
+      expect(h.storage.record!.verification!.identity, _fileIdentity());
+    },
+  );
+
+  for (final identity in [
+    _fileIdentity(modified: 2),
+    _fileIdentity(changed: 2),
+  ]) {
+    test(
+      'changed file identity ${identity.modifiedMicros}/${identity.changedMicros} forces a fresh hash',
+      () async {
+        final verification = Completer<bool>();
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          identity: identity,
+          verification: verification,
+        );
+        addTearDown(h.dispose);
+        expect(h.controller.state.value, isA<ModelDownloading>());
+        final ready = _nextState<ModelReady>(h.controller.state);
+        verification.complete(true);
+        await ready;
+        expect(h.storage.verifications, 1);
+        expect(h.storage.record!.verification!.identity, identity);
+      },
+    );
+  }
+
+  test(
+    'changed file size is reverified and removed rather than restored as Ready',
+    () async {
+      final h = await _Harness.create(
+        record: _verifiedRecord(),
+        identity: _fileIdentity(size: 99),
+      );
+      addTearDown(h.dispose);
+      await _nextState<ModelNotDownloaded>(h.controller.state);
+      expect(h.storage.verifications, 1);
+      expect(h.storage.removals, 1);
+      expect(h.storage.record!.verification, isNull);
+      expect(h.storage.record!.taskId, isNull);
+    },
+  );
+
+  test(
+    'manifest digest change invalidates a matching file identity stamp',
+    () async {
+      final verification = Completer<bool>();
+      final record = _verifiedRecord().copyWith(
+        verification: ModelDeliveryVerification(
+          expectedSha256: 'b' * 64,
+          identity: _fileIdentity(),
+        ),
+      );
+      final h = await _Harness.create(
+        record: record,
+        verification: verification,
+      );
+      addTearDown(h.dispose);
+      expect(h.controller.state.value, isA<ModelDownloading>());
+      final ready = _nextState<ModelReady>(h.controller.state);
+      verification.complete(true);
+      await ready;
+      expect(h.storage.verifications, 1);
+      expect(h.storage.record!.verification!.expectedSha256, _manifest.sha256);
+    },
+  );
+
+  test(
+    'file changed during a successful hash cannot publish a stale verification',
+    () async {
+      final h = await _Harness.create();
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: false);
+      h.storage.verification = Completer<bool>();
+      h.storage.verificationStarted = Completer<void>();
+      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
+      await h.event(ModelTransferStatus.complete);
+      await h.storage.verificationStarted!.future;
+      h.storage.identity = _fileIdentity(changed: 2);
+      h.storage.verification!.complete(true);
+      await offer;
+      expect(h.storage.removals, 1);
+      expect(h.storage.record!.verification, isNull);
+      await expectLater(h.controller.verifiedModelPath(), throwsStateError);
+    },
+  );
+
+  test(
+    'malformed optional verification stamp preserves task manifest and consent',
+    () {
+      final original = _verifiedRecord().copyWith(allowMobileData: true);
+      for (final malformed in <Object?>[
+        null,
+        7,
+        {'expectedSha256': 'invalid'},
+        {
+          'expectedSha256': _manifest.sha256,
+          'identity': {..._fileIdentity().toJson(), 'sizeBytes': '100'},
+        },
+      ]) {
+        final restored = ModelDeliveryRecord.fromJson({
+          ...original.toJson(),
+          'verification': malformed,
+        });
+        expect(restored.verification, isNull);
+        expect(restored.taskId, original.taskId);
+        expect(restored.manifest!.sha256, _manifest.sha256);
+        expect(restored.allowMobileData, isTrue);
+        expect(restored.phase, ModelDeliveryPhase.ready);
+      }
     },
   );
 
@@ -274,7 +428,7 @@ void main() {
   );
 
   test(
-    'restoring capability reverifies Ready before restoring its path',
+    'restoring capability reuses an unchanged verified file and restores its path',
     () async {
       final h = await _Harness.create();
       addTearDown(h.dispose);
@@ -287,15 +441,11 @@ void main() {
       await h.flush();
       expect(h.controller.state.value, isA<ModelUnsupported>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
-      h.storage.verification = Completer<bool>();
+      final ready = _nextState<ModelReady>(h.controller.state);
       h.controller.setCapability(true);
       await h.flush();
-      expect(h.controller.state.value, isA<ModelDownloading>());
-      await expectLater(h.controller.verifiedModelPath(), throwsStateError);
-      final ready = _nextState<ModelReady>(h.controller.state);
-      h.storage.verification!.complete(true);
       await ready;
-      expect(h.storage.verifications, 2);
+      expect(h.storage.verifications, 1);
       expect(await h.controller.verifiedModelPath(), '/owned/gemma.litertlm');
       expect(h.transport.enqueues, hasLength(1));
     },
@@ -308,11 +458,12 @@ void main() {
       addTearDown(h.dispose);
       await h.controller.start(allowMobileData: false);
       h.storage.valid = false;
-      final failed = _nextState<ModelFailed>(h.controller.state);
+      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
       await h.event(ModelTransferStatus.complete);
-      await failed;
+      await offer;
       expect(h.storage.removals, 1);
       expect(h.transport.forgets, [h.transport.enqueues.single.taskId]);
+      expect(h.storage.record!.verification, isNull);
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
     },
   );
@@ -383,9 +534,9 @@ void main() {
       addTearDown(h.dispose);
       expect(h.controller.state.value, isA<ModelDownloading>());
       await expectLater(h.controller.verifiedModelPath(), throwsStateError);
-      final failed = _nextState<ModelFailed>(h.controller.state);
+      final offer = _nextState<ModelNotDownloaded>(h.controller.state);
       verification.complete(false);
-      await failed;
+      await offer;
       expect(h.storage.removals, 1);
     },
   );
@@ -563,12 +714,14 @@ class _Harness {
     int restoredBytes = 0,
     bool failPrepare = false,
     Completer<bool>? verification,
+    ModelDeliveryFileIdentity? identity,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
       ..freeBytes = freeBytes
       ..failPrepare = failPrepare
       ..verification = verification;
+    if (identity != null) storage.identity = identity;
     final network = _Network()..wifi = wifi;
     final transport = _Transport();
     if (restoredStatus != null) {
@@ -600,6 +753,10 @@ class _Harness {
     int? bytes,
     String? taskId,
   }) async {
+    if (status == ModelTransferStatus.complete &&
+        (taskId == null || taskId == storage.record?.taskId)) {
+      storage.identity ??= _fileIdentity();
+    }
     transport.eventsController.add(
       ModelTransferEvent(
         taskId: taskId ?? id,
@@ -620,12 +777,14 @@ class _Storage implements ModelDeliveryStorage {
   ModelDeliveryRecord? record;
   int freeBytes = 1000;
   int? length;
+  ModelDeliveryFileIdentity? identity = _fileIdentity();
   bool valid = true;
   bool failPrepare = false;
   bool failFreeMeasurement = false;
   int removals = 0;
   int verifications = 0;
   Completer<bool>? verification;
+  Completer<void>? verificationStarted;
   Future<void> Function()? onRemove;
   @override
   Future<ModelDeliveryRecord?> readRecord() async => record;
@@ -648,8 +807,11 @@ class _Storage implements ModelDeliveryStorage {
   @override
   Future<int?> modelLength() async => length;
   @override
+  Future<ModelDeliveryFileIdentity?> modelIdentity() async => identity;
+  @override
   Future<bool> verify(ModelDeliveryManifest manifest) async {
     verifications++;
+    verificationStarted?.complete();
     return verification?.future ?? valid;
   }
 
@@ -660,6 +822,7 @@ class _Storage implements ModelDeliveryStorage {
     await onRemove?.call();
     removals++;
     length = null;
+    identity = null;
   }
 }
 

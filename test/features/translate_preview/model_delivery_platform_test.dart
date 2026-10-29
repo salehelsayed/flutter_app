@@ -7,6 +7,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_platform.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -793,6 +794,97 @@ void main() {
   );
 
   test(
+    'persisted file identity skips adapter hashing after restart and rejects changed bytes',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final preferences = await SharedPreferences.getInstance();
+      var hashes = 0;
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        preferences: () async => preferences,
+        diskSpace: DiskSpaceChannel(invoker: (_, _) async => 1000),
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+        hashFile: (path, expected) async {
+          hashes++;
+          final bytes = await File(path).readAsBytes();
+          return bytes.length == expected.bytes &&
+              sha256.convert(bytes).toString() == expected.sha256;
+        },
+      );
+      await storage.prepare();
+      final file = File(await storage.modelPath());
+      final bytes = [1, 2, 3];
+      await file.writeAsBytes(bytes);
+      final manifest = _manifest(
+        bytes: bytes.length,
+        digest: sha256.convert(bytes).toString(),
+      );
+      await storage.saveRecord(
+        ModelDeliveryRecord(
+          manifest: manifest,
+          taskId: 'one',
+          phase: ModelDeliveryPhase.ready,
+        ),
+      );
+      final active = <PersistentModelDeliveryController>[];
+      addTearDown(() async {
+        for (final controller in active) {
+          await controller.dispose();
+        }
+      });
+      PersistentModelDeliveryController controller() {
+        final downloader = _Downloader();
+        final task = _ownedTask('one').copyWith(url: manifest.url.toString());
+        downloader.db.records[task.taskId] = TaskRecord(
+          task,
+          TaskStatus.complete,
+          1,
+          bytes.length,
+        );
+        final result = PersistentModelDeliveryController(
+          storage: storage,
+          network: _StorageTestNetwork(manifest),
+          transport: createTransport(downloader: downloader, isIOS: true),
+          appBuild: () async => 129,
+          supported: true,
+          spaceReserveBytes: 20,
+        );
+        active.add(result);
+        return result;
+      }
+
+      final first = controller();
+      await first.initialize();
+      await _waitForState<ModelReady>(first);
+      expect(hashes, 1);
+      expect(
+        (await storage.readRecord())!.verification!.identity.sizeBytes,
+        bytes.length,
+      );
+      await first.dispose();
+      active.remove(first);
+      final restarted = controller();
+      final states = <ModelDeliveryState>[];
+      restarted.state.addListener(() => states.add(restarted.state.value));
+      await restarted.initialize();
+      expect(restarted.state.value, isA<ModelReady>());
+      expect(states.whereType<ModelDownloading>(), isEmpty);
+      expect(hashes, 1);
+      await restarted.dispose();
+      active.remove(restarted);
+      await file.writeAsBytes([1, 2, 4]);
+      await file.setLastModified(DateTime.fromMillisecondsSinceEpoch(1000));
+      final changed = controller();
+      await changed.initialize();
+      await _waitForState<ModelNotDownloaded>(changed);
+      expect(hashes, 2);
+      expect(await file.exists(), isFalse);
+      expect((await storage.readRecord())!.verification, isNull);
+    },
+  );
+
+  test(
     'storage checks exact size/hash and removes only its owned directory',
     () async {
       final root = await Directory.systemTemp.createTemp(
@@ -1071,4 +1163,31 @@ class _ResumeStorage extends Fake implements PersistentStorage {
   @override
   Future<ResumeData?> retrieveResumeData(String taskId) async =>
       onRetrieve == null ? records[taskId] : await onRetrieve!(taskId);
+}
+
+Future<void> _waitForState<T extends ModelDeliveryState>(
+  PersistentModelDeliveryController controller,
+) {
+  if (controller.state.value is T) return Future<void>.value();
+  final complete = Completer<void>();
+  void changed() {
+    if (controller.state.value is T) {
+      controller.state.removeListener(changed);
+      complete.complete();
+    }
+  }
+
+  controller.state.addListener(changed);
+  return complete.future.timeout(const Duration(seconds: 3));
+}
+
+class _StorageTestNetwork implements ModelDeliveryNetwork {
+  _StorageTestNetwork(this.manifest);
+  final ModelDeliveryManifest manifest;
+  @override
+  Future<Map<String, Object?>> fetchManifest() async => manifest.toJson();
+  @override
+  Future<bool> checkWifi() async => true;
+  @override
+  Stream<bool> get wifiChanges => const Stream<bool>.empty();
 }

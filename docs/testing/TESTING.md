@@ -10443,13 +10443,13 @@ State an investigation area separately from a proven root cause.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.
-  The model-delivery regressions include 22 core and 23 adapter/storage cases, all
+  The model-delivery regressions include 30 core and 24 adapter/storage cases, all
   passing with fake connectivity/downloader/storage and tiny real files for
   size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
   outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
-  storage admission/refresh, capability re-verification, cancellation completion
-  and owned-directory removal. The combined `affected-translate-preview` lane
-  passed 217 cases with zero failures/skips, including immediate sheet
+  storage admission/refresh, capability verification reuse/invalidation,
+  cancellation completion and owned-directory removal. The earlier combined
+  `affected-translate-preview` lane passed 217 cases with zero failures/skips, including immediate sheet
   presentation during a delayed read-only space refresh and preserving original
   content. The earlier integration's 330-case workflow pass remains separate;
   workflow was not rerun for the review-fix candidate.
@@ -10493,11 +10493,31 @@ State an investigation area separately from a proven root cause.
   The public SDK storage read is best-effort/non-atomic and may internally create
   an empty metadata key; it is not a promise to recover all old orphans. Files
   whose ownership mapping was already erased cannot justify a shared-cache sweep.
-  The reported 0.83 GiB post-Remove gap remains unverified pending device inventory.
+  The original 0.83 GiB post-Remove gap was an unverified observation. Kayan's
+  subsequent build 173 (`ca9b2e311`) device report records Pixel resume from the
+  stopped point and Remove reclaiming partials to within 18 MiB of baseline;
+  Pixel and iPhone 13 scenarios passed twice each, including iPhone swipe-kill
+  recovery through Resume. This is coordinator-supplied device evidence
+  (`m-238f0ddb`), separate from the host regressions; no broad orphan cleanup was
+  added.
   Original device evidence is in
   `.codex-test-logs/translate-129-20261029/devices/pixel_step3_resume_logcat_excerpt.txt`;
   the targeted host repro changes offset 80 to 0 without the hook and retains 80
   with it (`.codex-test-logs/model-resume-172-20261029/resume-{red,green}.log`).
+  Cold-start verification now persists the expected SHA-256 and canonical file
+  path, size, modification time and change time in the existing v1 delivery
+  record. A matching Ready record restores Ready before initialization returns,
+  with no hash call or intervening Downloading state. Missing/malformed proof or
+  changed identity/digest requires verification; a stamp is saved only when file
+  identity is unchanged across a successful hash. Verification failure removes
+  the owned file and returns the download offer. The rare uncached verification
+  presentation remains unchanged by coordinator clarification `m-0c3342d6`.
+  The cold-start regression failed before the fix (expected one full hash,
+  observed two); the 54-case focused core/adapter run passes with flat swap-outs,
+  including a tiny real-file and persisted-preferences restart/corruption case.
+  Evidence: `.codex-test-logs/model-cold-start-173-20261029/`
+  `cold-start-{red,focused}.log` and their receipts. These host checks do not
+  measure full-size device cold-start time or battery use.
   The 217-case preview run includes localized busy/failure labels and
   transcription-specific voice-link wording. Its lane passed with flat swap-outs;
   `focused-final/results.json` in the resume evidence directory records its source

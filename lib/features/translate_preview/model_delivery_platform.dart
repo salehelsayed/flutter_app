@@ -84,11 +84,13 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
     DiskSpaceChannel? diskSpace,
     Future<SharedPreferences> Function()? preferences,
     Future<bool> Function(String)? excludeFromBackup,
+    Future<bool> Function(String, ModelDeliveryManifest)? hashFile,
   }) : _removeModel = removeModel,
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
        _diskSpace = diskSpace ?? DiskSpaceChannel(),
        _preferences = preferences ?? SharedPreferences.getInstance,
-       _excludeFromBackup = excludeFromBackup ?? _nativeExcludeFromBackup;
+       _excludeFromBackup = excludeFromBackup ?? _nativeExcludeFromBackup,
+       _hashFile = hashFile;
 
   static const recordKey = 'mknoon.translator.model_delivery.v1';
   static const _channel = MethodChannel('mknoon/gemma_preview');
@@ -97,6 +99,7 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
   final DiskSpaceChannel _diskSpace;
   final Future<SharedPreferences> Function() _preferences;
   final Future<bool> Function(String) _excludeFromBackup;
+  final Future<bool> Function(String, ModelDeliveryManifest)? _hashFile;
 
   static Future<bool> _nativeExcludeFromBackup(String path) async {
     if (!Platform.isIOS) return true;
@@ -157,10 +160,28 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
   }
 
   @override
-  Future<bool> verify(ModelDeliveryManifest manifest) async => compute(
-    _verifyModelFile,
-    (path: await modelPath(), bytes: manifest.bytes, sha256: manifest.sha256),
-  );
+  Future<ModelDeliveryFileIdentity?> modelIdentity() async {
+    final file = File(await modelPath());
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file) return null;
+    return ModelDeliveryFileIdentity(
+      canonicalPath: await file.resolveSymbolicLinks(),
+      sizeBytes: stat.size,
+      modifiedMicros: stat.modified.microsecondsSinceEpoch,
+      changedMicros: stat.changed.microsecondsSinceEpoch,
+    );
+  }
+
+  @override
+  Future<bool> verify(ModelDeliveryManifest manifest) async {
+    final path = await modelPath();
+    return _hashFile?.call(path, manifest) ??
+        compute(_verifyModelFile, (
+          path: path,
+          bytes: manifest.bytes,
+          sha256: manifest.sha256,
+        ));
+  }
 
   @override
   Future<void> removeOwnedModel() => _removeModel(() async {

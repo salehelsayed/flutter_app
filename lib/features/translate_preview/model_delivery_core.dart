@@ -82,6 +82,92 @@ enum ModelDeliveryPhase {
   removing,
 }
 
+final class ModelDeliveryFileIdentity {
+  const ModelDeliveryFileIdentity({
+    required this.canonicalPath,
+    required this.sizeBytes,
+    required this.modifiedMicros,
+    required this.changedMicros,
+  });
+
+  final String canonicalPath;
+  final int sizeBytes;
+  final int modifiedMicros;
+  final int changedMicros;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ModelDeliveryFileIdentity &&
+      canonicalPath == other.canonicalPath &&
+      sizeBytes == other.sizeBytes &&
+      modifiedMicros == other.modifiedMicros &&
+      changedMicros == other.changedMicros;
+  @override
+  int get hashCode =>
+      Object.hash(canonicalPath, sizeBytes, modifiedMicros, changedMicros);
+
+  Map<String, Object?> toJson() => {
+    'canonicalPath': canonicalPath,
+    'sizeBytes': sizeBytes,
+    'modifiedMicros': modifiedMicros,
+    'changedMicros': changedMicros,
+  };
+}
+
+final class ModelDeliveryVerification {
+  const ModelDeliveryVerification({
+    required this.expectedSha256,
+    required this.identity,
+  });
+  final String expectedSha256;
+  final ModelDeliveryFileIdentity identity;
+
+  static ModelDeliveryVerification? tryFromJson(Object? json) {
+    if (json is! Map<String, Object?>) return null;
+    final sha = json['expectedSha256'];
+    final file = json['identity'];
+    if (sha is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(sha) ||
+        file is! Map<String, Object?>) {
+      return null;
+    }
+    final path = file['canonicalPath'];
+    final size = file['sizeBytes'];
+    final modified = file['modifiedMicros'];
+    final changed = file['changedMicros'];
+    if (path is! String ||
+        path.isEmpty ||
+        size is! int ||
+        size < 0 ||
+        modified is! int ||
+        changed is! int) {
+      return null;
+    }
+    return ModelDeliveryVerification(
+      expectedSha256: sha,
+      identity: ModelDeliveryFileIdentity(
+        canonicalPath: path,
+        sizeBytes: size,
+        modifiedMicros: modified,
+        changedMicros: changed,
+      ),
+    );
+  }
+
+  bool matches(
+    ModelDeliveryManifest manifest,
+    ModelDeliveryFileIdentity? file,
+  ) =>
+      expectedSha256 == manifest.sha256 &&
+      identity == file &&
+      identity.sizeBytes == manifest.bytes;
+
+  Map<String, Object?> toJson() => {
+    'expectedSha256': expectedSha256,
+    'identity': identity.toJson(),
+  };
+}
+
 final class ModelDeliveryRecord {
   const ModelDeliveryRecord({
     this.manifest,
@@ -89,6 +175,7 @@ final class ModelDeliveryRecord {
     this.receivedBytes = 0,
     this.phase = ModelDeliveryPhase.idle,
     this.allowMobileData = false,
+    this.verification,
   });
 
   factory ModelDeliveryRecord.fromJson(Map<String, Object?> json) {
@@ -114,6 +201,7 @@ final class ModelDeliveryRecord {
       receivedBytes: receivedBytes,
       phase: ModelDeliveryPhase.values.byName(phase),
       allowMobileData: allow,
+      verification: ModelDeliveryVerification.tryFromJson(json['verification']),
     );
   }
 
@@ -122,6 +210,7 @@ final class ModelDeliveryRecord {
   final int receivedBytes;
   final ModelDeliveryPhase phase;
   final bool allowMobileData;
+  final ModelDeliveryVerification? verification;
 
   ModelDeliveryRecord copyWith({
     ModelDeliveryManifest? manifest,
@@ -130,12 +219,17 @@ final class ModelDeliveryRecord {
     int? receivedBytes,
     ModelDeliveryPhase? phase,
     bool? allowMobileData,
+    ModelDeliveryVerification? verification,
+    bool clearVerification = false,
   }) => ModelDeliveryRecord(
     manifest: manifest ?? this.manifest,
     taskId: clearTask ? null : taskId ?? this.taskId,
     receivedBytes: receivedBytes ?? this.receivedBytes,
     phase: phase ?? this.phase,
     allowMobileData: allowMobileData ?? this.allowMobileData,
+    verification: clearTask || clearVerification
+        ? null
+        : verification ?? this.verification,
   );
 
   Map<String, Object?> toJson() => {
@@ -145,6 +239,7 @@ final class ModelDeliveryRecord {
     'receivedBytes': receivedBytes,
     'phase': phase.name,
     'allowMobileData': allowMobileData,
+    'verification': verification?.toJson(),
   };
 }
 
@@ -190,6 +285,7 @@ abstract interface class ModelDeliveryStorage {
   Future<void> prepare();
   Future<int> availableBytes();
   Future<int?> modelLength();
+  Future<ModelDeliveryFileIdentity?> modelIdentity();
   Future<bool> verify(ModelDeliveryManifest manifest);
   Future<String> modelPath();
   Future<void> removeOwnedModel();
@@ -281,6 +377,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   }
 
   Future<void> _initialize() async {
+    final generation = _generation;
     try {
       _record = await _storage.readRecord() ?? const ModelDeliveryRecord();
       _allowMobileData.value = _record.allowMobileData;
@@ -291,6 +388,20 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       await _transport.initialize(_record.taskId);
       if (_record.phase == ModelDeliveryPhase.removing) {
         await _remove();
+        return;
+      }
+      final manifest = _record.manifest;
+      if (_record.phase == ModelDeliveryPhase.ready && manifest != null) {
+        final identity = await _storage.modelIdentity();
+        if (generation == _generation &&
+            (_record.verification?.matches(manifest, identity) ?? false)) {
+          _verifiedPath = identity!.canonicalPath;
+          _render();
+          return;
+        }
+        _record = _record.copyWith(phase: ModelDeliveryPhase.verifying);
+        _render();
+        if (_canRun) _beginVerification();
         return;
       }
       final id = _record.taskId;
@@ -682,14 +793,23 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _verification = verification;
     unawaited(() async {
       var valid = false;
-      String? path;
+      ModelDeliveryFileIdentity? verifiedIdentity;
       try {
         await _storage.prepare();
-        valid = await _storage.verify(manifest);
-        if (valid) path = await _storage.modelPath();
+        final before = await _storage.modelIdentity();
+        if (before != null) {
+          valid =
+              (_record.verification?.matches(manifest, before) ?? false) ||
+              await _storage.verify(manifest);
+          final after = await _storage.modelIdentity();
+          valid =
+              valid && before.sizeBytes == manifest.bytes && before == after;
+          if (valid) verifiedIdentity = after;
+        }
       } on Object {
         valid = false;
       }
+      final verified = verifiedIdentity;
       await _queue(() async {
         if (_verification == verification) _verification = null;
         if (_disposed ||
@@ -699,17 +819,24 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
             !_canRun) {
           return;
         }
-        if (valid && path != null) {
-          _verifiedPath = path;
-          _record = _record.copyWith(phase: ModelDeliveryPhase.ready);
+        if (valid && verified != null) {
+          _verifiedPath = verified.canonicalPath;
+          _record = _record.copyWith(
+            phase: ModelDeliveryPhase.ready,
+            verification: ModelDeliveryVerification(
+              expectedSha256: manifest.sha256,
+              identity: verified,
+            ),
+          );
         } else {
           await _storage.removeOwnedModel();
           await _transport.forget(id);
           _record = _record.copyWith(
             clearTask: true,
             receivedBytes: 0,
-            phase: ModelDeliveryPhase.failed,
+            phase: ModelDeliveryPhase.idle,
           );
+          _freeBytes = await _storage.availableBytes();
         }
         await _persist();
         _render();
