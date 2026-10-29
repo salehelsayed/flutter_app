@@ -10385,6 +10385,23 @@ State an investigation area separately from a proven root cause.
   transcription prompt. This does not prove native inference or model delivery.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; store builds keep it off while delivery is undecided.
+  Translation capability uses OS-reported physical/kernel-visible total RAM,
+  typed OS version/API level and the running process ABI, never available RAM
+  or advertised supported ABIs. The approved conservative policy requires
+  iOS 15+ ARM64 with at least 3.5 GiB, or Android API 30+ ARM64 with at least 5.5 GiB.
+  These RAM thresholds approximate nominal 4/6 GB classes with reservation
+  tolerance; they are policy inferences, not calibrated phone totals or an
+  inference/thermal guarantee. The pinned LiteRT-LM 1.19.0 runtime requires
+  Android 30 despite the app/plugin build minimum 24, and does not ship x86_64.
+  Unknown/malformed/missing/failed reads are unsupported without loading the
+  model. `translation_capability_test.dart` passed 54 pure-policy/mock-channel
+  cases, including raw-byte boundaries, SDK 24/25/29 rejection, platform-matched
+  process ABI, malformed payloads, failures and sanitized one-line fact logs.
+  The existing `mknoon/gemma_preview` channel supplies only total RAM and typed
+  OS facts; Dart owns the policy. `TRANSLATION_CAPABILITY` logs numeric RAM/OS,
+  ABI and decision without identifiers so the device owner can calibrate actual
+  iPhone 11/13 and Pixel values. Swift source parsing passed; native compilation,
+  actual device readings and signed-artifact behavior remain separate proof.
   The preview's sqlite3 package upgrade from 3.1.4 to 3.8.0 changed the actual
   host/desktop FFI SQLite runtime from 3.51.2 to 3.54.1, measured through
   `sqflite_common_ffi` on main `ac6aaa690` and the isolated port. The same 303

@@ -2038,6 +2038,11 @@ final class IosSetupReadinessEntryCoordinator {
     )
     channel.setMethodCallHandler { call, result in
       switch call.method {
+      case "deviceCapabilities":
+        result([
+          "physicalMemoryBytes": Int(ProcessInfo.processInfo.physicalMemory),
+          "osVersionMajor": ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+        ])
       case "memory":
         result(Self.gemmaPreviewMemory())
       case "decodePcm":

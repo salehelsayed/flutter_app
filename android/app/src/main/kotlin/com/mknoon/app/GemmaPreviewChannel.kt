@@ -6,6 +6,7 @@ import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Debug
 import android.os.Handler
 import android.os.Looper
@@ -26,6 +27,14 @@ object GemmaPreviewChannel {
         val main = Handler(Looper.getMainLooper())
         MethodChannel(messenger, NAME).setMethodCallHandler { call, result ->
             when (call.method) {
+                "deviceCapabilities" -> {
+                    val info = ActivityManager.MemoryInfo()
+                    context.getSystemService(ActivityManager::class.java)?.getMemoryInfo(info)
+                    result.success(mapOf(
+                        "physicalMemoryBytes" to info.totalMem,
+                        "sdkInt" to Build.VERSION.SDK_INT,
+                    ))
+                }
                 "memory" -> result.success(memory(context))
                 "decodePcm" -> {
                     val path = call.argument<String>("path")
