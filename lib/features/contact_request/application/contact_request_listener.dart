@@ -30,7 +30,10 @@ class ReplayCache {
   final Duration ttl;
   final LinkedHashMap<String, DateTime> _entries = LinkedHashMap();
 
-  ReplayCache({this.maxSize = 1000, this.ttl = const Duration(hours: 25)});
+  ReplayCache({
+    this.maxSize = 1000,
+    this.ttl = const Duration(days: 7, hours: 1),
+  });
 
   /// Returns the set of currently cached message IDs.
   Set<String> get ids => _entries.keys.toSet();

@@ -16,7 +16,9 @@ import 'package:flutter_app/features/contact_request/application/decline_contact
 import 'package:flutter_app/features/contact_request/application/handle_incoming_message_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/data/repositories/sql_contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
+import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -33,6 +35,8 @@ import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
+import '../support/contact_repair_harness.dart'
+    show buildRepairWire, contactFor;
 
 final _cryptoBus = Ed25519ContactRequestCryptoBus();
 final _aliceId = TestEd25519Identity.fromSeedByte(0x21);
@@ -417,7 +421,7 @@ void main() {
     );
 
     test(
-      'old and CR/LF signature alias envelopes after restart preserve declined consent and wake authority',
+      'CR-006 late signature alias envelopes after restart preserve declined consent and wake authority',
       () async {
         final bobKeyStore = FakeSecureKeyStore();
         final wakeTokens = _RecordingWakeTokenStore();
@@ -466,19 +470,23 @@ void main() {
           bobP2p.dispose();
         });
 
-        final firstWireFuture = aliceP2p.messageStream.first;
-        expect(
-          await sendContactRequest(
-            p2pService: bobP2p,
-            identityRepo: bobIdentities,
-            bridge: bobBridge,
-            targetPeerId: _aliceId.peerId,
-            recipientPublicKey: _aliceId.publicKey,
-            resolveWakeToken: (_) async => 'signed-wake-token',
-          ),
-          SendContactRequestResult.success,
+        final lateTs = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(hours: 25))
+            .toIso8601String();
+        final oldEnvelope = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          ts: lateTs,
+          outerTs: lateTs,
+          mlKem: 'mlkem-bob-1',
+          wakeToken: 'signed-wake-token',
         );
-        final oldEnvelope = await firstWireFuture;
+        expect(
+          await aliceListener.processIncomingMessage(oldEnvelope),
+          HandleMessageResult.contactAutoAdded,
+        );
         await firstPromptBarrier.future;
         expect(alicePrompted, hasLength(1));
         expect(wakeTokens.writes, 1);
@@ -535,7 +543,21 @@ void main() {
 
         await aliceListener.processIncomingMessage(oldEnvelope);
 
-        final originalPayload = bobBridge.encrypts.single.payload;
+        final oldOuter =
+            jsonDecode(oldEnvelope.content) as Map<String, dynamic>;
+        final oldEncrypted = oldOuter['encrypted'] as Map<String, dynamic>;
+        final opened = await callDecryptContactRequest(
+          bridge: aliceBridge,
+          ownPrivateKey: _aliceId.privateKey,
+          ephemeralPublicKey: oldEncrypted['ephemeralPublicKey'] as String,
+          ciphertext: oldEncrypted['ciphertext'] as String,
+          nonce: oldEncrypted['nonce'] as String,
+          msgId: oldOuter['msgId'] as String,
+          ts: oldOuter['ts'] as String,
+        );
+        expect(opened['ok'], isTrue);
+        final originalPayload =
+            jsonDecode(opened['plaintext'] as String) as Map<String, dynamic>;
         final signature = originalPayload['sig'] as String;
         expect(signature.endsWith('=='), isTrue);
         const alphabet =
@@ -602,6 +624,203 @@ void main() {
         );
       },
     );
+  });
+
+  group('CR-006 late admission with durable SQL state', () {
+    late ContactRepositoryImpl contacts;
+    late ContactRequestRepositoryImpl requests;
+    late Ed25519ContactRequestBridge bridge;
+    late ChatMessage lateWire;
+    ContactRequestListener? receiver;
+    StreamSubscription<ContactRequestModel>? promptSub;
+    late List<ContactRequestModel> prompted;
+    late Completer<ContactRequestModel> firstPrompt;
+    var autoAddCalls = 0;
+
+    Future<void> attach({bool enableAutoAdd = false}) async {
+      final loaded = Completer<void>();
+      contacts = _buildContactRepo(aliceDb);
+      requests = _buildRequestRepo(
+        aliceDb,
+        onLoadPendingCompleted: (_) {
+          if (!loaded.isCompleted) loaded.complete();
+        },
+      );
+      receiver = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: requests,
+        contactRepo: contacts,
+        bridge: bridge,
+        getOwnPeerId: () => _aliceId.peerId,
+        getOwnPrivateKey: () async => _aliceId.privateKey,
+        getOwnPublicKey: () async => _aliceId.publicKey,
+        repairRepository: SqlContactRepairRepository(aliceDb),
+        downloadProfilePictureFn: _settledAvatar,
+        autoAcceptAndReciprocate: enableAutoAdd
+            ? (_) async {
+                autoAddCalls++;
+                return AcceptContactRequestResult.success;
+              }
+            : null,
+      );
+      prompted = [];
+      firstPrompt = Completer<ContactRequestModel>();
+      promptSub = receiver!.requestStream.listen((request) {
+        prompted.add(request);
+        if (!firstPrompt.isCompleted) firstPrompt.complete(request);
+      });
+      await loaded.future;
+      await Future<void>(() {});
+    }
+
+    Future<void> reopen({bool enableAutoAdd = false}) async {
+      await promptSub?.cancel();
+      receiver?.dispose();
+      await aliceDb.close();
+      aliceDb = await _openDb(aliceDbPath);
+      await attach(enableAutoAdd: enableAutoAdd);
+    }
+
+    setUp(() async {
+      contacts = _buildContactRepo(aliceDb);
+      requests = _buildRequestRepo(aliceDb);
+      bridge = Ed25519ContactRequestBridge(_cryptoBus);
+      receiver = null;
+      promptSub = null;
+      autoAddCalls = 0;
+      final ts = DateTime.now()
+          .toUtc()
+          .subtract(const Duration(hours: 25))
+          .toIso8601String();
+      lateWire = await buildRepairWire(
+        bus: _cryptoBus,
+        signer: _bobId,
+        recipientPublicKey: _aliceId.publicKey,
+        ts: ts,
+        outerTs: ts,
+        mlKem: 'old-signed-key',
+      );
+    });
+
+    tearDown(() async {
+      await promptSub?.cancel();
+      receiver?.dispose();
+    });
+
+    test(
+      'late pending request presents once and survives SQL reopen at 30 days',
+      () async {
+        // The documented null callback retains the manual-dialog fallback.
+        await attach();
+        expect(
+          await receiver!.processIncomingMessage(lateWire),
+          HandleMessageResult.contactAutoAdded,
+        );
+        final stored = await firstPrompt.future;
+        expect(prompted, hasLength(1));
+        expect(bridge.verifiedData, hasLength(1));
+        expect(await contacts.getContact(_bobId.peerId), isNull);
+        expect(
+          (await requests.getPendingRequests()).single.signature,
+          stored.signature,
+        );
+        expect(
+          await receiver!.processIncomingMessage(lateWire),
+          HandleMessageResult.invalidMessage,
+        );
+        expect(prompted, hasLength(1));
+
+        final oldReceivedAt = DateTime.now()
+            .toUtc()
+            .subtract(const Duration(days: 30))
+            .toIso8601String();
+        await requests.addRequest(stored.copyWith(receivedAt: oldReceivedAt));
+        await reopen();
+        final replayed = await firstPrompt.future;
+        expect(replayed.receivedAt, oldReceivedAt);
+        expect(replayed.signature, stored.signature);
+        expect(replayed.status, ContactRequestStatus.pending);
+        expect(
+          await receiver!.processIncomingMessage(lateWire),
+          HandleMessageResult.duplicateRequest,
+        );
+        expect(bridge.verifiedData, hasLength(2));
+        expect(prompted, hasLength(1));
+        final pending = await requests.getPendingRequests();
+        expect(pending, hasLength(1));
+        expect(pending.single.toMap(), replayed.toMap());
+      },
+    );
+
+    for (final state in ['accepted', 'blocked', 'deleted']) {
+      test(
+        'late arrival preserves reopened $state authority and consent',
+        () async {
+          final now = DateTime.now().toUtc().toIso8601String();
+          final current =
+              contactFor(_bobId, mlKem: 'current-key', scannedAt: now).copyWith(
+                mlKemKeyUpdatedTs: now,
+                isArchived: true,
+                isBlocked: state == 'blocked',
+              );
+          await contacts.addContact(current);
+          if (state == 'deleted') {
+            await contacts.deleteContact(_bobId.peerId);
+          } else {
+            await requests.addRequest(
+              ContactRequestModel(
+                peerId: _bobId.peerId,
+                publicKey: _bobId.publicKey,
+                rendezvous: current.rendezvous,
+                username: 'Bob',
+                signature: 'previous-request-signature',
+                receivedAt: now,
+                status: state == 'accepted'
+                    ? ContactRequestStatus.accepted
+                    : ContactRequestStatus.pending,
+              ),
+            );
+          }
+
+          await reopen(enableAutoAdd: true);
+          final before = await contacts.getContact(_bobId.peerId);
+          expect(
+            await receiver!.processIncomingMessage(lateWire),
+            state == 'deleted'
+                ? HandleMessageResult.contactRequest
+                : HandleMessageResult.alreadyContact,
+          );
+          expect(bridge.verifiedData, hasLength(1));
+          expect(autoAddCalls, 0);
+          expect(
+            (await contacts.getContact(_bobId.peerId))?.toMap(),
+            before?.toMap(),
+          );
+          if (state == 'deleted') {
+            await firstPrompt.future;
+            expect(prompted, hasLength(1));
+            expect(
+              (await SqlContactRepairRepository(
+                aliceDb,
+              ).readConsent(_bobId.peerId))?.state,
+              ContactRelationshipState.withdrawn,
+            );
+            expect(
+              (await requests.getPendingRequests()).single.peerId,
+              _bobId.peerId,
+            );
+          } else {
+            expect(prompted, isEmpty);
+            expect(
+              (await requests.getRequest(_bobId.peerId))?.status,
+              state == 'accepted'
+                  ? ContactRequestStatus.accepted
+                  : ContactRequestStatus.pending,
+            );
+          }
+        },
+      );
+    }
   });
 }
 

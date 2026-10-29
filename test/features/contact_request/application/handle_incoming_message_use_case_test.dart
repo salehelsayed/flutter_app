@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import '../../../shared/fakes/in_memory_contact_request_repository.dart';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -949,6 +950,40 @@ void main() {
       expect(request!.peerId, equals(_senderPeerId));
     });
 
+    for (final age in <String, Duration>{
+      'fresh': const Duration(minutes: 1),
+      '25 hours old': const Duration(hours: 25),
+      'just under seven days old': const Duration(
+        days: 6,
+        hours: 23,
+        minutes: 59,
+      ),
+    }.entries) {
+      test('CR-006 v2 ${age.key} reaches verified pending storage', () async {
+        final ts = DateTime.now().toUtc().subtract(age.value).toIso8601String();
+        final payload = _validPayload()..['ts'] = ts;
+        bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+
+        final (result, request, _) = await handleIncomingMessage(
+          message: _makeChatMessage(v2Message(payload, ts: ts)),
+          bridge: bridge,
+          requestRepo: requestRepo,
+          contactRepo: contactRepo,
+          ownPeerId: _ownPeerId,
+          ownPrivateKey: 'ownPrivKeyBase64',
+        );
+
+        expect(result, equals(HandleMessageResult.contactAutoAdded));
+        expect(bridge.decryptCalled, isTrue);
+        expect(bridge.verifyCalled, isTrue);
+        expect(request?.status, equals(ContactRequestStatus.pending));
+        expect(
+          (await requestRepo.getPendingRequests()).single.peerId,
+          equals(_senderPeerId),
+        );
+      });
+    }
+
     test('v2 decrypted payload is signature-verified', () async {
       final payload = _validPayload();
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
@@ -1092,13 +1127,13 @@ void main() {
       expect(result, equals(HandleMessageResult.invalidMessage));
     });
 
-    test('v2 ts older than 24h → invalidMessage', () async {
+    test('v2 ts older than seven days → invalidMessage', () async {
       final payload = _validPayload();
       bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
 
       final oldTs = DateTime.now()
           .toUtc()
-          .subtract(const Duration(hours: 25))
+          .subtract(const Duration(days: 7, minutes: 1))
           .toIso8601String();
       final message = _makeChatMessage(v2Message(payload, ts: oldTs));
       final (result, _, _) = await handleIncomingMessage(

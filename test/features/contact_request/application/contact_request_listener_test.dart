@@ -1369,6 +1369,20 @@ void main() {
   // ReplayCache
   // ---------------------------------------------------------------------------
   group('ReplayCache', () {
+    test('CR-006 default TTL covers seven days with one-hour margin', () {
+      final cache = ReplayCache();
+
+      expect(cache.ttl, equals(const Duration(days: 7, hours: 1)));
+      expect(cache.maxSize, equals(1000));
+      for (int i = 0; i <= 1000; i++) {
+        cache.add('msg-$i');
+      }
+
+      expect(cache.length, equals(1000));
+      expect(cache.contains('msg-0'), isFalse);
+      expect(cache.contains('msg-1000'), isTrue);
+    });
+
     test('bounded at maxSize entries', () {
       final cache = ReplayCache(maxSize: 5, ttl: const Duration(hours: 25));
 

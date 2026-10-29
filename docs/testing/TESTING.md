@@ -3314,6 +3314,24 @@ so they are resource-aborted attempts, not RED proof. Evidence is retained in
 `cr008-red-kayan-quiet-window/`, `cr008-green-kayan-quiet-window/`,
 `cr008-vet/` and `cr008-green-summary.json`. Server deployment, installed-client
 rendering and device behavior remain separate proof obligations.
+V2 request freshness admits authenticated envelope ages through seven days,
+retaining the five-minute future limit and all identity/signature/authority
+checks. Stored pending rows have no age expiry: a seeded 30-day-old row survives
+SQLite reopen and listener replay. The bounded in-memory ReplayCache defaults
+to seven days plus one hour, with its 1,000-entry cap; it is not a persistent
+nonce ledger. Extending the admissible age increases the replay window for
+captured authentic envelopes, while declined-signature, pending-row and current
+contact/block/withdrawal guards remain required. The three focused Dart files
+pass 116 cases, including 25-hour/near-seven-day admission, expiry/future limits
+and reopened pending/declined/accepted/blocked/deleted state. Seven actual Go
+crypto cases preserve nonce freshness, wrong-key/tamper rejection and binding of
+message ID/time in AES-GCM AAD. This does not certify device delivery. The relay
+source retains ordinary inbox copies seven days from server storage, which is
+different from envelope age and is not unlimited offline custody. Evidence:
+`.codex-test-logs/contact-request-gaps-post129-20261029/` contains
+`cr006-causal-red.json`, `cr006-green-summary.json`, `cr006-green/`,
+`cr006-analyze/` and `cr006-crypto-preservation/`.
+
 Feed, Orbit, FTE, Share and onboarding widget fixtures must persist the pending
 row before fake listener emission and bind the listener and decision fake to the
 same request/contact repositories used by the screen. Paired already-accepted

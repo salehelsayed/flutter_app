@@ -227,7 +227,7 @@ handleIncomingMessage({
 
     final now = DateTime.now().toUtc();
     final age = now.difference(parsedTs);
-    if (age > const Duration(hours: 24)) {
+    if (age > const Duration(days: 7)) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CONTACT_REQUEST_V2_EXPIRED',
