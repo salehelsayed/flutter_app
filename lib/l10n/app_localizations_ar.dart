@@ -4650,4 +4650,168 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get push_registration_health_dismiss => 'إخفاء تنبيه الإشعارات';
+
+  @override
+  String get translator_see_translation => 'عرض الترجمة';
+
+  @override
+  String get translator_transcribe => 'تفريغ نصي';
+
+  @override
+  String translator_link_downloading(String percent) {
+    return 'جارٍ تجهيز الترجمة · $percent%';
+  }
+
+  @override
+  String translator_link_paused(String percent) {
+    return 'الترجمة متوقفة مؤقتًا · $percent%';
+  }
+
+  @override
+  String get translator_link_failed => 'لم يكتمل تنزيل الترجمة';
+
+  @override
+  String get translator_try_again => 'حاول مجددًا';
+
+  @override
+  String get translator_sheet_title => 'مترجمك الخاص';
+
+  @override
+  String translator_sheet_line(String size) {
+    return 'تنزيل واحد ($size). يعمل بدون إنترنت.';
+  }
+
+  @override
+  String translator_sheet_download_size(String size) {
+    return 'تنزيل $size';
+  }
+
+  @override
+  String translator_sheet_free(String size) {
+    return '$size متاحة';
+  }
+
+  @override
+  String translator_sheet_needs(String size) {
+    return 'يحتاج $size';
+  }
+
+  @override
+  String get translator_sheet_privacy => 'لا أحد يرى ما تترجمه، ولا حتى مكنون.';
+
+  @override
+  String get translator_download_on_wifi => 'التنزيل عبر Wi-Fi';
+
+  @override
+  String get translator_download_when_wifi => 'التنزيل عند الاتصال بـ Wi-Fi';
+
+  @override
+  String get translator_use_mobile_data_instead =>
+      'استخدام بيانات الجوال بدلًا من ذلك';
+
+  @override
+  String get translator_not_now => 'ليس الآن';
+
+  @override
+  String get translator_free_up_space => 'إفراغ مساحة';
+
+  @override
+  String get translator_progress_title => 'جارٍ تجهيز الترجمة';
+
+  @override
+  String translator_progress_amount(String received, String total) {
+    return '$received من $total';
+  }
+
+  @override
+  String translator_progress_minutes_left(String minutes) {
+    return 'باقٍ حوالي $minutes د';
+  }
+
+  @override
+  String get translator_progress_keeps_going =>
+      'يمكنك إغلاق هذا. يستمر التنزيل حتى لو غادرت مكنون.';
+
+  @override
+  String get translator_close => 'إغلاق';
+
+  @override
+  String get translator_pause => 'إيقاف مؤقت';
+
+  @override
+  String get translator_waiting_title => 'بانتظار Wi-Fi';
+
+  @override
+  String get translator_paused_word => 'متوقف مؤقتًا';
+
+  @override
+  String get translator_waiting_line => 'يكمل من حيث توقف عند عودتك إلى Wi-Fi.';
+
+  @override
+  String get translator_use_mobile_data => 'استخدام بيانات الجوال';
+
+  @override
+  String get translator_failed_title => 'لم يكتمل التنزيل';
+
+  @override
+  String get translator_failed_line =>
+      'حدث خطأ ما. حاول مجددًا وسيكمل من حيث توقف.';
+
+  @override
+  String get translator_result_beta => 'تجريبي';
+
+  @override
+  String get translator_result_only_phone => 'على هاتفك فقط';
+
+  @override
+  String get translator_hide => 'إخفاء';
+
+  @override
+  String get translator_settings_title => 'المترجم الخاص';
+
+  @override
+  String get translator_settings_not_downloaded =>
+      'ترجمة الأفكار والرسائل الصوتية. تبقى على هاتفك.';
+
+  @override
+  String get translator_settings_ready => 'على هذا الهاتف · تعمل بدون إنترنت';
+
+  @override
+  String translator_settings_downloading(String amount) {
+    return 'جارٍ التنزيل · $amount';
+  }
+
+  @override
+  String get translator_settings_paused => 'متوقف مؤقتًا';
+
+  @override
+  String get translator_settings_failed => 'لم يكتمل';
+
+  @override
+  String get translator_settings_unsupported => 'غير متاح على هذا الهاتف';
+
+  @override
+  String get translator_get => 'تنزيل';
+
+  @override
+  String get translator_resume => 'استئناف';
+
+  @override
+  String get translator_remove => 'إزالة';
+
+  @override
+  String get translator_settings_mobile_data => 'التنزيل عبر بيانات الجوال';
+
+  @override
+  String get translator_remove_title => 'إزالة الترجمة؟';
+
+  @override
+  String translator_remove_body(String size) {
+    return 'يحرر $size. يمكنك تنزيلها مجددًا في أي وقت.';
+  }
+
+  @override
+  String translator_size_gb(String size) {
+    return '$size غيغابايت';
+  }
 }

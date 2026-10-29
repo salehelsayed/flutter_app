@@ -20,6 +20,7 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
@@ -863,6 +864,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         TranslatePreview(
           text: _post.text,
           ai: translatePreviewAi,
+          delivery: translatePreviewDelivery,
           color: Colors.white,
         ),
       ],

@@ -44,6 +44,9 @@ class SettingsScreen extends StatelessWidget {
   /// 229: opens the Media & storage sheet (auto-download matrix + scoped
   /// storage totals/actions). Row hidden when null.
   final VoidCallback? onOpenMediaStorageSheet;
+
+  /// TRANSLATE_PREVIEW: the "Private translator" rows, under Media & storage.
+  final Widget? privateTranslatorSection;
   final VoidCallback? onOpenCallPrivacySheet;
   final VoidCallback? onOpenRecoverySheet;
   final VoidCallback? onOpenSafetySupport;
@@ -79,6 +82,7 @@ class SettingsScreen extends StatelessWidget {
     this.onOpenPhotoQualitySheet,
     this.onOpenVideoQualitySheet,
     this.onOpenMediaStorageSheet,
+    this.privateTranslatorSection,
     this.onOpenCallPrivacySheet,
     this.onOpenRecoverySheet,
     this.onOpenSafetySupport,
@@ -181,6 +185,7 @@ class SettingsScreen extends StatelessWidget {
           label: l10n.settings_media_storage,
           onTap: onOpenMediaStorageSheet,
         ),
+      ?privateTranslatorSection,
       if (onOpenCallPrivacySheet != null)
         SettingsListRow(
           key: const ValueKey('settings-row-call-privacy'),

@@ -4584,4 +4584,170 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get push_registration_health_dismiss => 'Dismiss notification notice';
+
+  @override
+  String get translator_see_translation => 'See translation';
+
+  @override
+  String get translator_transcribe => 'Transcribe';
+
+  @override
+  String translator_link_downloading(String percent) {
+    return 'Getting translation ready · $percent%';
+  }
+
+  @override
+  String translator_link_paused(String percent) {
+    return 'Translation paused · $percent%';
+  }
+
+  @override
+  String get translator_link_failed => 'Translation didn\'t download';
+
+  @override
+  String get translator_try_again => 'Try again';
+
+  @override
+  String get translator_sheet_title => 'Your private translator';
+
+  @override
+  String translator_sheet_line(String size) {
+    return 'One download ($size). Works without internet.';
+  }
+
+  @override
+  String translator_sheet_download_size(String size) {
+    return '$size download';
+  }
+
+  @override
+  String translator_sheet_free(String size) {
+    return '$size free';
+  }
+
+  @override
+  String translator_sheet_needs(String size) {
+    return 'Needs $size';
+  }
+
+  @override
+  String get translator_sheet_privacy =>
+      'Nobody sees what you translate, not even Mknoon.';
+
+  @override
+  String get translator_download_on_wifi => 'Download on Wi-Fi';
+
+  @override
+  String get translator_download_when_wifi => 'Download when on Wi-Fi';
+
+  @override
+  String get translator_use_mobile_data_instead => 'Use mobile data instead';
+
+  @override
+  String get translator_not_now => 'Not now';
+
+  @override
+  String get translator_free_up_space => 'Free up space';
+
+  @override
+  String get translator_progress_title => 'Getting translation ready';
+
+  @override
+  String translator_progress_amount(String received, String total) {
+    return '$received of $total';
+  }
+
+  @override
+  String translator_progress_minutes_left(String minutes) {
+    return 'about $minutes min left';
+  }
+
+  @override
+  String get translator_progress_keeps_going =>
+      'You can close this. It keeps going, even if you leave Mknoon.';
+
+  @override
+  String get translator_close => 'Close';
+
+  @override
+  String get translator_pause => 'Pause';
+
+  @override
+  String get translator_waiting_title => 'Waiting for Wi-Fi';
+
+  @override
+  String get translator_paused_word => 'paused';
+
+  @override
+  String get translator_waiting_line =>
+      'It picks up where it stopped when you\'re back on Wi-Fi.';
+
+  @override
+  String get translator_use_mobile_data => 'Use mobile data';
+
+  @override
+  String get translator_failed_title => 'The download didn\'t finish';
+
+  @override
+  String get translator_failed_line =>
+      'Something went wrong. Try again and it continues from where it stopped.';
+
+  @override
+  String get translator_result_beta => 'BETA';
+
+  @override
+  String get translator_result_only_phone => 'Only on your phone';
+
+  @override
+  String get translator_hide => 'Hide';
+
+  @override
+  String get translator_settings_title => 'Private translator';
+
+  @override
+  String get translator_settings_not_downloaded =>
+      'Translate Thoughts and voice notes. Stays on your phone.';
+
+  @override
+  String get translator_settings_ready =>
+      'On this phone · works without internet';
+
+  @override
+  String translator_settings_downloading(String amount) {
+    return 'Downloading · $amount';
+  }
+
+  @override
+  String get translator_settings_paused => 'Paused';
+
+  @override
+  String get translator_settings_failed => 'Didn\'t finish';
+
+  @override
+  String get translator_settings_unsupported => 'Not available on this phone';
+
+  @override
+  String get translator_get => 'Get';
+
+  @override
+  String get translator_resume => 'Resume';
+
+  @override
+  String get translator_remove => 'Remove';
+
+  @override
+  String get translator_settings_mobile_data => 'Download over mobile data';
+
+  @override
+  String get translator_remove_title => 'Remove translation?';
+
+  @override
+  String translator_remove_body(String size) {
+    return 'Frees $size. You can download it again any time.';
+  }
+
+  @override
+  String translator_size_gb(String size) {
+    return '$size GB';
+  }
 }

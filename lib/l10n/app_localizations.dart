@@ -7639,6 +7639,282 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Dismiss notification notice'**
   String get push_registration_health_dismiss;
+
+  /// Link under a Thought or a transcript in another language.
+  ///
+  /// In en, this message translates to:
+  /// **'See translation'**
+  String get translator_see_translation;
+
+  /// Link under a received voice message.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcribe'**
+  String get translator_transcribe;
+
+  /// Link while the translator downloads.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting translation ready · {percent}%'**
+  String translator_link_downloading(String percent);
+
+  /// Link while the download waits or is paused.
+  ///
+  /// In en, this message translates to:
+  /// **'Translation paused · {percent}%'**
+  String translator_link_paused(String percent);
+
+  /// Link after the download failed; followed by Try again.
+  ///
+  /// In en, this message translates to:
+  /// **'Translation didn\'t download'**
+  String get translator_link_failed;
+
+  /// Retries the translator download.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get translator_try_again;
+
+  /// Download sheet title.
+  ///
+  /// In en, this message translates to:
+  /// **'Your private translator'**
+  String get translator_sheet_title;
+
+  /// Download sheet line; size like 2.6 GB.
+  ///
+  /// In en, this message translates to:
+  /// **'One download ({size}). Works without internet.'**
+  String translator_sheet_line(String size);
+
+  /// Size box, left side.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} download'**
+  String translator_sheet_download_size(String size);
+
+  /// Size box, free space on the phone.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} free'**
+  String translator_sheet_free(String size);
+
+  /// Size box when there is not enough space; also the Settings row.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs {size}'**
+  String translator_sheet_needs(String size);
+
+  /// Privacy line in the download sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Nobody sees what you translate, not even Mknoon.'**
+  String get translator_sheet_privacy;
+
+  /// Main sheet button on Wi-Fi.
+  ///
+  /// In en, this message translates to:
+  /// **'Download on Wi-Fi'**
+  String get translator_download_on_wifi;
+
+  /// Main sheet button on mobile data.
+  ///
+  /// In en, this message translates to:
+  /// **'Download when on Wi-Fi'**
+  String get translator_download_when_wifi;
+
+  /// Second sheet button on mobile data.
+  ///
+  /// In en, this message translates to:
+  /// **'Use mobile data instead'**
+  String get translator_use_mobile_data_instead;
+
+  /// Closes the download sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get translator_not_now;
+
+  /// Opens the Storage section.
+  ///
+  /// In en, this message translates to:
+  /// **'Free up space'**
+  String get translator_free_up_space;
+
+  /// Sheet title while downloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting translation ready'**
+  String get translator_progress_title;
+
+  /// Downloaded amount, like 1.1 of 2.6 GB.
+  ///
+  /// In en, this message translates to:
+  /// **'{received} of {total}'**
+  String translator_progress_amount(String received, String total);
+
+  /// Time left for the download.
+  ///
+  /// In en, this message translates to:
+  /// **'about {minutes} min left'**
+  String translator_progress_minutes_left(String minutes);
+
+  /// Sheet line while downloading.
+  ///
+  /// In en, this message translates to:
+  /// **'You can close this. It keeps going, even if you leave Mknoon.'**
+  String get translator_progress_keeps_going;
+
+  /// Closes the sheet; the download continues.
+  ///
+  /// In en, this message translates to:
+  /// **'Close'**
+  String get translator_close;
+
+  /// Pauses the download.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get translator_pause;
+
+  /// Sheet title when the download waits or is paused.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for Wi-Fi'**
+  String get translator_waiting_title;
+
+  /// Next to the downloaded amount when paused.
+  ///
+  /// In en, this message translates to:
+  /// **'paused'**
+  String get translator_paused_word;
+
+  /// Sheet line when the download waits.
+  ///
+  /// In en, this message translates to:
+  /// **'It picks up where it stopped when you\'re back on Wi-Fi.'**
+  String get translator_waiting_line;
+
+  /// Continues the download on mobile data.
+  ///
+  /// In en, this message translates to:
+  /// **'Use mobile data'**
+  String get translator_use_mobile_data;
+
+  /// Sheet title after the download failed.
+  ///
+  /// In en, this message translates to:
+  /// **'The download didn\'t finish'**
+  String get translator_failed_title;
+
+  /// Sheet line after the download failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Something went wrong. Try again and it continues from where it stopped.'**
+  String get translator_failed_line;
+
+  /// Tag under every translation and transcript.
+  ///
+  /// In en, this message translates to:
+  /// **'BETA'**
+  String get translator_result_beta;
+
+  /// Next to the BETA tag.
+  ///
+  /// In en, this message translates to:
+  /// **'Only on your phone'**
+  String get translator_result_only_phone;
+
+  /// Hides a translation.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide'**
+  String get translator_hide;
+
+  /// Settings row title.
+  ///
+  /// In en, this message translates to:
+  /// **'Private translator'**
+  String get translator_settings_title;
+
+  /// Settings row before the download.
+  ///
+  /// In en, this message translates to:
+  /// **'Translate Thoughts and voice notes. Stays on your phone.'**
+  String get translator_settings_not_downloaded;
+
+  /// Settings row when the translator is on the phone.
+  ///
+  /// In en, this message translates to:
+  /// **'On this phone · works without internet'**
+  String get translator_settings_ready;
+
+  /// Settings row while downloading; amount like 1.1 of 2.6 GB.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading · {amount}'**
+  String translator_settings_downloading(String amount);
+
+  /// Settings row when the download waits or is paused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get translator_settings_paused;
+
+  /// Settings row after the download failed.
+  ///
+  /// In en, this message translates to:
+  /// **'Didn\'t finish'**
+  String get translator_settings_failed;
+
+  /// Greyed Settings row on phones that cannot run the translator.
+  ///
+  /// In en, this message translates to:
+  /// **'Not available on this phone'**
+  String get translator_settings_unsupported;
+
+  /// Settings button that opens the download sheet.
+  ///
+  /// In en, this message translates to:
+  /// **'Get'**
+  String get translator_get;
+
+  /// Settings button that resumes the download.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume'**
+  String get translator_resume;
+
+  /// Settings button and dialog button that remove the translator.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get translator_remove;
+
+  /// Settings switch.
+  ///
+  /// In en, this message translates to:
+  /// **'Download over mobile data'**
+  String get translator_settings_mobile_data;
+
+  /// Remove dialog title.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove translation?'**
+  String get translator_remove_title;
+
+  /// Remove dialog body.
+  ///
+  /// In en, this message translates to:
+  /// **'Frees {size}. You can download it again any time.'**
+  String translator_remove_body(String size);
+
+  /// A size in gigabytes, like 2.6 GB.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} GB'**
+  String translator_size_gb(String size);
 }
 
 class _AppLocalizationsDelegate

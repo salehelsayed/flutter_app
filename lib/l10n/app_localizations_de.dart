@@ -4693,4 +4693,173 @@ class AppLocalizationsDe extends AppLocalizations {
   @override
   String get push_registration_health_dismiss =>
       'Benachrichtigungshinweis schließen';
+
+  @override
+  String get translator_see_translation => 'Übersetzung anzeigen';
+
+  @override
+  String get translator_transcribe => 'Abschreiben';
+
+  @override
+  String translator_link_downloading(String percent) {
+    return 'Übersetzung wird vorbereitet · $percent %';
+  }
+
+  @override
+  String translator_link_paused(String percent) {
+    return 'Übersetzung pausiert · $percent %';
+  }
+
+  @override
+  String get translator_link_failed => 'Übersetzung nicht geladen';
+
+  @override
+  String get translator_try_again => 'Erneut versuchen';
+
+  @override
+  String get translator_sheet_title => 'Dein privater Übersetzer';
+
+  @override
+  String translator_sheet_line(String size) {
+    return 'Ein Download ($size). Geht ohne Internet.';
+  }
+
+  @override
+  String translator_sheet_download_size(String size) {
+    return '$size Download';
+  }
+
+  @override
+  String translator_sheet_free(String size) {
+    return '$size frei';
+  }
+
+  @override
+  String translator_sheet_needs(String size) {
+    return 'Braucht $size';
+  }
+
+  @override
+  String get translator_sheet_privacy =>
+      'Niemand sieht, was du übersetzt, auch Mknoon nicht.';
+
+  @override
+  String get translator_download_on_wifi => 'Über WLAN laden';
+
+  @override
+  String get translator_download_when_wifi => 'Laden, sobald WLAN da ist';
+
+  @override
+  String get translator_use_mobile_data_instead =>
+      'Stattdessen mobile Daten nutzen';
+
+  @override
+  String get translator_not_now => 'Nicht jetzt';
+
+  @override
+  String get translator_free_up_space => 'Platz schaffen';
+
+  @override
+  String get translator_progress_title => 'Übersetzung wird vorbereitet';
+
+  @override
+  String translator_progress_amount(String received, String total) {
+    return '$received von $total';
+  }
+
+  @override
+  String translator_progress_minutes_left(String minutes) {
+    return 'noch etwa $minutes Min.';
+  }
+
+  @override
+  String get translator_progress_keeps_going =>
+      'Du kannst das schließen. Es läuft weiter, auch wenn du Mknoon verlässt.';
+
+  @override
+  String get translator_close => 'Schließen';
+
+  @override
+  String get translator_pause => 'Pausieren';
+
+  @override
+  String get translator_waiting_title => 'Warte auf WLAN';
+
+  @override
+  String get translator_paused_word => 'pausiert';
+
+  @override
+  String get translator_waiting_line =>
+      'Es macht dort weiter, wo es aufgehört hat, sobald du wieder im WLAN bist.';
+
+  @override
+  String get translator_use_mobile_data => 'Mobile Daten nutzen';
+
+  @override
+  String get translator_failed_title =>
+      'Der Download ist nicht fertig geworden';
+
+  @override
+  String get translator_failed_line =>
+      'Etwas ist schiefgelaufen. Versuch es erneut, dann geht es dort weiter, wo es aufgehört hat.';
+
+  @override
+  String get translator_result_beta => 'BETA';
+
+  @override
+  String get translator_result_only_phone => 'Nur auf deinem Handy';
+
+  @override
+  String get translator_hide => 'Ausblenden';
+
+  @override
+  String get translator_settings_title => 'Privater Übersetzer';
+
+  @override
+  String get translator_settings_not_downloaded =>
+      'Gedanken und Sprachnachrichten übersetzen. Bleibt auf deinem Handy.';
+
+  @override
+  String get translator_settings_ready =>
+      'Auf diesem Handy · geht ohne Internet';
+
+  @override
+  String translator_settings_downloading(String amount) {
+    return 'Wird geladen · $amount';
+  }
+
+  @override
+  String get translator_settings_paused => 'Pausiert';
+
+  @override
+  String get translator_settings_failed => 'Nicht fertig geworden';
+
+  @override
+  String get translator_settings_unsupported =>
+      'Auf diesem Handy nicht verfügbar';
+
+  @override
+  String get translator_get => 'Laden';
+
+  @override
+  String get translator_resume => 'Fortsetzen';
+
+  @override
+  String get translator_remove => 'Entfernen';
+
+  @override
+  String get translator_settings_mobile_data => 'Über mobile Daten laden';
+
+  @override
+  String get translator_remove_title => 'Übersetzung entfernen?';
+
+  @override
+  String translator_remove_body(String size) {
+    return 'Gibt $size frei. Du kannst sie jederzeit wieder laden.';
+  }
+
+  @override
+  String translator_size_gb(String size) {
+    return '$size GB';
+  }
 }

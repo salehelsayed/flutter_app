@@ -53,6 +53,9 @@ import 'package:flutter_app/features/settings/presentation/widgets/settings_reco
 import 'package:flutter_app/features/settings/presentation/widgets/safety_support_sheet.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/settings_transport_diagnostics_card.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/group_exit_diagnostics_sheet.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_settings_section.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -458,6 +461,15 @@ class _SettingsWiredState extends State<SettingsWired>
             ),
         ],
       ),
+    );
+  }
+
+  Widget? _privateTranslatorSection() {
+    final delivery = translatePreviewDelivery;
+    if (!translatePreviewEnabled || delivery == null) return null;
+    return PrivateTranslatorSettingsSection(
+      controller: delivery,
+      onFreeUpSpace: _openMediaStorageSheet,
     );
   }
 
@@ -1038,6 +1050,7 @@ class _SettingsWiredState extends State<SettingsWired>
       onOpenPhotoQualitySheet: _openPhotoQualitySheet,
       onOpenVideoQualitySheet: _openVideoQualitySheet,
       onOpenMediaStorageSheet: _openMediaStorageSheet,
+      privateTranslatorSection: _privateTranslatorSection(),
       onOpenCallPrivacySheet:
           (widget.voiceCallFeatureFlags ??
                   productionVoiceCallFeatureFlags())['voice_call_always_relay_enabled'] ==
