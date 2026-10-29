@@ -825,8 +825,11 @@ private object ProcessHeadlessCallAdmissionEngine {
 }
 
 /** Minimal non-UI engine with the canonical lease and Go-runtime custody. */
-private class FlutterHeadlessCallAdmissionEngineRunner(
+internal class FlutterHeadlessCallAdmissionEngineRunner(
     context: Context,
+    private val engineFactory: (Context) -> FlutterEngine = {
+        FlutterEngine(it, null, false)
+    },
 ) : HeadlessCallAdmissionEngineRunner {
     companion object {
         private const val CHANNEL_NAME = "mknoon/headless_call_admission"
@@ -870,11 +873,29 @@ private class FlutterHeadlessCallAdmissionEngineRunner(
     private fun startOnMain(identity: HeadlessCallAdmissionRunIdentity) {
         check(Looper.myLooper() == Looper.getMainLooper())
         check(engine == null) { "headless call admission engine already started" }
+        // Foreground ownership may change while this continuation waits for
+        // main. Refuse before claiming a slot or constructing a second engine.
+        if (foregroundOwnsCanonicalRuntime(ProcessCanonicalRuntimeLease.broker.snapshot())) {
+            completion.complete(
+                HeadlessCallAdmissionCompletion(
+                    nonce = identity.nonce,
+                    callId = identity.callId,
+                    wakeHandle = identity.wakeHandle,
+                    expiresAtMs = identity.expiresAtMs,
+                    disposition = HeadlessCallAdmissionDisposition.DEFERRED,
+                    requiredPersistenceComplete = false,
+                    databaseClosed = true,
+                    leaseReleased = true,
+                    diagnosticCause = "busy",
+                ),
+            )
+            return
+        }
         if (!ProcessHeadlessCallAdmissionEngine.claim(this)) {
             throw IllegalStateException("headless call admission engine is retained")
         }
         claimed = true
-        val created = FlutterEngine(applicationContext, null, false)
+        val created = engineFactory(applicationContext)
         engine = created
         val engineIdentity = System.identityHashCode(created)
         leaseOwnerId = "headless-call-admission-$engineIdentity"

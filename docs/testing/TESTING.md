@@ -8962,6 +8962,20 @@ visible and cannot become an ordinary first-attempt PASS.
   reproduce delayed-worker cleanup and preserve those ownership boundaries.
   This source proof does not turn a prior twenty-second device timeout into
   a pass or establish prompt cleanup on an untested candidate.
+  Headless admission rechecks the actual process canonical lease on main,
+  immediately before claiming its construction slot and invoking the Flutter
+  engine factory. The earlier worker preflight remains an optimization; a
+  foreground acquisition while the continuation is queued must return existing
+  `DEFERRED` / `busy` with no persistence, database or lease acquired, then follow
+  normal runner cleanup and exact-admission release fencing.
+  `HeadlessCallAdmissionMainQueueTest` pauses main, observes RELEASED at preflight,
+  acquires the real foreground lease, and then drains the real runner. Its causal
+  baseline invokes the engine factory once (expected 0, actual 1); the late-guard
+  candidate invokes it zero times and passes pending/busy, cleanup and preserved
+  foreground-custody assertions (one test, no skips). Receipts and fresh JUnit
+  XML are retained under `.codex-test-logs/call-fixes-h1-h2-m2-20261029/m2-red/`
+  and `m2-green/`. This controlled host race does not certify device freeze/ANR
+  recovery or introduce an atomic ownership arbiter.
   A foreground-owned wake can still leave admission without any native journal:
   the 145 receiver-offline-through-expiry failure records exact-trace
   `deferred / graph_not_owner`, incomplete admission persistence, an owner-matched
