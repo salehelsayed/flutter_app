@@ -2025,9 +2025,9 @@ final class IosSetupReadinessEntryCoordinator {
     diskSpaceChannel = channel
   }
 
-  // TRANSLATE_PREVIEW: memory figures for the GEMMA_PREVIEW log line, and a
-  // voice message decoded to mono 16-bit PCM for the on-device model. Dart only
-  // calls it when the preview is built in.
+  // TRANSLATE_PREVIEW: memory figures, model backup exclusion, and voice messages
+  // decoded to mono 16-bit PCM for the on-device model. Dart only calls it when
+  // the preview is built in.
   private func setupGemmaPreviewBridge(messenger: FlutterBinaryMessenger) {
     if gemmaPreviewChannel != nil {
       return
@@ -2040,6 +2040,35 @@ final class IosSetupReadinessEntryCoordinator {
       switch call.method {
       case "memory":
         result(Self.gemmaPreviewMemory())
+      case "excludeFromBackup":
+        guard let args = call.arguments as? [String: Any],
+              let path = args["path"] as? String, !path.isEmpty else {
+          result(FlutterError(code: "bad_args", message: "path is required", details: nil))
+          return
+        }
+        DispatchQueue.global(qos: .utility).async {
+          do {
+            var directory = URL(fileURLWithPath: path, isDirectory: true)
+            var resources = URLResourceValues()
+            resources.isExcludedFromBackup = true
+            try directory.setResourceValues(resources)
+            let excluded = try URL(fileURLWithPath: path, isDirectory: true)
+              .resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup
+            DispatchQueue.main.async {
+              if excluded == true {
+                result(true)
+              } else {
+                result(FlutterError(code: "backup_exclusion_failed",
+                  message: "Could not verify model backup exclusion", details: nil))
+              }
+            }
+          } catch {
+            DispatchQueue.main.async {
+              result(FlutterError(code: "backup_exclusion_failed",
+                message: "Could not exclude model files from backup", details: nil))
+            }
+          }
+        }
       case "decodePcm":
         guard let args = call.arguments as? [String: Any],
               let path = args["path"] as? String, !path.isEmpty else {
