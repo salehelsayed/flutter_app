@@ -7678,9 +7678,20 @@ visible and cannot become an ordinary first-attempt PASS.
   limits, retention and observer/disk/full-queue failure without changing sends.
   Its focused APNs/wake/diagnostics run passed 141 tests and the receipt race run
   passed. The operator-report regression confirms private IDs stay out of shared
-  output. Native/Dart delivery owners and invitation expiry policy are unchanged;
-  this is an evidence repair, not a demonstrated OS-delivery fix or deployment.
-  The initial wrapper and pinned Go repeat each retained 1,288 passing and eight
+  output. Native/Dart delivery owners and the encrypted invitation deadline remain
+  unchanged. The VoIP HTTP sender uses `apns-expiration: 0`, while the existing
+  call deadline remains in the opaque payload and provider eligibility checks.
+  Private `expirationSeconds` receipts record that wire zero. The actual-HTTP
+  regression `TestVC205APNSVoIPRequestUsesExactHeadersAndOpaqueBoundedPayload`
+  retains its exact payload-expiry assertion; the optional-ID receipt regression
+  `TestAPNSVoIPPrivateReceiptOptionalIDsNeverChangeResponse` checks zero across
+  present, missing, malformed and oversized response IDs. Both fail on the prior
+  header/receipt deadlines and pass with zero under Go 1.27.1; focused logs are in
+  `.codex-test-logs/relay-voip-hardening-129/`. This is storage-expiry hardening,
+  not proof of idle phone delivery. Control mailbox delivery, VoIP wake
+  eligibility and the strict legacy v1 envelope shape are unchanged; encrypted
+  event kinds cannot be classified from the first stored recipient event.
+  The original receipt-capture wrapper and pinned Go repeat each retained 1,288 passing and eight
   failing relay cases during the live relay outage; one post-recovery pinned
   repeat retained the same live QUIC/WSS/TCP smoke failures. TCP still hardcodes
   the old IP, while macOS application DNS remained stale after authoritative DNS

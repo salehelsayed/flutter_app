@@ -94,7 +94,7 @@ func (p *httpAPNSVoIPProvider) observeResponse(ctx context.Context, request apns
 	unique, uniqueState := apnsVoIPResponseID(response.Header, "apns-unique-id", false)
 	r := apnsVoIPResponseReceipt{
 		AttemptID: uuid.NewString(), Environment: environment, Topic: request.Topic,
-		ExpirationSeconds: request.Expiration.Unix(), StartedAtMs: started.UnixMilli(),
+		ExpirationSeconds: 0, StartedAtMs: started.UnixMilli(),
 		ResponseAtMs: received.UnixMilli(), DurationNs: received.Sub(started).Nanoseconds(),
 		StatusCode: response.StatusCode, APNSID: id, APNSIDState: idState,
 		APNSUniqueID: unique, APNSUniqueIDState: uniqueState,

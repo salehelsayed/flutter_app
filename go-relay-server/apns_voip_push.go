@@ -407,7 +407,7 @@ func (p *httpAPNSVoIPProvider) Send(
 	httpRequest.Header.Set("apns-topic", request.Topic)
 	httpRequest.Header.Set("apns-push-type", "voip")
 	httpRequest.Header.Set("apns-priority", "10")
-	httpRequest.Header.Set("apns-expiration", strconv.FormatInt(request.Expiration.Unix(), 10))
+	httpRequest.Header.Set("apns-expiration", "0")
 	httpRequest.Header.Set("content-type", "application/json")
 
 	started := time.Now()
