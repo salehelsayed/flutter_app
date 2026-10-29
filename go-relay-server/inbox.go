@@ -44,8 +44,8 @@ const (
 	pushNotificationBody        = "You have a new message"
 	pushNotificationChannelID   = "mknoon_messages"
 	pushNotificationSound       = "default"
-	contactRequestPushTitle     = "New Contact Request"
-	contactRequestPushBody      = "Open Mknoon to respond"
+	contactRequestPushTitle     = "Mknoon"
+	contactRequestPushBody      = "New contact request"
 	groupInvitePushTitle        = "Group Invite"
 	groupInvitePushBody         = "Open Mknoon to review"
 	postCreatePushTitle         = "New thought"
@@ -2252,26 +2252,12 @@ func extractChatPushMetadata(message string) chatPushMetadata {
 		}
 	case "contact_request":
 		intent := trimmedString(envelope["intent"])
-		metadata := chatPushMetadata{
-			ShouldNotify:   intent != "key_exchange_retry",
-			RouteType:      "contact_request",
-			MessageID:      extractMessageId(message),
-			SenderUsername: trimmedString(envelope["senderUsername"]),
+		return chatPushMetadata{
+			ShouldNotify: intent != "key_exchange_retry",
+			RouteType:    "contact_request",
+			MessageID:    extractMessageId(message),
+			Body:         contactRequestPushBody,
 		}
-		if payload, ok := envelope["payload"].(map[string]interface{}); ok {
-			if metadata.SenderUsername == "" {
-				metadata.SenderUsername = trimmedString(payload["senderUsername"])
-			}
-			if metadata.SenderUsername == "" {
-				metadata.SenderUsername = trimmedString(payload["un"])
-			}
-		}
-		if metadata.SenderUsername != "" {
-			metadata.Body = fmt.Sprintf("%s wants to connect", metadata.SenderUsername)
-		} else {
-			metadata.Body = contactRequestPushBody
-		}
-		return metadata
 	case "group_invite":
 		metadata := chatPushMetadata{
 			ShouldNotify:   true,

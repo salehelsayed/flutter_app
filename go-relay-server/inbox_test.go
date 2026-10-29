@@ -987,8 +987,54 @@ func TestBuildContactRequestPushMessage_UsesContactRequestRoute(t *testing.T) {
 	if msg.Data["title"] != contactRequestPushTitle {
 		t.Fatalf("title = %q, want %q", msg.Data["title"], contactRequestPushTitle)
 	}
-	if msg.Data["body"] != "Alice wants to connect" {
-		t.Fatalf("body = %q, want %q", msg.Data["body"], "Alice wants to connect")
+	if msg.Data["body"] != "New contact request" {
+		t.Fatalf("body = %q, want %q", msg.Data["body"], "New contact request")
+	}
+}
+
+func TestBuildContactRequestPushMessage_DoesNotUseUnsignedSenderName(t *testing.T) {
+	const wantBody = "New contact request"
+	for _, tc := range []struct {
+		name     string
+		envelope string
+	}{
+		{"v2 outer name", `{"type":"contact_request","version":"2","msgId":"req-1","senderUsername":"unverified-request-name","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`},
+		{"v1 outer name", `{"type":"contact_request","version":"1","id":"req-1","senderUsername":"unverified-request-name","payload":{}}`},
+		{"v1 payload name", `{"type":"contact_request","version":"1","id":"req-1","payload":{"senderUsername":"unverified-request-name"}}`},
+		{"v1 payload short name", `{"type":"contact_request","version":"1","id":"req-1","payload":{"un":"unverified-request-name"}}`},
+		{"no display name", `{"type":"contact_request","version":"2","msgId":"req-1","encrypted":{"ephemeralPublicKey":"e","ciphertext":"c","nonce":"n"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			metadata := extractChatPushMetadata(tc.envelope)
+			if !metadata.ShouldNotify || metadata.RouteType != "contact_request" {
+				t.Fatal("generic copy must retain the contact-request notification route")
+			}
+			if metadata.SenderUsername != "" {
+				t.Error("unsigned sender name escaped into push metadata")
+			}
+
+			msg := buildPushMessage("fcm-token", "peer-from", tc.envelope)
+			if msg.Data["type"] != "contact_request" || msg.Data["sender_id"] != "peer-from" || msg.Data["message_id"] != "req-1" {
+				t.Fatal("generic copy must preserve exact notification routing")
+			}
+			for _, key := range []string{"senderUsername", "sender_username"} {
+				if _, ok := msg.Data[key]; ok {
+					t.Errorf("unsigned display field %q escaped into notification data", key)
+				}
+			}
+			if msg.Data["body"] != wantBody {
+				t.Errorf("data body = %q, want %q", msg.Data["body"], wantBody)
+			}
+			if msg.Notification == nil || msg.Notification.Body != wantBody {
+				t.Error("common notification body must be the generic request copy")
+			}
+			if msg.Android == nil || msg.Android.Notification == nil || msg.Android.Notification.Body != wantBody {
+				t.Error("Android notification body must be the generic request copy")
+			}
+			if msg.APNS == nil || msg.APNS.Payload == nil || msg.APNS.Payload.Aps == nil || msg.APNS.Payload.Aps.Alert == nil || msg.APNS.Payload.Aps.Alert.Body != wantBody {
+				t.Error("APNS notification body must be the generic request copy")
+			}
+		})
 	}
 }
 

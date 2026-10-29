@@ -3190,7 +3190,21 @@ checks blocked authority before choosing a request or conversation and rechecks
 the current pending decision before presentation. Blocked pending rows remain
 pending during passive replay. Resolver/materializer controls cover blocked
 peers with/without requests, removal/replacement during awaits and blocking or
-deletion before reciprocal/profile work. Notification sender-name copy is unchanged.
+deletion before reciprocal/profile work. Contact-request relay pushes use the generic English body "New contact request"
+and brand title, omitting unsigned sender display names from visible copy and
+push data. Routing identifiers and silent key-exchange repair remain intact.
+A five-case payload regression covers v2 outer names, v1 outer/payload aliases
+and absent names across common, Android and APNS payloads. The original source
+failed all five cases; the focused push-family run and `go vet .` pass.
+AR/DE activation is deferred: Android prefers a supplied literal over localization
+keys, while pre-129 clients lack new resource keys. The compatible server fix
+uses the existing payload fields; client sender-name fields need no wire change.
+The first two compile attempts stopped on swap growth before tests started,
+so they are resource-aborted attempts, not RED proof. Evidence is retained in
+`.codex-test-logs/contact-request-gaps-post129-20261029/` under
+`cr008-red-kayan-quiet-window/`, `cr008-green-kayan-quiet-window/`,
+`cr008-vet/` and `cr008-green-summary.json`. Server deployment, installed-client
+rendering and device behavior remain separate proof obligations.
 Feed, Orbit, FTE, Share and onboarding widget fixtures must persist the pending
 row before fake listener emission and bind the listener and decision fake to the
 same request/contact repositories used by the screen. Paired already-accepted
