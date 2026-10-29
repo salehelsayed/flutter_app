@@ -21,19 +21,23 @@ enum AppShellChangeKind { tab, background, identity, mediaQuality }
 class AppShellController extends ChangeNotifier {
   String _activeTab;
   BackgroundPreference _backgroundPreference;
+  bool _backgroundMotionEnabled;
   AppShellChangeKind _lastChangeKind = AppShellChangeKind.tab;
 
   AppShellController({
     String initialTab = AppShellTab.orbit,
     BackgroundPreference initialBackgroundPreference =
         BackgroundPreference.defaultBackground,
+    bool initialBackgroundMotionEnabled = true,
   }) : _activeTab = AppShellTab.isValid(initialTab)
            ? initialTab
            : AppShellTab.orbit,
-       _backgroundPreference = initialBackgroundPreference;
+       _backgroundPreference = initialBackgroundPreference,
+       _backgroundMotionEnabled = initialBackgroundMotionEnabled;
 
   String get activeTab => _activeTab;
   BackgroundPreference get backgroundPreference => _backgroundPreference;
+  bool get backgroundMotionEnabled => _backgroundMotionEnabled;
 
   /// The kind of the most recent change that fired `notifyListeners()`.
   AppShellChangeKind get lastChangeKind => _lastChangeKind;
@@ -52,6 +56,13 @@ class AppShellController extends ChangeNotifier {
       return;
     }
     _backgroundPreference = preference;
+    _lastChangeKind = AppShellChangeKind.background;
+    notifyListeners();
+  }
+
+  void setBackgroundMotionEnabled(bool enabled) {
+    if (_backgroundMotionEnabled == enabled) return;
+    _backgroundMotionEnabled = enabled;
     _lastChangeKind = AppShellChangeKind.background;
     notifyListeners();
   }

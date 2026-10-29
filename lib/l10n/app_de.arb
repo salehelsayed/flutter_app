@@ -501,6 +501,8 @@
   "settings_group_exit_diagnostic_ex10": "Das lokale Löschen der Gruppe ist unvollständig.",
   "settings_group_exit_diagnostic_ex99": "Beim Gruppenaustritt ist ein unerwartetes Ergebnis aufgetreten.",
   "settings_background": "Hintergrund",
+  "settings_moving_background": "Bewegter Hintergrund",
+  "settings_moving_background_desc": "Zum Akkusparen ausschalten",
   "settings_background_default": "Standard",
   "settings_background_default_desc": "Gespiegelter kosmischer Drift mit weichen Farblichten.",
   "settings_background_cosmic": "Kosmisch",

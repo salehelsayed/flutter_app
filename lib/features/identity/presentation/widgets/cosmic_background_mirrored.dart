@@ -9,6 +9,7 @@ class CosmicBackgroundMirrored extends StatefulWidget {
   final int starCount;
   final int starSeed;
   final Duration driftPeriod;
+  final bool paused;
 
   const CosmicBackgroundMirrored({
     super.key,
@@ -16,6 +17,7 @@ class CosmicBackgroundMirrored extends StatefulWidget {
     this.starCount = 70,
     this.starSeed = 1906,
     this.driftPeriod = const Duration(seconds: 18),
+    this.paused = false,
   });
 
   @override
@@ -91,6 +93,12 @@ class _CosmicBackgroundMirroredState extends State<CosmicBackgroundMirrored>
       _clock.stop();
       _controller.stop();
       _controller.value = 0;
+      return;
+    }
+
+    if (widget.paused) {
+      _clock.stop();
+      _controller.stop();
       return;
     }
 

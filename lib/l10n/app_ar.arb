@@ -501,6 +501,8 @@
   "settings_group_exit_diagnostic_ex10": "حذف المجموعة محليًا غير مكتمل.",
   "settings_group_exit_diagnostic_ex99": "حدثت نتيجة غير متوقعة أثناء مغادرة المجموعة.",
   "settings_background": "الخلفية",
+  "settings_moving_background": "خلفية متحركة",
+  "settings_moving_background_desc": "أوقفها لتوفير البطارية",
   "settings_background_default": "الافتراضية",
   "settings_background_default_desc": "انسياب كوني معكوس بتوهجات لونية ناعمة.",
   "settings_background_cosmic": "كونية",

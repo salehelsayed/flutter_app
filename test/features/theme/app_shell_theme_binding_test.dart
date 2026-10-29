@@ -10,6 +10,50 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../core/secure_storage/fake_secure_key_store.dart';
 
 void main() {
+  testWidgets('motion scope updates without rebuilding theme or route state', (
+    tester,
+  ) async {
+    final controller = AppShellController();
+    addTearDown(controller.dispose);
+    final probeKey = GlobalKey<_ProbeState>();
+    var themeBuilds = 0;
+    await tester.pumpWidget(
+      AppShellThemeBinding(
+        controller: controller,
+        builder: (_, mode) {
+          themeBuilds++;
+          return MaterialApp(home: _Probe(key: probeKey));
+        },
+      ),
+    );
+    expect(probeKey.currentState!.observedMotionEnabled, isTrue);
+    probeKey.currentState!.counter = 9;
+    controller.setBackgroundMotionEnabled(false);
+    await tester.pump();
+    expect(probeKey.currentState!.observedMotionEnabled, isFalse);
+    expect(probeKey.currentState!.counter, 9);
+    expect(themeBuilds, 1);
+    controller.setBackgroundMotionEnabled(true);
+    await tester.pump();
+    expect(probeKey.currentState!.observedMotionEnabled, isTrue);
+    expect(themeBuilds, 1);
+  });
+
+  testWidgets('motion scope defaults on without an app controller', (
+    tester,
+  ) async {
+    bool? enabled;
+    await tester.pumpWidget(
+      Builder(
+        builder: (context) {
+          enabled = BackgroundMotionScope.enabledOf(context);
+          return const SizedBox.shrink();
+        },
+      ),
+    );
+    expect(enabled, isTrue);
+  });
+
   Widget buildApp(
     AppShellController controller, {
     GlobalKey<_ProbeState>? probeKey,
@@ -230,10 +274,12 @@ class _Probe extends StatefulWidget {
 class _ProbeState extends State<_Probe> {
   int counter = 0;
   Brightness? observedBrightness;
+  bool? observedMotionEnabled;
 
   @override
   Widget build(BuildContext context) {
     observedBrightness = Theme.of(context).brightness;
+    observedMotionEnabled = BackgroundMotionScope.enabledOf(context);
     return const SizedBox.shrink();
   }
 }

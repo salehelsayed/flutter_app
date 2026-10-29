@@ -12,7 +12,7 @@ Rect orbitThoughtNoteRect(Offset face, double faceSize, Size noteSize) =>
       noteSize.height,
     );
 
-/// Session-local spring positions; the original seat engine remains unchanged.
+/// Stable collision anchors with bounded drift; the seat engine is unchanged.
 ///
 /// The final projection separates the painted rectangles (including note tails),
 /// rather than relying on a repulsion force that can settle with an overlap.
@@ -22,11 +22,19 @@ class OrbitThoughtSwim {
   final Map<int, Offset> _positions = {};
   final Map<int, Offset> _velocities = {};
   double? _lastSeconds;
+  List<double>? _layoutInputs;
+  final Map<int, Offset> _anchors = {};
+  final Map<int, Offset> _motionOrigins = {};
+  final Map<int, Rect> _translationBounds = {};
 
   void clear() {
     _positions.clear();
     _velocities.clear();
     _lastSeconds = null;
+    _layoutInputs = null;
+    _anchors.clear();
+    _motionOrigins.clear();
+    _translationBounds.clear();
   }
 
   Map<int, Offset> resolve({
@@ -41,6 +49,23 @@ class OrbitThoughtSwim {
         .where((seat) => seat.kind != OrbitSeatKind.arc)
         .toList();
     final byIndex = {for (final seat in rings) seat.index: seat};
+    final inputs = <double>[
+      availableWidth,
+      motionEnabled ? 1 : 0,
+      selfNoteSize?.width ?? -1,
+      selfNoteSize?.height ?? -1,
+      for (final seat in rings) ...[
+        seat.index.toDouble(),
+        seat.kind.index.toDouble(),
+        seat.dx,
+        seat.dy,
+        seat.avatarSize,
+        noteSizes[seat.index]?.width ?? -1,
+        noteSizes[seat.index]?.height ?? -1,
+      ],
+    ];
+    final sameLayout = _sameLayout(inputs);
+    if (!sameLayout) clear();
     _positions.removeWhere((index, _) => !byIndex.containsKey(index));
     _velocities.removeWhere((index, _) => !byIndex.containsKey(index));
     final dt = _lastSeconds == null
@@ -69,21 +94,25 @@ class OrbitThoughtSwim {
       }
     }
 
+    // Animation ticks must not choose a new discrete collision gap. Resolve
+    // the existing layout only when its geometric inputs actually change.
+    if (sameLayout) return _animatedPositions();
+    final projectedPositions = Map<int, Offset>.of(_positions);
     // Horizontal bounds follow the real canvas. Vertical space can grow, which
     // is necessary when a large text scaler makes all thirteen notes taller.
     final halfWidth = math.max(64.0, availableWidth / 2 - 6);
     Rect face(int index) => Rect.fromCenter(
-      center: _positions[index]!,
+      center: projectedPositions[index]!,
       width: byIndex[index]!.avatarSize,
       height: byIndex[index]!.avatarSize,
     );
     Rect note(int index) => orbitThoughtNoteRect(
-      _positions[index]!,
+      projectedPositions[index]!,
       byIndex[index]!.avatarSize,
       noteSizes[index]!,
     );
     void move(int index, Offset delta) {
-      _positions[index] = _positions[index]! + delta;
+      projectedPositions[index] = projectedPositions[index]! + delta;
     }
 
     Offset separation(Rect a, Rect b, int first, int second) {
@@ -121,11 +150,14 @@ class OrbitThoughtSwim {
         final index = a.index;
         final ownHalf =
             math.max(a.avatarSize, noteSizes[index]?.width ?? 0) / 2;
-        final x = _positions[index]!.dx.clamp(
+        final x = projectedPositions[index]!.dx.clamp(
           -halfWidth + ownHalf,
           halfWidth - ownHalf,
         );
-        _positions[index] = Offset(x.toDouble(), _positions[index]!.dy);
+        projectedPositions[index] = Offset(
+          x.toDouble(),
+          projectedPositions[index]!.dy,
+        );
         Offset delta;
         for (final obstacle in centre) {
           delta = separation(face(index), obstacle, index, -1);
@@ -182,7 +214,7 @@ class OrbitThoughtSwim {
       final index = seat.index;
       final ownHalf =
           math.max(seat.avatarSize, noteSizes[index]?.width ?? 0) / 2;
-      final position = _positions[index]!;
+      final position = projectedPositions[index]!;
       final x = position.dx
           .clamp(-halfWidth + ownHalf, halfWidth - ownHalf)
           .toDouble();
@@ -218,9 +250,151 @@ class OrbitThoughtSwim {
           ),
         );
       });
-      _positions[index] = Offset(x, y);
-      fixed.addAll(shapes.map((shape) => shape.shift(_positions[index]!)));
+      projectedPositions[index] = Offset(x, y);
+      fixed.addAll(
+        shapes.map((shape) => shape.shift(projectedPositions[index]!)),
+      );
     }
-    return Map<int, Offset>.unmodifiable(_positions);
+    _anchors.addAll(projectedPositions);
+    _motionOrigins.addAll(_positions);
+    _translationBounds.addAll(
+      _boundsFor(rings, noteSizes, selfNoteSize, availableWidth),
+    );
+    _layoutInputs = inputs;
+    return _animatedPositions();
+  }
+
+  bool _sameLayout(List<double> inputs) {
+    final previous = _layoutInputs;
+    if (previous == null || previous.length != inputs.length) return false;
+    for (var index = 0; index < inputs.length; index++) {
+      if (previous[index] != inputs[index]) return false;
+    }
+    return true;
+  }
+
+  Map<int, Offset> _animatedPositions() => Map<int, Offset>.unmodifiable({
+    for (final entry in _anchors.entries)
+      entry.key: entry.value + _boundedTranslation(entry.key),
+  });
+
+  Offset _boundedTranslation(int index) {
+    final delta = _positions[index]! - _motionOrigins[index]!;
+    final bounds = _translationBounds[index]!;
+    return Offset(
+      delta.dx.clamp(bounds.left, bounds.right).toDouble(),
+      delta.dy.clamp(bounds.top, bounds.bottom).toDouble(),
+    );
+  }
+
+  Map<int, Rect> _boundsFor(
+    List<OrbitSeat> seats,
+    Map<int, Size> noteSizes,
+    Size? selfNoteSize,
+    double availableWidth,
+  ) {
+    const infinity = double.infinity;
+    final halfWidth = math.max(64.0, availableWidth / 2 - 6);
+    final bounds = <int, Rect>{
+      for (final seat in seats)
+        seat.index: Rect.fromLTRB(
+          -halfWidth +
+              math.max(seat.avatarSize, noteSizes[seat.index]?.width ?? 0) / 2 -
+              _anchors[seat.index]!.dx,
+          -infinity,
+          halfWidth -
+              math.max(seat.avatarSize, noteSizes[seat.index]?.width ?? 0) / 2 -
+              _anchors[seat.index]!.dx,
+          infinity,
+        ),
+    };
+    final self = Rect.fromCenter(center: Offset.zero, width: 48, height: 48);
+    final shapes = <int, List<Rect>>{
+      -1: [
+        self.inflate(3),
+        if (selfNoteSize != null)
+          orbitThoughtNoteRect(
+            Offset.zero,
+            self.width,
+            selfNoteSize,
+          ).inflate(3),
+      ],
+      for (final seat in seats)
+        seat.index: [
+          Rect.fromCenter(
+            center: _anchors[seat.index]!,
+            width: seat.avatarSize,
+            height: seat.avatarSize,
+          ).inflate(3),
+          if (noteSizes.containsKey(seat.index))
+            orbitThoughtNoteRect(
+              _anchors[seat.index]!,
+              seat.avatarSize,
+              noteSizes[seat.index]!,
+            ).inflate(3),
+        ],
+    };
+    void limitX(int index, double lower, double upper) {
+      final current = bounds[index];
+      if (current == null) return; // The self face/note never moves.
+      bounds[index] = Rect.fromLTRB(
+        math.max(current.left, lower),
+        current.top,
+        math.min(current.right, upper),
+        current.bottom,
+      );
+    }
+
+    void limitY(int index, double lower, double upper) {
+      final current = bounds[index];
+      if (current == null) return;
+      bounds[index] = Rect.fromLTRB(
+        current.left,
+        math.max(current.top, lower),
+        current.right,
+        math.min(current.bottom, upper),
+      );
+    }
+
+    final owners = shapes.entries.toList();
+    for (var first = 0; first < owners.length; first++) {
+      for (var second = first + 1; second < owners.length; second++) {
+        final aOwner = owners[first], bOwner = owners[second];
+        for (final a in aOwner.value) {
+          for (final b in bOwner.value) {
+            final leftGap = b.left - a.right;
+            final rightGap = a.left - b.right;
+            final topGap = b.top - a.bottom;
+            final bottomGap = a.top - b.bottom;
+            final horizontalGap = math.max(leftGap, rightGap);
+            final verticalGap = math.max(topGap, bottomGap);
+            final share = aOwner.key == -1 || bOwner.key == -1 ? 1.0 : 0.5;
+            // Keep one separating axis fixed for the lifetime of this layout.
+            // Both moving owners share its spare clearance; using the full gap
+            // for each would permit their face/note rectangles to collide.
+            if (horizontalGap >= verticalGap) {
+              final allowance = math.max(0.0, horizontalGap) * share;
+              if (leftGap >= rightGap) {
+                limitX(aOwner.key, -infinity, allowance);
+                limitX(bOwner.key, -allowance, infinity);
+              } else {
+                limitX(aOwner.key, -allowance, infinity);
+                limitX(bOwner.key, -infinity, allowance);
+              }
+            } else {
+              final allowance = math.max(0.0, verticalGap) * share;
+              if (topGap >= bottomGap) {
+                limitY(aOwner.key, -infinity, allowance);
+                limitY(bOwner.key, -allowance, infinity);
+              } else {
+                limitY(aOwner.key, -allowance, infinity);
+                limitY(bOwner.key, -infinity, allowance);
+              }
+            }
+          }
+        }
+      }
+    }
+    return bounds;
   }
 }

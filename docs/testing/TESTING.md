@@ -3892,6 +3892,35 @@ tests use bounded pumps rather than waiting for a file-image loading ticker;
 they do not certify device image decoding. The [scoped host receipts](../../.codex-test-logs/plan407-step2/retained-host-evidence/)
 retain initial failures and the 214-test Orbit integration rerun. These host
 checks do not prove real transport, OS notification taps or device rendering.
+
+Animated 2D Thought layout must observe the real Surface clock; geometry
+fixtures with Reduce Motion enabled do not exercise normal motion. Re-solving
+discrete collision gaps on every tick can change avatar seats with identical
+geometric inputs. OrbitThoughtSwim therefore resolves the existing anchor
+layout only when ordered seat geometry, note/self-note sizes, available width
+or motion mode changes by value. Face and note translate together inside fixed
+separating-axis bounds; both moving owners share their spare inflated
+clearance. Free drift remains active, while crowded axes stop at their
+clearance limits. Initial placement, canvas bounds, Reduce Motion and the
+existing projection rules stay preserved.
+
+The golden-free orbit_thought_avatar_stability_test.dart uses the actual
+Surface and unconditional orbit-self-node key, normal motion flags, and both
+absolute and relative-to-self positions. It covers300 original combinations,252
+Samsung-like cadence combinations,9 forty-second60/90/120Hz cases and one
+Reduce Motion control. Original source failed6/300 ordinary cases and30/252
+Samsung-like cases; the full562-case fixed widget matrix passes with no skips.
+Domain controls also cover nonzero free motion, animated painted geometry,
+equal rebuilt inputs and clock restart. Receipts and retained first-attempt
+failures are under .codex-test-logs/orbit-thought-avatar-jitter-20261029/ .
+Samsung logical presets and host fonts do not certify actual S26 metrics,
+adaptive rendering or signed-device behavior; flutter_app owns
+availability-bounded device confirmation.
+
+The complete affected-surfaces lane passes 3,021 tests with zero skips, and all
+eight selected change checks pass. The wrapper receipt in the same evidence
+directory binds the explicit base/local candidate; per-file reuse counts must
+not be summed as independent tests.
 The Step 2 `feature-host-all` gate completed on host source `d8481bb3a`
 with 11,959 passing tests, 14 declared skips and no failures across 1,018 test
 files. The [family receipt](../../.codex-test-logs/plan407-step2/retained-host-evidence/feature-host-all-d848/summary.redacted.json)
@@ -5405,6 +5434,34 @@ visible and cannot become an ordinary first-attempt PASS.
   not verified people. All-time returning/engagement claims remain unsupported.
   See `go-relay-server/docs/thought-metrics-release.md` for the default-off
   release preparation and the separate approval/privacy/staging prerequisites.
+
+- **Background motion scheduling:** the default-on Moving background preference
+  is stored separately from the wallpaper and loaded into AppShellController
+  before startup routing. Only the saved preference and both OS motion flags
+  select the static frame through the backgrounds' gated MediaQuery; content
+  retains its original motion and accessibility policy. Lifecycle and TickerMode
+  pauses stop Cosmic/Mirror Cosmic clocks and controllers and Aurora's controller
+  without resetting their phase. Resuming continues mid-loop. Signal is already
+  static. `background_motion_lifecycle_test.dart` checks queued frame
+  callbacks for all animated treatments, covered routes, initial paused mounts,
+  resume, switching and OS precedence. Before the fix, all three paused cases
+  retained one queued callback rather than zero. Six additional continuity
+  regressions caught pause/route cover resetting the drift to zero; all original
+  32 scheduling assertions remain unchanged in the final 38-case motion check.
+  Settings integration tests
+  retain persistence, failed-save rollback, serialized writes, modal refresh and
+  app-state publication after Settings disposal. The switch lives inside the
+  existing Background chooser: adding a main-page row caused 65 pixels of scroll
+  on the existing 390x844 no-scroll contract. That fixture omits
+  `onOpenMediaStorageSheet`, so its passing fit assertion does not certify the
+  full production page with Media & storage visible. SettingsScreen itself is
+  unchanged by the motion preference. The final 302 focused cases (38 motion and
+  264 preservation cases) and
+  touched-file analysis pass; original failures and final logs remain in
+  `.codex-test-logs/background-motion-129/` in the delivering checkout. Scheduler
+  tests do not establish Pixel CPU, FPS, thermal or battery improvements; those
+  need matched device measurements. Broad curated and device lanes remain
+  separate from this focused host evidence.
 
 - **Settings, consent, group creation and update recovery boundaries:** recovery
   phrase visibility is page-owned but its modal sheet must also rebuild when

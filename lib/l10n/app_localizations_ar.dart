@@ -1184,6 +1184,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get settings_background => 'الخلفية';
 
   @override
+  String get settings_moving_background => 'خلفية متحركة';
+
+  @override
+  String get settings_moving_background_desc => 'أوقفها لتوفير البطارية';
+
+  @override
   String get settings_background_default => 'الافتراضية';
 
   @override

@@ -1169,6 +1169,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settings_background => 'Background';
 
   @override
+  String get settings_moving_background => 'Moving background';
+
+  @override
+  String get settings_moving_background_desc => 'Turn off to save battery';
+
+  @override
   String get settings_background_default => 'Default';
 
   @override

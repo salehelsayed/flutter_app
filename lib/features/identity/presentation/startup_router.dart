@@ -580,8 +580,14 @@ class _StartupRouterState extends State<StartupRouter> {
       final backgroundPreference = await loadBackgroundPreference(
         secureKeyStore: widget.secureKeyStore,
       );
+      final backgroundMotionEnabled = await loadBackgroundMotionEnabled(
+        secureKeyStore: widget.secureKeyStore,
+      );
       if (!mounted) return;
       widget.appShellController.setBackgroundPreference(backgroundPreference);
+      widget.appShellController.setBackgroundMotionEnabled(
+        backgroundMotionEnabled,
+      );
 
       final migrationAuthorityRepository =
           SecureKeyStoreAccountMigrationAuthorityRepository(

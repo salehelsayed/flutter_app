@@ -2,6 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
+/// Shares the app-owned motion preference with backgrounds on every route.
+class BackgroundMotionScope extends InheritedNotifier<AppShellController> {
+  const BackgroundMotionScope({
+    super.key,
+    required AppShellController controller,
+    required super.child,
+  }) : super(notifier: controller);
+
+  static bool enabledOf(BuildContext context) {
+    return context
+            .dependOnInheritedWidgetOfExactType<BackgroundMotionScope>()
+            ?.notifier
+            ?.backgroundMotionEnabled ??
+        true;
+  }
+}
+
 /// 248 — binds the root [MaterialApp]'s [ThemeMode] to the live
 /// [AppShellController] background preference so selecting Signal switches the
 /// whole app (root ThemeData, pushed routes, modals) to light, while every dark
@@ -85,6 +102,9 @@ class _AppShellThemeBindingState extends State<AppShellThemeBinding> {
 
   @override
   Widget build(BuildContext context) {
-    return widget.builder(context, _themeMode);
+    return BackgroundMotionScope(
+      controller: widget.controller,
+      child: widget.builder(context, _themeMode),
+    );
   }
 }

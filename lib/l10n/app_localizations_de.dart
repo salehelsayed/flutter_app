@@ -1189,6 +1189,12 @@ class AppLocalizationsDe extends AppLocalizations {
   String get settings_background => 'Hintergrund';
 
   @override
+  String get settings_moving_background => 'Bewegter Hintergrund';
+
+  @override
+  String get settings_moving_background_desc => 'Zum Akkusparen ausschalten';
+
+  @override
   String get settings_background_default => 'Standard';
 
   @override
