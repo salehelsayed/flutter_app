@@ -192,15 +192,15 @@ void main() {
     );
 
     await tester.tap(find.text('Übersetzung anzeigen'));
-    await tester.tap(find.text('Abschreiben'));
+    await tester.tap(find.text('Transkribieren'));
     await tester.pump();
     expect(find.text('Wird übersetzt…'), findsOneWidget);
-    expect(find.text('Wird abgeschrieben…'), findsOneWidget);
+    expect(find.text('Wird transkribiert…'), findsOneWidget);
 
     ai.next.completeError(StateError('model missing'));
     await tester.pump();
     expect(find.text('Übersetzen fehlgeschlagen'), findsOneWidget);
-    expect(find.text('Abschreiben fehlgeschlagen'), findsOneWidget);
+    expect(find.text('Transkribieren fehlgeschlagen'), findsOneWidget);
     expect(find.text('Erneut versuchen'), findsNWidgets(2));
   });
 }

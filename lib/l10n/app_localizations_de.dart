@@ -4704,7 +4704,7 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_see_translation => 'Übersetzung anzeigen';
 
   @override
-  String get translator_transcribe => 'Abschreiben';
+  String get translator_transcribe => 'Transkribieren';
 
   @override
   String translator_link_downloading(String percent) {
@@ -4721,16 +4721,16 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String translator_link_transcribe_downloading(String percent) {
-    return 'Abschrift wird vorbereitet · $percent %';
+    return 'Transkription wird vorbereitet · $percent %';
   }
 
   @override
   String translator_link_transcribe_paused(String percent) {
-    return 'Abschrift pausiert · $percent %';
+    return 'Transkription pausiert · $percent %';
   }
 
   @override
-  String get translator_link_transcribe_failed => 'Abschrift nicht geladen';
+  String get translator_link_transcribe_failed => 'Transkription nicht geladen';
 
   @override
   String get translator_try_again => 'Erneut versuchen';
@@ -4742,10 +4742,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_translate_failed => 'Übersetzen fehlgeschlagen';
 
   @override
-  String get translator_transcribing => 'Wird abgeschrieben…';
+  String get translator_transcribing => 'Wird transkribiert…';
 
   @override
-  String get translator_transcribe_failed => 'Abschreiben fehlgeschlagen';
+  String get translator_transcribe_failed => 'Transkribieren fehlgeschlagen';
 
   @override
   String get translator_sheet_title => 'Dein privater Übersetzer';
