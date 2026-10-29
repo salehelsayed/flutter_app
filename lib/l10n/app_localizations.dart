@@ -7682,6 +7682,24 @@ abstract class AppLocalizations {
   /// **'Translation didn\'t download'**
   String get translator_link_failed;
 
+  /// Link under a voice message while the translator downloads.
+  ///
+  /// In en, this message translates to:
+  /// **'Getting transcription ready · {percent}%'**
+  String translator_link_transcribe_downloading(String percent);
+
+  /// Link under a voice message while the download waits or is paused.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcription paused · {percent}%'**
+  String translator_link_transcribe_paused(String percent);
+
+  /// Link under a voice message after the download failed; followed by Try again.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcription didn\'t download'**
+  String get translator_link_transcribe_failed;
+
   /// Retries the translator download.
   ///
   /// In en, this message translates to:

@@ -46,6 +46,11 @@ class TranslatePreview extends StatelessWidget {
       delivery: delivery,
       onFreeUpSpace: onFreeUpSpace,
       action: l10n.translator_see_translation,
+      words: (
+        downloading: l10n.translator_link_downloading,
+        paused: l10n.translator_link_paused,
+        failed: l10n.translator_link_failed,
+      ),
       color: color,
       ready: () => _AiAction(
         key: ValueKey('translate-preview:$target:$text'),
@@ -87,6 +92,11 @@ class TranscribePreview extends StatelessWidget {
       delivery: delivery,
       onFreeUpSpace: onFreeUpSpace,
       action: l10n.translator_transcribe,
+      words: (
+        downloading: l10n.translator_link_transcribe_downloading,
+        paused: l10n.translator_link_transcribe_paused,
+        failed: l10n.translator_link_transcribe_failed,
+      ),
       color: color,
       ready: () => _AiAction(
         labels: _Labels(
@@ -108,12 +118,21 @@ class TranscribePreview extends StatelessWidget {
   }
 }
 
+/// What a link says while the one download runs, waits or failed: a voice
+/// message offers its transcript first, so it never promises a translation.
+typedef _GateWords = ({
+  String Function(String percent) downloading,
+  String Function(String percent) paused,
+  String failed,
+});
+
 /// Until the translator is on the phone, every link shows where the one
 /// download stands and opens the download sheet.
 class _DeliveryGate extends StatelessWidget {
   const _DeliveryGate({
     required this.delivery,
     required this.action,
+    required this.words,
     required this.ready,
     this.onFreeUpSpace,
     this.color,
@@ -122,6 +141,7 @@ class _DeliveryGate extends StatelessWidget {
   final ModelDeliveryController? delivery;
   final VoidCallback? onFreeUpSpace;
   final String action;
+  final _GateWords words;
   final Widget Function() ready;
   final Color? color;
 
@@ -147,14 +167,14 @@ class _DeliveryGate extends StatelessWidget {
           ModelNotDownloaded() ||
           ModelNotEnoughSpace() => _Link(action, base, onTap: openSheet),
           ModelDownloading(:final percent) => _Link(
-            l10n.translator_link_downloading('$percent'),
+            words.downloading('$percent'),
             base,
             onTap: openSheet,
             quiet: true,
           ),
           ModelWaitingForWifi(:final percent) ||
           ModelPaused(:final percent) => _Link(
-            l10n.translator_link_paused('$percent'),
+            words.paused('$percent'),
             base,
             onTap: openSheet,
             quiet: true,
@@ -163,7 +183,7 @@ class _DeliveryGate extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 8,
             children: [
-              Text(l10n.translator_link_failed, style: _quiet(base)),
+              Text(words.failed, style: _quiet(base)),
               _Link(
                 l10n.translator_try_again,
                 base,

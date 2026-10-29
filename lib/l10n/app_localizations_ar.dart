@@ -4677,6 +4677,20 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_link_failed => 'لم يكتمل تنزيل الترجمة';
 
   @override
+  String translator_link_transcribe_downloading(String percent) {
+    return 'جارٍ تجهيز التفريغ النصي · $percent%';
+  }
+
+  @override
+  String translator_link_transcribe_paused(String percent) {
+    return 'التفريغ النصي متوقف مؤقتًا · $percent%';
+  }
+
+  @override
+  String get translator_link_transcribe_failed =>
+      'لم يكتمل تنزيل التفريغ النصي';
+
+  @override
   String get translator_try_again => 'حاول مجددًا';
 
   @override

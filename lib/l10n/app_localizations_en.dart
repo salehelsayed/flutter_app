@@ -4611,6 +4611,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_link_failed => 'Translation didn\'t download';
 
   @override
+  String translator_link_transcribe_downloading(String percent) {
+    return 'Getting transcription ready · $percent%';
+  }
+
+  @override
+  String translator_link_transcribe_paused(String percent) {
+    return 'Transcription paused · $percent%';
+  }
+
+  @override
+  String get translator_link_transcribe_failed =>
+      'Transcription didn\'t download';
+
+  @override
   String get translator_try_again => 'Try again';
 
   @override

@@ -4720,6 +4720,19 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_link_failed => 'Übersetzung nicht geladen';
 
   @override
+  String translator_link_transcribe_downloading(String percent) {
+    return 'Abschrift wird vorbereitet · $percent %';
+  }
+
+  @override
+  String translator_link_transcribe_paused(String percent) {
+    return 'Abschrift pausiert · $percent %';
+  }
+
+  @override
+  String get translator_link_transcribe_failed => 'Abschrift nicht geladen';
+
+  @override
   String get translator_try_again => 'Erneut versuchen';
 
   @override

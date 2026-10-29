@@ -138,7 +138,8 @@ void main() {
       tester,
       const ModelDownloading(receivedBytes: 1100000000, totalBytes: _total),
     );
-    expect(find.text('Getting translation ready · 42%'), findsNWidgets(2));
+    expect(find.text('Getting translation ready · 42%'), findsOneWidget);
+    expect(find.text('Getting transcription ready · 42%'), findsOneWidget);
     expect(find.text('See translation'), findsNothing);
     expect(find.text('Transcribe'), findsNothing);
 
@@ -146,6 +147,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Getting translation ready'), findsOneWidget);
     expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
+  });
+
+  testWidgets('voice message while downloading: the link reads Getting '
+      'transcription ready, not translation', (tester) async {
+    await tester.pumpWidget(
+      localizedApp(
+        Scaffold(
+          body: TranscribePreview(
+            audioPath: '/tmp/voice.m4a',
+            ai: _RecordingAi(),
+            delivery: FakeModelDeliveryController(
+              const ModelDownloading(
+                receivedBytes: 1100000000,
+                totalBytes: _total,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Getting transcription ready · 42%'), findsOneWidget);
+    expect(find.textContaining('translation'), findsNothing);
   });
 
   for (final (name, state) in [
@@ -158,21 +181,22 @@ void main() {
       const ModelPaused(receivedBytes: 1100000000, totalBytes: _total),
     ),
   ]) {
-    testWidgets('$name: links read Translation paused and open 3c', (
-      tester,
-    ) async {
+    testWidgets('$name: links read Translation paused and Transcription '
+        'paused and open 3c', (tester) async {
       await _pumpLinks(tester, state);
-      expect(find.text('Translation paused · 42%'), findsNWidgets(2));
+      expect(find.text('Translation paused · 42%'), findsOneWidget);
+      expect(find.text('Transcription paused · 42%'), findsOneWidget);
       await tester.tap(find.text('Translation paused · 42%').first);
       await tester.pumpAndSettle();
       expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
     });
   }
 
-  testWidgets("failed: links read Translation didn't download, Try again "
-      'retries', (tester) async {
+  testWidgets("failed: links read Translation didn't download and "
+      "Transcription didn't download, Try again retries", (tester) async {
     final (controller, _) = await _pumpLinks(tester, const ModelFailed());
-    expect(find.text("Translation didn't download"), findsNWidgets(2));
+    expect(find.text("Translation didn't download"), findsOneWidget);
+    expect(find.text("Transcription didn't download"), findsOneWidget);
     await tester.tap(find.text('Try again').first);
     expect(controller.calls, ['retry']);
   });
@@ -183,7 +207,8 @@ void main() {
       tester,
       const ModelDownloading(receivedBytes: 2500000000, totalBytes: _total),
     );
-    expect(find.text('Getting translation ready · 96%'), findsNWidgets(2));
+    expect(find.text('Getting translation ready · 96%'), findsOneWidget);
+    expect(find.text('Getting transcription ready · 96%'), findsOneWidget);
 
     controller.state.value = const ModelReady(sizeBytes: _total);
     await tester.pump();
