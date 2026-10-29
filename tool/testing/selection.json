@@ -5199,8 +5199,8 @@
         "test/features/posts/improvement/thought_card_screen_test.dart",
         "test/features/conversation/presentation/screens/conversation_audio_source_regression_test.dart"
       ],
-      "boundary": "Preview language/script decisions, WAV conversion and language-neutral prompts, translation/transcription states and errors, original-content retention, and flag-off Thought/direct-voice rendering preservation",
-      "limitations": "Host fake-AI and fake-audio coverage; native model execution/delivery, platform memory, provisioning and signed builds remain separate checks",
+      "boundary": "Preview language/script decisions, WAV conversion and language-neutral prompts, translation/transcription states and errors, opt-in model download policy, verification, restart recovery and owned-task cancellation, original-content retention, and flag-off Thought/direct-voice rendering preservation",
+      "limitations": "Host fake-AI/audio/network/downloader coverage and tiny real-file size/hash checks; native model execution, background transfer, cellular policy, backup exclusion, platform memory, provisioning and signed builds remain separate checks",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [

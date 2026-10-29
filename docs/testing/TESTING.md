@@ -10379,12 +10379,33 @@ State an investigation area separately from a proven root cause.
   `affected-translate-preview` in the selection manifest covers the preview
   module and its exact Thought/chat entrypoints. New feature folders also need
   critical ownership in `tool/sims/critical_features.json`; check selection alone
-  does not register that ownership. Its five host files passed
+  does not register that ownership. The initial port's five host files passed
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
-  entitlement from a build; store builds keep it off while delivery is undecided.
+  entitlement from a build; enabling it does not certify native delivery,
+  inference or signing compatibility.
+  The model-delivery candidate adds 21 core and 10 adapter/storage cases, all
+  passing with fake connectivity/downloader/storage and tiny real files for
+  size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
+  outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
+  storage admission/refresh, capability re-verification, cancellation completion
+  and owned-directory removal. The sheet/Thought/voice integration run passed
+  59 cases, including immediate sheet presentation during a delayed read-only
+  space refresh and preserving original content. The first core attempt was
+  resource-interrupted (guard exit 75); the later 31-case run passed with flat
+  swap-outs and unchanged guard limits. These results do not prove native
+  background transfer, cellular-byte policy, URLSession quiescence, backup
+  exclusion or inference on a device. The iOS backup hook passed Swift parsing
+  only. Pinned background_downloader 9.6.4 clears resume data after exhausted
+  failure, so Try again restarts then; unchanged-policy paused downloads retain
+  resumability. A changed iOS network policy requires a fresh request because
+  native resume data retains the original policy. Opaque iOS URLSession partial
+  caches remain OS-owned; app-support removal does not promise immediate OS-cache
+  reclamation. Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
+  `core-behavior-first-receipt.json`, `core-platform-behavior-receipt.json`,
+  `ui-refresh-review-receipt.json` and `backup-hook-parse-receipt.json`.
   The preview's sqlite3 package upgrade from 3.1.4 to 3.8.0 changed the actual
   host/desktop FFI SQLite runtime from 3.51.2 to 3.54.1, measured through
   `sqflite_common_ffi` on main `ac6aaa690` and the isolated port. The same 303

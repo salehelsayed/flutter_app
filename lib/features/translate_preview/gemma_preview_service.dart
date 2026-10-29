@@ -8,10 +8,9 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
 import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
-import 'package:path_provider/path_provider.dart';
 
 /// Gemma 4 E2B on the CPU through LiteRT-LM. Loads the model from the app's
-/// Documents directory on first use, keeps it, and runs one request at a time.
+/// verified delivery path on first use, keeps it, and runs one request at a time.
 /// Each request is a fresh session, as in the benchmark.
 final class GemmaPreviewService implements OnDeviceAi {
   GemmaPreviewService._();
@@ -23,6 +22,27 @@ final class GemmaPreviewService implements OnDeviceAi {
   Future<InferenceModel>? _model;
   bool _engineRegistered = false;
   Future<void> _tail = Future.value();
+  Future<String> Function()? _downloadedModelPath;
+
+  void setDownloadedModelPathResolver(Future<String> Function() resolve) {
+    _downloadedModelPath = resolve;
+  }
+
+  Future<void> removeDownloadedModel(
+    Future<void> Function() deleteOwnedFiles,
+  ) => _serial(() async {
+    final held = _model;
+    if (held != null) {
+      final model = await held;
+      await model.close();
+      if (identical(_model, held)) _model = null;
+    }
+    await _ensureEngineRegistered();
+    if (await FlutterEdgeAi.isModelInstalled(gemmaModelFileName)) {
+      await FlutterEdgeAi.uninstallModel(gemmaModelFileName);
+    }
+    await deleteOwnedFiles();
+  });
 
   @override
   Future<String> translate(String text, {required String languageName}) =>
@@ -102,18 +122,18 @@ final class GemmaPreviewService implements OnDeviceAi {
   }
 
   Future<InferenceModel> _load() async {
-    final documents = await getApplicationDocumentsDirectory();
-    final path = '${documents.path}/$gemmaModelFileName';
+    final resolve = _downloadedModelPath;
+    if (resolve == null) {
+      throw StateError('Translator delivery is not configured');
+    }
+    final path = await resolve();
     final length = await File(path).length();
     if (length != gemmaModelBytes) {
       throw StateError(
         '$gemmaModelFileName is $length bytes, not $gemmaModelBytes',
       );
     }
-    if (!_engineRegistered) {
-      await FlutterEdgeAi.initialize(inferenceEngines: [LiteRtLmEngine()]);
-      _engineRegistered = true;
-    }
+    await _ensureEngineRegistered();
     await FlutterEdgeAi.installModel(
       modelType: ModelType.gemma4,
       fileType: ModelFileType.litertlm,
@@ -127,6 +147,12 @@ final class GemmaPreviewService implements OnDeviceAi {
       // The benchmark sent the audio before the instruction.
       multimodalOrder: MultimodalOrder.imagesAudioText,
     );
+  }
+
+  Future<void> _ensureEngineRegistered() async {
+    if (_engineRegistered) return;
+    await FlutterEdgeAi.initialize(inferenceEngines: [LiteRtLmEngine()]);
+    _engineRegistered = true;
   }
 
   String _reply(String reply) {

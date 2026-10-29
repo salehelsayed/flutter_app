@@ -88,6 +88,8 @@ dependencies:
   # Only loaded when built with --dart-define=TRANSLATE_PREVIEW=true.
   flutter_edge_ai: 2.5.4
   flutter_edge_ai_litertlm: 1.19.0
+  background_downloader: 9.6.4
+  shared_preferences: 2.5.6
 dependency_overrides:
   # R2-4: local Android transcoder update and compression-state cleanup.
   video_compress:
