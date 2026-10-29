@@ -143,6 +143,50 @@ void main() {
   );
 
   test(
+    'mobile consent switch replaces a never-started Wi-Fi task without waiting for pause',
+    () async {
+      final h = await _Harness.create(wifi: false);
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: false);
+      await h.event(ModelTransferStatus.enqueued, bytes: 0);
+      final oldId = h.id;
+      expect(h.controller.state.value, isA<ModelWaitingForWifi>());
+      await h.controller.setAllowMobileData(true);
+      expect(h.transport.enqueues, hasLength(2));
+      expect(h.transport.enqueues.last.requiresWiFi, isFalse);
+      expect(h.transport.cancels, [oldId]);
+      expect(h.transport.forgets, [oldId]);
+      expect(h.transport.pauses, isEmpty);
+      expect(h.transport.peakOwnedTasks, 1);
+      expect(h.transport.ownedTasks, {h.id});
+      expect(h.id, isNot(oldId));
+      await h.event(ModelTransferStatus.paused, taskId: oldId);
+      expect(h.controller.state.value, isA<ModelDownloading>());
+    },
+  );
+
+  test(
+    'explicit mobile start replaces a never-started Wi-Fi task without waiting for pause',
+    () async {
+      final h = await _Harness.create(wifi: false);
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: false);
+      await h.event(ModelTransferStatus.enqueued, bytes: 0);
+      final oldId = h.id;
+      await h.controller.start(allowMobileData: true);
+      expect(h.transport.enqueues, hasLength(2));
+      expect(h.transport.enqueues.last.requiresWiFi, isFalse);
+      expect(h.transport.cancels, [oldId]);
+      expect(h.transport.forgets, [oldId]);
+      expect(h.transport.pauses, isEmpty);
+      expect(h.transport.peakOwnedTasks, 1);
+      expect(h.transport.ownedTasks, {h.id});
+      expect(h.id, isNot(oldId));
+      expect(h.controller.state.value, isA<ModelDownloading>());
+    },
+  );
+
+  test(
     'revoking mobile consent during delayed resume reconfigures before running',
     () async {
       final h = await _Harness.create(wifi: false);
@@ -753,6 +797,11 @@ class _Harness {
     int? bytes,
     String? taskId,
   }) async {
+    transport.restored = ModelTransferSnapshot(
+      taskId: taskId ?? id,
+      status: status,
+      receivedBytes: bytes ?? storage.record!.receivedBytes,
+    );
     if (status == ModelTransferStatus.complete &&
         (taskId == null || taskId == storage.record?.taskId)) {
       storage.identity ??= _fileIdentity();
@@ -858,6 +907,8 @@ class _Transport implements ModelDeliveryTransport {
   final pauses = <String>[];
   final cancels = <String>[];
   final forgets = <String>[];
+  final ownedTasks = <String>{};
+  int peakOwnedTasks = 0;
   bool resumeAccepted = true;
   bool failCancel = false;
   ModelTransferSnapshot? restored;
@@ -866,7 +917,8 @@ class _Transport implements ModelDeliveryTransport {
   @override
   Future<void> initialize(String? ownedTaskId) async {}
   @override
-  Future<ModelTransferSnapshot?> restore(String taskId) async => restored;
+  Future<ModelTransferSnapshot?> restore(String taskId) async =>
+      restored?.taskId == taskId ? restored : null;
   @override
   Future<bool> enqueue({
     required String taskId,
@@ -874,6 +926,8 @@ class _Transport implements ModelDeliveryTransport {
     required bool requiresWiFi,
   }) async {
     enqueues.add((taskId: taskId, requiresWiFi: requiresWiFi));
+    ownedTasks.add(taskId);
+    if (ownedTasks.length > peakOwnedTasks) peakOwnedTasks = ownedTasks.length;
     return true;
   }
 
@@ -893,6 +947,7 @@ class _Transport implements ModelDeliveryTransport {
   Future<void> cancel(String taskId) async {
     cancels.add(taskId);
     if (failCancel) throw StateError('cancellation rejected');
+    ownedTasks.remove(taskId);
   }
 
   @override
