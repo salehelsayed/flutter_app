@@ -5372,8 +5372,19 @@ visible and cannot become an ordinary first-attempt PASS.
   pattern results are in `.codex-test-logs/relay-thought-hardening-20261027/`;
   the opt-out run and preserved first-attempt test-assertion correction are in
   `.codex-test-logs/relay-thought-optout-20261028/` in the delivering checkout.
-  The earlier unkeyed run is superseded for this candidate. Full relay validation
-  and frozen builds remain held by Kayan's partial-resume instruction. This is host/inbox/filesystem proof with a
+  The earlier unkeyed run is superseded for this candidate. The original partial-
+  resume hold on full relay validation is superseded for the main-based counter
+  plus VoIP-expiration port: the complete relay suite passed under Go 1.27.1,
+  `GOMAXPROCS=4`, `-p 4` and live-test skipping unset (1,636 passing parent/subtest
+  events, zero failures/skips, including all five live transport smoke cases).
+  Counter admission, snapshot, scrape and bind cases and both expiration
+  regressions passed together. The initial wrapper lease block is retained;
+  Kayan explicitly authorized the same full Go package scope directly under the
+  unchanged host slot/resource guard while another owner's device build held
+  the native lease. Evidence: `.codex-test-logs/relay-main-counter-expiry-20261029/`
+  contains `full-suite-summary.json`, the raw Go log, resource receipt and parity
+  proof. This run does not deploy a relay or certify a signed app/APNs delivery.
+  The Thought cases provide host/inbox/filesystem proof with a
   recording provider, not deployed relay, real push, device or signed-artifact
   evidence. Direct-only deliveries are unseen; counts are observed sender IDs,
   not verified people. All-time returning/engagement claims remain unsupported.
