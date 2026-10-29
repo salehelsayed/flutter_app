@@ -10538,6 +10538,16 @@ State an investigation area separately from a proven root cause.
   "Transkribieren" wording, only the two requested UI files were rerun: all 17
   cases passed (`resume-final-german-ui.log`). The full lane was not rerun after
   that final copy change and an equivalent null-aware-element lint correction.
+  Manual-pause UI uses the existing paused copy and Resume without changing
+  mobile-data consent; only `ModelWaitingForWifi` shows the Wi-Fi explanation.
+  Settings' translator Free up space action opens the existing Storage surface
+  with its manager/scopes. It awaits `Navigator.maybePop()` before pushing that
+  surface: the pinned Navigator otherwise skips the pending pop when the route
+  changes, leaving the download offer underneath. The real `SettingsWired`
+  regression checks a new current Storage route and absence of the old offer;
+  a fake callback-only assertion would miss that ordering bug. Focused RED/GREEN
+  evidence is in `.codex-test-logs/translator-ui-fixes-174/`; device verification
+  remains separate.
   Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
   `core-behavior-first-receipt.json`, `core-platform-behavior-receipt.json`,
   `focused-final/partial.json`, `focused-preview-recovery/results.json`,

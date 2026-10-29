@@ -124,8 +124,8 @@ class PrivateTranslatorSheet extends StatelessWidget {
             l10n.translator_free_up_space,
             onFreeUpSpace == null
                 ? null
-                : () {
-                    close();
+                : () async {
+                    await Navigator.of(context).maybePop();
                     onFreeUpSpace!();
                   },
           ),
@@ -153,7 +153,18 @@ class PrivateTranslatorSheet extends StatelessWidget {
             () => unawaited(controller.pause()),
           ),
         ),
-      final ModelDeliveryInProgress waiting => _SheetLayout(
+      final ModelPaused paused => _SheetLayout(
+        title: l10n.translator_settings_paused,
+        progress: (
+          paused.percent / 100,
+          translatorAmount(context, paused.receivedBytes, paused.totalBytes),
+          l10n.translator_paused_word,
+        ),
+        line: l10n.translator_link_paused('${paused.percent}'),
+        primary: (l10n.translator_resume, () => unawaited(controller.resume())),
+        secondary: (l10n.translator_close, close),
+      ),
+      final ModelWaitingForWifi waiting => _SheetLayout(
         title: l10n.translator_waiting_title,
         progress: (
           waiting.percent / 100,

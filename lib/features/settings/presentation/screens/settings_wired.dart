@@ -514,13 +514,20 @@ class _SettingsWiredState extends State<SettingsWired>
               setSheetState(() {});
             },
           ),
-          // The translator rows live here, not on the main page, which must
-          // fit 390x844 without scrolling. Free up space only closes the
-          // download sheet: the storage totals are right below.
+          // Keep translator controls together under Media & storage.
           if (translator != null)
             PrivateTranslatorSettingsSection(
               controller: translator,
-              onFreeUpSpace: () {},
+              onFreeUpSpace: manager == null || scopesProvider == null
+                  ? null
+                  : () => unawaited(
+                      _showSettingsSheet(
+                        builder: (_, _) => MediaStorageUsageSection(
+                          manager: manager,
+                          loadScopes: scopesProvider,
+                        ),
+                      ),
+                    ),
             ),
           if (manager != null && scopesProvider != null)
             MediaStorageUsageSection(

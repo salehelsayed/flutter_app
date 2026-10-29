@@ -188,7 +188,10 @@ void main() {
       expect(find.text('Transcription paused · 42%'), findsOneWidget);
       await tester.tap(find.text('Translation paused · 42%').first);
       await tester.pumpAndSettle();
-      expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
+      expect(
+        find.text(state is ModelPaused ? 'Paused' : 'Waiting for Wi-Fi'),
+        findsOneWidget,
+      );
     });
   }
 

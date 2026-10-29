@@ -222,26 +222,30 @@ void main() {
     expect(controller.calls, ['pause']);
   });
 
-  testWidgets('3c waiting for Wi-Fi: Use mobile data continues on mobile data', (
-    tester,
-  ) async {
-    final controller = await _openSheet(
-      tester,
-      const ModelWaitingForWifi(receivedBytes: 1100000000, totalBytes: _total),
-    );
-    expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
-    expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
-    expect(find.text('paused'), findsOneWidget);
-    expect(
-      find.text("It picks up where it stopped when you're back on Wi-Fi."),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Use mobile data'));
-    expect(controller.calls, ['start(allowMobileData: true)']);
-    await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
-    expect(find.text('Waiting for Wi-Fi'), findsNothing);
-  });
+  testWidgets(
+    '3c waiting for Wi-Fi: Use mobile data continues on mobile data',
+    (tester) async {
+      final controller = await _openSheet(
+        tester,
+        const ModelWaitingForWifi(
+          receivedBytes: 1100000000,
+          totalBytes: _total,
+        ),
+      );
+      expect(find.text('Waiting for Wi-Fi'), findsOneWidget);
+      expect(find.text('1.1 of 2.6 GB'), findsOneWidget);
+      expect(find.text('paused'), findsOneWidget);
+      expect(
+        find.text("It picks up where it stopped when you're back on Wi-Fi."),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Use mobile data'));
+      expect(controller.calls, ['start(allowMobileData: true)']);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      expect(find.text('Waiting for Wi-Fi'), findsNothing);
+    },
+  );
 
   testWidgets('manual Pause with mobile data allowed shows Paused and Resume '
       'without changing consent', (tester) async {

@@ -66,7 +66,8 @@ void main() {
     ThemeData? themeOverride,
     bool callPrivacyAvailable = false,
     MediaStorageManager? mediaStorageManager,
-    Future<List<MediaStorageScopeOption>> Function()? mediaStorageScopesProvider,
+    Future<List<MediaStorageScopeOption>> Function()?
+    mediaStorageScopesProvider,
   }) async {
     final repo =
         identityRepo ??
@@ -178,9 +179,10 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    final currentStorage = find.byType(MediaStorageUsageSection).evaluate().where(
-      (element) => ModalRoute.of(element)?.isCurrent == true,
-    );
+    final currentStorage = find
+        .byType(MediaStorageUsageSection)
+        .evaluate()
+        .where((element) => ModalRoute.of(element)?.isCurrent == true);
     expect(currentStorage, hasLength(1));
     expect(
       ModalRoute.of(currentStorage.single),
