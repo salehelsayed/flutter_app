@@ -5191,6 +5191,28 @@
         "integration_test/maestro/production_catalog_media_assert_local_absent.yaml"
       ],
       "host_preflight": "production-catalog-group-local-delete"
+    },
+    "affected-translate-preview": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/translate_preview/",
+        "test/features/posts/improvement/thought_card_screen_test.dart",
+        "test/features/conversation/presentation/screens/conversation_audio_source_regression_test.dart"
+      ],
+      "boundary": "Preview language/script decisions, WAV conversion and language-neutral prompts, translation/transcription states and errors, original-content retention, and flag-off Thought/direct-voice rendering preservation",
+      "limitations": "Host fake-AI and fake-audio coverage; native model execution/delivery, platform memory, provisioning and signed builds remain separate checks",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/translate_preview/",
+        "lib/features/posts/presentation/screens/thought_card_screen.dart",
+        "lib/features/conversation/presentation/screens/conversation_screen.dart",
+        "lib/features/conversation/presentation/widgets/letter_card.dart"
+      ],
+      "inspected": true
     }
   },
   "areas": [
@@ -6902,6 +6924,20 @@
         "production-catalog-direct-cut"
       ],
       "why": "The optional existing relay fixture gate and exact sender-cut adapter require their integration-tagged host contract plus the matching production scenario; existing relay mappings remain intact."
+    },
+    {
+      "id": "translate-preview",
+      "patterns": [
+        "lib/features/translate_preview/*",
+        "test/features/translate_preview/*",
+        "lib/features/posts/presentation/screens/thought_card_screen.dart",
+        "lib/features/conversation/presentation/screens/conversation_screen.dart",
+        "lib/features/conversation/presentation/widgets/letter_card.dart"
+      ],
+      "checks": [
+        "affected-translate-preview"
+      ],
+      "why": "The preview module and its exact Thought/direct-voice entrypoints require the preview tests and existing widget/audio preservation sentinels"
     }
   ],
   "documentation_only": [
@@ -6968,7 +7004,8 @@
     "signed-chat-group-media",
     "signed-notifications",
     "signed-upgrade-compat",
-    "signed-audio"
+    "signed-audio",
+    "affected-translate-preview"
   ],
   "full_commands": [
     {

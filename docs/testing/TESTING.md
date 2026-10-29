@@ -10252,6 +10252,32 @@ State an investigation area separately from a proven root cause.
   four-test census suite passed after that addition; exact equality, production
   source hashes and architecture guards remain unchanged. Preserve its first
   failure under `tdd-change-investigation/layering-census-assessment.json`.
+- **Translation/transcription preview host boundary:** `TRANSLATE_PREVIEW`
+  defaults to false. The Thought viewer returns its original text widget and
+  direct voice messages retain their original player subtree when disabled.
+  `affected-translate-preview` in the selection manifest covers the preview
+  module and its exact Thought/chat entrypoints. Its five host files passed
+  82 tests with fake AI/audio, including flag-off rendering, original-content
+  retention, errors/retry, language decisions, WAV conversion and the neutral
+  transcription prompt. This does not prove native inference or model delivery.
+  The flag does not remove plugin/native dependencies or the iOS increased-memory
+  entitlement from a build; store builds keep it off while delivery is undecided.
+  The preview's sqlite3 package upgrade from 3.1.4 to 3.8.0 changed the actual
+  host/desktop FFI SQLite runtime from 3.51.2 to 3.54.1, measured through
+  `sqflite_common_ffi` on main `ac6aaa690` and the isolated port. The same 303
+  database, secure-storage, account-migration and additional direct FFI-consumer
+  test files passed 2,835 cases on each runtime, with zero failures and the same
+  single SQLCipher export-capability skip. The storage wrapper therefore retains
+  its `BLOCKED` verdict; do not relabel the integration-only skip as host proof.
+  Production desktop bootstrap selects FFI; mobile's sqflite_sqlcipher package
+  remains 3.4.0. These host results establish no observed regression in that
+  coverage, not native/mobile binary or provisioning compatibility. The unchanged
+  tracked signing selectors do not certify the added entitlement against an
+  actual signing profile; signed iPhone/Pixel build checks remain separate.
+  Evidence: `.codex-test-logs/translate-preview-main-20261029/` contains
+  `baseline-db-summary.json`, `candidate-db-comparison.json`, both
+  `*-sqlite-runtime.json` probes, `db-comparison-coverage.json`,
+  `candidate-focused/results.json` and `signing-source-comparison.json`.
 - **Archived-source analysis and workspace access metadata:** strict analysis
   included historical Dart copies under `artifacts/`, producing 98,277 archive
   diagnostics alongside five current-source lint issues. Exclude the historical
