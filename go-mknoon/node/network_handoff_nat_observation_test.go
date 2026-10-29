@@ -166,11 +166,11 @@ func nonLoopbackIPv4(t *testing.T) net.IP {
 			continue
 		}
 		for _, a := range addrs {
-			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil {
+			if ipn, ok := a.(*net.IPNet); ok && ipn.IP.To4() != nil && !ipn.IP.IsLinkLocalUnicast() {
 				return ipn.IP.To4()
 			}
 		}
 	}
-	t.Skip("no non-loopback IPv4 interface; libp2p ignores loopback observations")
+	t.Skip("no non-loopback, non-link-local IPv4 interface; libp2p ignores loopback observations")
 	return nil
 }
