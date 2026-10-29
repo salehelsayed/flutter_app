@@ -438,6 +438,9 @@ class _SettingsWiredState extends State<SettingsWired>
   Future<void> _openMediaStorageSheet() {
     final manager = widget.mediaStorageManager;
     final scopesProvider = widget.mediaStorageScopesProvider;
+    final translator = translatePreviewEnabled
+        ? translatePreviewDelivery
+        : null;
     return _showSettingsSheet(
       builder: (sheetContext, setSheetState) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -454,6 +457,14 @@ class _SettingsWiredState extends State<SettingsWired>
               setSheetState(() {});
             },
           ),
+          // The translator rows live here, not on the main page, which must
+          // fit 390x844 without scrolling. Free up space only closes the
+          // download sheet: the storage totals are right below.
+          if (translator != null)
+            PrivateTranslatorSettingsSection(
+              controller: translator,
+              onFreeUpSpace: () {},
+            ),
           if (manager != null && scopesProvider != null)
             MediaStorageUsageSection(
               manager: manager,
@@ -461,15 +472,6 @@ class _SettingsWiredState extends State<SettingsWired>
             ),
         ],
       ),
-    );
-  }
-
-  Widget? _privateTranslatorSection() {
-    final delivery = translatePreviewDelivery;
-    if (!translatePreviewEnabled || delivery == null) return null;
-    return PrivateTranslatorSettingsSection(
-      controller: delivery,
-      onFreeUpSpace: _openMediaStorageSheet,
     );
   }
 
@@ -1050,7 +1052,6 @@ class _SettingsWiredState extends State<SettingsWired>
       onOpenPhotoQualitySheet: _openPhotoQualitySheet,
       onOpenVideoQualitySheet: _openVideoQualitySheet,
       onOpenMediaStorageSheet: _openMediaStorageSheet,
-      privateTranslatorSection: _privateTranslatorSection(),
       onOpenCallPrivacySheet:
           (widget.voiceCallFeatureFlags ??
                   productionVoiceCallFeatureFlags())['voice_call_always_relay_enabled'] ==

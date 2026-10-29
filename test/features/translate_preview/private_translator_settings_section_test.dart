@@ -1,9 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
+import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_settings_section.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../core/bridge/fake_bridge.dart';
+import '../../core/secure_storage/fake_secure_key_store.dart';
+import '../../core/services/fake_p2p_service.dart';
+import '../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../contacts/domain/repositories/fake_contact_repository.dart';
+import '../identity/domain/repositories/fake_identity_repository.dart';
 import 'fake_model_delivery_controller.dart';
 
 const _total = 2600000000;
@@ -185,29 +194,43 @@ void main() {
     expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
   });
 
-  testWidgets('Settings shows the section in Preferences, under Media & '
-      'storage', (tester) async {
-    final controller = FakeModelDeliveryController(
+  testWidgets('Settings keeps the main page as is and shows the section '
+      'inside the Media & storage sheet', (tester) async {
+    debugTranslatePreviewEnabledOverride = true;
+    debugModelDeliveryOverride = FakeModelDeliveryController(
       const ModelReady(sizeBytes: _total),
     );
+    addTearDown(() {
+      debugTranslatePreviewEnabledOverride = null;
+      debugModelDeliveryOverride = null;
+    });
+    final shell = AppShellController();
+    addTearDown(shell.dispose);
+    final privacyRepo = InMemoryPostsPrivacySettingsRepository();
+    addTearDown(privacyRepo.dispose);
     await tester.pumpWidget(
       localizedApp(
-        Scaffold(
-          body: SettingsScreen(
-            username: 'Sara',
-            onOpenMediaStorageSheet: () {},
-            privateTranslatorSection: PrivateTranslatorSettingsSection(
-              controller: controller,
-            ),
-            onSwitchView: (_) {},
-            activeTab: 'settings',
-          ),
+        SettingsWired(
+          identityRepo: FakeIdentityRepository(),
+          bridge: FakeBridge(),
+          contactRepo: FakeContactRepository(),
+          p2pService: FakeP2PService(),
+          secureKeyStore: FakeSecureKeyStore(),
+          imageProcessor: ImageProcessor(),
+          appShellController: shell,
+          postsPrivacySettingsRepository: privacyRepo,
         ),
       ),
     );
-    final storage = tester.getRect(find.text('Media & storage'));
-    final translator = tester.getRect(find.text('Private translator'));
-    expect(translator.top, greaterThan(storage.bottom));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Private translator'), findsNothing);
+
+    await tester.tap(find.text('Media & storage'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('Private translator'), findsOneWidget);
     expect(find.text('Download over mobile data'), findsOneWidget);
   });
 }
