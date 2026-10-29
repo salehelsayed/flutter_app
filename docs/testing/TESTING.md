@@ -5420,7 +5420,10 @@ visible and cannot become an ordinary first-attempt PASS.
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
   existing Background chooser: adding a main-page row caused 65 pixels of scroll
-  on the existing 390x844 no-scroll contract. The final 296-case focused run and
+  on the existing 390x844 no-scroll contract. That fixture omits
+  `onOpenMediaStorageSheet`, so its passing fit assertion does not certify the
+  full production page with Media & storage visible. SettingsScreen itself is
+  unchanged by the motion preference. The final 296-case focused run and
   touched-file analysis pass; original failures and final logs remain in
   `.codex-test-logs/background-motion-129/` in the delivering checkout. Scheduler
   tests do not establish Pixel CPU, FPS, thermal or battery improvements; those
