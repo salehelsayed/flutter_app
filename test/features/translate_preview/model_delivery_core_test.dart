@@ -214,6 +214,45 @@ void main() {
   );
 
   test(
+    'cold start reuses a verified unchanged file without another full hash',
+    () async {
+      final first = await _Harness.create();
+      await first.controller.start(allowMobileData: false);
+      final firstReady = _nextState<ModelReady>(first.controller.state);
+      await first.event(ModelTransferStatus.complete);
+      await firstReady;
+      expect(first.storage.verifications, 1);
+      final storage = first.storage;
+      final taskId = first.id;
+      await first.dispose();
+
+      final network = _Network();
+      final transport = _Transport()
+        ..restored = ModelTransferSnapshot(
+          taskId: taskId,
+          status: ModelTransferStatus.complete,
+          receivedBytes: 100,
+        );
+      final controller = PersistentModelDeliveryController(
+        storage: storage,
+        network: network,
+        transport: transport,
+        appBuild: () async => 129,
+        supported: true,
+        spaceReserveBytes: 20,
+      );
+      final restarted = _Harness(controller, storage, network, transport);
+      addTearDown(restarted.dispose);
+      await controller.initialize();
+      await _nextState<ModelReady>(controller.state);
+      expect(await controller.verifiedModelPath(), '/owned/gemma.litertlm');
+      expect(storage.verifications, 1);
+      expect(transport.enqueues, isEmpty);
+      expect(transport.resumes, isEmpty);
+    },
+  );
+
+  test(
     'completion stays downloading until size/checksum verification succeeds',
     () async {
       final h = await _Harness.create();
