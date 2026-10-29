@@ -72,6 +72,25 @@ void main() {
     expect(ai.translations, hasLength(1));
   });
 
+  testWidgets('Translate targets the Mknoon app language, not the phone '
+      'language', (tester) async {
+    final ai = _FakeAi();
+    tester.platformDispatcher.localeTestValue = const Locale('fr');
+    addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+    await tester.pumpWidget(
+      _host(
+        TranslatePreview(text: 'How are you today?', ai: ai),
+        locale: const Locale('de'),
+      ),
+    );
+
+    await tester.tap(find.text('Übersetzung anzeigen'));
+    await tester.pump();
+    expect(ai.translations, [
+      (text: 'How are you today?', languageName: 'German'),
+    ]);
+  });
+
   testWidgets("Translate: a failure says Couldn't translate and Try again "
       'runs it again', (tester) async {
     final ai = _FakeAi();
