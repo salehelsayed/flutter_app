@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +24,10 @@ func TestCatalogDC017OwnedRelayServiceOutageAndReplay(t *testing.T) {
 	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
 	inbox := NewInboxStoreWithBackend(backend, push)
 	inbox.SetAckCustodyAdmissionEnabled(true)
+	var storeClockMs atomic.Int64
+	storeClockMs.Store(time.Now().UnixMilli())
+	clock := func() time.Time { return time.UnixMilli(storeClockMs.Load()) }
+	inbox.SetAckCustodyNowForTest(clock)
 	groups := NewGroupInboxStore(16, time.Hour)
 	env := setupInboxStreamEnv(t, inbox, groups)
 	wires := []string{
@@ -32,6 +37,9 @@ func TestCatalogDC017OwnedRelayServiceOutageAndReplay(t *testing.T) {
 		ackCustodyTextEnvelope("queued-third", env.sender.ID().String(), "third"),
 	}
 	store := func(wire string) inboxResponse {
+		// Protected replay sorts by timestamp, then relay ID. Keep accepted
+		// timestamps distinct so this FIFO assertion cannot depend on ID ties.
+		storeClockMs.Add(1)
 		return sendAckCustodyStoreRequest(t, env, env.recipient.ID().String(), ackCustodyDirectTextKind, ackCustodyContract, wire)
 	}
 	if response := store(wires[0]); response.Status != "OK" {
@@ -83,6 +91,7 @@ func TestCatalogDC017OwnedRelayServiceOutageAndReplay(t *testing.T) {
 	restore := func() {
 		inbox = NewInboxStoreWithBackend(backend, push)
 		inbox.SetAckCustodyAdmissionEnabled(true)
+		inbox.SetAckCustodyNowForTest(clock)
 		env.server.SetStreamHandler(InboxProtocol, func(stream network.Stream) {
 			HandleInboxStream(stream, inbox, groups, env.server, env.presence, nil)
 		})

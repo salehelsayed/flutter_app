@@ -2751,6 +2751,13 @@ internal custody/error labels. The complementary Go test withdraws only the
 owned inbox service, transfers bytes over a healthy client link, then restores
 fresh handlers/stores over the same Redis backend and proves ordered replay,
 deduplication and explicit ACK. It does not stop/restart a relay daemon.
+Protected replay orders by acceptance timestamp, then relay entry ID. DC-017
+advances the existing shared custody/pruning test clock one millisecond per
+request and reinstalls it on restored store owners, preserving every FIFO,
+identity, duplicate, outage and ACK assertion without sleeps. Wall-clock ties
+made the original fixture fail 4/20 runs at `57b4a39e3`; the clock-controlled
+fixture passed 50/50 with zero skips and no production changes. Both raw runs
+are retained in `.codex-test-logs/dc017-relay-replay-test-20261029/`.
 The Go near-cap test reuses the DC-007 owned filesystem fault, interrupts real
 framed upload and download streams, retries the same protected blob and rejects
 cross-recipient access. Protected retrieval/ACK requests require the explicit
