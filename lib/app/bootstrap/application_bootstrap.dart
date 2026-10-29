@@ -8,6 +8,18 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/shared/widgets/tap_outside_hides_keyboard.dart';
 
+Locale resolveAppLocale(
+  List<Locale>? preferredLocales,
+  Iterable<Locale> supportedLocales,
+) {
+  for (final preferred in preferredLocales ?? const <Locale>[]) {
+    for (final supported in supportedLocales) {
+      if (preferred.languageCode == supported.languageCode) return supported;
+    }
+  }
+  return const Locale('en');
+}
+
 typedef ApplicationBootstrapFactory = ApplicationBootstrap Function();
 
 abstract interface class ApplicationBootstrap {
@@ -133,6 +145,7 @@ class _StartupRecoveryAppState extends State<_StartupRecoveryApp> {
     darkTheme: AppTheme.darkTheme,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
+    localeListResolutionCallback: resolveAppLocale,
     home: Builder(
       builder: (context) {
         final l10n = AppLocalizations.of(context)!;

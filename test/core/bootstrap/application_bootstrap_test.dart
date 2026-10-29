@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 enum _FailurePhase { factory, prepare, build, launch, post }
@@ -115,6 +116,31 @@ final class _RecoverableBootstrap
 }
 
 void main() {
+  test(
+    'app locale prefers supported device languages and defaults to English',
+    () {
+      const cases = <({List<Locale>? preferred, String language})>[
+        (preferred: [Locale('fr', 'FR')], language: 'en'),
+        (preferred: [Locale('fr', 'FR'), Locale('de', 'DE')], language: 'de'),
+        (preferred: [Locale('ar', 'EG')], language: 'ar'),
+        (preferred: [Locale('de', 'AT')], language: 'de'),
+        (preferred: [Locale('en', 'GB')], language: 'en'),
+        (preferred: [], language: 'en'),
+        (preferred: null, language: 'en'),
+      ];
+      for (final example in cases) {
+        expect(
+          resolveAppLocale(
+            example.preferred,
+            AppLocalizations.supportedLocales,
+          ),
+          Locale(example.language),
+          reason: 'preferred locales: ${example.preferred}',
+        );
+      }
+    },
+  );
+
   testWidgets(
     'bounded startup failure exposes Retry and resumes one preparation',
     (tester) async {

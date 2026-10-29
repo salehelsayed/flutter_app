@@ -6,6 +6,8 @@ import 'package:flutter_app/features/call/domain/call_id.dart';
 
 import 'package:flutter_app/debug/production_journeys/foreground_group_push_control.dart';
 import 'dart:async';
+import 'package:flutter_app/app/bootstrap/application_bootstrap.dart'
+    show resolveAppLocale;
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
@@ -3571,6 +3573,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
+        localeListResolutionCallback: resolveAppLocale,
         theme: AppTheme.lightTheme,
         darkTheme: AppTheme.darkTheme,
         themeMode: themeMode,

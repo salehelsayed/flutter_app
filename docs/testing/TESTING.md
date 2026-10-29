@@ -34,6 +34,14 @@ current pubspec/lockfile. Keep JavaScript test/tooling discovery and bundle
 identity handling because retained tooling and future bundled assets can still
 change; do not assume the old runtime architecture is active.
 
+The main app and recoverable-startup UI share `resolveAppLocale` in
+`lib/app/bootstrap/application_bootstrap.dart`. It uses the first supported
+language in the device's preferred-locale list, then English for no match,
+an empty list or null. The locale behavior case in
+`test/core/bootstrap/application_bootstrap_test.dart` covers French fallback,
+French/German preference order and Arabic/German/English regional variants.
+The generated locale order and translation-preview target selection are separate.
+
 Android ML Kit registrar retention: the merged release manifest discovers
 `BarcodeRegistrar`, `CommonComponentRegistrar`, and `VisionCommonRegistrar`
 under `com.google.mlkit` by reflection. R8 full mode requires their no-argument

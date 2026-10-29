@@ -252,7 +252,7 @@ const _privacySha256 =
 // Thoughts 128: one owner-approved Orbit retry binding reuses the existing
 // post-delivery worker and its media-upload prerequisite.
 const _applicationRootNormalizedSha256 =
-    '37bce9217726e2c68ea8ae96bfa6bd944f869cc755d2a6ea20d11e55a98a4ffd';
+    'a682548cbf525ad6d29a8f13dc9e79d88adb57f7685d5f6ce7034e92d72efcf8';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
