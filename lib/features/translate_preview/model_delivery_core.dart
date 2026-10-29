@@ -526,6 +526,20 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     if (id != null &&
         (_record.phase == ModelDeliveryPhase.active ||
             _record.phase == ModelDeliveryPhase.resumeRequested)) {
+      final transfer = await _transport.restore(id);
+      if (transfer?.status == ModelTransferStatus.enqueued) {
+        // A constrained queued worker cannot consume a pause request yet.
+        await _cancelOwnedTask();
+        await _storage.removeOwnedModel();
+        _record = _record.copyWith(
+          clearTask: true,
+          receivedBytes: 0,
+          phase: ModelDeliveryPhase.idle,
+        );
+        await _persist();
+        await _startOrResume();
+        return;
+      }
       _record = _record.copyWith(
         phase: ModelDeliveryPhase.policyPauseRequested,
       );

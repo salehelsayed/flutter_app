@@ -187,6 +187,50 @@ void main() {
   );
 
   test(
+    'queued mobile replacement waits for owned cancellation settlement',
+    () async {
+      final h = await _Harness.create(wifi: false);
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: false);
+      await h.event(ModelTransferStatus.enqueued, bytes: 0);
+      final oldId = h.id;
+      h.transport.cancellationStarted = Completer<void>();
+      h.transport.cancellation = Completer<void>();
+      final replace = h.controller.setAllowMobileData(true);
+      await h.transport.cancellationStarted!.future;
+      expect(h.transport.enqueues, hasLength(1));
+      expect(h.transport.ownedTasks, {oldId});
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+      h.transport.cancellation!.complete();
+      await replace;
+      expect(h.transport.enqueues, hasLength(2));
+      expect(h.transport.enqueues.last.requiresWiFi, isFalse);
+      expect(h.transport.peakOwnedTasks, 1);
+      expect(h.transport.ownedTasks, {h.id});
+      expect(h.id, isNot(oldId));
+    },
+  );
+
+  test(
+    'queued mobile replacement cannot enqueue when owned cancellation fails',
+    () async {
+      final h = await _Harness.create(wifi: false);
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: false);
+      await h.event(ModelTransferStatus.enqueued, bytes: 0);
+      final oldId = h.id;
+      h.transport.failCancel = true;
+      await h.controller.setAllowMobileData(true);
+      expect(h.controller.state.value, isA<ModelFailed>());
+      expect(h.transport.enqueues, hasLength(1));
+      expect(h.transport.ownedTasks, {oldId});
+      expect(h.transport.forgets, isEmpty);
+      expect(h.storage.removals, 0);
+    },
+  );
+
+  test(
     'revoking mobile consent during delayed resume reconfigures before running',
     () async {
       final h = await _Harness.create(wifi: false);
@@ -911,6 +955,8 @@ class _Transport implements ModelDeliveryTransport {
   int peakOwnedTasks = 0;
   bool resumeAccepted = true;
   bool failCancel = false;
+  Completer<void>? cancellationStarted;
+  Completer<void>? cancellation;
   ModelTransferSnapshot? restored;
   @override
   Stream<ModelTransferEvent> get events => eventsController.stream;
@@ -947,6 +993,8 @@ class _Transport implements ModelDeliveryTransport {
   Future<void> cancel(String taskId) async {
     cancels.add(taskId);
     if (failCancel) throw StateError('cancellation rejected');
+    cancellationStarted?.complete();
+    await cancellation?.future;
     ownedTasks.remove(taskId);
   }
 

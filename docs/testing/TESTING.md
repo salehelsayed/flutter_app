@@ -10443,7 +10443,7 @@ State an investigation area separately from a proven root cause.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.
-  The model-delivery regressions include 30 core and 24 adapter/storage cases, all
+  The model-delivery regressions include 34 core and 24 adapter/storage cases, all
   passing with fake connectivity/downloader/storage and tiny real files for
   size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
   outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
@@ -10472,6 +10472,19 @@ State an investigation area separately from a proven root cause.
   SDK database rows, callbacks during native lookup, and mobile-consent
   revocation while resume awaits its callback. Failed-copy assertions in all
   three locales avoid promising retained progress after a fresh retry.
+  A Wi-Fi-constrained queued Android task cannot acknowledge Paused until its
+  worker runs: the pinned SDK pause call only records a flag and returns true.
+  Policy changes therefore inspect the existing restored task status. Enqueued
+  tasks are canceled, forgotten and cleaned up before one replacement uses the
+  latest policy; running tasks keep the existing pause/callback path, including
+  iOS changed-policy fresh requests. Queued status is an observation, not an
+  atomic worker-exit guarantee, so replacement still awaits owned cancellation
+  settlement. The regressions cover mobile consent and explicit mobile start,
+  delayed/rejected cancellation, stale callbacks and at most one owned task.
+  The two queued-policy cases fail before the fix (one enqueue rather than two).
+  Evidence: `.codex-test-logs/model-queued-policy-173-20261029/` contains
+  `queued-policy-red.log`, focused selector results and scoped analysis receipts;
+  native retest remains separate from these host fakes.
   Pixel 6/API 37 evidence on build 172 (`bbdbf5d73`) exposed a distinct Android
   reconnect defect: a resumed runner initializes `serverAcceptsRanges` false;
   DNS failure before a response reaches `prepResumeAfterFailure`, which deletes
