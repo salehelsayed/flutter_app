@@ -33,8 +33,7 @@ Future<void> showPrivateTranslatorSheet(
   required ModelDeliveryController controller,
   VoidCallback? onFreeUpSpace,
 }) async {
-  await controller.refresh();
-  if (!context.mounted) return;
+  unawaited(controller.refresh());
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
@@ -56,7 +58,9 @@ void main() {
       ),
     );
     var freeBytes = 1100000000;
+    Completer<void>? pendingMeasurement;
     controller.onRefresh = () async {
+      await pendingMeasurement?.future;
       if (freeBytes >= 2800000000) {
         controller.state.value = ModelNotDownloaded(
           totalBytes: _total,
@@ -86,7 +90,12 @@ void main() {
     expect(_isEnabled(tester, 'Download on Wi-Fi'), isFalse);
     await tester.tap(find.text('Free up space'));
     await tester.pumpAndSettle();
+    pendingMeasurement = Completer<void>();
     await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Your private translator'), findsOneWidget);
+    expect(_isEnabled(tester, 'Download on Wi-Fi'), isFalse);
+    pendingMeasurement.complete();
     await tester.pumpAndSettle();
     expect(find.text('4.0 GB free'), findsOneWidget);
     expect(_isEnabled(tester, 'Download on Wi-Fi'), isTrue);

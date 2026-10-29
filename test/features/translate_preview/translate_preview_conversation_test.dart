@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import '../../shared/fakes/fake_just_audio.dart';
+import 'fake_model_delivery_controller.dart';
 
 class _UnusedAi implements OnDeviceAi {
   @override
@@ -71,12 +73,16 @@ void main() {
     originalPlatform = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
     debugOnDeviceAiOverride = _UnusedAi();
+    debugModelDeliveryOverride = FakeModelDeliveryController(
+      const ModelReady(sizeBytes: 2600000000),
+    );
   });
 
   tearDown(() {
     JustAudioPlatform.instance = originalPlatform;
     debugTranslatePreviewEnabledOverride = null;
     debugOnDeviceAiOverride = null;
+    debugModelDeliveryOverride = null;
   });
 
   Future<void> finish(WidgetTester tester) async {

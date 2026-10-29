@@ -20,6 +20,7 @@ import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/post_card.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -34,6 +35,7 @@ import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/bidi_layout_checks.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart';
+import '../../translate_preview/fake_model_delivery_controller.dart';
 
 void main() {
   final initialNow = DateTime.utc(2026, 10, 21, 12);
@@ -77,6 +79,7 @@ void main() {
     WidgetTester tester,
     PostModel initialPost, {
     String authorName = 'Alice',
+    Locale locale = const Locale('en'),
     bool messageable = true,
     void Function(String text, String postId)? onReply,
     Future<ThoughtReplyStatus> Function(String, String, String)? sendReply,
@@ -96,7 +99,7 @@ void main() {
       MaterialApp(
         navigatorKey: navigator,
         navigatorObservers: [navigationObserver],
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: const Scaffold(body: Text('orbit-home')),
@@ -1410,9 +1413,16 @@ void main() {
   });
 
   group('TRANSLATE_PREVIEW', () {
+    setUp(() {
+      debugModelDeliveryOverride = FakeModelDeliveryController(
+        const ModelReady(sizeBytes: 2600000000),
+      );
+    });
+
     tearDown(() {
       debugTranslatePreviewEnabledOverride = null;
       debugOnDeviceAiOverride = null;
+      debugModelDeliveryOverride = null;
     });
 
     testWidgets('without the flag a foreign thought has no Translate', (
@@ -1424,11 +1434,11 @@ void main() {
       final thought = _thought(initialNow);
       await posts.savePost(thought);
 
-      await openCard(tester, thought);
+      await openCard(tester, thought, locale: const Locale('de'));
       await tester.pumpAndSettle();
 
       expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-      expect(find.text('Translate'), findsNothing);
+      expect(find.text('Übersetzung anzeigen'), findsNothing);
       await finish(tester);
     });
 
@@ -1442,9 +1452,9 @@ void main() {
       final thought = _thought(initialNow).copyWith(text: 'How are you today?');
       await posts.savePost(thought);
 
-      await openCard(tester, thought);
+      await openCard(tester, thought, locale: const Locale('de'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Translate'));
+      await tester.tap(find.text('Übersetzung anzeigen'));
       await tester.pumpAndSettle();
 
       expect(ai.requests, ['German: How are you today?']);
@@ -1453,8 +1463,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Wie geht es dir heute?'), findsOneWidget);
-      expect(find.text('Auto-translated, may be wrong'), findsOneWidget);
-      expect(find.text('Show original'), findsOneWidget);
+      expect(find.text('BETA'), findsOneWidget);
+      expect(find.text('Nur auf deinem Handy'), findsOneWidget);
+      expect(find.text('Ausblenden'), findsOneWidget);
       await finish(tester);
     });
   });
