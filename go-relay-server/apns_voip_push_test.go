@@ -756,7 +756,7 @@ func TestVC205APNSVoIPRequestUsesExactHeadersAndOpaqueBoundedPayload(t *testing.
 		"Apns-Topic":      callTestVoIPTopic,
 		"Apns-Push-Type":  "voip",
 		"Apns-Priority":   "10",
-		"Apns-Expiration": strconv.FormatInt(time.UnixMilli(payload.ExpiresAtMs).Unix(), 10),
+		"Apns-Expiration": "0",
 		"Content-Type":    "application/json",
 	}
 	for name, want := range checks {

@@ -82,6 +82,9 @@ func TestAPNSVoIPPrivateReceiptOptionalIDsNeverChangeResponse(t *testing.T) {
 				if r.APNSIDState != tc.state || r.APNSUniqueIDState != tc.state || r.StatusCode != 200 || r.Environment != "sandbox" || r.TraceID != trace || r.RequestID == "" || r.DurationNs < 0 || r.StartedAtMs <= 0 || r.ResponseAtMs <= 0 {
 					t.Fatal("incorrect attempt evidence")
 				}
+				if r.ExpirationSeconds != 0 {
+					t.Fatalf("receipt expirationSeconds = %d, want 0", r.ExpirationSeconds)
+				}
 				if tc.state == "present" && (r.APNSID != tc.id || r.APNSUniqueID != tc.unique) {
 					t.Fatal("returned IDs altered")
 				}
