@@ -10391,11 +10391,13 @@ State an investigation area separately from a proven root cause.
   size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
   outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
   storage admission/refresh, capability re-verification, cancellation completion
-  and owned-directory removal. The sheet/Thought/voice integration run passed
-  59 cases, including immediate sheet presentation during a delayed read-only
-  space refresh and preserving original content. The first core attempt was
-  resource-interrupted (guard exit 75); the later 31-case run passed with flat
-  swap-outs and unchanged guard limits. These results do not prove native
+  and owned-directory removal. The combined `affected-translate-preview` lane
+  passed 198 cases with zero failures/skips, including immediate sheet
+  presentation during a delayed read-only space refresh and preserving original
+  content. The workflow check passed 330 cases on the same source identity.
+  Resource-interrupted attempts remain retained as incomplete, and the passing
+  preview recovery kept swap-outs flat with unchanged guard limits. Other
+  selected checks remain unrun. These results do not prove native
   background transfer, cellular-byte policy, URLSession quiescence, backup
   exclusion or inference on a device. The iOS backup hook passed Swift parsing
   only. Pinned background_downloader 9.6.4 clears resume data after exhausted
@@ -10405,7 +10407,8 @@ State an investigation area separately from a proven root cause.
   caches remain OS-owned; app-support removal does not promise immediate OS-cache
   reclamation. Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
   `core-behavior-first-receipt.json`, `core-platform-behavior-receipt.json`,
-  `ui-refresh-review-receipt.json` and `backup-hook-parse-receipt.json`.
+  `focused-final/partial.json`, `focused-preview-recovery/results.json`,
+  `final-combined-analyze-receipt.json` and `final-merged-swift-parse-receipt.json`.
   Translation capability uses OS-reported physical/kernel-visible total RAM,
   typed OS version/API level and the running process ABI, never available RAM
   or advertised supported ABIs. The approved conservative policy requires

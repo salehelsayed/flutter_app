@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_runtime.dart';
 
 /// Where the one on-device translator download stands. The Thought and voice
 /// links, the download sheet and the Settings row all render from this.
@@ -114,7 +115,7 @@ abstract class ModelDeliveryController {
 @visibleForTesting
 ModelDeliveryController? debugModelDeliveryOverride;
 
-/// Null until the download logic is wired in. The links then behave as if the
-/// model is already on the phone, as the owner preview does today.
+/// The shared production download, or null when the preview is disabled.
+/// A test override avoids constructing any production adapters.
 ModelDeliveryController? get translatePreviewDelivery =>
-    debugModelDeliveryOverride;
+    debugModelDeliveryOverride ?? productionTranslatePreviewDelivery;

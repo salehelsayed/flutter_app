@@ -342,8 +342,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _closing ||
           !_isLive ||
           _post.id != postId ||
-          generation != _activityGeneration)
+          generation != _activityGeneration) {
         return;
+      }
       setState(() {
         _activity = activity;
         _activityLoading = false;
@@ -352,8 +353,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       if (!mounted ||
           _closing ||
           _post.id != postId ||
-          generation != _activityGeneration)
+          generation != _activityGeneration) {
         return;
+      }
       setState(() {
         _activity = null;
         _activityLoading = false;
