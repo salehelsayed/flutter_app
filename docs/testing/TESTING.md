@@ -5408,22 +5408,26 @@ visible and cannot become an ordinary first-attempt PASS.
 
 - **Background motion scheduling:** the default-on Moving background preference
   is stored separately from the wallpaper and loaded into AppShellController
-  before startup routing. AmbientBackground combines that preference with both
-  OS motion flags, resumed lifecycle state and TickerMode visibility. Only the
-  backgrounds receive the gated MediaQuery; content retains its original motion
-  and accessibility policy. The existing Cosmic/Mirror Cosmic static branches
-  stop their controllers and clocks; Aurora stops its own loop, and Signal is
-  already static. `background_motion_lifecycle_test.dart` checks queued frame
+  before startup routing. Only the saved preference and both OS motion flags
+  select the static frame through the backgrounds' gated MediaQuery; content
+  retains its original motion and accessibility policy. Lifecycle and TickerMode
+  pauses stop Cosmic/Mirror Cosmic clocks and controllers and Aurora's controller
+  without resetting their phase. Resuming continues mid-loop. Signal is already
+  static. `background_motion_lifecycle_test.dart` checks queued frame
   callbacks for all animated treatments, covered routes, initial paused mounts,
   resume, switching and OS precedence. Before the fix, all three paused cases
-  retained one queued callback rather than zero. Settings integration tests
+  retained one queued callback rather than zero. Six additional continuity
+  regressions caught pause/route cover resetting the drift to zero; all original
+  32 scheduling assertions remain unchanged in the final 38-case motion check.
+  Settings integration tests
   retain persistence, failed-save rollback, serialized writes, modal refresh and
   app-state publication after Settings disposal. The switch lives inside the
   existing Background chooser: adding a main-page row caused 65 pixels of scroll
   on the existing 390x844 no-scroll contract. That fixture omits
   `onOpenMediaStorageSheet`, so its passing fit assertion does not certify the
   full production page with Media & storage visible. SettingsScreen itself is
-  unchanged by the motion preference. The final 296-case focused run and
+  unchanged by the motion preference. The final 302 focused cases (38 motion and
+  264 preservation cases) and
   touched-file analysis pass; original failures and final logs remain in
   `.codex-test-logs/background-motion-129/` in the delivering checkout. Scheduler
   tests do not establish Pixel CPU, FPS, thermal or battery improvements; those

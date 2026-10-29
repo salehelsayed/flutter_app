@@ -43,6 +43,76 @@ void main() {
       expect(tester.binding.transientCallbackCount, greaterThan(0));
     });
 
+    testWidgets('${preference.name} retains its phase through app pause', (
+      tester,
+    ) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      addTearDown(() {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      });
+      await tester.pumpWidget(_background(preference));
+      await tester.pump(const Duration(seconds: 4));
+      final animation = _backgroundAnimation(tester, preference);
+      final before = animation.value;
+      expect(before, greaterThan(0.1));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(animation.value, closeTo(before, 0.000001));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 32));
+      expect(animation.value, greaterThan(before));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+    });
+
+    testWidgets('${preference.name} retains its phase under an opaque route', (
+      tester,
+    ) async {
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: AmbientBackground(
+            preference: preference,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 4));
+      final animation = _backgroundAnimation(tester, preference);
+      final before = animation.value;
+      expect(before, greaterThan(0.1));
+
+      navigator.currentState!.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('Covering route')),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      final covered = animation.value;
+      expect(covered, greaterThanOrEqualTo(before));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(animation.value, closeTo(covered, 0.000001));
+
+      navigator.currentState!.pop();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(animation.value, greaterThan(covered));
+      expect(tester.binding.transientCallbackCount, greaterThan(0));
+    });
+
     for (final state in [
       AppLifecycleState.inactive,
       AppLifecycleState.hidden,
@@ -273,4 +343,29 @@ Widget _background(
   return controller == null
       ? app
       : BackgroundMotionScope(controller: controller, child: app);
+}
+
+Animation<double> _backgroundAnimation(
+  WidgetTester tester,
+  BackgroundPreference preference,
+) {
+  if (preference == BackgroundPreference.aurora) {
+    return tester
+        .widgetList<AnimatedBuilder>(
+          find.descendant(
+            of: find.byType(AmbientBackground),
+            matching: find.byType(AnimatedBuilder),
+          ),
+        )
+        .map((builder) => builder.animation)
+        .whereType<AnimationController>()
+        .first;
+  }
+  final key = preference == BackgroundPreference.cosmic
+      ? 'cosmic-background-painter'
+      : 'cosmic-background-mirrored-painter';
+  final dynamic painter = tester
+      .widget<CustomPaint>(find.byKey(ValueKey(key)))
+      .painter;
+  return painter.animation as Animation<double>;
 }

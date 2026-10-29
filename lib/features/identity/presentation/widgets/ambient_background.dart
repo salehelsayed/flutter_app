@@ -110,14 +110,13 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     final mediaQuery = MediaQuery.maybeOf(context);
     _motionDisabled =
         !BackgroundMotionScope.enabledOf(context) ||
-        !_appResumed ||
-        !TickerMode.valuesOf(context).enabled ||
         (mediaQuery?.disableAnimations ?? false) ||
         (mediaQuery?.accessibleNavigation ?? false);
 
-    if (_shouldAnimate && !_controller.isAnimating) {
+    final animate = _shouldAnimate && !_temporarilyPaused;
+    if (animate && !_controller.isAnimating) {
       _controller.repeat();
-    } else if (!_shouldAnimate && _controller.isAnimating) {
+    } else if (!animate && _controller.isAnimating) {
       _controller.stop();
     }
     if (!_shouldAnimate) {
@@ -141,9 +140,13 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     final content = MediaQuery(data: originalMediaQuery, child: widget.child);
     final themedBackground = switch (widget.preference) {
       BackgroundPreference.defaultBackground => CosmicBackgroundMirrored(
+        paused: _temporarilyPaused,
         child: content,
       ),
-      BackgroundPreference.cosmic => CosmicBackground(child: content),
+      BackgroundPreference.cosmic => CosmicBackground(
+        paused: _temporarilyPaused,
+        child: content,
+      ),
       BackgroundPreference.aurora => _DefaultAmbientBackground(
         animation: _controller,
         child: content,
@@ -179,14 +182,18 @@ class _AmbientBackgroundState extends State<AmbientBackground>
     return widget.preference == BackgroundPreference.aurora;
   }
 
-  /// The Aurora ambient loop runs UNLESS (a) the preference is not the glow
+  bool get _temporarilyPaused =>
+      !_appResumed || !TickerMode.valuesOf(context).enabled;
+
+  /// Aurora permits motion UNLESS (a) the preference is not the glow
   /// treatment, (b) this is a chat/group surface (158 critic-2:
   /// idle-glow suppression so the always-mounted chrome BackdropFilters stay
   /// cacheable at rest), (c) this is the feed surface AND [reduceMotion] is
-  /// requested, or (d) the app, route, OS, or saved preference disables motion.
+  /// requested, or (d) the OS or saved preference disables motion.
   /// Each clause is additive (OR-combined) — none
   /// short-circuits another. When gated off the controller stays at value 0 →
-  /// the static final glow frame is rendered.
+  /// the static final glow frame is rendered. Temporary lifecycle/route pauses
+  /// stop the controller separately, preserving its current phase.
   bool get _shouldAnimate {
     if (!_usesGlowBackground) return false;
     if (widget.isChatSurface) return false;
