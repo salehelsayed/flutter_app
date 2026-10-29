@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
 import 'package:crypto/crypto.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
@@ -88,6 +89,63 @@ void main() {
       expect(events, isEmpty);
       downloader.emit(task, TaskStatus.running);
       expect(events.single.taskId, 'owned');
+    },
+  );
+
+  test(
+    'native reconnect waits for origin readiness and retains its partial offset',
+    () async {
+      final downloader = _Downloader();
+      final transport = createTransport(downloader: downloader);
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      await transport.enqueue(
+        taskId: 'one',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      final task = downloader.enqueued.single;
+      final partial = File('${destinations.path}/resume-partial');
+      await partial.writeAsBytes(List.filled(80, 1));
+      final origin = _RecoveringOrigin();
+      var nativeEntries = 0;
+
+      // The pinned runner enters resume before DNS is ready, loses the partial
+      // on the failed attempt, then retries against the now-missing path.
+      Future<int> nativeAttempt() async {
+        final gate = await task.options?.beforeTaskStartCallBack?.call(task);
+        if (gate != null) return -1;
+        nativeEntries++;
+        if (!origin.ready) {
+          partial.deleteSync();
+          origin.ready = true;
+          return nativeAttempt();
+        }
+        return partial.existsSync() ? partial.lengthSync() : 0;
+      }
+
+      fakeAsync((clock) {
+        int? resumedOffset;
+        Object? error;
+        HttpOverrides.runZoned(
+          nativeAttempt,
+          createHttpClient: (_) => _OriginClient(origin),
+        ).then<void>(
+          (offset) {
+            resumedOffset = offset;
+          },
+          onError: (Object e) {
+            error = e;
+          },
+        );
+        clock.flushMicrotasks();
+        clock.elapse(const Duration(seconds: 25));
+        expect(error, isNull);
+        expect(resumedOffset, 80);
+        expect(partial.existsSync(), isTrue);
+        expect(nativeEntries, 1);
+        expect(origin.probes, greaterThanOrEqualTo(2));
+      });
     },
   );
 
@@ -628,4 +686,53 @@ class _Downloader extends Fake implements FileDownloader {
     db.records[task.taskId] = TaskRecord(task, status, 0, 100);
     statusCallback?.call(TaskStatusUpdate(task, status));
   }
+}
+
+class _RecoveringOrigin {
+  bool ready = false;
+  int probes = 0;
+}
+
+class _OriginClient extends Fake implements HttpClient {
+  _OriginClient(this.origin);
+  final _RecoveringOrigin origin;
+  @override
+  Future<HttpClientRequest> headUrl(Uri url) async {
+    expect(url.scheme, 'https');
+    expect(url.host, 'updates.mknoon.xyz');
+    return _OriginRequest(origin);
+  }
+
+  @override
+  Future<HttpClientRequest> openUrl(String method, Uri url) {
+    expect(method, 'HEAD');
+    return headUrl(url);
+  }
+
+  @override
+  void close({bool force = false}) {}
+}
+
+class _OriginRequest extends Fake implements HttpClientRequest {
+  _OriginRequest(this.origin);
+  final _RecoveringOrigin origin;
+  @override
+  bool followRedirects = true;
+  @override
+  Future<HttpClientResponse> close() async {
+    origin.probes++;
+    if (!origin.ready) {
+      origin.ready = true;
+      throw const SocketException('Host lookup not ready');
+    }
+    return _OriginResponse();
+  }
+}
+
+class _OriginResponse extends Fake implements HttpClientResponse {
+  @override
+  int get statusCode => HttpStatus.ok;
+  @override
+  Future<E> drain<E>([E? futureValue]) =>
+      const Stream<List<int>>.empty().drain<E>(futureValue);
 }
