@@ -32,15 +32,19 @@ Future<void> showPrivateTranslatorSheet(
   BuildContext context, {
   required ModelDeliveryController controller,
   VoidCallback? onFreeUpSpace,
-}) => showModalBottomSheet<void>(
-  context: context,
-  isScrollControlled: true,
-  showDragHandle: true,
-  builder: (_) => PrivateTranslatorSheet(
-    controller: controller,
-    onFreeUpSpace: onFreeUpSpace,
-  ),
-);
+}) async {
+  await controller.refresh();
+  if (!context.mounted) return;
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (_) => PrivateTranslatorSheet(
+      controller: controller,
+      onFreeUpSpace: onFreeUpSpace,
+    ),
+  );
+}
 
 class PrivateTranslatorSheet extends StatelessWidget {
   const PrivateTranslatorSheet({

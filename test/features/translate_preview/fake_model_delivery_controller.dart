@@ -14,6 +14,14 @@ class FakeModelDeliveryController implements ModelDeliveryController {
   final ValueNotifier<bool> allowMobileData = ValueNotifier(false);
 
   final calls = <String>[];
+  int refreshCalls = 0;
+  Future<void> Function()? onRefresh;
+
+  @override
+  Future<void> refresh() async {
+    refreshCalls++;
+    await onRefresh?.call();
+  }
 
   @override
   Future<void> setAllowMobileData(bool allow) async {

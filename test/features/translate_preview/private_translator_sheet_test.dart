@@ -46,6 +46,54 @@ bool _isEnabled(WidgetTester tester, String label) => tester
     .enabled;
 
 void main() {
+  testWidgets('reopening after freeing space refreshes admission without '
+      'starting a download', (tester) async {
+    final controller = FakeModelDeliveryController(
+      const ModelNotEnoughSpace(
+        totalBytes: _total,
+        neededBytes: 2800000000,
+        freeBytes: 1100000000,
+      ),
+    );
+    var freeBytes = 1100000000;
+    controller.onRefresh = () async {
+      if (freeBytes >= 2800000000) {
+        controller.state.value = ModelNotDownloaded(
+          totalBytes: _total,
+          freeBytes: freeBytes,
+          onWifi: true,
+        );
+      }
+    };
+    await tester.pumpWidget(
+      localizedApp(
+        Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => showPrivateTranslatorSheet(
+                context,
+                controller: controller,
+                onFreeUpSpace: () => freeBytes = 4000000000,
+              ),
+              child: const Text('open'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(_isEnabled(tester, 'Download on Wi-Fi'), isFalse);
+    await tester.tap(find.text('Free up space'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    expect(find.text('4.0 GB free'), findsOneWidget);
+    expect(_isEnabled(tester, 'Download on Wi-Fi'), isTrue);
+    expect(controller.refreshCalls, 2);
+    expect(controller.calls, isEmpty);
+  });
+
   testWidgets('2a offer on Wi-Fi: Download on Wi-Fi starts without mobile '
       'data, Not now closes', (tester) async {
     final controller = await _openSheet(

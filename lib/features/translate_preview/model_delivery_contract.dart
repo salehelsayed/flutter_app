@@ -97,6 +97,9 @@ abstract class ModelDeliveryController {
 
   Future<void> setAllowMobileData(bool allow);
 
+  /// Rechecks available space and connectivity without starting or resuming.
+  Future<void> refresh();
+
   Future<void> start({required bool allowMobileData});
 
   Future<void> pause();
