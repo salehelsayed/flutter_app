@@ -9558,6 +9558,11 @@
       "critical": true
     },
     {
+      "path": "lib/features/translate_preview",
+      "capability": "host.dart.all",
+      "critical": true
+    },
+    {
       "path": "lib/features/update_check",
       "capability": "host.dart.all",
       "critical": true

@@ -10256,7 +10256,9 @@ State an investigation area separately from a proven root cause.
   defaults to false. The Thought viewer returns its original text widget and
   direct voice messages retain their original player subtree when disabled.
   `affected-translate-preview` in the selection manifest covers the preview
-  module and its exact Thought/chat entrypoints. Its five host files passed
+  module and its exact Thought/chat entrypoints. New feature folders also need
+  critical ownership in `tool/sims/critical_features.json`; check selection alone
+  does not register that ownership. Its five host files passed
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
