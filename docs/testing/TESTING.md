@@ -8991,6 +8991,16 @@ visible and cannot become an ordinary first-attempt PASS.
   cases pass exact release within 2.051 s/1.007 s, original caller cleanup, stable
   resource clearance and distinct eight-second PCM/End controls. The first 146
   assertion failures remain retained; these named replays do not relabel them.
+  Android calls explicitly advertise `callCapabilities = 0`: the current
+  inactive callback terminalizes the call and does not implement hold/resume.
+  Omitting the argument would restore Core-Telecom's default hold capability.
+  `MknoonCallAttributesRegressionTest` captures the actual add-call arguments
+  for both incoming and outgoing registration. Its causal baseline fails on
+  the advertised hold bit (expected 0, actual 2); the explicit-zero candidate
+  passes the same test with no skips. Receipts and fresh JUnit XML are retained
+  under `.codex-test-logs/call-fixes-h1-h2-m2-20261029/h2-red/` and `h2-green/`.
+  This host contract neither adds hold/resume nor changes true-disconnect
+  terminal custody, and it does not certify device interruption behavior.
   A separate Telecom dependency requires provider callbacks to return before
   a nested `CallControlScope.disconnect` can finish. The actual 146 cellular
   Answer failure records `onSetInactive`, a nested disconnect and Telecom's

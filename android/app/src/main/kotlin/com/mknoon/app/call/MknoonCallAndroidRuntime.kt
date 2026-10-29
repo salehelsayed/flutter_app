@@ -904,15 +904,28 @@ internal class MknoonCallRuntime private constructor(context: Context) {
     }
 }
 
+internal typealias MknoonTelecomAddCall = suspend (
+    CallAttributesCompat,
+    suspend (Int) -> Unit,
+    suspend (DisconnectCause) -> Unit,
+    suspend () -> Unit,
+    suspend () -> Unit,
+    CallControlScope.() -> Unit,
+) -> Unit
+
 /** Actual Core-Telecom and Android system boundary. */
-private class AndroidMknoonCallPlatform(
+internal class AndroidMknoonCallPlatform(
     context: Context,
     private val controller: () -> MknoonCallLifecycleController,
     private val stopIncomingRinger: (UUID) -> Unit,
+    callsManager: CallsManager = CallsManager(context.applicationContext),
+    private val registerAppWithTelecom: () -> Unit = {
+        callsManager.registerAppWithTelecom(CallsManager.CAPABILITY_BASELINE, Build.VERSION_CODES.TIRAMISU)
+    },
+    private val addCall: MknoonTelecomAddCall = callsManager::addCall,
 ) : MknoonCallPlatform {
     private val applicationContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val callsManager = CallsManager(applicationContext)
     private val notificationManager =
         applicationContext.getSystemService(NotificationManager::class.java)
     private var ongoingNotificationOwner: UUID? = null
@@ -968,10 +981,7 @@ private class AndroidMknoonCallPlatform(
         }
         if (registered.compareAndSet(false, true)) {
             try {
-                callsManager.registerAppWithTelecom(
-                    CallsManager.CAPABILITY_BASELINE,
-                    Build.VERSION_CODES.TIRAMISU,
-                )
+                registerAppWithTelecom()
             } catch (_: Exception) {
                 registered.set(false)
                 callback.onFailure()
@@ -984,14 +994,14 @@ private class AndroidMknoonCallPlatform(
         val registeredScope = AtomicReference<CallControlScope?>(null)
         scope.launch {
             try {
-                callsManager.addCall(
+                addCall(
                     callAttributes(direction),
-                    onAnswer = {
+                    {
                         check(controller().answerFromTelecom(nativeCallId)) {
                             "native answer transition rejected"
                         }
                     },
-                    onDisconnect = {
+                    {
                         val exactScope = registeredScope.get()
                         if (exactScope != null && locallyDisconnecting[nativeCallId] === exactScope) {
                             emitMknoonTelecomDisconnectDiagnostic(
@@ -1009,7 +1019,7 @@ private class AndroidMknoonCallPlatform(
                             }
                         }
                     },
-                    onSetActive = {
+                    {
                         val applied = controller().activateAudioFromTelecom(nativeCallId)
                         if (!applied) {
                             disconnectCallbackScope(
@@ -1022,7 +1032,7 @@ private class AndroidMknoonCallPlatform(
                             "native active transition rejected"
                         }
                     },
-                    onSetInactive = {
+                    {
                         val applied = controller().deactivateAudioFromTelecom(nativeCallId)
                         val releaseQueued = disconnectCallbackScope(
                             nativeCallId,
@@ -1322,7 +1332,7 @@ private class AndroidMknoonCallPlatform(
         address = Uri.parse("sip:mknoon"),
         direction = coreTelecomDirection(direction),
         callType = CallAttributesCompat.CALL_TYPE_AUDIO_CALL,
-        callCapabilities = CallAttributesCompat.SUPPORTS_SET_INACTIVE,
+        callCapabilities = 0,
         preferredStartingCallEndpoint = null,
         isLogExcluded = true,
     )
