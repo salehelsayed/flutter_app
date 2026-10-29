@@ -2394,7 +2394,7 @@
   "@translator_use_mobile_data": {"description": "Continues the download on mobile data."},
   "translator_failed_title": "The download didn't finish",
   "@translator_failed_title": {"description": "Sheet title after the download failed."},
-  "translator_failed_line": "Something went wrong. Try again and it continues from where it stopped.",
+  "translator_failed_line": "Something went wrong. Please try again.",
   "@translator_failed_line": {"description": "Sheet line after the download failed."},
   "translator_result_beta": "BETA",
   "@translator_result_beta": {"description": "Tag under every translation and transcript."},

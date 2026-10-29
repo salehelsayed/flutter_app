@@ -4801,7 +4801,7 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get translator_failed_line =>
-      'Etwas ist schiefgelaufen. Versuch es erneut, dann geht es dort weiter, wo es aufgehört hat.';
+      'Etwas ist schiefgelaufen. Bitte versuch es erneut.';
 
   @override
   String get translator_result_beta => 'BETA';

@@ -4690,7 +4690,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get translator_failed_line =>
-      'Something went wrong. Try again and it continues from where it stopped.';
+      'Something went wrong. Please try again.';
 
   @override
   String get translator_result_beta => 'BETA';

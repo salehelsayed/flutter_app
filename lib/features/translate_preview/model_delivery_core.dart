@@ -412,7 +412,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     _record = _record.copyWith(allowMobileData: allow);
     await _persist();
     final id = _record.taskId;
-    if (id != null && _record.phase == ModelDeliveryPhase.active) {
+    if (id != null &&
+        (_record.phase == ModelDeliveryPhase.active ||
+            _record.phase == ModelDeliveryPhase.resumeRequested)) {
       _record = _record.copyWith(
         phase: ModelDeliveryPhase.policyPauseRequested,
       );

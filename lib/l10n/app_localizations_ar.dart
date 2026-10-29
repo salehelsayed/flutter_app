@@ -4754,8 +4754,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_failed_title => 'لم يكتمل التنزيل';
 
   @override
-  String get translator_failed_line =>
-      'حدث خطأ ما. حاول مجددًا وسيكمل من حيث توقف.';
+  String get translator_failed_line => 'حدث خطأ ما. حاول مجددًا.';
 
   @override
   String get translator_result_beta => 'تجريبي';

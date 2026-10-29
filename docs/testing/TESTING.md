@@ -10386,15 +10386,16 @@ State an investigation area separately from a proven root cause.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.
-  The model-delivery candidate adds 21 core and 10 adapter/storage cases, all
+  The model-delivery regressions include 22 core and 14 adapter/storage cases, all
   passing with fake connectivity/downloader/storage and tiny real files for
   size/SHA verification. They cover opt-in, Wi-Fi/mobile policy, bounded-retry
   outcomes, pause/restart recovery, verification before Ready, mismatch deletion,
   storage admission/refresh, capability re-verification, cancellation completion
   and owned-directory removal. The combined `affected-translate-preview` lane
-  passed 198 cases with zero failures/skips, including immediate sheet
+  passed 206 cases with zero failures/skips, including immediate sheet
   presentation during a delayed read-only space refresh and preserving original
-  content. The workflow check passed 330 cases on the same source identity.
+  content. The earlier integration's 330-case workflow pass remains separate;
+  workflow was not rerun for the review-fix candidate.
   Resource-interrupted attempts remain retained as incomplete, and the passing
   preview recovery kept swap-outs flat with unchanged guard limits. Other
   selected checks remain unrun. These results do not prove native
@@ -10405,10 +10406,20 @@ State an investigation area separately from a proven root cause.
   resumability. A changed iOS network policy requires a fresh request because
   native resume data retains the original policy. Opaque iOS URLSession partial
   caches remain OS-owned; app-support removal does not promise immediate OS-cache
-  reclamation. Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
+  reclamation. Android's synthetic canceled callback and WorkManager cancel ACK
+  do not join its synchronous destination writer. The scoped fallback waits for
+  a stable/absent owned destination, deletes it again after any recreation and
+  requires two quiet absent samples before cancel returns. A timeout retains
+  task metadata. This is bounded filesystem settlement, not a native worker-exit
+  guarantee. Regressions cover late recreation after ACK, native tasks missing
+  SDK database rows, callbacks during native lookup, and mobile-consent
+  revocation while resume awaits its callback. Failed-copy assertions in all
+  three locales avoid promising retained progress after a fresh retry.
+  Evidence: `.codex-test-logs/model-delivery-129-20261029/` contains
   `core-behavior-first-receipt.json`, `core-platform-behavior-receipt.json`,
   `focused-final/partial.json`, `focused-preview-recovery/results.json`,
-  `final-combined-analyze-receipt.json` and `final-merged-swift-parse-receipt.json`.
+  `final-combined-analyze-receipt.json`, `final-merged-swift-parse-receipt.json`,
+  `review-final/results.json` and `review-final-analyze-receipt.json`.
   Translation capability uses OS-reported physical/kernel-visible total RAM,
   typed OS version/API level and the running process ABI, never available RAM
   or advertised supported ABIs. The approved conservative policy requires

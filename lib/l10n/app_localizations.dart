@@ -7811,7 +7811,7 @@ abstract class AppLocalizations {
   /// Sheet line after the download failed.
   ///
   /// In en, this message translates to:
-  /// **'Something went wrong. Try again and it continues from where it stopped.'**
+  /// **'Something went wrong. Please try again.'**
   String get translator_failed_line;
 
   /// Tag under every translation and transcript.

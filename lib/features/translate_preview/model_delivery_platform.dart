@@ -184,17 +184,24 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     FileDownloader? downloader,
     bool? isIOS,
     Duration cancellationTimeout = const Duration(seconds: 30),
+    Duration cancellationSettleInterval = const Duration(seconds: 1),
+    Future<String> Function(DownloadTask)? destinationPath,
   }) : _downloader = downloader ?? FileDownloader(),
        _isIOS = isIOS ?? Platform.isIOS,
-       _cancellationTimeout = cancellationTimeout;
+       _cancellationTimeout = cancellationTimeout,
+       _cancellationSettleInterval = cancellationSettleInterval,
+       _destinationPath = destinationPath ?? ((task) => task.filePath());
 
   final FileDownloader _downloader;
   final bool _isIOS;
   final Duration _cancellationTimeout;
+  final Duration _cancellationSettleInterval;
+  final Future<String> Function(DownloadTask) _destinationPath;
   final _events = StreamController<ModelTransferEvent>.broadcast(sync: true);
   final _tasks = <String, DownloadTask>{};
   final _sizes = <String, int>{};
   final _cancellations = <String, Completer<TaskStatus>>{};
+  final _settledStatuses = <String, TaskStatus>{};
 
   @override
   Stream<ModelTransferEvent> get events => _events.stream;
@@ -228,15 +235,18 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     for (final record in records) {
       if (!_owns(record.task)) continue;
       _tasks[record.taskId] = record.task as DownloadTask;
-      if (record.taskId != ownedTaskId) {
-        await cancel(record.taskId);
-        await forget(record.taskId);
-      } else {
-        _tasks[record.taskId] = record.task as DownloadTask;
-        _sizes[record.taskId] = record.expectedFileSize > 0
-            ? record.expectedFileSize
-            : gemmaModelBytes;
-      }
+      _sizes[record.taskId] = record.expectedFileSize > 0
+          ? record.expectedFileSize
+          : gemmaModelBytes;
+    }
+    // Native acceptance may survive a crash before the SDK database write.
+    for (final task in await _downloader.allTasks(group: modelDeliveryGroup)) {
+      if (_owns(task)) _tasks[task.taskId] = task as DownloadTask;
+    }
+    for (final id in _tasks.keys.toList()) {
+      if (id == ownedTaskId) continue;
+      await cancel(id);
+      await forget(id);
     }
     await _downloader.resumeFromBackground();
   }
@@ -244,7 +254,18 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
   @override
   Future<ModelTransferSnapshot?> restore(String taskId) async {
     final record = await _downloader.database.recordForId(taskId);
-    if (record == null || !_owns(record.task)) return null;
+    if (record == null) {
+      if (await _task(taskId) == null) return null;
+      final status = _settledStatuses[taskId];
+      return ModelTransferSnapshot(
+        taskId: taskId,
+        status: status == null ? ModelTransferStatus.enqueued : _status(status),
+        receivedBytes: status == TaskStatus.complete
+            ? _sizes[taskId] ?? gemmaModelBytes
+            : 0,
+      );
+    }
+    if (!_owns(record.task)) return null;
     _tasks[taskId] = record.task as DownloadTask;
     final total = record.expectedFileSize > 0
         ? record.expectedFileSize
@@ -280,6 +301,7 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
       headers: {'Accept-Encoding': 'identity'},
     );
     _tasks[taskId] = task;
+    _settledStatuses.remove(taskId);
     _sizes[taskId] = manifest.bytes;
     final accepted = await _downloader.enqueue(task);
     if (!accepted) {
@@ -293,8 +315,9 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     final remembered = _tasks[id];
     if (remembered != null) return remembered;
     final record = await _downloader.database.recordForId(id);
-    if (record == null || !_owns(record.task)) return null;
-    return _tasks[id] = record.task as DownloadTask;
+    final task = record?.task ?? await _downloader.taskForId(id) ?? _tasks[id];
+    if (task == null || !_owns(task)) return null;
+    return _tasks[id] = task as DownloadTask;
   }
 
   @override
@@ -311,47 +334,93 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     // Returning false asks the owner to cancel and create a fresh scoped task.
     if (_isIOS && task.requiresWiFi != requiresWiFi) return false;
     final resumed = task.copyWith(requiresWiFi: requiresWiFi);
+    _settledStatuses.remove(taskId);
     _tasks[taskId] = resumed;
     return _downloader.resume(resumed);
   }
 
   @override
   Future<void> cancel(String taskId) async {
-    final task = await _task(taskId);
-    if (task == null) return;
-    final record = await _downloader.database.recordForId(taskId);
-    if (await _downloader.taskForId(taskId) == null &&
-        record != null &&
-        record.status.isFinalState) {
-      return;
-    }
-    // ACK is not quiescence: iOS can still move the finished file after cancel.
-    // Resolve here, outside the controller queue, before that owner deletes it.
-    for (var attempt = 0; attempt < 2; attempt++) {
-      final settled = Completer<TaskStatus>();
-      _cancellations[taskId] = settled;
-      try {
+    var settled = Completer<TaskStatus>();
+    // Observe before even looking up the task: an inspection can race completion.
+    _cancellations[taskId] = settled;
+    try {
+      final task = await _task(taskId);
+      if (task == null) return;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        final native = await _downloader.taskForId(taskId);
+        final record = await _downloader.database.recordForId(taskId);
+        var status = _settledStatuses[taskId] ?? record?.status;
+        if (native == null && status != null && status.isFinalState) {
+          await _settleCanceledWriter(task, status);
+          return;
+        }
         final accepted = await _downloader.cancelTaskWithId(taskId);
-        if (!accepted && !settled.isCompleted) {
-          final current = await _downloader.database.recordForId(taskId);
-          if (await _downloader.taskForId(taskId) == null &&
-              current != null &&
-              current.status.isFinalState) {
-            return;
-          }
+        final current = await _downloader.database.recordForId(taskId);
+        final absent = await _downloader.taskForId(taskId) == null;
+        status = _settledStatuses[taskId] ?? current?.status;
+        if (!accepted &&
+            !settled.isCompleted &&
+            !(absent && status != null && status.isFinalState)) {
           throw StateError('Translator cancellation was not accepted');
         }
-        final status = await settled.future.timeout(_cancellationTimeout);
-        if (status != TaskStatus.paused) return;
+        if (!(absent && status != null && status.isFinalState)) {
+          status = await settled.future.timeout(_cancellationTimeout);
+        }
+        if (status != TaskStatus.paused) {
+          await _settleCanceledWriter(task, status);
+          return;
+        }
         // A racing pause can leave resume data; cancel that settled paused task
         // once more so the SDK clears its own staging state.
-      } finally {
-        if (identical(_cancellations[taskId], settled)) {
-          _cancellations.remove(taskId);
+        _settledStatuses.remove(taskId);
+        settled = Completer<TaskStatus>();
+        _cancellations[taskId] = settled;
+      }
+      throw StateError('Translator cancellation did not settle');
+    } finally {
+      if (identical(_cancellations[taskId], settled)) {
+        _cancellations.remove(taskId);
+      }
+    }
+  }
+
+  Future<void> _settleCanceledWriter(
+    DownloadTask task,
+    TaskStatus status,
+  ) async {
+    if (_isIOS || status == TaskStatus.complete) return;
+    // WorkManager cancel/"canceled" does not join its synchronous file writer.
+    // The pinned SDK exposes no join. Use the bounded filesystem-settle fallback:
+    // remove a stable owned destination, then require two quiet absent samples.
+    // A late recreation resets settlement and is deleted again before returning.
+    final destination = File(await _destinationPath(task));
+    final watch = Stopwatch()..start();
+    FileStat? previous;
+    var absentSamples = 0;
+    while (watch.elapsed < _cancellationTimeout) {
+      await Future<void>.delayed(_cancellationSettleInterval);
+      if (await _downloader.taskForId(task.taskId) != null) {
+        absentSamples = 0;
+        previous = null;
+        continue;
+      }
+      final stat = await destination.stat();
+      if (stat.type == FileSystemEntityType.notFound) {
+        previous = null;
+        if (++absentSamples >= 2) return;
+      } else {
+        absentSamples = 0;
+        if (previous?.size == stat.size &&
+            previous?.modified == stat.modified) {
+          await destination.delete();
+          previous = null;
+        } else {
+          previous = stat;
         }
       }
     }
-    throw StateError('Translator cancellation did not settle');
+    throw TimeoutException('Translator destination did not settle');
   }
 
   @override
@@ -361,10 +430,15 @@ final class BackgroundModelDeliveryTransport implements ModelDeliveryTransport {
     }
     _tasks.remove(taskId);
     _sizes.remove(taskId);
+    _settledStatuses.remove(taskId);
   }
 
   void _onStatus(TaskStatusUpdate update) {
     if (!_owns(update.task) || _events.isClosed) return;
+    _tasks[update.task.taskId] = update.task as DownloadTask;
+    if (update.status.isFinalState || update.status == TaskStatus.paused) {
+      _settledStatuses[update.task.taskId] = update.status;
+    }
     final cancellation = _cancellations[update.task.taskId];
     if (cancellation != null &&
         !cancellation.isCompleted &&

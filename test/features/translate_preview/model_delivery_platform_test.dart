@@ -25,6 +25,26 @@ ModelDeliveryManifest _manifest({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late Directory destinations;
+  setUp(() async {
+    destinations = await Directory.systemTemp.createTemp('translator-cancel-');
+  });
+  tearDown(() => destinations.delete(recursive: true));
+  BackgroundModelDeliveryTransport createTransport({
+    required FileDownloader downloader,
+    bool? isIOS,
+    Duration cancellationTimeout = const Duration(seconds: 30),
+    Future<String> Function(DownloadTask)? destinationPath,
+  }) => BackgroundModelDeliveryTransport(
+    downloader: downloader,
+    isIOS: isIOS,
+    cancellationTimeout: cancellationTimeout,
+    cancellationSettleInterval: const Duration(milliseconds: 2),
+    destinationPath:
+        destinationPath ??
+        (task) async => '${destinations.path}/${task.filename}',
+  );
+
   test(
     'adapter owns only its group and disables completion notifications',
     () async {
@@ -36,9 +56,7 @@ void main() {
         .2,
         100,
       );
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-      );
+      final transport = createTransport(downloader: downloader);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       expect(downloader.registeredGroup, modelDeliveryGroup);
@@ -77,10 +95,7 @@ void main() {
     'iOS unchanged policy resumes partial; changed policy requests scoped restart',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-        isIOS: true,
-      );
+      final transport = createTransport(downloader: downloader, isIOS: true);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -100,10 +115,7 @@ void main() {
     'Android resume changes native requiresWiFi on the same partial task',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-        isIOS: false,
-      );
+      final transport = createTransport(downloader: downloader, isIOS: false);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -121,9 +133,7 @@ void main() {
     'cancel ACK waits for terminal callback after a racing destination move',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-      );
+      final transport = createTransport(downloader: downloader);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -154,12 +164,158 @@ void main() {
   );
 
   test(
+    'Android canceled ACK precedes the writer final action and late recreation is deleted',
+    () async {
+      final downloader = _Downloader();
+      final destination = File('${destinations.path}/$gemmaModelFileName');
+      await destination.writeAsString('first destination');
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      await transport.enqueue(
+        taskId: 'one',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      final task = downloader.enqueued.single;
+      var acknowledged = false;
+      var lateWrite = false;
+      downloader.onCancel = (_) async {
+        downloader.emit(task, TaskStatus.canceled);
+        acknowledged = true;
+        return true;
+      };
+      downloader.onTaskForId = (id) async {
+        if (acknowledged && !lateWrite && !await destination.exists()) {
+          // The worker's copy fallback recreates the file after initial cleanup.
+          expect(downloader.db.deleted, isEmpty);
+          expect(downloader.enqueued, hasLength(1));
+          await destination.writeAsString('late worker destination');
+          lateWrite = true;
+        }
+        return downloader.active[id];
+      };
+      await transport.cancel('one');
+      expect(lateWrite, isTrue);
+      expect(await destination.exists(), isFalse);
+      await transport.forget('one');
+      await transport.enqueue(
+        taskId: 'two',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      expect(downloader.db.deleted, ['one']);
+      expect(downloader.enqueued, hasLength(2));
+    },
+  );
+
+  test(
+    'completion during taskForId remains observed before cancel inspection',
+    () async {
+      final downloader = _Downloader();
+      final transport = createTransport(
+        downloader: downloader,
+        isIOS: true,
+        cancellationTimeout: const Duration(milliseconds: 20),
+      );
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      await transport.enqueue(
+        taskId: 'one',
+        manifest: _manifest(),
+        requiresWiFi: true,
+      );
+      final task = downloader.enqueued.single;
+      var completed = false;
+      downloader.onTaskForId = (_) async {
+        if (!completed) {
+          completed = true;
+          downloader.emit(task, TaskStatus.complete);
+          // SDK persistence can still lag behind its delivered status.
+          downloader.db.records['one'] = TaskRecord(
+            task,
+            TaskStatus.running,
+            0,
+            100,
+          );
+        }
+        return null;
+      };
+      downloader.onCancel = (_) async => true; // No second callback.
+      await transport.cancel('one');
+      await transport.forget('one');
+      expect(completed, isTrue);
+      expect(downloader.canceled, isEmpty);
+      expect(downloader.db.deleted, ['one']);
+    },
+  );
+
+  test(
+    'native lookup retains owned task observed while the inspection awaits',
+    () async {
+      final downloader = _Downloader();
+      final transport = createTransport(downloader: downloader, isIOS: false);
+      addTearDown(transport.dispose);
+      await transport.initialize(null);
+      final task = _ownedTask('late');
+      downloader.active['late'] = task;
+      final destination = File('${destinations.path}/$gemmaModelFileName');
+      await destination.writeAsString('owned destination');
+      var delivered = false;
+      downloader.onTaskForId = (_) async {
+        if (!delivered) {
+          delivered = true;
+          downloader.emit(task, TaskStatus.canceled);
+        }
+        return null;
+      };
+      await transport.cancel('late');
+      expect(delivered, isTrue);
+      expect(await destination.exists(), isFalse);
+      await transport.forget('late');
+      expect(downloader.db.deleted, ['late']);
+    },
+  );
+
+  test(
+    'owned native task without SDK DB record is recovered and canceled',
+    () async {
+      final downloader = _Downloader();
+      final current = _ownedTask('current');
+      final stale = _ownedTask('stale');
+      final unrelated = _ownedTask('other').copyWith(group: 'smart_downloads');
+      downloader.active.addAll({
+        'current': current,
+        'stale': stale,
+        'other': unrelated,
+      });
+      final transport = createTransport(downloader: downloader);
+      addTearDown(transport.dispose);
+      await transport.initialize('current');
+      final recovered = await transport.restore('current');
+      expect(recovered!.taskId, 'current');
+      expect(recovered.status, ModelTransferStatus.enqueued);
+      expect(downloader.canceled, ['stale']);
+      expect(downloader.active['other'], same(unrelated));
+      // Also exercise lookup fallback after initialization, without either cache.
+      downloader.active['late'] = _ownedTask('late');
+      await transport.cancel('late');
+      await transport.cancel('current');
+      expect(downloader.canceled, ['stale', 'late', 'current']);
+      expect(downloader.enqueued, isEmpty);
+      final wrongDirectory = _ownedTask('foreign').copyWith(directory: 'other');
+      downloader.active['foreign'] = wrongDirectory;
+      await transport.cancel('foreign');
+      expect(downloader.active['foreign'], same(wrongDirectory));
+      expect(downloader.canceled, hasLength(3));
+    },
+  );
+
+  test(
     'rejected live cancel fails; terminal and absent task needs no cancel',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-      );
+      final transport = createTransport(downloader: downloader);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -182,7 +338,7 @@ void main() {
     'cancel with no terminal outcome times out without forgetting state',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
+      final transport = createTransport(
         downloader: downloader,
         cancellationTimeout: const Duration(milliseconds: 20),
       );
@@ -207,9 +363,7 @@ void main() {
     'cancel cleans a racing paused resume record before it finishes',
     () async {
       final downloader = _Downloader();
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-      );
+      final transport = createTransport(downloader: downloader);
       addTearDown(transport.dispose);
       await transport.initialize(null);
       await transport.enqueue(
@@ -250,9 +404,7 @@ void main() {
         );
         downloader.active[task.taskId] = task;
       }
-      final transport = BackgroundModelDeliveryTransport(
-        downloader: downloader,
-      );
+      final transport = createTransport(downloader: downloader);
       addTearDown(transport.dispose);
       await transport.initialize('current');
       expect(downloader.canceled, ['stale']);
@@ -385,6 +537,7 @@ class _Downloader extends Fake implements FileDownloader {
   bool? markDownloadedComplete;
   bool resumedBackground = false;
   Future<bool> Function(String)? onCancel;
+  Future<Task?> Function(String)? onTaskForId;
   @override
   Database get database => db;
   @override
@@ -451,7 +604,15 @@ class _Downloader extends Fake implements FileDownloader {
   }
 
   @override
-  Future<Task?> taskForId(String taskId) async => active[taskId];
+  Future<Task?> taskForId(String taskId) async =>
+      onTaskForId == null ? active[taskId] : await onTaskForId!(taskId);
+  @override
+  Future<List<Task>> allTasks({
+    String group = 'default',
+    bool includeTasksWaitingToRetry = true,
+    bool allGroups = false,
+  }) async =>
+      active.values.where((task) => allGroups || task.group == group).toList();
   @override
   Future<bool> cancelTaskWithId(String taskId) async {
     canceled.add(taskId);

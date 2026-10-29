@@ -121,6 +121,29 @@ void main() {
   );
 
   test(
+    'revoking mobile consent during delayed resume reconfigures before running',
+    () async {
+      final h = await _Harness.create(wifi: false);
+      addTearDown(h.dispose);
+      await h.controller.start(allowMobileData: true);
+      await h.event(ModelTransferStatus.running, bytes: 40);
+      await h.controller.pause();
+      await h.event(ModelTransferStatus.paused, bytes: 40);
+      await h.controller.resume();
+      expect(h.transport.resumes.single.requiresWiFi, isFalse);
+      expect(h.controller.state.value, isA<ModelPaused>());
+      await h.controller.setAllowMobileData(false);
+      expect(h.transport.pauses, [h.id, h.id]);
+      // The old resume acknowledgement arrives after consent was revoked.
+      await h.event(ModelTransferStatus.running, bytes: 41);
+      await h.event(ModelTransferStatus.paused, bytes: 41);
+      expect(h.transport.resumes.last.requiresWiFi, isTrue);
+      expect(h.controller.allowMobileData.value, isFalse);
+      expect(h.controller.state.value, isA<ModelWaitingForWifi>());
+    },
+  );
+
+  test(
     'revoking active mobile consent pauses before aligned native resume',
     () async {
       final h = await _Harness.create(wifi: false);

@@ -2157,7 +2157,7 @@
   "translator_waiting_line": "يكمل من حيث توقف عند عودتك إلى Wi-Fi.",
   "translator_use_mobile_data": "استخدام بيانات الجوال",
   "translator_failed_title": "لم يكتمل التنزيل",
-  "translator_failed_line": "حدث خطأ ما. حاول مجددًا وسيكمل من حيث توقف.",
+  "translator_failed_line": "حدث خطأ ما. حاول مجددًا.",
   "translator_result_beta": "تجريبي",
   "translator_result_only_phone": "على هاتفك فقط",
   "translator_hide": "إخفاء",

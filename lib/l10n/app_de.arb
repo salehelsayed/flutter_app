@@ -2157,7 +2157,7 @@
   "translator_waiting_line": "Es macht dort weiter, wo es aufgehört hat, sobald du wieder im WLAN bist.",
   "translator_use_mobile_data": "Mobile Daten nutzen",
   "translator_failed_title": "Der Download ist nicht fertig geworden",
-  "translator_failed_line": "Etwas ist schiefgelaufen. Versuch es erneut, dann geht es dort weiter, wo es aufgehört hat.",
+  "translator_failed_line": "Etwas ist schiefgelaufen. Bitte versuch es erneut.",
   "translator_result_beta": "BETA",
   "translator_result_only_phone": "Nur auf deinem Handy",
   "translator_hide": "Ausblenden",

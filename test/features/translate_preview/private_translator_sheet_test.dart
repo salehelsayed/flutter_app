@@ -48,6 +48,19 @@ bool _isEnabled(WidgetTester tester, String label) => tester
     .enabled;
 
 void main() {
+  for (final (language, message) in [
+    ('en', 'Something went wrong. Please try again.'),
+    ('ar', 'حدث خطأ ما. حاول مجددًا.'),
+    ('de', 'Etwas ist schiefgelaufen. Bitte versuch es erneut.'),
+  ]) {
+    testWidgets('failed copy avoids retained-progress promise in $language', (
+      tester,
+    ) async {
+      await _openSheet(tester, const ModelFailed(), locale: Locale(language));
+      expect(find.text(message), findsOneWidget);
+    });
+  }
+
   testWidgets('reopening after freeing space refreshes admission without '
       'starting a download', (tester) async {
     final controller = FakeModelDeliveryController(
@@ -242,10 +255,7 @@ void main() {
     final controller = await _openSheet(tester, const ModelFailed());
     expect(find.text("The download didn't finish"), findsOneWidget);
     expect(
-      find.text(
-        'Something went wrong. Try again and it continues from where it '
-        'stopped.',
-      ),
+      find.text('Something went wrong. Please try again.'),
       findsOneWidget,
     );
     await tester.tap(find.text('Try again'));
