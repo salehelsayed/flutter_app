@@ -11,8 +11,14 @@
 String gemmaTranslatePrompt(String languageName, String text) =>
     'Translate this chat message to $languageName. Output only the translation.\n$text';
 
+// Departs from the benchmark line 282, which forced Arabic: the owner asked
+// not to assume a language. The hint names common languages without
+// requiring one.
 const gemmaTranscribePrompt =
-    'Transcribe this Arabic voice message verbatim in Arabic. Preserve English words as spoken. Output only the transcript.';
+    'Transcribe this voice message verbatim, in the language or languages '
+    'actually spoken. It is often Arabic, English or German, but do not '
+    'assume a language. Keep words from different languages exactly as '
+    'spoken. Do not translate. Output only the transcript.';
 
 const gemmaModelFileName = 'gemma-4-E2B-it.litertlm';
 const gemmaModelBytes = 2588147712;
