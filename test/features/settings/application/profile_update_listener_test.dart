@@ -1,5 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/features/settings/application/download_profile_picture_use_case.dart';
+import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
+
+import '../../contact_request/support/contact_repair_harness.dart';
+import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -127,6 +139,7 @@ ChatMessage _makeProfileUpdateMessage(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late StreamController<ChatMessage> profileUpdateController;
   late _FakeBridge bridge;
   late _FakeContactRepo contactRepo;
@@ -148,6 +161,133 @@ void main() {
     listener.dispose();
     profileUpdateController.close();
   });
+
+  for (final cut in _ProfileAwaitCut.values) {
+    test('CONTACT-008 old avatar completion at ${cut.name} preserves newer '
+        'persisted key authority, name and flags in listener output', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'profile_key_race_',
+      );
+      final dbPath = '${directory.path}/account.db';
+      var db = await openRepairTestDatabase(dbPath);
+      final originalPlatform = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _ProfilePathProvider(directory.path);
+      final pause = _ProfilePause();
+      final owner = TestEd25519Identity.fromSeedByte(0x91);
+      final contacts = databaseContactRepository(db);
+      final avatarBridge = _ProfileDownloadBridge(
+        cut == _ProfileAwaitCut.avatarDownload ? pause : null,
+      );
+      final listenerRepository = _ProfileWriteBoundary(
+        contacts,
+        cut == _ProfileAwaitCut.contactWrite ? pause : null,
+      );
+      addTearDown(() async {
+        if (!pause.release.isCompleted) pause.release.complete();
+        listener.dispose();
+        PathProviderPlatform.instance = originalPlatform;
+        if (db.isOpen) await db.close();
+        await directory.delete(recursive: true);
+      });
+      final before = contactFor(
+        owner,
+        mlKem: 'old-mlkem',
+      ).copyWith(username: 'Old name', avatarVersion: 'v1');
+      await contacts.addContact(before);
+      listener.dispose();
+      listener = ProfileUpdateListener(
+        profileUpdateStream: profileUpdateController.stream,
+        contactRepo: listenerRepository,
+        bridge: avatarBridge,
+        downloadProfilePictureFn:
+            ({
+              required bridge,
+              required contactRepo,
+              required ownerPeerId,
+              required avatarVersion,
+              bool retryPendingRequest = false,
+            }) => downloadProfilePicture(
+              bridge: bridge,
+              contactRepo: contactRepo,
+              ownerPeerId: ownerPeerId,
+              avatarVersion: avatarVersion,
+              retryPendingRequest: retryPendingRequest,
+              avatarNormalizer: AvatarNormalizationHelper(
+                imageProcessor: ImageProcessor(
+                  compressFile:
+                      ({
+                        required path,
+                        required quality,
+                        required keepExif,
+                        minWidth = 1920,
+                        minHeight = 1080,
+                      }) async {
+                        final output = '${path}_processed.jpg';
+                        await File(
+                          output,
+                        ).writeAsBytes(_profilePng, flush: true);
+                        return XFile(output);
+                      },
+                ),
+              ),
+            ),
+      );
+      final updates = <ContactModel>[];
+      final emitted = Completer<void>();
+      final subscription = listener.contactUpdatedStream.listen((contact) {
+        updates.add(contact);
+        if (!emitted.isCompleted) emitted.complete();
+      });
+      addTearDown(subscription.cancel);
+      listener.start();
+      await listener.retryNow();
+      profileUpdateController.add(
+        _makeProfileUpdateMessage(owner.peerId, 'v2'),
+      );
+      await pause.entered.future.timeout(const Duration(seconds: 5));
+      // Metadata and ML-KEM rotation keep the account key bound to owner.peerId.
+      final newer = before.copyWith(
+        mlKemPublicKey: 'new-authoritative-mlkem',
+        mlKemKeyUpdatedTs: '2026-10-30T12:00:00.000Z',
+        username: 'New authoritative name',
+        isArchived: true,
+        archivedAt: '2026-10-30T12:01:00.000Z',
+        introsBannerDismissed: true,
+        introsSentAt: '2026-10-30T12:02:00.000Z',
+        introducedBy: 'Preserved introducer',
+        introducedByPeerId: 'introducer-peer',
+      );
+      await contacts.addContact(newer);
+      pause.release.complete();
+      await emitted.future.timeout(const Duration(seconds: 5));
+      expect(avatarBridge.downloads, 1);
+      expect(updates, hasLength(1));
+      final expected = newer.copyWith(
+        avatarVersion: 'v2',
+        avatarPath: 'media/avatars/${owner.peerId}.jpg',
+      );
+      listener.dispose();
+      await db.close();
+      db = await openRepairTestDatabase(dbPath);
+      final persisted = (await databaseContactRepository(
+        db,
+      ).getContact(owner.peerId))!.toMap();
+      expect(
+        persisted,
+        expected.toMap(),
+        reason: 'the persisted row must retain new authority',
+      );
+      expect(
+        updates.single.toMap(),
+        expected.toMap(),
+        reason: 'the observable refresh must contain current authority',
+      );
+      expect(
+        await File('${directory.path}/${expected.avatarPath}').exists(),
+        isTrue,
+      );
+    });
+  }
 
   group('ProfileUpdateListener', () {
     test('ignores unknown contacts', () async {
@@ -321,4 +461,70 @@ void main() {
       await sub.cancel();
     });
   });
+}
+
+enum _ProfileAwaitCut { avatarDownload, contactWrite }
+
+final class _ProfilePause {
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  Future<void> wait() async {
+    if (entered.isCompleted) return;
+    entered.complete();
+    await release.future;
+  }
+}
+
+final _profilePng = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGNhAAMWCAUAAGIACcSrH9MAAAAASUVORK5CYII=',
+);
+
+final class _ProfilePathProvider extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  _ProfilePathProvider(this.path);
+  final String path;
+  @override
+  Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+final class _ProfileDownloadBridge extends _FakeBridge {
+  _ProfileDownloadBridge(this.pause);
+  final _ProfilePause? pause;
+  var downloads = 0;
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    if (request['cmd'] == 'profile:download') {
+      downloads++;
+      final payload = request['payload'] as Map<String, dynamic>;
+      await File(
+        payload['outputPath'] as String,
+      ).writeAsBytes(Uint8List.fromList(_profilePng), flush: true);
+      await pause?.wait();
+    }
+    return jsonEncode({'ok': true});
+  }
+}
+
+// Only the profile listener/downloader's public repository operations are
+// intercepted; all state is committed by the real SQL repository.
+final class _ProfileWriteBoundary implements ContactRepository {
+  _ProfileWriteBoundary(this.inner, this.pause);
+  final ContactRepository inner;
+  final _ProfilePause? pause;
+  @override
+  Future<ContactModel?> getContact(String id) => inner.getContact(id);
+  @override
+  Future<List<ContactModel>> getAllContacts() => inner.getAllContacts();
+  @override
+  Future<void> addContact(ContactModel contact) async {
+    await pause?.wait();
+    await inner.addContact(contact);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw StateError(
+    'Unexpected profile operation: ${invocation.memberName}',
+  );
 }

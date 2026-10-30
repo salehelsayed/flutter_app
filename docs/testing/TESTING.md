@@ -3230,6 +3230,41 @@ deadlines. Retain the initial causal failures and resource-aborted final attempt
 in the same artifact directory; `focused-ad-preservation-final` exited 75 after
 the swap-out limit and is not a pass. The quiet-window runs kept swap-outs flat.
 
+Construct the SQL fixture, listeners, completers and their continuations inside
+that same `runAsync` zone when a widget journey awaits real I/O. Text entry must
+pump the existing frames before tapping a Send handler enabled by a rebuild.
+A retry fixture must wire the real atomic staging and settlement callbacks:
+`buildWidgetMessageRepository` is sufficient for read-only UI but intentionally
+refuses a send attempt without them; use `MediaRepositoryRealDbFixture` for the
+joined retry boundary. Host scanner/event-channel substitutes prove Dart
+routing and persisted state, never optical capture or native protection.
+
+The P0 host regressions on base
+`fd63d23aa3f775a965f6a5d25564c00565f24b6b` retain three unskipped application
+failures: `profile_update_listener_test.dart` exposes a late avatar repository
+write restoring an obsolete whole contact row; `contact_authority_freshness_await_race_test.dart`
+exposes a grant/token write after completed contact deletion; and
+`protected_viewer_incoming_call_test.dart` exposes the incoming call surface's
+230/255 alpha over a retained private viewer with no other opaque painted
+cover. The latter is supported by the host color assertion and source
+composition, not a captured pixel or device proof. The affected fail-fast files
+leave later cases unrun; this test-only batch contains no production fixes.
+Retained receipts and source anchors are in
+`.codex-test-logs/p0-inventory-20261030/{profile-stale-write-app-bug,revoked-capability-recreation-app-bug,private-viewer-call-opacity-app-bug}.json`.
+
+The new joined notification case in `test/app/call_back_feedback_test.dart`
+remains **UNRESOLVED cleanup stall**, unskipped. Its original widget attempt
+ended at the installed binding's ten-minute deadline with 12 existing cases
+passing. The owner's single 60-second phase probe reached every new-case
+assertion, unmount and cleanup frame, then stopped at `calls.dispose()`; it did
+not establish the cleanup cause. The probe was interrupted, and its zero SDK
+exit code is not a pass. Temporary phase prints were removed. Preserve
+`callback-unresolved-stall.json`, the original timeout and the single diagnostic
+log in the same artifact directory; no further probe or production defect is
+claimed by that evidence. Native source analysis and kernel compilation do not
+close the missing native capture, signed-candidate or release obligations.
+
+
 The contact-request shell integration tests mount the real `FeedWired` and its
 retained embedded `OrbitWired` with production SQL repositories and signed input.
 The three presentation obligations are now active: observable suppression release
