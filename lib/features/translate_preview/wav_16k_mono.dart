@@ -11,6 +11,13 @@ Uint8List wav16kMono(
   const targetRate = 16000;
   final input = ByteData.sublistView(pcm);
   final frames = pcm.lengthInBytes ~/ (2 * channels);
+  if (frames < 1) {
+    throw ArgumentError('PCM must contain at least one complete audio frame');
+  }
+  final outFrames = (frames * targetRate / sampleRate).floor();
+  if (outFrames < 1) {
+    throw ArgumentError('PCM must produce at least one normalized audio frame');
+  }
   final mono = Float64List(frames);
   for (var f = 0; f < frames; f++) {
     var sum = 0;
@@ -19,9 +26,6 @@ Uint8List wav16kMono(
     }
     mono[f] = sum / channels;
   }
-  final outFrames = frames == 0
-      ? 0
-      : (frames * targetRate / sampleRate).floor();
   final out = ByteData(44 + outFrames * 2);
   void ascii(int offset, String text) {
     for (var i = 0; i < text.length; i++) {

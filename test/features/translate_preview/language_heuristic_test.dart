@@ -96,18 +96,48 @@ void main() {
       expect(shouldOfferTranslate('مرحبا', 'xx'), isFalse);
     });
 
-    test('the prompt names languages the way the benchmark did', () {
+    test('the translation instruction names the selected language', () {
       expect(translateLanguageName('ar'), 'Arabic');
       expect(translateLanguageName('de'), 'German');
       expect(translateLanguageName('en'), 'English');
       expect(
-        gemmaTranslatePrompt('German', 'hello'),
-        'Translate this chat message to German. Output only the translation.\nhello',
+        gemmaTranslateInstruction('German'),
+        contains('Translate only the source text to German'),
       );
     });
   });
 
   group('wav16kMono', () {
+    test('rejects empty PCM instead of sending a header-only WAV', () {
+      expect(
+        () => wav16kMono(Uint8List(0), sampleRate: 16000, channels: 1),
+        throwsArgumentError,
+      );
+    });
+
+    test('rejects PCM without one complete interleaved frame', () {
+      expect(
+        () => wav16kMono(Uint8List(2), sampleRate: 16000, channels: 2),
+        throwsArgumentError,
+      );
+    });
+
+    test('rejects input too short to produce one normalized frame', () {
+      expect(
+        () => wav16kMono(Uint8List(2), sampleRate: 48000, channels: 1),
+        throwsArgumentError,
+      );
+    });
+
+    test('accepts one complete sample that produces a normalized frame', () {
+      final wav = ByteData.sublistView(
+        wav16kMono(Uint8List(2), sampleRate: 16000, channels: 1),
+      );
+      expect(wav.lengthInBytes, 46);
+      expect(wav.getUint32(40, Endian.little), 2);
+      expect(wav.getInt16(44, Endian.little), 0);
+    });
+
     test('writes a 16 kHz mono 16-bit header and averages stereo', () {
       final pcm = ByteData(8)
         ..setInt16(0, 1000, Endian.little)

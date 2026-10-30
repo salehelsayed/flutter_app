@@ -10454,6 +10454,26 @@ State an investigation area separately from a proven root cause.
   82 tests with fake AI/audio, including flag-off rendering, original-content
   retention, errors/retry, language decisions, WAV conversion and the neutral
   transcription prompt. This does not prove native inference or model delivery.
+  Preview requests now keep task instructions in LiteRT-LM's supported
+  `systemInstruction` and source audio/text in the user message. Prompt-contract
+  tests check verbatim spoken-language and data-only translation instructions;
+  they do not prove model obedience or exclude instruction echo. The WAV
+  converter rejects decoded PCM with no complete input frame or no normalized
+  output sample before an audio inference session is created. Valid short and
+  zero-amplitude complete samples remain accepted; there is no duration or
+  assistant-phrase blacklist. The three empty/partial-frame regressions failed
+  against the prior header-only-WAV behavior.
+  `TRANSLATE_PREVIEW_DIAG=true` additionally requires a debug build. Its
+  diagnostics include the exact input basename/size/SHA-256/header bytes,
+  native source codec, decoded/normalized duration and sample counts, and
+  JSON-escaped raw model responses. The switch is off by default; ordinary
+  builds do not perform this diagnostic file IO or print message content.
+  Keep replay output in ignored artifacts. Source inspection found no fixed
+  transcription WAV tempfile or alternate prompt/TTS input path, but cannot
+  establish which bytes the owner device decoded. Identical-note native
+  baseline/fix replay remains required to distinguish wrong/empty audio from
+  model echo; host prompt/WAV tests and Swift syntax parsing do not provide
+  that proof. Evidence: `.codex-test-logs/transcription-prompt-129-20261030/`.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.

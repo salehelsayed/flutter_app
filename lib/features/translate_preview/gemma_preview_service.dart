@@ -54,6 +54,7 @@ final class GemmaPreviewService implements OnDeviceAi {
         final model = await _loadedModel();
         return _measure('text', () async {
           final session = await model.createSession(
+            systemInstruction: gemmaTranslateInstruction(languageName),
             temperature: gemmaTemperature,
             randomSeed: gemmaSeed,
             topK: gemmaTopK,
@@ -61,12 +62,7 @@ final class GemmaPreviewService implements OnDeviceAi {
             maxOutputTokens: gemmaTextMaxOutputTokens,
           );
           try {
-            await session.addQueryChunk(
-              Message.text(
-                text: gemmaTranslatePrompt(languageName, text),
-                isUser: true,
-              ),
-            );
+            await session.addQueryChunk(Message.text(text: text, isUser: true));
             return _reply(await session.getResponse(), operation: 'translate');
           } finally {
             await session.close();
@@ -95,26 +91,7 @@ final class GemmaPreviewService implements OnDeviceAi {
         final sampleCount = pcm.lengthInBytes ~/ 2;
         final frameCount = channels > 0 ? sampleCount ~/ channels : null;
         debugPrint(
-          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
-            'event': 'decoded_audio',
-            'operation': 'transcribe',
-            'inputBasename': input.uri.pathSegments.last,
-            'inputBytes': inputBytes,
-            'inputSha256': digest.toString(),
-            'inputHeaderHex': header
-                .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
-                .join(),
-            'sourceContainer': decoded['sourceContainer'],
-            'sourceCodec': decoded['sourceCodec'],
-            'pcmBytes': pcm.lengthInBytes,
-            'sampleRate': sampleRate,
-            'channels': channels,
-            'sampleCount': sampleCount,
-            'frameCount': frameCount,
-            'durationMs': frameCount != null && sampleRate > 0
-                ? frameCount * 1000 / sampleRate
-                : null,
-          })}',
+          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({'event': 'decoded_audio', 'operation': 'transcribe', 'inputBasename': input.uri.pathSegments.last, 'inputBytes': inputBytes, 'inputSha256': digest.toString(), 'inputHeaderHex': header.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join(), 'sourceContainer': decoded['sourceContainer'], 'sourceCodec': decoded['sourceCodec'], 'pcmBytes': pcm.lengthInBytes, 'sampleRate': sampleRate, 'channels': channels, 'sampleCount': sampleCount, 'frameCount': frameCount, 'durationMs': frameCount != null && sampleRate > 0 ? frameCount * 1000 / sampleRate : null})}',
         );
       }
       final wav = wav16kMono(pcm, sampleRate: sampleRate, channels: channels);
@@ -123,16 +100,11 @@ final class GemmaPreviewService implements OnDeviceAi {
         final wavSampleRate = wavHeader.getUint32(24, Endian.little);
         final wavSampleCount = wavHeader.getUint32(40, Endian.little) ~/ 2;
         debugPrint(
-          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
-            'event': 'normalized_wav',
-            'operation': 'transcribe',
-            'wavSampleRate': wavSampleRate,
-            'wavSampleCount': wavSampleCount,
-            'wavDurationMs': wavSampleCount * 1000 / wavSampleRate,
-          })}',
+          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({'event': 'normalized_wav', 'operation': 'transcribe', 'wavSampleRate': wavSampleRate, 'wavSampleCount': wavSampleCount, 'wavDurationMs': wavSampleCount * 1000 / wavSampleRate})}',
         );
       }
       final session = await model.createSession(
+        systemInstruction: gemmaTranscribePrompt,
         temperature: gemmaTemperature,
         randomSeed: gemmaSeed,
         topK: gemmaTopK,
@@ -142,11 +114,7 @@ final class GemmaPreviewService implements OnDeviceAi {
       );
       try {
         await session.addQueryChunk(
-          Message.withAudio(
-            text: gemmaTranscribePrompt,
-            audioBytes: wav,
-            isUser: true,
-          ),
+          Message.withAudio(text: '', audioBytes: wav, isUser: true),
         );
         return _reply(await session.getResponse(), operation: 'transcribe');
       } finally {
@@ -207,12 +175,7 @@ final class GemmaPreviewService implements OnDeviceAi {
   String _reply(String reply, {required String operation}) {
     if (_diagnosticsEnabled) {
       debugPrint(
-        'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
-          'event': 'raw_model_output',
-          'operation': operation,
-          'lengthCodeUnits': reply.length,
-          'text': reply,
-        })}',
+        'TRANSLATE_PREVIEW_DIAG ${jsonEncode({'event': 'raw_model_output', 'operation': operation, 'lengthCodeUnits': reply.length, 'text': reply})}',
       );
     }
     final text = reply.trim();
