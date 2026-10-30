@@ -20,6 +20,7 @@ import 'package:flutter_app/features/contact_request/data/repositories/sql_conta
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contacts/application/add_contact_use_case.dart';
+import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -35,6 +36,7 @@ import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/fake_p2p_service_integration.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../support/contact_repair_harness.dart'
     show buildRepairWire, contactFor;
 
@@ -681,6 +683,16 @@ void main() {
       await attach(enableAutoAdd: enableAutoAdd);
     }
 
+    Future<int> decisionTimeMs() async {
+      final rows = await aliceDb.query(
+        'contact_relationship_consent',
+        columns: ['updated_at_ms'],
+        where: 'peer_id = ?',
+        whereArgs: [_bobId.peerId],
+      );
+      return rows.single['updated_at_ms']! as int;
+    }
+
     setUp(() async {
       contacts = _buildContactRepo(aliceDb);
       requests = _buildRequestRepo(aliceDb);
@@ -752,7 +764,208 @@ void main() {
       },
     );
 
-    for (final state in ['accepted', 'blocked', 'deleted']) {
+    for (final replay in [
+      'same 25h wire',
+      'same +1min future wire',
+      'signature at decision cutoff',
+    ]) {
+      test(
+        'accepted then deleted request stays withdrawn after SQL reopen ($replay)',
+        () async {
+          await attach();
+          var acceptedWire = lateWire;
+          if (replay == 'same +1min future wire') {
+            final ts = DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 1))
+                .toIso8601String();
+            acceptedWire = await buildRepairWire(
+              bus: _cryptoBus,
+              signer: _bobId,
+              recipientPublicKey: _aliceId.publicKey,
+              ts: ts,
+              outerTs: ts,
+              mlKem: 'future-accepted-key',
+            );
+          }
+          expect(
+            await receiver!.processIncomingMessage(acceptedWire),
+            HandleMessageResult.contactAutoAdded,
+          );
+          final stored = await firstPrompt.future;
+          expect(
+            await acceptContactRequest(
+              requestRepo: requests,
+              contactRepo: contacts,
+              peerId: _bobId.peerId,
+              expectedRequest: stored,
+            ),
+            AcceptContactRequestResult.success,
+          );
+          expect(await contacts.getContact(_bobId.peerId), isNotNull);
+          await deleteContactAndMessages(
+            contactRepo: contacts,
+            messageRepo: InMemoryMessageRepository(),
+            contactRequestRepo: requests,
+            peerId: _bobId.peerId,
+          );
+          final cutoffMs = await decisionTimeMs();
+          final withdrawn = await SqlContactRepairRepository(
+            aliceDb,
+          ).readConsent(_bobId.peerId);
+          expect(withdrawn?.state, ContactRelationshipState.withdrawn);
+
+          var replayWire = acceptedWire;
+          if (replay == 'signature at decision cutoff') {
+            final ts = DateTime.fromMillisecondsSinceEpoch(
+              cutoffMs,
+              isUtc: true,
+            ).toIso8601String();
+            replayWire = await buildRepairWire(
+              bus: _cryptoBus,
+              signer: _bobId,
+              recipientPublicKey: _aliceId.publicKey,
+              ts: ts,
+              outerTs: ts,
+              mlKem: 'signed-at-withdrawal-cutoff',
+            );
+          }
+
+          await reopen(enableAutoAdd: true);
+          final verifiedBefore = bridge.verifiedData.length;
+          final result = await receiver!.processIncomingMessage(replayWire);
+          expect(bridge.verifiedData.length, verifiedBefore + 1);
+          expect(result, HandleMessageResult.invalidMessage);
+          expect(await contacts.getContact(_bobId.peerId), isNull);
+          expect(await requests.getPendingRequests(), isEmpty);
+          final remaining = await requests.getRequest(_bobId.peerId);
+          if (remaining != null) {
+            expect(remaining.status, isNot(ContactRequestStatus.pending));
+          }
+          expect(prompted, isEmpty);
+          expect(autoAddCalls, 0);
+          final currentConsent = await SqlContactRepairRepository(
+            aliceDb,
+          ).readConsent(_bobId.peerId);
+          expect(currentConsent?.state, ContactRelationshipState.withdrawn);
+          expect(currentConsent?.revision, withdrawn?.revision);
+        },
+      );
+    }
+
+    test(
+      'older of two declined signed requests stays declined after SQL reopen',
+      () async {
+        await attach();
+        expect(
+          await receiver!.processIncomingMessage(lateWire),
+          HandleMessageResult.contactAutoAdded,
+        );
+        final first = await firstPrompt.future;
+        expect(
+          await declineContactRequest(
+            requestRepo: requests,
+            peerId: _bobId.peerId,
+            expectedRequest: first,
+          ),
+          DeclineContactRequestResult.success,
+        );
+
+        final firstDecisionMs = await decisionTimeMs();
+        final secondTs = DateTime.fromMillisecondsSinceEpoch(
+          firstDecisionMs + 1,
+          isUtc: true,
+        ).toIso8601String();
+        final secondWire = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          ts: secondTs,
+          outerTs: secondTs,
+          mlKem: 'second-signed-request',
+        );
+        expect(
+          await receiver!.processIncomingMessage(secondWire),
+          HandleMessageResult.contactRequest,
+        );
+        final second = (await requests.getRequest(_bobId.peerId))!;
+        expect(second.signature, isNot(first.signature));
+        final intermediateMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final intermediateTs = DateTime.fromMillisecondsSinceEpoch(
+          intermediateMs,
+          isUtc: true,
+        ).toIso8601String();
+        final intermediateWire = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          ts: intermediateTs,
+          outerTs: intermediateTs,
+          mlKem: 'undelivered-request-between-decisions',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(
+          await declineContactRequest(
+            requestRepo: requests,
+            peerId: _bobId.peerId,
+            expectedRequest: second,
+          ),
+          DeclineContactRequestResult.success,
+        );
+        final declined = (await requests.getRequest(_bobId.peerId))!;
+        final cutoffMs = await decisionTimeMs();
+
+        await reopen(enableAutoAdd: true);
+        for (final replayWire in [lateWire, intermediateWire]) {
+          final verifiedBefore = bridge.verifiedData.length;
+          final replayResult = await receiver!.processIncomingMessage(
+            replayWire,
+          );
+          expect(bridge.verifiedData.length, verifiedBefore + 1);
+          expect(replayResult, HandleMessageResult.invalidMessage);
+          expect(
+            (await requests.getRequest(_bobId.peerId))?.toMap(),
+            declined.toMap(),
+          );
+          expect(await requests.getPendingRequests(), isEmpty);
+          expect(await contacts.getContact(_bobId.peerId), isNull);
+          expect(prompted, isEmpty);
+          expect(autoAddCalls, 0);
+        }
+        expect(cutoffMs, greaterThan(firstDecisionMs));
+        expect(cutoffMs, greaterThan(intermediateMs));
+
+        // A genuinely different signed request strictly after the last
+        // decision remains eligible for a new manual decision.
+        final freshTs = DateTime.fromMillisecondsSinceEpoch(
+          cutoffMs + 1,
+          isUtc: true,
+        ).toIso8601String();
+        final freshWire = await buildRepairWire(
+          bus: _cryptoBus,
+          signer: _bobId,
+          recipientPublicKey: _aliceId.publicKey,
+          ts: freshTs,
+          outerTs: freshTs,
+          mlKem: 'new-signed-request-after-decisions',
+        );
+        expect(
+          await receiver!.processIncomingMessage(freshWire),
+          HandleMessageResult.contactRequest,
+        );
+        final fresh = await firstPrompt.future;
+        expect(fresh.signature, isNot(declined.signature));
+        expect(prompted, hasLength(1));
+        expect(
+          (await requests.getPendingRequests()).single.signature,
+          fresh.signature,
+        );
+        expect(await contacts.getContact(_bobId.peerId), isNull);
+        expect(autoAddCalls, 0);
+      },
+    );
+
+    for (final state in ['accepted', 'blocked']) {
       test(
         'late arrival preserves reopened $state authority and consent',
         () async {
@@ -764,31 +977,25 @@ void main() {
                 isBlocked: state == 'blocked',
               );
           await contacts.addContact(current);
-          if (state == 'deleted') {
-            await contacts.deleteContact(_bobId.peerId);
-          } else {
-            await requests.addRequest(
-              ContactRequestModel(
-                peerId: _bobId.peerId,
-                publicKey: _bobId.publicKey,
-                rendezvous: current.rendezvous,
-                username: 'Bob',
-                signature: 'previous-request-signature',
-                receivedAt: now,
-                status: state == 'accepted'
-                    ? ContactRequestStatus.accepted
-                    : ContactRequestStatus.pending,
-              ),
-            );
-          }
+          await requests.addRequest(
+            ContactRequestModel(
+              peerId: _bobId.peerId,
+              publicKey: _bobId.publicKey,
+              rendezvous: current.rendezvous,
+              username: 'Bob',
+              signature: 'previous-request-signature',
+              receivedAt: now,
+              status: state == 'accepted'
+                  ? ContactRequestStatus.accepted
+                  : ContactRequestStatus.pending,
+            ),
+          );
 
           await reopen(enableAutoAdd: true);
           final before = await contacts.getContact(_bobId.peerId);
           expect(
             await receiver!.processIncomingMessage(lateWire),
-            state == 'deleted'
-                ? HandleMessageResult.contactRequest
-                : HandleMessageResult.alreadyContact,
+            HandleMessageResult.alreadyContact,
           );
           expect(bridge.verifiedData, hasLength(1));
           expect(autoAddCalls, 0);
@@ -796,28 +1003,13 @@ void main() {
             (await contacts.getContact(_bobId.peerId))?.toMap(),
             before?.toMap(),
           );
-          if (state == 'deleted') {
-            await firstPrompt.future;
-            expect(prompted, hasLength(1));
-            expect(
-              (await SqlContactRepairRepository(
-                aliceDb,
-              ).readConsent(_bobId.peerId))?.state,
-              ContactRelationshipState.withdrawn,
-            );
-            expect(
-              (await requests.getPendingRequests()).single.peerId,
-              _bobId.peerId,
-            );
-          } else {
-            expect(prompted, isEmpty);
-            expect(
-              (await requests.getRequest(_bobId.peerId))?.status,
-              state == 'accepted'
-                  ? ContactRequestStatus.accepted
-                  : ContactRequestStatus.pending,
-            );
-          }
+          expect(prompted, isEmpty);
+          expect(
+            (await requests.getRequest(_bobId.peerId))?.status,
+            state == 'accepted'
+                ? ContactRequestStatus.accepted
+                : ContactRequestStatus.pending,
+          );
         },
       );
     }

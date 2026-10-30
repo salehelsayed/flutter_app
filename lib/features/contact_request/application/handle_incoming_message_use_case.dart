@@ -527,16 +527,21 @@ handleIncomingMessage({
   }
 
   // The stored signing identity survives the in-memory replay cache. Ignore
-  // the exact declined request before it can change request or wake authority;
+  // an exact declined request or a deleted contact's accepted request before
+  // it can change request or wake authority;
   // a fresh signed request still follows the manual-consent path below.
   final priorRequest = await requestRepo.getRequest(peerId);
   if (priorRequest != null &&
-      priorRequest.status == ContactRequestStatus.declined &&
+      (priorRequest.status == ContactRequestStatus.declined ||
+          (priorRequest.status == ContactRequestStatus.accepted &&
+              existingContact == null)) &&
       priorRequest.publicKey == publicKey &&
       _sameContactRequestSignatureBytes(priorRequest.signature, signature)) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'CONTACT_REQUEST_DECLINED_REPLAY_IGNORED',
+      event: priorRequest.status == ContactRequestStatus.declined
+          ? 'CONTACT_REQUEST_DECLINED_REPLAY_IGNORED'
+          : 'CONTACT_REQUEST_ACCEPTED_REPLAY_IGNORED',
       details: {},
     );
     return (HandleMessageResult.invalidMessage, null, null);
@@ -549,6 +554,17 @@ handleIncomingMessage({
       existingContact == null &&
       consent != null &&
       consent.state != ContactRelationshipState.active;
+  if (refused) {
+    final signedAtMs = parseSignedInstantMs(payload['ts']);
+    if (signedAtMs == null || signedAtMs <= consent.updatedAtMs) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_BEFORE_RELATIONSHIP_DECISION_IGNORED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+  }
   final requestDigest = contactRequestSignedDigest(dataToVerify);
 
   // 7c. The same signed request ID with a different signed body is a

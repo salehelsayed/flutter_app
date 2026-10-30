@@ -3321,16 +3321,33 @@ SQLite reopen and listener replay. The bounded in-memory ReplayCache defaults
 to seven days plus one hour, with its 1,000-entry cap; it is not a persistent
 nonce ledger. Extending the admissible age increases the replay window for
 captured authentic envelopes, while declined-signature, pending-row and current
-contact/block/withdrawal guards remain required. The three focused Dart files
-pass 116 cases, including 25-hour/near-seven-day admission, expiry/future limits
-and reopened pending/declined/accepted/blocked/deleted state. Seven actual Go
-crypto cases preserve nonce freshness, wrong-key/tamper rejection and binding of
-message ID/time in AES-GCM AAD. This does not certify device delivery. The relay
+contact/block/withdrawal guards remain required. A later review superseded the
+original deleted-contact test's expectation that a disposed envelope may prompt
+again. After authentication, withdrawn/declined peers now reject signed inner
+timestamps at or before the durable per-peer decision cutoff. Successful pending
+decisions and actual contact deletion preserve a precise, nondecreasing cutoff
+in the existing consent record. Deletion retains the latest terminal request
+identity, including canonical signature-alias rejection for an accepted request
+signed within the allowed future-clock window. A distinct request signed after
+the last decision still requires a new manual decision. No migration or extra
+envelope ledger is introduced; historical decision times are not reconstructed.
+The corrected cold-reopen cases fail causally before the fix (four failures,
+three passing controls), then all 197 cases across eleven focused Dart files
+pass with zero failures/skips; targeted analysis reports no issues. The first
+GREEN attempt exposed three helper-fixture failures because its hand-built
+schema omitted v121; that fixture now applies the existing migration. The first
+analysis warning and both initial test attempts remain in the evidence.
+Earlier seven Go crypto cases preserve nonce freshness, wrong-key/tamper
+rejection and binding of message ID/time in AES-GCM AAD. These host checks do not
+certify device delivery. The relay
 source retains ordinary inbox copies seven days from server storage, which is
 different from envelope age and is not unlimited offline custody. Evidence:
 `.codex-test-logs/contact-request-gaps-post129-20261029/` contains
 `cr006-causal-red.json`, `cr006-green-summary.json`, `cr006-green/`,
-`cr006-analyze/` and `cr006-crypto-preservation/`.
+`cr006-analyze/` and `cr006-crypto-preservation/`. The disposed-replay correction
+uses `cr006-cutoff-causal-red.json`, `cr006-cutoff-replay-red/`,
+`cr006-cutoff-green-final/` and `cr006-cutoff-analyze-final/`. Broader curated
+families and device/signed-candidate checks remain separate obligations.
 
 Feed, Orbit, FTE, Share and onboarding widget fixtures must persist the pending
 row before fake listener emission and bind the listener and decision fake to the

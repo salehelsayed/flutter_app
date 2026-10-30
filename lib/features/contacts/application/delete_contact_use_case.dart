@@ -3,6 +3,7 @@ import 'package:flutter_app/core/media/direct_private_media_transfer_registry.da
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
+import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
@@ -81,7 +82,12 @@ Future<void> deleteContactAndMessages({
         peerId: peerId,
       );
       if (contactRequestRepo != null) {
-        await contactRequestRepo.deleteRequest(peerId);
+        // Retain the latest terminal signed identity across deletion, including
+        // a request signed within the allowed future-clock window.
+        final request = await contactRequestRepo.getRequest(peerId);
+        if (request == null || request.status == ContactRequestStatus.pending) {
+          await contactRequestRepo.deleteRequest(peerId);
+        }
       }
 
       emitFlowEvent(

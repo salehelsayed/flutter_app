@@ -13,12 +13,16 @@ final class ContactRelationshipConsent {
   const ContactRelationshipConsent({
     required this.state,
     required this.revision,
+    required this.updatedAtMs,
   });
 
   final ContactRelationshipState state;
 
   /// Monotonic; bumped by every delete, decline and explicit (re-)add.
   final int revision;
+
+  /// Latest local relationship decision, as UTC epoch milliseconds.
+  final int updatedAtMs;
 }
 
 /// One authenticated, fresh, signed `new_request` asking for a reply.

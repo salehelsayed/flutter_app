@@ -180,6 +180,17 @@ Future<void> dbDeleteContactWithinTransaction(
   DatabaseExecutor txn,
   String peerId,
 ) async {
+  final consentRows = await txn.query(
+    'contact_relationship_consent',
+    columns: ['updated_at_ms'],
+    where: 'peer_id = ?',
+    whereArgs: [peerId],
+  );
+  final priorCutoffMs = consentRows.isEmpty
+      ? 0
+      : consentRows.single['updated_at_ms']! as int;
+  final wallNowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+  final decisionAtMs = priorCutoffMs > wallNowMs ? priorCutoffMs : wallNowMs;
   await dbDeleteAuthoredDirectTextIntents(txn, contactPeerId: peerId);
   await dbDeleteDirectContactDeviceRoster(txn, peerId);
   await txn.delete(
@@ -187,7 +198,19 @@ Future<void> dbDeleteContactWithinTransaction(
     where: 'contact_account_peer_id = ?',
     whereArgs: [peerId],
   );
-  await txn.delete('contacts', where: 'peer_id = ?', whereArgs: [peerId]);
+  final deleted = await txn.delete(
+    'contacts',
+    where: 'peer_id = ?',
+    whereArgs: [peerId],
+  );
+  if (deleted != 0) {
+    await txn.update(
+      'contact_relationship_consent',
+      {'updated_at_ms': decisionAtMs},
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+    );
+  }
 }
 
 /// Row counts committed by one final serialized contact-conversation purge.

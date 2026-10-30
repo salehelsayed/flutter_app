@@ -28,7 +28,7 @@ final class SqlContactRepairRepository implements ContactRepairRepository {
   Future<ContactRelationshipConsent?> readConsent(String peerId) async {
     final rows = await _db.query(
       _consent,
-      columns: <String>['state', 'revision'],
+      columns: <String>['state', 'revision', 'updated_at_ms'],
       where: 'peer_id = ?',
       whereArgs: <Object?>[peerId],
     );
@@ -38,6 +38,7 @@ final class SqlContactRepairRepository implements ContactRepairRepository {
         rows.single['state']! as String,
       ),
       revision: rows.single['revision']! as int,
+      updatedAtMs: rows.single['updated_at_ms']! as int,
     );
   }
 

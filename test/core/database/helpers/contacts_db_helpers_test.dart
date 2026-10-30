@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/migrations/121_contact_repair.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
@@ -40,6 +41,9 @@ void main() {
     await runDirectLinkedDeviceAddressingMigration(db);
     // SE-47: contact deletion also clears that contact's call history.
     await runCallHistoryMigration(db);
+    // CR-006: deletion retains the precise decision cutoff in the existing
+    // consent record and therefore uses the production v121 tables/triggers.
+    await runContactRepairMigration(db);
   });
 
   tearDown(() async {

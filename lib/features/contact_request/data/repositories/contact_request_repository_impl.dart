@@ -186,6 +186,22 @@ Future<ContactRequestDecisionResult> dbDecideContactRequest(
             : ContactRequestDecisionResult.notPending;
       }
 
+      // Capture the prior cutoff before contact/status triggers can replace it
+      // with their legacy whole-second timestamp.
+      final consentRows = await txn.query(
+        'contact_relationship_consent',
+        columns: ['updated_at_ms'],
+        where: 'peer_id = ?',
+        whereArgs: [peerId],
+      );
+      final priorCutoffMs = consentRows.isEmpty
+          ? 0
+          : consentRows.single['updated_at_ms']! as int;
+      final wallNowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+      final decisionAtMs = priorCutoffMs > wallNowMs
+          ? priorCutoffMs
+          : wallNowMs;
+
       Future<void> mark(String status) async {
         final changed = await txn.update(
           'contact_requests',
@@ -204,6 +220,12 @@ Future<ContactRequestDecisionResult> dbDecideContactRequest(
         if (changed != 1) {
           throw StateError('Contact request changed during decision');
         }
+        await txn.update(
+          'contact_relationship_consent',
+          {'updated_at_ms': decisionAtMs},
+          where: 'peer_id = ?',
+          whereArgs: [peerId],
+        );
       }
 
       if (hasContact) {
