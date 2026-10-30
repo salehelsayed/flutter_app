@@ -115,7 +115,7 @@ void main() {
   test(
     'v100 remains the sole successor to v99 and later versions follow it',
     () {
-      expect(currentIdentityDatabaseVersion, 125);
+      expect(currentIdentityDatabaseVersion, 126);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -137,7 +137,7 @@ void main() {
         expect(registry.where((entry) => entry.version == 118), hasLength(1));
         expect(registry.where((entry) => entry.version == 119), hasLength(1));
         expect(registry.where((entry) => entry.version == 120), hasLength(1));
-        expect(registry.where((entry) => entry.version > 125), isEmpty);
+        expect(registry.where((entry) => entry.version > 126), isEmpty);
         final index99 = registry.indexWhere((entry) => entry.version == 99);
         final index100 = registry.indexWhere((entry) => entry.version == 100);
         final index101 = registry.indexWhere((entry) => entry.version == 101);
@@ -164,7 +164,7 @@ void main() {
         expect(index109, index108 + 1);
         expect(index110, index109 + 1);
         expect(index111, index110 + 1);
-        expect(index111, registry.length - 15);
+        expect(index111, registry.length - 16);
         expect(registry[index100].name, '100_direct_private_media_lifecycle');
         expect(
           registry[index100].run,

@@ -4082,6 +4082,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Includes operation stages, fixed error categories, timing, app version, crash and freeze reports, and reporting health. No messages, images, audio, keys, contact or device IDs, tokens, or network addresses. Copy a support code to help us locate a problem.';
 
   @override
+  String get settings_thoughts_metrics_title => 'Thoughts metrics';
+
+  @override
+  String get settings_thoughts_metrics_desc =>
+      'Helps us count Thoughts as weekly estimates. We never read your Thoughts and keep no record of who sent what. Turning it off applies from now on.';
+
+  @override
   String get settings_diagnostics_sharing_on => 'Sharing on';
 
   @override

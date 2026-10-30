@@ -56,6 +56,7 @@ class SettingsScreen extends StatelessWidget {
   final Widget? groupExitDiagnosticsSection;
   final Widget? callDiagnosticsSection;
   final Widget? appDiagnosticsSection;
+  final Widget? thoughtsMetricsSection;
   final Widget? debugSection;
   final void Function(String) onSwitchView;
   final String activeTab;
@@ -91,6 +92,7 @@ class SettingsScreen extends StatelessWidget {
     this.groupExitDiagnosticsSection,
     this.callDiagnosticsSection,
     this.appDiagnosticsSection,
+    this.thoughtsMetricsSection,
     this.debugSection,
     required this.onSwitchView,
     required this.activeTab,
@@ -331,6 +333,7 @@ class SettingsScreen extends StatelessWidget {
                         ?groupExitDiagnosticsSection,
                         ?callDiagnosticsSection,
                         ?appDiagnosticsSection,
+                        ?thoughtsMetricsSection,
                         ?debugSection,
                       ],
                     ),

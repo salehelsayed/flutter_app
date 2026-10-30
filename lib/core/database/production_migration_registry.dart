@@ -125,6 +125,7 @@ import 'migrations/122_thoughts_reset.dart';
 import 'migrations/123_authored_direct_text_intents.dart';
 import 'migrations/124_thought_photo_previews_and_view_receipts.dart';
 import 'migrations/125_local_ai_previews.dart';
+import 'migrations/126_thoughts_metrics_opt_out.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -723,6 +724,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '125_local_ai_previews',
     runLocalAiPreviewsMigration,
   ),
+  ProductionMigrationEntry(
+    126,
+    '126_thoughts_metrics_opt_out',
+    runThoughtsMetricsOptOutMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1310,6 +1316,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     125,
     '125_local_ai_previews',
     runLocalAiPreviewsMigration,
+  ),
+  ProductionMigrationEntry(
+    126,
+    '126_thoughts_metrics_opt_out',
+    runThoughtsMetricsOptOutMigration,
   ),
 ]);
 

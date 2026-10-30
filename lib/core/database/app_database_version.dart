@@ -88,4 +88,6 @@
 // v123 retains authored direct text until the atomic encrypted custody commit.
 // v124 adds thought photo previews and first-view receipts (407, build 128).
 // v125 stores local AI previews; the Thoughts metrics switch moves to v126.
-const int currentIdentityDatabaseVersion = 125;
+// v126 adds posts.metrics_opt_out (0/1, default 0) for the Thoughts metrics
+// switch (build 129). Existing rows keep 0; the mark is one-way.
+const int currentIdentityDatabaseVersion = 126;

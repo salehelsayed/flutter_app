@@ -418,6 +418,7 @@ class PostCreateEnvelope {
     required String kem,
     required String ciphertext,
     required String nonce,
+    bool metricsOptOut = false,
   }) {
     return jsonEncode({
       'type': 'post_create',
@@ -427,6 +428,10 @@ class PostCreateEnvelope {
       'sender_peer_id': senderPeerId,
       'post_id': postId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
+      // Outer and plaintext on purpose: the relay's weekly Thoughts count
+      // skips this envelope. Absent when the switch was on, so that envelope
+      // stays byte-identical to builds before 129.
+      if (metricsOptOut) 'thoughts_metrics_opt_out': true,
     });
   }
 

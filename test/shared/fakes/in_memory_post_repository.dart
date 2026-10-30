@@ -70,8 +70,18 @@ class InMemoryPostRepository implements PostRepository {
 
   @override
   Future<void> savePost(PostModel post) async {
-    _posts[post.id] = post;
+    // Like the posts table, a save never clears metrics_opt_out.
+    _posts[post.id] = _posts[post.id]?.metricsOptOut == true
+        ? post.copyWith(metricsOptOut: true)
+        : post;
     _changes.add(post.id);
+  }
+
+  @override
+  Future<void> markUndeliveredOwnThoughtsMetricsOptOut() async {
+    for (final post in await loadRetryableOutgoingPosts()) {
+      _posts[post.id] = _posts[post.id]!.copyWith(metricsOptOut: true);
+    }
   }
 
   @override

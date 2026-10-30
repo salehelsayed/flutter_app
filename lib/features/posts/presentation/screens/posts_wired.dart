@@ -428,6 +428,7 @@ class _PostsWiredState extends State<PostsWired> {
             text: result.text,
             audience: result.audience,
             mediaDrafts: result.mediaDrafts,
+            secureKeyStore: widget.secureKeyStore,
             contactPresenceSnapshotRepository:
                 widget.contactPresenceSnapshotRepository,
             postsPrivacySettingsRepository:
@@ -568,6 +569,7 @@ class _PostsWiredState extends State<PostsWired> {
             appShellController: _settingsAppShellController,
             postsPrivacySettingsRepository:
                 widget.postsPrivacySettingsRepository,
+            postRepository: widget.postRepo,
             introductionRepository: widget.introductionRepository,
             nearbyLocationService: widget.nearbyLocationService,
             accountMigrationRunTransfer: widget.accountMigrationRunTransfer,

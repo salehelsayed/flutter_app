@@ -453,8 +453,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 125);
-        expect(manifest.databaseVersion, 125);
+        expect(currentIdentityDatabaseVersion, 126);
+        expect(manifest.databaseVersion, 126);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -595,7 +595,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 125);
+        expect(manifest.databaseVersion, 126);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -802,7 +802,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 125);
+        expect(manifest.databaseVersion, 126);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -967,7 +967,7 @@ CREATE TABLE identity (
           orderBy: 'attachment_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 125);
+        expect(manifest.databaseVersion, 126);
         expect(
           manifest.schemaInventory.tables['direct_media_blob_custody'],
           isNotEmpty,
@@ -1125,7 +1125,7 @@ CREATE TABLE identity (
       );
 
       final manifest = await _manifestFor(productionStaged);
-      expect(manifest.databaseVersion, 125);
+      expect(manifest.databaseVersion, 126);
       expect(
         manifest.schemaInventory.tables['direct_contact_device_bindings'],
         isNotEmpty,

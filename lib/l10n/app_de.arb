@@ -1886,6 +1886,8 @@
   "settings_app_diagnostics_switch": "App-Diagnosedaten teilen",
   "settings_app_diagnostics_summary": "Hilf dabei, Probleme mit Nachrichten, privaten Medien, Benachrichtigungen und dem App-Start zu erkennen. Berichte werden automatisch hochgeladen, sobald dieses Gerät online ist.",
   "settings_app_diagnostics_details": "Enthält Vorgangsphasen, festgelegte Fehlerkategorien, Zeitangaben, die App-Version, Berichte über Abstürze und Einfrieren sowie den Zustand der Berichterstattung. Keine Nachrichten, Bilder, Audiodaten, Schlüssel, Kontakt- oder Gerätekennungen, Tokens oder Netzwerkadressen. Kopiere einen Supportcode, damit wir das Problem finden können.",
+  "settings_thoughts_metrics_title": "Gedanken-Statistik",
+  "settings_thoughts_metrics_desc": "Hilft uns, Gedanken als wöchentliche Schätzwerte zu zählen. Wir lesen deine Gedanken nie und speichern nicht, wer was gesendet hat. Das Ausschalten gilt ab jetzt.",
   "settings_diagnostics_sharing_on": "Teilen aktiviert",
   "settings_diagnostics_off": "Aus",
   "settings_diagnostics_status_unavailable": "Der Diagnosestatus ist vorübergehend nicht verfügbar.",

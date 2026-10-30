@@ -4175,6 +4175,13 @@ class AppLocalizationsDe extends AppLocalizations {
       'Enthält Vorgangsphasen, festgelegte Fehlerkategorien, Zeitangaben, die App-Version, Berichte über Abstürze und Einfrieren sowie den Zustand der Berichterstattung. Keine Nachrichten, Bilder, Audiodaten, Schlüssel, Kontakt- oder Gerätekennungen, Tokens oder Netzwerkadressen. Kopiere einen Supportcode, damit wir das Problem finden können.';
 
   @override
+  String get settings_thoughts_metrics_title => 'Gedanken-Statistik';
+
+  @override
+  String get settings_thoughts_metrics_desc =>
+      'Hilft uns, Gedanken als wöchentliche Schätzwerte zu zählen. Wir lesen deine Gedanken nie und speichern nicht, wer was gesendet hat. Das Ausschalten gilt ab jetzt.';
+
+  @override
   String get settings_diagnostics_sharing_on => 'Teilen aktiviert';
 
   @override

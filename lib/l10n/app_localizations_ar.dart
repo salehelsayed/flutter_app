@@ -4143,6 +4143,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'تشمل مراحل العمليات وفئات الأخطاء المحددة والتوقيت وإصدار التطبيق وتقارير التعطّل والتجمّد وحالة عمل نظام التقارير. لا تشمل الرسائل أو الصور أو الصوت أو المفاتيح أو معرّفات جهات الاتصال أو الأجهزة أو الرموز السرية أو عناوين الشبكة. انسخ رمز الدعم لمساعدتنا في العثور على المشكلة.';
 
   @override
+  String get settings_thoughts_metrics_title => 'إحصاءات الخواطر';
+
+  @override
+  String get settings_thoughts_metrics_desc =>
+      'تساعدنا على عدّ الخواطر كتقديرات أسبوعية. لا نقرأ خواطرك أبدًا ولا نحتفظ بأي سجل لمن أرسل ماذا. يسري الإيقاف من الآن فصاعدًا.';
+
+  @override
   String get settings_diagnostics_sharing_on => 'المشاركة مفعّلة';
 
   @override

@@ -6788,6 +6788,18 @@ abstract class AppLocalizations {
   /// **'Includes operation stages, fixed error categories, timing, app version, crash and freeze reports, and reporting health. No messages, images, audio, keys, contact or device IDs, tokens, or network addresses. Copy a support code to help us locate a problem.'**
   String get settings_app_diagnostics_details;
 
+  /// No description provided for @settings_thoughts_metrics_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Thoughts metrics'**
+  String get settings_thoughts_metrics_title;
+
+  /// No description provided for @settings_thoughts_metrics_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Helps us count Thoughts as weekly estimates. We never read your Thoughts and keep no record of who sent what. Turning it off applies from now on.'**
+  String get settings_thoughts_metrics_desc;
+
   /// No description provided for @settings_diagnostics_sharing_on.
   ///
   /// In en, this message translates to:

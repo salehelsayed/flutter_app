@@ -21,6 +21,7 @@ import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.
 import 'package:flutter_app/features/posts/domain/repositories/contact_presence_snapshot_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
+import 'package:flutter_app/features/settings/application/thoughts_metrics_preference_use_cases.dart';
 
 export 'package:flutter_app/features/posts/application/post_delivery_runner.dart'
     show CreatedLocalPost, CreatedLocalPostRecipient, SendPostResult;
@@ -215,6 +216,9 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     return (SendPostResult.noEligibleRecipients, null);
   }
 
+  final metricsOptOut =
+      secureKeyStore != null &&
+      !await loadThoughtsMetricsEnabled(secureKeyStore: secureKeyStore);
   final now = DateTime.now().toUtc();
   final createdAt = now.toIso8601String();
   var post = PostModel(
@@ -235,6 +239,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     nearbySenderCapturedAt: nearbySettings?.lastLocalCapturedAt,
     nearbySenderAccuracyM: nearbySettings?.lastLocalAccuracyM,
     isIncoming: false,
+    metricsOptOut: metricsOptOut,
     deliveryStatus: 'sending',
   );
   if (hasMedia) {

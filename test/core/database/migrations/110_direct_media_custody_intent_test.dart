@@ -64,7 +64,7 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 125);
+      expect(currentIdentityDatabaseVersion, 126);
       expect(await _userVersion(upgraded), currentIdentityDatabaseVersion);
       expect(
         (await upgraded.query(

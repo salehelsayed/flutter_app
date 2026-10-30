@@ -2085,6 +2085,8 @@
   "settings_app_diagnostics_switch": "Share app diagnostics",
   "settings_app_diagnostics_summary": "Help identify problems with messages, private media, notifications, and app startup. Reports upload automatically when this phone is online.",
   "settings_app_diagnostics_details": "Includes operation stages, fixed error categories, timing, app version, crash and freeze reports, and reporting health. No messages, images, audio, keys, contact or device IDs, tokens, or network addresses. Copy a support code to help us locate a problem.",
+  "settings_thoughts_metrics_title": "Thoughts metrics",
+  "settings_thoughts_metrics_desc": "Helps us count Thoughts as weekly estimates. We never read your Thoughts and keep no record of who sent what. Turning it off applies from now on.",
   "settings_diagnostics_sharing_on": "Sharing on",
   "settings_diagnostics_off": "Off",
   "settings_diagnostics_status_unavailable": "Diagnostic status is temporarily unavailable.",

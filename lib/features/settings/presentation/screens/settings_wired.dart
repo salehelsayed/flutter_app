@@ -3,6 +3,7 @@ import 'package:flutter_app/features/call/application/voice_call_feature_flags.d
 import '../widgets/call_privacy_settings_control.dart';
 import '../widgets/call_diagnostics_settings_section.dart';
 import '../widgets/app_diagnostics_settings_section.dart';
+import '../widgets/thoughts_metrics_settings_section.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -22,6 +23,7 @@ import 'package:flutter_app/features/settings/application/background_preference_
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
+import 'package:flutter_app/features/settings/application/thoughts_metrics_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -37,6 +39,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/posts_privacy_settings.dart';
+import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_settings_repository.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/application/upload_profile_picture_use_case.dart';
@@ -71,6 +74,9 @@ class SettingsWired extends StatefulWidget {
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
+
+  /// Lets switching Thoughts metrics off mark own undelivered Thoughts.
+  final PostRepository? postRepository;
   final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
   final IntroductionRepository? introductionRepository;
   final NearbyLocationService? nearbyLocationService;
@@ -108,6 +114,7 @@ class SettingsWired extends StatefulWidget {
     required this.imageProcessor,
     required this.appShellController,
     required this.postsPrivacySettingsRepository,
+    this.postRepository,
     this.groupExitDiagnosticRepository,
     this.introductionRepository,
     this.nearbyLocationService,
@@ -153,6 +160,7 @@ class _SettingsWiredState extends State<SettingsWired>
       const MediaDownloadPreferences.defaults();
   String? _mediaDownloadError;
   PostsPrivacySettings _postsPrivacySettings = const PostsPrivacySettings();
+  bool _thoughtsMetricsEnabled = true;
   List<IntroductionModel> _debugIntroductions = const [];
   bool _isLoadingDebugIntroductions = false;
   String? _debugIntroductionsError;
@@ -187,6 +195,7 @@ class _SettingsWiredState extends State<SettingsWired>
     _loadVideoQualityPreference();
     _loadMediaDownloadPreferences();
     _loadPostsPrivacySettings();
+    _loadThoughtsMetricsEnabled();
   }
 
   @override
@@ -573,6 +582,24 @@ class _SettingsWiredState extends State<SettingsWired>
     );
     setState(() => _postsPrivacySettings = updated);
     await widget.postsPrivacySettingsRepository.save(updated);
+  }
+
+  Future<void> _loadThoughtsMetricsEnabled() async {
+    final enabled = await loadThoughtsMetricsEnabled(
+      secureKeyStore: widget.secureKeyStore,
+    );
+    if (mounted) {
+      setState(() => _thoughtsMetricsEnabled = enabled);
+    }
+  }
+
+  Future<void> _onThoughtsMetricsChanged(bool enabled) async {
+    setState(() => _thoughtsMetricsEnabled = enabled);
+    await saveThoughtsMetricsEnabled(
+      secureKeyStore: widget.secureKeyStore,
+      enabled: enabled,
+      postRepository: widget.postRepository,
+    );
   }
 
   Future<void> _loadDebugIntroductions({IdentityModel? identity}) async {
@@ -1153,6 +1180,10 @@ class _SettingsWiredState extends State<SettingsWired>
           ? null
           : _onMoveAccountToNewPhone,
       appDiagnosticsSection: const AppDiagnosticsSettingsSection(),
+      thoughtsMetricsSection: ThoughtsMetricsSettingsSection(
+        enabled: _thoughtsMetricsEnabled,
+        onChanged: _onThoughtsMetricsChanged,
+      ),
       callDiagnosticsSection: CallDiagnosticsSettingsSection(
         enabled: CallDiagnostics.instance.enabledListenable,
         setEnabled: CallDiagnostics.instance.setEnabled,

@@ -29,6 +29,11 @@ class PostModel {
   final String? nearbyDistanceLabel;
   final bool isIncoming;
 
+  /// Own Thought created, or still undelivered, while the Thoughts metrics
+  /// switch was off. One-way: [toMap] writes it only when set, so a later
+  /// save of an older copy never clears it.
+  final bool metricsOptOut;
+
   /// Read state projected from `post_feed_state`, not a column in `posts`.
   final bool isRead;
   final bool isFocused;
@@ -67,6 +72,7 @@ class PostModel {
     this.nearbySenderAccuracyM,
     this.nearbyDistanceLabel,
     this.isIncoming = true,
+    this.metricsOptOut = false,
     this.isRead = false,
     this.isFocused = false,
     this.deliveryStatus = 'available',
@@ -107,6 +113,7 @@ class PostModel {
           ?.toDouble(),
       nearbyDistanceLabel: map['nearby_distance_label'] as String?,
       isIncoming: (map['is_incoming'] as int? ?? 1) == 1,
+      metricsOptOut: (map['metrics_opt_out'] as int? ?? 0) == 1,
       isRead: (map['is_read'] as int? ?? 0) == 1,
       isFocused: (map['is_focused'] as int? ?? 0) == 1,
       deliveryStatus:
@@ -145,6 +152,7 @@ class PostModel {
       'nearby_sender_captured_at': nearbySenderCapturedAt,
       'nearby_sender_accuracy_m': nearbySenderAccuracyM,
       'is_incoming': isIncoming ? 1 : 0,
+      if (metricsOptOut) 'metrics_opt_out': 1,
       'is_focused': isFocused ? 1 : 0,
       'delivery_status': deliveryStatus,
     };
@@ -174,6 +182,7 @@ class PostModel {
     double? nearbySenderAccuracyM,
     String? nearbyDistanceLabel,
     bool? isIncoming,
+    bool? metricsOptOut,
     bool? isRead,
     bool? isFocused,
     String? deliveryStatus,
@@ -214,6 +223,7 @@ class PostModel {
           nearbySenderAccuracyM ?? this.nearbySenderAccuracyM,
       nearbyDistanceLabel: nearbyDistanceLabel ?? this.nearbyDistanceLabel,
       isIncoming: isIncoming ?? this.isIncoming,
+      metricsOptOut: metricsOptOut ?? this.metricsOptOut,
       isRead: isRead ?? this.isRead,
       isFocused: isFocused ?? this.isFocused,
       deliveryStatus: deliveryStatus ?? this.deliveryStatus,

@@ -348,6 +348,23 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   }
 
   @override
+  Future<void> markUndeliveredOwnThoughtsMetricsOptOut() async {
+    for (final post in await loadRetryableOutgoingPosts()) {
+      if (post.metricsOptOut) continue;
+      try {
+        // A partial row updates only this column, so a fanout persisting
+        // delivery status at the same time keeps its own write.
+        await dbInsertPost(<String, Object?>{
+          'post_id': post.id,
+          'metrics_opt_out': 1,
+        });
+      } catch (_) {
+        // The Thought was deleted meanwhile; nothing is left to send.
+      }
+    }
+  }
+
+  @override
   Future<List<PostModel>> loadExpiredPosts(String nowIso) async {
     final dbLoad = _require(
       dbLoadExpiredPosts,

@@ -123,9 +123,13 @@ class PostDeliveryRunner {
         isEligible: isEligible,
         maxConcurrentRecipients: maxConcurrentRecipients,
         resolvedRecipients: created.resolvedRecipients,
-        buildWireEnvelope: (recipient) {
+        buildWireEnvelope: (recipient) async {
+          // Re-read the mark: switching Thoughts metrics off mid-fanout marks
+          // the stored row, and the remaining recipients must carry it.
+          final stored = await postRepo.getPost(created.post.id);
           return _buildWireEnvelope(
             post: created.post,
+            metricsOptOut: (stored ?? created.post).metricsOptOut,
             bridge: bridge,
             recipient: recipient.contact,
             nearbyDistanceM: recipient.nearbyDistanceM,
@@ -547,6 +551,7 @@ SendPostResult _resultForAggregate(PostDeliveryAggregate aggregate) {
 
 Future<String> _buildWireEnvelope({
   required PostModel post,
+  required bool metricsOptOut,
   required ContactModel recipient,
   Bridge? bridge,
   int? nearbyDistanceM,
@@ -603,6 +608,7 @@ Future<String> _buildWireEnvelope({
     kem: kem,
     ciphertext: ciphertext,
     nonce: nonce,
+    metricsOptOut: metricsOptOut,
   );
 }
 

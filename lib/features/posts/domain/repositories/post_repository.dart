@@ -28,6 +28,10 @@ abstract class PostRepository {
 
   Future<List<PostModel>> loadRetryableOutgoingPosts();
 
+  /// Sets `metrics_opt_out` on every own Thought a later send can still
+  /// reach. Never clears a mark.
+  Future<void> markUndeliveredOwnThoughtsMetricsOptOut();
+
   Future<List<PostModel>> loadExpiredPosts(String nowIso);
 
   Future<void> deletePostCascade(String postId);

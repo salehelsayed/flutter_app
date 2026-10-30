@@ -917,6 +917,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               imageProcessor: widget.imageProcessor,
               appShellController: shell,
               postsPrivacySettingsRepository: privacy,
+              postRepository: widget.postRepository,
               groupExitDiagnosticRepository:
                   widget.groupExitDiagnosticRepository,
               introductionRepository: widget.introductionRepository,
@@ -1087,6 +1088,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 text: draft.text,
                 audience: PostAudience.allFriends(),
                 mediaDrafts: draft.mediaDrafts,
+                secureKeyStore: widget.secureKeyStore,
               );
               if (result == SendPostResult.success && local != null) {
                 // The sheet may have been swiped away mid-share and handed
