@@ -585,6 +585,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
     SELECT
       summary.group_id,
       summary.unread_count,
+      summary.last_incoming_at,
       latest.id AS latest_id,
       latest.group_id AS latest_group_id,
       latest.sender_peer_id AS latest_sender_peer_id,
@@ -616,7 +617,8 @@ Future<List<Map<String, Object?>>> dbLoadGroupThreadSummaries(
             WHEN is_incoming = 1 AND read_at IS NULL THEN 1
             ELSE 0
           END
-        ) AS unread_count
+        ) AS unread_count,
+        MAX(CASE WHEN is_incoming = 1 THEN timestamp END) AS last_incoming_at
       FROM group_messages
       WHERE group_id IN ($placeholders)
         AND id NOT LIKE '$_groupRemovalCutoffMessageIdLike'

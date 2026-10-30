@@ -13,6 +13,10 @@ class ConversationThreadSummary {
   /// aggregate in `dbLoadConversationThreadSummaries` (160 A0).
   final DateTime? lastOutgoingAt;
 
+  /// Newest incoming message timestamp in the visible thread, including
+  /// non-hidden deleted metadata. Independent of outgoing activity/previews.
+  final DateTime? lastIncomingAt;
+
   final ConversationMessage? latestMessage;
 
   const ConversationThreadSummary({
@@ -20,6 +24,7 @@ class ConversationThreadSummary {
     this.messageCount = 0,
     this.unreadCount = 0,
     this.lastOutgoingAt,
+    this.lastIncomingAt,
     this.latestMessage,
   });
 }

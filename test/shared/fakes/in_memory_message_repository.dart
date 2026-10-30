@@ -445,6 +445,15 @@ class InMemoryMessageRepository
     final messages = _visibleMessagesForContact(contactPeerId).toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     final visible = messages.where((m) => !m.isDeleted).toList();
+    DateTime? lastIncomingAt;
+    for (final message in messages) {
+      if (!message.isIncoming) continue;
+      final timestamp = DateTime.tryParse(message.timestamp)?.toUtc();
+      if (timestamp != null &&
+          (lastIncomingAt == null || timestamp.isAfter(lastIncomingAt))) {
+        lastIncomingAt = timestamp;
+      }
+    }
     DateTime? lastOutgoingAt;
     for (final m in visible) {
       if (!m.isIncoming) {
@@ -462,6 +471,7 @@ class InMemoryMessageRepository
           .where((message) => message.isIncoming && message.readAt == null)
           .length,
       lastOutgoingAt: lastOutgoingAt,
+      lastIncomingAt: lastIncomingAt,
       latestMessage: messages.isEmpty ? null : messages.first,
     );
   }

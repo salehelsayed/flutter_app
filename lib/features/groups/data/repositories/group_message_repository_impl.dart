@@ -1083,6 +1083,9 @@ class GroupMessageRepositoryImpl
       summaries[groupId] = GroupThreadSummary(
         groupId: groupId,
         unreadCount: row['unread_count'] as int? ?? 0,
+        lastIncomingAt: DateTime.tryParse(
+          row['last_incoming_at'] as String? ?? '',
+        )?.toUtc(),
         latestMessage: row['latest_id'] == null
             ? null
             : GroupMessage.fromMap({

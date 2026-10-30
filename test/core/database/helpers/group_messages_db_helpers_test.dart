@@ -313,6 +313,86 @@ void main() {
     );
   });
 
+  group('NAV-006 received group history', () {
+    test(
+      'keeps incoming history after sending and excludes removal controls',
+      () async {
+        const receivedAt = '2026-01-15T08:00:00.000Z';
+        const sentAt = '2026-01-15T11:00:00.000Z';
+        for (final row in [
+          makeMessageRow(
+            id: 'nav-group-in',
+            timestamp: receivedAt,
+            isIncoming: 1,
+          ),
+          makeMessageRow(
+            id: 'nav-group-out',
+            senderPeerId: 'self',
+            timestamp: sentAt,
+            isIncoming: 0,
+          ),
+          makeMessageRow(
+            id: 'sys-member_removed_cutoff:group-1:peer-a:nav',
+            timestamp: '2026-01-15T12:00:00.000Z',
+            isIncoming: 1,
+          ),
+        ]) {
+          await dbInsertGroupMessage(db, row);
+        }
+
+        final summaries = await dbLoadGroupThreadSummaries(db, ['group-1']);
+        expect(summaries.single['last_incoming_at'], receivedAt);
+        expect(summaries.single['latest_id'], 'nav-group-out');
+        expect(summaries.single['latest_timestamp'], sentAt);
+        expect(summaries.single['latest_is_incoming'], 0);
+        expect(summaries.single['unread_count'], 1);
+
+        final previews = await dbLoadGroupThreadPreviews(db, ['group-1']);
+        expect(previews.single['latest_id'], 'nav-group-out');
+        expect(previews.single['latest_timestamp'], sentAt);
+        expect(previews.single['last_outgoing_at'], sentAt);
+        expect(previews.single['message_count'], 2);
+        expect(previews.single['unread_count'], 1);
+      },
+    );
+
+    test(
+      'outgoing and removal controls alone have no incoming timestamp',
+      () async {
+        const sentAt = '2026-01-15T11:00:00.000Z';
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'nav-group-out-only',
+            senderPeerId: 'self',
+            timestamp: sentAt,
+            isIncoming: 0,
+          ),
+        );
+        await dbInsertGroupMessage(
+          db,
+          makeMessageRow(
+            id: 'sys-member_removed_cutoff:group-1:peer-a:nav-only',
+            timestamp: '2026-01-15T12:00:00.000Z',
+            isIncoming: 1,
+          ),
+        );
+
+        final summaries = await dbLoadGroupThreadSummaries(db, ['group-1']);
+        expect(summaries.single, containsPair('last_incoming_at', isNull));
+        expect(summaries.single['latest_id'], 'nav-group-out-only');
+        expect(summaries.single['latest_timestamp'], sentAt);
+        expect(summaries.single['unread_count'], 0);
+
+        final previews = await dbLoadGroupThreadPreviews(db, ['group-1']);
+        expect(previews.single['latest_id'], 'nav-group-out-only');
+        expect(previews.single['last_outgoing_at'], sentAt);
+        expect(previews.single['message_count'], 1);
+        expect(previews.single['unread_count'], 0);
+      },
+    );
+  });
+
   // 161 db-persistence-5 (QUERY half): the batched preview aggregate that
   // replaces the per-group `getMessagesPage(limit:200)` loop on feed mount. The
   // windowed message slice itself is loaded separately (per pending group, in

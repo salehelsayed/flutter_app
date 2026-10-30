@@ -12,6 +12,7 @@ class OrbitGroup {
   final String? latestMessage;
   final int unreadCount;
   final DateTime? lastActivityTimestamp;
+  final DateTime? lastIncomingAt;
 
   /// Key-free media summary of the latest group message, when it carries
   /// attachments. Drives the "Photo"/"Voice message" preview label (after the
@@ -35,6 +36,7 @@ class OrbitGroup {
     this.latestMessage,
     this.unreadCount = 0,
     this.lastActivityTimestamp,
+    this.lastIncomingAt,
     this.rejoinAttemptCount,
     this.hasExitIntent = false,
     this.latestMedia,
@@ -52,6 +54,7 @@ class OrbitGroup {
       latestMessage: latestMessage,
       unreadCount: unreadCount,
       lastActivityTimestamp: lastActivityTimestamp,
+      lastIncomingAt: lastIncomingAt,
       rejoinAttemptCount: rejoinAttemptCount ?? this.rejoinAttemptCount,
       hasExitIntent: hasExitIntent ?? this.hasExitIntent,
       latestMedia: latestMedia,

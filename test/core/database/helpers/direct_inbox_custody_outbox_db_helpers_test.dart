@@ -22,11 +22,18 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/authored_direct_text_intent.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
+import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../../shared/fakes/in_memory_contact_repository.dart';
 
 const _peer = 'peer-recipient';
 const _t0 = '2026-08-06T10:00:00.000Z';
@@ -70,6 +77,102 @@ void main() {
   });
 
   group('authored direct text intent', () {
+    test(
+      'NAV-006 a durable pending send preserves received circle order across restart',
+      () async {
+        const peerA = 'nav-peer-a';
+        const peerB = 'nav-peer-b';
+        const receivedByA = '2026-08-06T09:00:00.000Z';
+        const receivedByB = '2026-08-06T10:00:00.000Z';
+        const queuedAt = '2026-08-06T11:00:00.000Z';
+        var contacts = InMemoryContactRepository();
+        for (final peerId in [peerA, peerB]) {
+          final row = _fanoutContactRow(peerId: peerId);
+          await db.insert('contacts', row);
+          contacts.addTestContact(ContactModel.fromMap(row));
+        }
+        for (final entry in [(peerA, receivedByA), (peerB, receivedByB)]) {
+          final message = ConversationMessage(
+            id: 'nav-received-${entry.$1}',
+            contactPeerId: entry.$1,
+            senderPeerId: entry.$1,
+            text: 'received history',
+            timestamp: entry.$2,
+            createdAt: entry.$2,
+            status: 'delivered',
+            isIncoming: true,
+          );
+          await dbInsertMessage(db, message.toMap());
+        }
+        repository = _buildRepository(
+          db,
+          capacity: 2,
+          includeAuthoredTextIntents: true,
+        );
+        const intent = AuthoredDirectTextIntent(
+          id: 'nav-queued-a',
+          contactPeerId: peerA,
+          text: 'pending local preview',
+          timestamp: queuedAt,
+          token: 'nav-queued-intent',
+        );
+        expect(repository.supportsAuthoredDirectTextIntents, isTrue);
+        expect(await repository.saveAuthoredDirectTextIntent(intent), isTrue);
+        expect(await dbLoadAuthoredDirectTextIntents(db), hasLength(1));
+        expect(await db.query('messages'), hasLength(2));
+
+        Future<void> expectReceivedOrderWithPendingPreview() async {
+          final summaries = await repository.getConversationThreadSummaries([
+            peerA,
+            peerB,
+          ]);
+          final summaryA = summaries[peerA]!;
+          expect(summaryA.latestMessage!.id, intent.id);
+          expect(summaryA.latestMessage!.timestamp, queuedAt);
+          expect(summaryA.latestMessage!.status, 'sending');
+          expect(summaryA.lastOutgoingAt, DateTime.parse(queuedAt));
+          expect(summaryA.messageCount, 2);
+          expect(summaryA.unreadCount, 1);
+
+          final friends = await loadOrbitData(
+            contactRepo: contacts,
+            messageRepo: repository,
+          );
+          final friendA = friends.singleWhere(
+            (friend) => friend.peerId == peerA,
+          );
+          expect(friendA.lastMessageTimestamp, queuedAt);
+          expect(friendA.lastActivity, intent.text);
+          final circle = mergeInnerCircleItems(friends: friends, groups: []);
+          expect(
+            circle
+                .map((item) => (item as OrbitFriendItem).friend.peerId)
+                .toList(),
+            [peerB, peerA],
+          );
+        }
+
+        await expectReceivedOrderWithPendingPreview();
+        await db.close();
+        db = await databaseFactoryFfi.openDatabase(
+          '${tempDirectory.path}/identity.db',
+          options: OpenDatabaseOptions(singleInstance: false),
+        );
+        repository = _buildRepository(
+          db,
+          capacity: 2,
+          includeAuthoredTextIntents: true,
+        );
+        contacts = InMemoryContactRepository();
+        for (final row in await db.query('contacts')) {
+          contacts.addTestContact(ContactModel.fromMap(row));
+        }
+        expect(await dbLoadAuthoredDirectTextIntents(db), hasLength(1));
+        expect(await db.query('messages'), hasLength(2));
+        await expectReceivedOrderWithPendingPreview();
+      },
+    );
+
     Map<String, Object?> intentFor(Map<String, Object?> row) => {
       for (final key in [
         'id',
@@ -3588,6 +3691,7 @@ String _envelope(String id, String ciphertext) =>
 MessageRepositoryImpl _buildRepository(
   Database db, {
   required int capacity,
+  bool includeAuthoredTextIntents = false,
   String? omitCustodyDelegate,
   Future<Map<String, Object?>?> Function(String id)? dbLoadMessageOverride,
   Future<List<MediaAttachment>> Function(String messageId)?
@@ -3627,6 +3731,18 @@ MessageRepositoryImpl _buildRepository(
         dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
     dbLoadConversationThreadSummaries: (peerIds) =>
         dbLoadConversationThreadSummaries(db, peerIds),
+    dbSaveAuthoredDirectTextIntent: includeAuthoredTextIntents
+        ? (intent) => dbSaveAuthoredDirectTextIntent(db, intent)
+        : null,
+    dbLoadAuthoredDirectTextIntents: includeAuthoredTextIntents
+        ? () => dbLoadAuthoredDirectTextIntents(db)
+        : null,
+    dbCancelAuthoredDirectTextIntent: includeAuthoredTextIntents
+        ? (intent) => dbCancelAuthoredDirectTextIntent(db, intent)
+        : null,
+    loadAuthoredTextSenderPeerId: includeAuthoredTextIntents
+        ? () async => 'peer-self'
+        : null,
     dbRecoverStuckSendingMessages: ({required olderThan, limit = 50}) =>
         dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
     dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 50}) =>

@@ -8,7 +8,7 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_group.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 
 // 197 — mergeInnerCircleItems merges active friends + active groups into the
-// single most-recent-activity ordering the inner-circle rings render.
+// single received-message ordering the inner-circle rings render.
 
 OrbitFriend _friend(
   String id, {
@@ -29,6 +29,7 @@ OrbitFriend _friend(
     // Same ISO-8601 UTC format the group side emits, so the two sortKeys are
     // lexically comparable (the shipped all-chats list relies on this too).
     lastMessageTimestamp: lastMessageAt.toUtc().toIso8601String(),
+    lastIncomingAt: lastMessageAt,
   );
 }
 
@@ -49,13 +50,89 @@ OrbitGroup _group(
     ),
     unreadCount: unreadCount,
     lastActivityTimestamp: lastActivityAt,
+    lastIncomingAt: lastActivityAt,
   );
 }
 
+OrbitFriend _emptyFriend(String id, DateTime addedAt) => OrbitFriend(
+  contact: ContactModel(
+    peerId: 'peer-$id',
+    publicKey: 'pk-$id',
+    rendezvous: '/dns4/relay/tcp/443',
+    username: 'friend-$id',
+    signature: 'sig-$id',
+    scannedAt: addedAt.toUtc().toIso8601String(),
+  ),
+  messageCount: 0,
+);
+
+OrbitGroup _emptyGroup(String id, DateTime createdAt) => OrbitGroup(
+  group: GroupModel(
+    id: id,
+    name: 'group-$id',
+    type: GroupType.chat,
+    topicName: 'topic-$id',
+    createdBy: 'creator',
+    myRole: GroupRole.admin,
+    createdAt: createdAt,
+  ),
+);
+
+List<String> _navItemIds(Iterable<OrbitItem> items) => items
+    .map(
+      (item) => switch (item) {
+        OrbitFriendItem(:final friend) => 'friend:${friend.peerId}',
+        OrbitGroupItem(:final group) => 'group:${group.groupId}',
+      },
+    )
+    .toList();
+
 void main() {
+  group('NAV-006 deterministic empty circle membership', () {
+    test(
+      'empty contacts and groups use added or created time across item kinds',
+      () {
+        final items = mergeInnerCircleItems(
+          friends: [
+            _emptyFriend('A', DateTime.utc(2026, 1, 1)),
+            _emptyFriend('B', DateTime.utc(2026, 2, 1)),
+          ],
+          groups: [
+            _emptyGroup('older', DateTime.utc(2025, 12, 1)),
+            _emptyGroup('newer', DateTime.utc(2026, 3, 1)),
+          ],
+        );
+
+        expect(_navItemIds(items), [
+          'group:newer',
+          'friend:peer-B',
+          'friend:peer-A',
+          'group:older',
+        ]);
+      },
+    );
+
+    test('equal fallback times use stable friend/group and identity ties', () {
+      final time = DateTime.utc(2026, 1, 1);
+      final friends = [_emptyFriend('B', time), _emptyFriend('A', time)];
+      final groups = [_emptyGroup('B', time), _emptyGroup('A', time)];
+
+      for (final friendInput in [friends, friends.reversed.toList()]) {
+        for (final groupInput in [groups, groups.reversed.toList()]) {
+          expect(
+            _navItemIds(
+              mergeInnerCircleItems(friends: friendInput, groups: groupInput),
+            ),
+            ['friend:peer-A', 'friend:peer-B', 'group:A', 'group:B'],
+          );
+        }
+      }
+    });
+  });
+
   group('mergeInnerCircleItems', () {
     test(
-      'interleaves friends and groups by recency (most-recent first)',
+      'interleaves friends and groups by received recency (most-recent first)',
       () {
         // 3 friends + 2 groups with known timestamps. Descending recency:
         // fA(10:00) gX(08:00) fB(06:00) gY(04:00) fC(02:00) — a group sits

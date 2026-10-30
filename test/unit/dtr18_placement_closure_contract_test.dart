@@ -117,7 +117,8 @@ const _relocations = <String, List<String>>{
     // Thoughts128 adds the Thought-reaction message lookup delegate to this
     // same data adapter; placement is unchanged.
     // Wrote-back adds its query delegate and aggregation to the same adapter.
-    '7aa9a66308399eabbae7145772186bfaa838cb54e127de0b06ff15d67a61e6e3',
+    // NAV-006 carries incoming recency through this existing data adapter.
+    '1c151fd322a39c59721fc0ea2496e640d7622d80f1f957b1d8064033a1d86cb3',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -156,7 +157,8 @@ const _relocations = <String, List<String>>{
     'lib/features/groups/data/repositories/group_message_repository_impl.dart',
     // Plan 364 adds the narrow protected-content prepared-owner/CAS
     // capabilities to this already-relocated adapter; placement is unchanged.
-    '501a42e834c6ef2cb6af583819bbbddf6d2ea60bed43288f50f31a4c87e5eaf9',
+    // NAV-006 carries incoming recency through this existing data adapter.
+    'a81935bea27205d49e0b8c7bc4799be9b0911a007862b9e7f99c1414a27fa03d',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_broadcast_repository_impl.dart': <String>[

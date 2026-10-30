@@ -6,6 +6,9 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_thread_summary.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_groups_use_case.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -29,6 +32,37 @@ class _CountingGroupMessageRepository extends InMemoryGroupMessageRepository {
     return super.getGroupThreadSummaries(groupIds);
   }
 }
+
+// This wrapper deliberately does not implement GroupThreadSummaryRepository:
+// the existing fallback APIs expose complete history without a future DTO field.
+class _NavGroupHistoryRepository implements GroupMessageRepository {
+  _NavGroupHistoryRepository(this.delegate);
+
+  final InMemoryGroupMessageRepository delegate;
+
+  @override
+  Future<GroupMessage?> getLatestMessage(String groupId) =>
+      delegate.getLatestMessage(groupId);
+
+  @override
+  Future<int> getUnreadCount(String groupId) =>
+      delegate.getUnreadCount(groupId);
+
+  @override
+  Future<List<GroupMessage>> getMessagesPage(
+    String groupId, {
+    int limit = 50,
+    int offset = 0,
+  }) => delegate.getMessagesPage(groupId, limit: limit, offset: offset);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+List<String> _navGroupOrder(Iterable<OrbitItem> items) => items
+    .whereType<OrbitGroupItem>()
+    .map((item) => item.group.groupId)
+    .toList();
 
 class _CountingMediaAttachmentRepository
     extends InMemoryMediaAttachmentRepository {
@@ -73,6 +107,7 @@ GroupMessage _makeMessage({
   required DateTime timestamp,
   String senderUsername = 'Alice',
   bool isIncoming = true,
+  DateTime? createdAt,
   GroupPrivateMediaPolicy privateMediaPolicy =
       const GroupPrivateMediaPolicy.ordinary(),
 }) {
@@ -84,7 +119,7 @@ GroupMessage _makeMessage({
     text: text,
     timestamp: timestamp,
     isIncoming: isIncoming,
-    createdAt: timestamp,
+    createdAt: createdAt ?? timestamp,
     privateMediaPolicy: privateMediaPolicy,
   );
 }
@@ -97,6 +132,191 @@ void main() {
     setUp(() {
       groupRepo = InMemoryGroupRepository();
       msgRepo = _CountingGroupMessageRepository();
+    });
+
+    group('NAV-006 received group-message circle order', () {
+      test(
+        'outgoing latest preview does not promote G but a new received message does',
+        () async {
+          await groupRepo.saveGroup(_makeGroup(id: 'G', name: 'Group G'));
+          await groupRepo.saveGroup(_makeGroup(id: 'H', name: 'Group H'));
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'G-in-9',
+              groupId: 'G',
+              text: 'G received',
+              timestamp: DateTime.utc(2026, 1, 2, 9),
+            ),
+          );
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'G-out-11',
+              groupId: 'G',
+              text: 'G outgoing latest',
+              timestamp: DateTime.utc(2026, 1, 2, 11),
+              isIncoming: false,
+            ),
+          );
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'H-in-10',
+              groupId: 'H',
+              text: 'H received',
+              timestamp: DateTime.utc(2026, 1, 2, 10),
+            ),
+          );
+          final history = _NavGroupHistoryRepository(msgRepo);
+          final loaded = await loadOrbitGroups(
+            groupRepo: groupRepo,
+            msgRepo: history,
+          );
+
+          // The chat-list preview/activity retains its outgoing latest row.
+          expect(loaded.first.groupId, 'G');
+          expect(loaded.first.latestMessageText, 'G outgoing latest');
+          expect(
+            loaded.first.lastActivityTimestamp,
+            DateTime.utc(2026, 1, 2, 11),
+          );
+          expect(
+            _navGroupOrder(mergeInnerCircleItems(friends: [], groups: loaded)),
+            ['H', 'G'],
+          );
+
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'G-in-12',
+              groupId: 'G',
+              text: 'G newly received',
+              timestamp: DateTime.utc(2026, 1, 2, 12),
+            ),
+          );
+          final refreshed = await loadOrbitGroupSnapshot(
+            groupRepo: groupRepo,
+            msgRepo: history,
+            groupId: 'G',
+          );
+          expect(refreshed, isNotNull);
+          final reordered = mergeInnerCircleItems(
+            friends: [],
+            groups: [
+              loaded.singleWhere((group) => group.groupId == 'H'),
+              refreshed!,
+            ],
+          );
+          expect(_navGroupOrder(reordered), ['G', 'H']);
+          expect(reordered.every((item) => item is OrbitGroupItem), isTrue);
+        },
+      );
+
+      test(
+        'received groups precede empty creation fallback and outgoing-only groups',
+        () async {
+          await groupRepo.saveGroup(_makeGroup(id: 'G', name: 'Outgoing only'));
+          await groupRepo.saveGroup(_makeGroup(id: 'H', name: 'Received'));
+          await groupRepo.saveGroup(
+            _makeGroup(
+              id: 'empty',
+              name: 'New empty',
+              createdAt: DateTime.utc(2030),
+            ),
+          );
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'G-out',
+              groupId: 'G',
+              text: 'Outgoing preview',
+              timestamp: DateTime.utc(2026, 1, 2, 11),
+              isIncoming: false,
+            ),
+          );
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'H-in',
+              groupId: 'H',
+              text: 'Received preview',
+              timestamp: DateTime.utc(2026, 1, 2, 10),
+            ),
+          );
+          final loaded = await loadOrbitGroups(
+            groupRepo: groupRepo,
+            msgRepo: _NavGroupHistoryRepository(msgRepo),
+          );
+
+          expect(
+            loaded
+                .singleWhere((group) => group.groupId == 'G')
+                .latestMessageText,
+            'Outgoing preview',
+          );
+          expect(
+            _navGroupOrder(mergeInnerCircleItems(friends: [], groups: loaded)),
+            ['H', 'empty', 'G'],
+          );
+        },
+      );
+
+      test(
+        'equal incoming timestamps use stable group identity independent of input order',
+        () async {
+          for (final id in ['H', 'G']) {
+            await groupRepo.saveGroup(_makeGroup(id: id, name: 'Group $id'));
+            await msgRepo.saveMessage(
+              _makeMessage(
+                id: '$id-in',
+                groupId: id,
+                text: 'Same received time',
+                timestamp: DateTime.utc(2026, 1, 2, 10),
+              ),
+            );
+          }
+          final loaded = await loadOrbitGroups(
+            groupRepo: groupRepo,
+            msgRepo: _NavGroupHistoryRepository(msgRepo),
+          );
+
+          for (final input in [loaded, loaded.reversed.toList()]) {
+            expect(
+              _navGroupOrder(mergeInnerCircleItems(friends: [], groups: input)),
+              ['G', 'H'],
+            );
+          }
+        },
+      );
+
+      test(
+        'late group arrival follows incoming timestamp instead of local createdAt',
+        () async {
+          await groupRepo.saveGroup(_makeGroup(id: 'G', name: 'Late arrival'));
+          await groupRepo.saveGroup(_makeGroup(id: 'H', name: 'Newer message'));
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'G-in',
+              groupId: 'G',
+              text: 'Older received message',
+              timestamp: DateTime.utc(2026, 1, 2, 9),
+              createdAt: DateTime.utc(2026, 1, 2, 11),
+            ),
+          );
+          await msgRepo.saveMessage(
+            _makeMessage(
+              id: 'H-in',
+              groupId: 'H',
+              text: 'Newer received message',
+              timestamp: DateTime.utc(2026, 1, 2, 10),
+            ),
+          );
+          final loaded = await loadOrbitGroups(
+            groupRepo: groupRepo,
+            msgRepo: _NavGroupHistoryRepository(msgRepo),
+          );
+
+          expect(
+            _navGroupOrder(mergeInnerCircleItems(friends: [], groups: loaded)),
+            ['H', 'G'],
+          );
+        },
+      );
     });
 
     test('returns empty list when no groups', () async {

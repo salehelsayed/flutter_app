@@ -1255,6 +1255,33 @@ Do not fabricate evidence merely to fill the schema.
 
 ## Full regression and CI
 
+NAV-006 circle membership is automatic. Active people and group tiles share
+received-message ordering, independently of conversation-list activity and
+previews. Sending, queued authored intents and calls retain their list behavior
+without promoting circle seats. The key is the latest eligible incoming
+message timestamp, so a delayed older-stamped arrival stays behind a newer
+incoming timestamp. Received items precede empty conversations; empty items use
+added/created time, newest first. Equal times use stable friend/group kind and
+identifier order. Existing membership filters and geometry remain unchanged.
+The existing batched SQL summaries carry an independent `lastIncomingAt`;
+pending-intent copying preserves it. Direct incoming history excludes hidden
+rows but retains deleted metadata, while group history excludes removal-cutoff
+controls, matching the existing eligible populations. Hiding/hard-deleting an
+eligible row may lower its recomputed key; permanent rank history is not stored.
+The 21 new causal cases produce 19 failures and two controls before the fix,
+then the focused set passes 408 cases with zero failures/skips. Real queued
+intent storage, message-repository projection and SQL close/reopen prove that a
+newer send keeps its preview while the newer received peer remains closest.
+Orbit refresh and existing layout/adapter preservation are included. All 20
+changed Dart files analyze without issues; the first analysis exposed an
+existing missing-braces lint, whose original output is retained. The two
+adapter pins changed for the same existing owners, preserving placement and
+dependency guards. Evidence is under
+`.codex-test-logs/nav006-received-order-20261029/`: `nav006-causal-red/`,
+`nav006-green/` and `nav006-analyze-current/`. Broader curated lanes and actual
+available-target receive/seat/restart UI proof remain separate obligations;
+these host results do not certify a signed release candidate.
+
 Protected legacy contracts hash each nested command owner. The Go 1.27.1
 toolchain upgrade changed `run_test_gates.sh` and both relay toolchain/custody
 contract scripts without refreshing their recorded hashes. Audit the owner

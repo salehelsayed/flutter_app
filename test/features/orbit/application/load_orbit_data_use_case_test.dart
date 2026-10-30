@@ -12,6 +12,8 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_tim
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/orbit/application/load_orbit_data_use_case.dart';
+import 'package:flutter_app/features/orbit/application/inner_circle_items.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
@@ -199,14 +201,93 @@ class FakeMessageRepository
   }
 }
 
-ContactModel _makeContact(String peerId, {bool isArchived = false}) {
+// Complete histories deliberately use the existing non-summary API. The
+// overall latest row can be outgoing while an older incoming row owns the
+// circle order. SQL/batched-summary persistence is covered separately.
+class _NavMessageHistoryRepository implements MessageRepository {
+  _NavMessageHistoryRepository(this.messages);
+
+  final List<ConversationMessage> messages;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesForContact(
+    String peerId,
+  ) async =>
+      messages.where((message) => message.contactPeerId == peerId).toList();
+
+  @override
+  Future<ConversationMessage?> getLatestMessageForContact(String peerId) async {
+    final history = await getMessagesForContact(peerId);
+    history.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return history.firstOrNull;
+  }
+
+  @override
+  Future<int> getMessageCountForContact(String peerId) async =>
+      (await getMessagesForContact(peerId)).length;
+
+  @override
+  Future<int> getUnreadCountForContact(String peerId) async =>
+      (await getMessagesForContact(peerId))
+          .where((message) => message.isIncoming && message.readAt == null)
+          .length;
+
+  @override
+  Future<List<ConversationMessage>> getMessagesPage(
+    String peerId, {
+    int limit = 50,
+    String? beforeTimestamp,
+  }) async {
+    final history = await getMessagesForContact(peerId);
+    history.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return history
+        .where(
+          (message) =>
+              beforeTimestamp == null ||
+              message.timestamp.compareTo(beforeTimestamp) < 0,
+        )
+        .take(limit)
+        .toList();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+ConversationMessage _navMessage(
+  String peerId,
+  int hour, {
+  bool isIncoming = true,
+  String status = 'delivered',
+  int? receivedHour,
+}) => ConversationMessage(
+  id: '$peerId-$hour-$status',
+  contactPeerId: peerId,
+  senderPeerId: isIncoming ? peerId : 'self',
+  text: '$status activity at $hour',
+  timestamp: DateTime.utc(2026, 1, 2, hour).toIso8601String(),
+  isIncoming: isIncoming,
+  status: status,
+  createdAt: DateTime.utc(2026, 1, 2, receivedHour ?? hour).toIso8601String(),
+);
+
+List<String> _navFriendOrder(Iterable<OrbitItem> items) => items
+    .whereType<OrbitFriendItem>()
+    .map((item) => item.friend.peerId)
+    .toList();
+
+ContactModel _makeContact(
+  String peerId, {
+  bool isArchived = false,
+  String scannedAt = '2026-01-01T00:00:00.000Z',
+}) {
   return ContactModel(
     peerId: peerId,
     publicKey: 'pk-$peerId',
     rendezvous: '/dns4/relay/tcp/443',
     username: 'User-$peerId',
     signature: 'sig-$peerId',
-    scannedAt: '2026-01-01T00:00:00.000Z',
+    scannedAt: scannedAt,
     isArchived: isArchived,
     archivedAt: isArchived ? '2026-02-01T00:00:00.000Z' : null,
   );
@@ -276,6 +357,126 @@ ConversationCallTimelineEntry _call({
 );
 
 void main() {
+  group('NAV-006 received-message circle order', () {
+    for (final status in ['sent', 'sending', 'queued', 'failed']) {
+      test(
+        'an outgoing $status row cannot promote a person over received history',
+        () async {
+          final repo = _NavMessageHistoryRepository([
+            _navMessage('A', 9),
+            _navMessage('A', 11, isIncoming: false, status: status),
+            _navMessage('B', 10),
+            _navMessage('C', 8),
+          ]);
+          final friends = await loadOrbitData(
+            contactRepo: FakeContactRepository(
+              contacts: [
+                _makeContact('A'),
+                _makeContact('B'),
+                _makeContact('C'),
+              ],
+            ),
+            messageRepo: repo,
+          );
+
+          // Latest activity/preview still belong to the outgoing row. The
+          // circle must independently recover A's older received message.
+          expect(friends.first.peerId, 'A');
+          expect(friends.first.lastActivity, '$status activity at 11');
+          expect(
+            friends.first.lastMessageTimestamp,
+            DateTime.utc(2026, 1, 2, 11).toIso8601String(),
+          );
+          expect(
+            _navFriendOrder(
+              mergeInnerCircleItems(friends: friends, groups: []),
+            ),
+            ['B', 'A', 'C'],
+          );
+        },
+      );
+    }
+
+    for (final direction in ConversationCallDirection.values) {
+      test(
+        'a newer ${direction.name} call changes the preview but not the circle',
+        () async {
+          final friends = await loadOrbitData(
+            contactRepo: FakeContactRepository(
+              contacts: [_makeContact('A'), _makeContact('B')],
+            ),
+            messageRepo: _NavMessageHistoryRepository([
+              _navMessage('A', 9),
+              _navMessage('B', 10),
+            ]),
+            callActivitySource: FakeOrbitCallActivitySource(
+              calls: {
+                'A': _call(
+                  contactPeerId: 'A',
+                  endedAt: DateTime.utc(2026, 1, 2, 12),
+                  direction: direction,
+                ),
+              },
+            ),
+          );
+
+          expect(friends.first.peerId, 'A');
+          expect(friends.first.latestCall?.direction, direction);
+          expect(
+            _navFriendOrder(
+              mergeInnerCircleItems(friends: friends, groups: []),
+            ),
+            ['B', 'A'],
+          );
+        },
+      );
+    }
+
+    test(
+      'received history precedes empty added-time fallback and outgoing-only contacts',
+      () async {
+        final friends = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [
+              _makeContact('A'),
+              _makeContact('B'),
+              _makeContact('empty', scannedAt: '2030-01-01T00:00:00.000Z'),
+            ],
+          ),
+          messageRepo: _NavMessageHistoryRepository([
+            _navMessage('A', 11, isIncoming: false, status: 'sent'),
+            _navMessage('B', 10),
+          ]),
+        );
+
+        expect(
+          _navFriendOrder(mergeInnerCircleItems(friends: friends, groups: [])),
+          ['B', 'empty', 'A'],
+        );
+      },
+    );
+
+    test(
+      'late arrival follows incoming message timestamp rather than local creation time',
+      () async {
+        final friends = await loadOrbitData(
+          contactRepo: FakeContactRepository(
+            contacts: [_makeContact('A'), _makeContact('B')],
+          ),
+          messageRepo: _NavMessageHistoryRepository([
+            _navMessage('A', 9, receivedHour: 11),
+            _navMessage('B', 10),
+          ]),
+        );
+
+        expect(
+          _navFriendOrder(mergeInnerCircleItems(friends: friends, groups: [])),
+          ['B', 'A'],
+        );
+      },
+    );
+  });
+
   group('loadOrbitData', () {
     test('default excludes archived contacts', () async {
       final contacts = [

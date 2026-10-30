@@ -45,6 +45,7 @@ header:
     --output .codex-test-logs/astra-matrix/change-plan-v3
   - git diff --check
   limitations:
+  - 'Scoped NAV-006 update (2026-10-30): owner approved automatic circle order by received-message timestamp, not manual membership editing. The 21 new cases produced 19 failures and 2 preservation passes on baseline b523feae9; the final six-file focused run passed 408 cases with zero failures/skips, including all 21 new cases. Analysis passed on 20 Dart files. Actual device/manual execution remains not_run. Evidence: .codex-test-logs/nav006-received-order-20261029/nav006-causal-red/result.json, nav006-green/result.json and nav006-analyze-current/result.json.'
   - "Progress refresh 2026-10-26: only the 23 ranked-gap status fields and refresh metadata changed; original coverage audit a502c06bc7b2a87c66e01495d4d2285f6731be3e and all 295 journey ratings/execution records are retained. ready is reviewed preparation; covered can be scoped historical evidence or an existing runner, never a fresh device/signed-candidate PASS."
   - "Current test routing: remote test relays use Hetzner; owned local fixtures are allowed; production AWS is restricted to owner pre-publish store-build lanes. No remote relay mutation is authorized."
   - "DC-013 is outside the 23 ranked gaps: reuse integration_test/scripts/run_production_contact_delete.dart (kx0010/kx0011), documented in 0d7e4f1f7:docs/testing/privacy-e2e-mcp.md; no new rank or native result is added."
@@ -280,11 +281,11 @@ features:
   name: Feed, Orbit, rings, search and navigation
   summary:
     strong: 0
-    partial: 10
+    partial: 11
     missing: 0
-    unknown: 1
-  biggest_gap: Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency
-    membership and sculpt geometry must not imply that shipped editor.
+    unknown: 0
+  biggest_gap: Actual device navigation and geometry preservation remain separate from host received-only circle
+    ordering and SQL restart evidence.
 - id: SHARE
   name: External share and received-media forwarding
   summary:
@@ -11564,39 +11565,89 @@ journeys:
   open_questions: []
 - id: NAV-006
   feature: NAV
-  title: Inner-Circle automatic membership/order; manual editor reachability unresolved
+  title: Inner-Circle automatic received-message order and restart
   steps:
-  - Inspect the implemented Inner-Circle population and ordering.
-  - Distinguish spatial sculpt knobs from manual contact membership/order.
-  - Confirm any intended cancel/commit/restart editor entry before claiming coverage.
+  - Receive messages from active friends and groups; inspect which item is closest in the circle.
+  - Send messages, queue an authored text intent and update calls; distinguish their latest previews from circle order.
+  - Check empty-history fallback and equal-time ordering across friend and group inputs.
+  - Close and reopen stored history, reconstruct repositories and compare circle order and geometry.
   conditions:
     platform: shared Android/iOS logic; host evidence only
-    connectivity: n/a
-    offline: n/a
-    app_state: foreground
-    input: active friend/group recency; proposed manual edit
-    recovery: n/a
-  expected: Current source derives active friends/groups by recency; manual membership/order editing requires a
-    confirmed product entry.
-  rating: unknown
+    connectivity: local repository fixtures; no network execution
+    offline: durable authored intent and stored history
+    app_state: foreground and reconstructed after SQL reopen
+    input: received-message timestamps, sent/queued messages, calls, groups, empty history and ties
+    recovery: real SQL close/reopen plus repository reconstruction
+  expected: >-
+    Owner-approved policy (2026-10-30): automatic circle order uses the most recent received-message timestamp,
+    not local arrival time. Incoming group messages promote the group tile. Sent messages, queued intents and calls
+    may update previews but do not promote circle items. Received history comes before empty items, whose fallback
+    is contact-added or group-created time. Equal times use friend before group, then stable ascending identity.
+    Existing eligible membership and geometry remain unchanged.
+  rating: partial
   tests:
   - path: test/features/orbit/application/inner_circle_items_test.dart
-    name: interleaves friends and groups by recency (most-recent first)
+    name: NAV-006 deterministic empty circle membership
     kind: unit
     real:
-    - actual mergeInnerCircleItems ordering
+    - actual mergeInnerCircleItems ordering across item kinds
     faked:
-    - timestamped friend/group inputs
-    proves: 'test/features/orbit/application/inner_circle_items_test.dart:57: All five items interleave in descending
-      activity; no manual membership/order editor is involved. Registered: affected-surfaces, host-all.'
-  execution: not_run
+    - timestamped friend/group models and input permutations
+    proves: 'The owner-approved empty-history fallback and stable friend/group/identity ties are asserted at :91.
+      This is ordering evidence, not a manual membership editor or rendered geometry proof.'
+  - path: test/features/orbit/application/load_orbit_data_use_case_test.dart
+    name: NAV-006 received-message circle order
+    kind: unit
+    real:
+    - actual loadOrbitData and mergeInnerCircleItems
+    faked:
+    - stored-history repository fixtures and call activity
+    proves: 'Assertions at :353 cover outgoing sent/sending/queued/failed rows and newer calls retaining latest
+      previews without promoting the circle, received-first fallback and stable received-time behavior.'
+  - path: test/features/orbit/application/load_orbit_groups_use_case_test.dart
+    name: NAV-006 received group-message circle order
+    kind: unit
+    real:
+    - actual loadOrbitGroups and merged group placement
+    faked:
+    - group/history repositories
+    proves: 'Assertions at :137 distinguish outgoing preview activity from received group activity and require a
+      new received group message to promote that group tile.'
+  - path: test/core/database/helpers/messages_db_helpers_test.dart
+    name: NAV-006 incoming history survives a real SQL close and reopen
+    kind: unit
+    real:
+    - production batched direct-message SQL and file-backed production-schema reopen
+    faked:
+    - synthetic mixed incoming/outgoing rows
+    proves: 'The NAV-006 cases at :1504 retain incoming history behind newer outgoing previews, preserve existing
+      latest/unread/outgoing projections, exclude hidden rows, retain the existing visible soft-deleted population,
+      return null for no inbound history and reconstruct the same aggregate after SQL reopen.'
+  - path: test/core/database/helpers/group_messages_db_helpers_test.dart
+    name: NAV-006 received group history
+    kind: unit
+    real:
+    - production group summary SQL and existing preview preservation controls
+    faked:
+    - synthetic incoming/outgoing rows and removal-cutoff controls
+    proves: 'The cases at :316 recover incoming history behind an outgoing latest row, exclude removal-cutoff
+      controls and return null without incoming history. The Feed preview API remains unchanged.'
+  - path: test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart
+    name: NAV-006 a durable pending send preserves received circle order across restart
+    kind: unit
+    real:
+    - durable authored-intent storage, MessageRepositoryImpl, loadOrbitData and mergeInnerCircleItems
+    - file-backed SQL close/reopen and repository reconstruction
+    faked:
+    - contact projection repository and sender identity callback
+    proves: 'The case at :81 persists B received at 10 and A received at 9 with A queued at 11; B stays closest
+      while A retains its queued preview, outgoing projection and unread count, before and after restart.'
+  execution: host_run
   gaps:
-  - lib/features/orbit/application/inner_circle_items.dart:5 derives membership/order. Inspected Orbit callbacks
-    expose geometry editing, not a manual membership/reorder editor.
+  - Actual available-device/manual execution, signed-candidate placement and native storage behavior remain not_run.
+  - Host ordering and persistence assertions do not certify rendered geometry or complete device navigation flows.
   catalog_ids: []
-  open_questions:
-  - Is manual Inner-Circle membership/order editing implemented anywhere? No entry discovered; do not treat it as
-    a shipped missing test or a planned commitment without an owner decision.
+  open_questions: []
 - id: NAV-007
   feature: NAV
   title: Orbit radial/list presentation and geometry preferences preserve selected people
@@ -16814,9 +16865,12 @@ gaps:
   test_type: manual
   status: ready
   status_date: "2026-11-01"
-  status_note: "Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Verify automatic ordering; no manual membership editor required."
-  must_verify: Verify the circle fills from the closer position in message-receipt order.
-  why: Owner supplied the automatic-order oracle on 2026-10-30; device verification remains to run.
+  status_note: "Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Approved automatic received-message order has 21 causal host cases and SQL/repository restart coverage; no manual membership editor required. Actual device/manual execution remains not_run."
+  must_verify: On available targets, received messages promote their friend or group tile; sent/queued messages and
+    calls do not. Check received-first order, added/created empty fallback, stable friend/group/identity ties and
+    restart while preserving existing geometry and membership.
+  why: Product policy is resolved and host ordering/persistence evidence exists; actual device/manual execution
+    remains a separate ready obligation.
 exclusions:
 - item: Video calling and custom app-password/biometric unlock flows
   reason: No supported implementation/entry discovered; do not invent planned product commitments. Voice calls and

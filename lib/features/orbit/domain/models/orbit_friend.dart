@@ -4,8 +4,8 @@ import 'package:flutter_app/features/conversation/domain/models/media_preview_de
 
 /// Composite model combining a contact with conversation activity data.
 ///
-/// Used by the Orbit screen to determine ring placement (sorted by messageCount)
-/// and display activity info in the friends list.
+/// The circle uses received-message recency; the friends list retains complete
+/// conversation activity for its ordering and previews.
 class OrbitFriend {
   final ContactModel contact;
   final int messageCount;
@@ -14,6 +14,7 @@ class OrbitFriend {
   /// media-only message is NOT a caption — the row falls back to [latestMedia].
   final String? lastActivity;
   final String? lastMessageTimestamp;
+  final DateTime? lastIncomingAt;
   final int unreadCount;
 
   /// Key-free media summary of the latest message, when it carries attachments
@@ -35,6 +36,7 @@ class OrbitFriend {
     required this.messageCount,
     this.lastActivity,
     this.lastMessageTimestamp,
+    this.lastIncomingAt,
     this.unreadCount = 0,
     this.latestMedia,
     this.isLatestDeleted = false,
@@ -50,7 +52,7 @@ class OrbitFriend {
 
   /// 409: the newest thing that happened in this conversation — a message or
   /// a terminal call. Orbit orders rows and renders relative time by this, so
-  /// a call cannot leave a contact stranded at the bottom of the ring.
+  /// the list's preview and relative time follow the same activity.
   ///
   /// A call contributes its END: that is when the conversation last had
   /// activity. The chat timeline orders by start instead, because there a call

@@ -12,9 +12,8 @@ import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activi
 import 'package:flutter_app/features/orbit/application/load_latest_media_descriptors.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 
-/// Loads all contacts with their message activity, sorted by most recent message first.
-///
-/// This drives the orbital ring placement: top 5 on ring 1, next 8 on ring 2.
+/// Loads contacts in conversation-activity order for the list, carrying an
+/// independent received-message timestamp for circle placement.
 Future<List<OrbitFriend>> loadOrbitData({
   required ContactRepository contactRepo,
   required MessageRepository messageRepo,
@@ -223,6 +222,7 @@ OrbitFriend _buildOrbitFriend({
     messageCount: summary.messageCount,
     lastActivity: isDeleted ? null : latest?.text,
     lastMessageTimestamp: latest?.timestamp,
+    lastIncomingAt: summary.lastIncomingAt,
     // 410: one badge for the whole conversation. A missed call the user has
     // not seen counts exactly like an unread message, because from the row's
     // point of view both mean "something here is waiting for you".
@@ -277,11 +277,22 @@ Future<ConversationThreadSummary> _loadConversationThreadSummary({
   final latestMessage = await messageRepo.getLatestMessageForContact(
     contactPeerId,
   );
+  DateTime? lastIncomingAt;
+  for (final message in await messageRepo.getMessagesForContact(
+    contactPeerId,
+  )) {
+    if (!message.isIncoming || message.hiddenAt != null) continue;
+    final at = DateTime.tryParse(message.timestamp)?.toUtc();
+    if (at != null && (lastIncomingAt == null || at.isAfter(lastIncomingAt))) {
+      lastIncomingAt = at;
+    }
+  }
   return ConversationThreadSummary(
     contactPeerId: contactPeerId,
     messageCount: await messageRepo.getMessageCountForContact(contactPeerId),
     unreadCount: await messageRepo.getUnreadCountForContact(contactPeerId),
     latestMessage: latestMessage,
+    lastIncomingAt: lastIncomingAt,
   );
 }
 

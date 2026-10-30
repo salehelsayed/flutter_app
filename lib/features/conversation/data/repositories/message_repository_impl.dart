@@ -900,8 +900,9 @@ class MessageRepositoryImpl
     String postId,
   ) async {
     final load = dbLoadThoughtReactionMessages;
-    if (load == null)
+    if (load == null) {
       throw StateError('Thought reply lookup is not configured.');
+    }
     return (await load(
       postId,
     )).map(ConversationMessage.fromMap).toList(growable: false);
@@ -2419,6 +2420,9 @@ class MessageRepositoryImpl
         contactPeerId: contactPeerId,
         messageCount: row['message_count'] as int? ?? 0,
         unreadCount: row['unread_count'] as int? ?? 0,
+        lastIncomingAt: DateTime.tryParse(
+          row['last_incoming_at'] as String? ?? '',
+        )?.toUtc(),
         lastOutgoingAt: lastOutgoingAtRaw == null
             ? null
             : DateTime.tryParse(lastOutgoingAtRaw),
@@ -2470,6 +2474,7 @@ class MessageRepositoryImpl
           contactPeerId: contactPeerId,
           messageCount: old.messageCount + local.length,
           unreadCount: old.unreadCount,
+          lastIncomingAt: old.lastIncomingAt,
           lastOutgoingAt:
               at != null &&
                   (old.lastOutgoingAt == null ||

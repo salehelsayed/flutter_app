@@ -1094,6 +1094,7 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
       summary.message_count,
       summary.unread_count,
       summary.last_outgoing_at,
+      summary.last_incoming_at,
       latest.id AS latest_id,
       latest.contact_peer_id AS latest_contact_peer_id,
       latest.sender_peer_id AS latest_sender_peer_id,
@@ -1132,7 +1133,8 @@ Future<List<Map<String, Object?>>> dbLoadConversationThreadSummaries(
         -- the window). NULL when the thread has no outgoing reply.
         MAX(
           CASE WHEN is_incoming = 0 AND deleted_at IS NULL THEN timestamp END
-        ) AS last_outgoing_at
+        ) AS last_outgoing_at,
+        MAX(CASE WHEN is_incoming = 1 THEN timestamp END) AS last_incoming_at
       FROM messages
       WHERE contact_peer_id IN ($placeholders)
         AND $_visibleMessageFilter

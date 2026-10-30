@@ -476,6 +476,14 @@ class InMemoryGroupMessageRepository
       unreadCount: messages
           .where((message) => message.isIncoming && message.readAt == null)
           .length,
+      lastIncomingAt: messages
+          .where((message) => message.isIncoming)
+          .fold<DateTime?>(null, (latest, message) {
+            final timestamp = message.timestamp.toUtc();
+            return latest == null || timestamp.isAfter(latest)
+                ? timestamp
+                : latest;
+          }),
       latestMessage: messages.isEmpty ? null : messages.first,
     );
   }
@@ -496,6 +504,14 @@ class InMemoryGroupMessageRepository
         unreadCount: messages
             .where((message) => message.isIncoming && message.readAt == null)
             .length,
+        lastIncomingAt: messages
+            .where((message) => message.isIncoming)
+            .fold<DateTime?>(null, (latest, message) {
+              final timestamp = message.timestamp.toUtc();
+              return latest == null || timestamp.isAfter(latest)
+                  ? timestamp
+                  : latest;
+            }),
         latestMessage: messages.isEmpty ? null : messages.first,
       );
     }

@@ -1500,6 +1500,182 @@ void main() {
   });
 
   group('dbLoadConversationThreadSummaries', () {
+    test(
+      'NAV-006 keeps incoming history when a later message is outgoing',
+      () async {
+        const receivedByB = '2026-01-01T10:00:00.000Z';
+        const receivedByA = '2026-01-01T09:00:00.000Z';
+        const sentToA = '2026-01-01T11:00:00.000Z';
+        for (final row in [
+          makeMessageRow(
+            id: 'nav-b-in',
+            contactPeerId: 'peer-b',
+            senderPeerId: 'peer-b',
+            timestamp: receivedByB,
+            isIncoming: 1,
+          ),
+          makeMessageRow(id: 'nav-a-in', timestamp: receivedByA, isIncoming: 1),
+          makeMessageRow(
+            id: 'nav-a-out',
+            senderPeerId: 'self',
+            timestamp: sentToA,
+            isIncoming: 0,
+            status: 'delivered',
+          ),
+        ]) {
+          await dbInsertMessage(db, row);
+        }
+
+        final rows = await dbLoadConversationThreadSummaries(db, [
+          'peer-a',
+          'peer-b',
+        ]);
+        final byPeer = {for (final row in rows) row['contact_peer_id']: row};
+        expect(byPeer['peer-b']!['last_incoming_at'], receivedByB);
+        expect(byPeer['peer-a']!['last_incoming_at'], receivedByA);
+        expect(byPeer['peer-a']!['latest_id'], 'nav-a-out');
+        expect(byPeer['peer-a']!['latest_timestamp'], sentToA);
+        expect(byPeer['peer-a']!['latest_is_incoming'], 0);
+        expect(byPeer['peer-a']!['latest_status'], 'delivered');
+        expect(byPeer['peer-a']!['last_outgoing_at'], sentToA);
+        expect(byPeer['peer-a']!['message_count'], 2);
+        expect(byPeer['peer-a']!['unread_count'], 1);
+        expect(byPeer['peer-b']!['latest_id'], 'nav-b-in');
+        expect(byPeer['peer-b']!['last_outgoing_at'], isNull);
+        expect(byPeer['peer-b']!['message_count'], 1);
+        expect(byPeer['peer-b']!['unread_count'], 1);
+      },
+    );
+
+    test('NAV-006 outgoing-only history has no incoming timestamp', () async {
+      const sentAt = '2026-01-01T11:00:00.000Z';
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'nav-out-only',
+          senderPeerId: 'self',
+          timestamp: sentAt,
+          isIncoming: 0,
+        ),
+      );
+
+      final rows = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+      expect(rows.single, containsPair('last_incoming_at', isNull));
+      expect(rows.single['latest_id'], 'nav-out-only');
+      expect(rows.single['latest_timestamp'], sentAt);
+      expect(rows.single['last_outgoing_at'], sentAt);
+      expect(rows.single['message_count'], 1);
+      expect(rows.single['unread_count'], 0);
+    });
+
+    test(
+      'NAV-006 incoming history follows the visible latest population',
+      () async {
+        const receivedAt = '2026-01-01T09:00:00.000Z';
+        const deletedReceivedAt = '2026-01-01T10:00:00.000Z';
+        const sentAt = '2026-01-01T11:00:00.000Z';
+        for (final row in [
+          makeMessageRow(
+            id: 'nav-visible-in',
+            timestamp: receivedAt,
+            isIncoming: 1,
+          ),
+          makeMessageRow(
+            id: 'nav-deleted-in',
+            text: '',
+            timestamp: deletedReceivedAt,
+            isIncoming: 1,
+            deletedAt: '2026-01-01T10:01:00.000Z',
+            deletedByPeerId: 'peer-a',
+          ),
+          makeMessageRow(
+            id: 'nav-visible-out',
+            senderPeerId: 'self',
+            timestamp: sentAt,
+            isIncoming: 0,
+          ),
+          makeMessageRow(
+            id: 'nav-hidden-in',
+            text: '',
+            timestamp: '2026-01-01T12:00:00.000Z',
+            isIncoming: 1,
+            deletedAt: '2026-01-01T12:01:00.000Z',
+            deletedByPeerId: 'peer-a',
+            hiddenAt: '2026-01-01T12:01:00.000Z',
+          ),
+        ]) {
+          await dbInsertMessage(db, row);
+        }
+
+        final rows = await dbLoadConversationThreadSummaries(db, ['peer-a']);
+        expect(rows.single['last_incoming_at'], deletedReceivedAt);
+        expect(rows.single['latest_id'], 'nav-visible-out');
+        expect(rows.single['latest_timestamp'], sentAt);
+        expect(rows.single['last_outgoing_at'], sentAt);
+        expect(rows.single['message_count'], 2);
+        expect(rows.single['unread_count'], 1);
+      },
+    );
+
+    test(
+      'NAV-006 incoming history survives a real SQL close and reopen',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp(
+          'nav006_history_',
+        );
+        final path = '${tempDir.path}/identity.db';
+        var current = await _openCurrentSchema(path);
+        const receivedByB = '2026-01-01T10:00:00.000Z';
+        const receivedByA = '2026-01-01T09:00:00.000Z';
+        const sentToA = '2026-01-01T11:00:00.000Z';
+        try {
+          await dbUpsertContact(current, makeContactRow(peerId: 'peer-a'));
+          await dbUpsertContact(current, makeContactRow(peerId: 'peer-b'));
+          for (final row in [
+            makeMessageRow(
+              id: 'nav-reopen-b-in',
+              contactPeerId: 'peer-b',
+              senderPeerId: 'peer-b',
+              timestamp: receivedByB,
+              isIncoming: 1,
+            ),
+            makeMessageRow(
+              id: 'nav-reopen-a-in',
+              timestamp: receivedByA,
+              isIncoming: 1,
+            ),
+            makeMessageRow(
+              id: 'nav-reopen-a-out',
+              senderPeerId: 'self',
+              timestamp: sentToA,
+              isIncoming: 0,
+            ),
+          ]) {
+            await dbInsertMessage(current, row);
+          }
+
+          await current.close();
+          current = await _openCurrentSchema(path);
+          final rows = await dbLoadConversationThreadSummaries(current, [
+            'peer-a',
+            'peer-b',
+          ]);
+          final byPeer = {for (final row in rows) row['contact_peer_id']: row};
+          expect(byPeer['peer-b']!['last_incoming_at'], receivedByB);
+          expect(byPeer['peer-a']!['last_incoming_at'], receivedByA);
+          expect(byPeer['peer-a']!['latest_id'], 'nav-reopen-a-out');
+          expect(byPeer['peer-a']!['latest_timestamp'], sentToA);
+          expect(byPeer['peer-a']!['last_outgoing_at'], sentToA);
+          expect(byPeer['peer-a']!['unread_count'], 1);
+          expect(byPeer['peer-b']!['latest_id'], 'nav-reopen-b-in');
+          expect(byPeer['peer-b']!['last_outgoing_at'], isNull);
+        } finally {
+          if (current.isOpen) await current.close();
+          await tempDir.delete(recursive: true);
+        }
+      },
+    );
+
     test('excludes hidden rows from counts and latest projection', () async {
       await dbInsertMessage(
         db,

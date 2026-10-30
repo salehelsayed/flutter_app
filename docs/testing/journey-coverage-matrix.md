@@ -2,7 +2,9 @@
 
 Ranked-gap progress refreshed: 2026-11-01; source `a4651274d447d016717a5340ba1a400a37cde5f7`. Original coverage-audit metadata and scoped updates retained: Audited source: `a502c06bc7b2a87c66e01495d4d2285f6731be3e`. Generated: 2026-10-20T14:42:18Z. Scoped Group B update: `f4005fbfa66391500dce2c2b82a6f325cc65934f` (2026-10-21). Scoped Group C host update: base `f14f7d369646b9877bc80c71f517494628f4fe2b`, tests `6ce42d583` (2026-10-22). Scoped Group C device execution: `0ee837d5d` by flutter_app (2026-10-22). Scoped Group D host update: tests `7ebe0608c` / `4365c0ae3` / `063aa72e2` (2026-10-22). The matching [YAML](journey-coverage-matrix.yaml) is the machine-readable source for this document.
 
-295 representative journeys: **45 strong, 245 partial, 4 missing, 1 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+295 representative journeys: **45 strong, 246 partial, 4 missing, 0 unknown**. All 103 catalog IDs are retained. The actual camera+caption/full-decode incident is explicit in MEDIA-002 and MEDIA-014. **This matrix does not certify a production release.**
+
+Scoped NAV-006 update (2026-10-30): the owner approved received-message ordering. All 21 new cases are included in a 408-pass focused host run with zero failures/skips; analysis passed on 20 Dart files. The original baseline produced 19 failures and two preservation passes. Actual device/manual execution remains not_run. Evidence is under `.codex-test-logs/nav006-received-order-20261029/`.
 
 
 Group C device evidence: source `0ee837d5d6b058977b22c09365fc706b38dfd1d3`, application base `f14f7d369646b9877bc80c71f517494628f4fe2b`, Pixel 6 debug / iPhone 13 release FLOW-log install-over builds. Evidence directory: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-c-20261022`. Plain host rechecks on that source: contacts 3 PASS, camera 19 PASS / 1 pre-existing skip, calls 6 PASS, all exit 0 (`RESUME.md:50`; `focused.log` completion/rc markers 70/71, 12546/12547, 12562/12563; overall exit 0 at 12564). Astra performed no device work. First failed video download and text-entry harness correction remain visible. Audibility/native RTP and production-signed artifact proof remain unverified.
@@ -47,7 +49,7 @@ Group D device evidence: flutter_app reports source `62450cba434f6f718f52472db68
 | CALL — Voice calls, lifecycle, privacy and history | 11 | 24 | 1 | 0 | Actual cross-platform audible call, sustained audio soak, OS suspended/killed incoming delivery, muted-content privacy and hard-kill native cleanup remain distinct gaps. |
 | INTRO — Introductions and mutual consent | 2 | 10 | 0 | 0 | Host SQL/consent tests do not establish a complete real network/OS restart journey through both approvals and first reciprocal chat. |
 | NOTIFY — Notification ingress, routing, unread and privacy | 3 | 13 | 0 | 0 | Actual signed OS/provider ingress, killed-before-send delivery and iOS extension/lockscreen evidence remain separate from exact local routing/read policy tests. |
-| NAV — Feed, Orbit, rings, search and navigation | 0 | 10 | 0 | 1 | Manual Inner-Circle membership/order editor reachability is unresolved; current automatic recency membership and sculpt geometry must not imply that shipped editor. |
+| NAV — Feed, Orbit, rings, search and navigation | 0 | 11 | 0 | 0 | Actual device navigation and geometry preservation remain separate from host received-only circle ordering and SQL restart evidence. |
 | SHARE — External share and received-media forwarding | 0 | 11 | 0 | 0 | Native share URI lifetime/permission/cancel and actual recipient full decode/play across selected targets are not joined by fake ingress/forwarding tests. |
 | SETTINGS — Profile, preferences and support | 2 | 10 | 0 | 0 | Preference/profile host boundaries do not prove native picker/clipboard/mail, actual peer avatar convergence or auto-download policy on received full media. |
 | TRANSFER — Move Account between phones | 1 | 15 | 0 | 0 | Host loopback transfer now opens a real imported photo through the host codec. Native mobile video/voice/PDF/viewers, secure keychain/SQLCipher and complete candidate cutover remain unverified. |
@@ -6615,34 +6617,50 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Representative fake repository fixtures cover action projection; no persisted privacy-state change/restart and all filter combinations joined.
 
-#### NAV-006 — Inner-Circle automatic membership/order; manual editor reachability unresolved
+#### NAV-006 — Inner-Circle automatic received-message order and restart
 
-**Coverage:** unknown. **Execution:** not_run. **Catalog:** source-derived.
+**Coverage:** partial. **Execution:** host_run. **Catalog:** source-derived.
 
 **Steps**
 
-1. Inspect the implemented Inner-Circle population and ordering.
-2. Distinguish spatial sculpt knobs from manual contact membership/order.
-3. Confirm any intended cancel/commit/restart editor entry before claiming coverage.
+1. Receive messages from active friends and groups; inspect which item is closest in the circle.
+2. Send messages, queue an authored text intent and update calls; distinguish their latest previews from circle order.
+3. Check empty-history fallback and equal-time ordering across friend and group inputs.
+4. Close and reopen stored history, reconstruct repositories and compare circle order and geometry.
 
-**Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: active friend/group recency; proposed manual edit; recovery: n/a.
+**Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: local repository fixtures, no network execution; offline: durable authored intent and stored history; app state: foreground and reconstructed after SQL reopen; input: received-message timestamps, sent/queued messages, calls, groups, empty history and ties; recovery: real SQL close/reopen plus repository reconstruction.
 
-**Expected:** Current source derives active friends/groups by recency; manual membership/order editing requires a confirmed product entry.
+**Expected:** Owner-approved policy (2026-10-30): automatic circle order uses the most recent received-message timestamp, not local arrival time. Incoming group messages promote the group tile. Sent messages, queued intents and calls may update previews but do not promote circle items. Received history comes before empty items, whose fallback is contact-added or group-created time. Equal times use friend before group, then stable ascending identity. Existing eligible membership and geometry remain unchanged.
 
 **Inspected test evidence**
 
-- [test/features/orbit/application/inner_circle_items_test.dart](../../test/features/orbit/application/inner_circle_items_test.dart) — `interleaves friends and groups by recency (most-recent first)` (unit).
-  - Real: actual mergeInnerCircleItems ordering.
-  - Faked: timestamped friend/group inputs.
-  - Proves / registration: test/features/orbit/application/inner_circle_items_test.dart:57: All five items interleave in descending activity; no manual membership/order editor is involved. Registered: affected-surfaces, host-all.
+- [test/features/orbit/application/inner_circle_items_test.dart](../../test/features/orbit/application/inner_circle_items_test.dart) — `NAV-006 deterministic empty circle membership` (unit).
+  - Real: actual mergeInnerCircleItems ordering across item kinds. Faked: timestamped friend/group models and input permutations.
+  - Proves: empty-history fallback and stable friend/group/identity ties at :91; this is ordering evidence, not a manual editor or rendered geometry proof.
+- [test/features/orbit/application/load_orbit_data_use_case_test.dart](../../test/features/orbit/application/load_orbit_data_use_case_test.dart) — `NAV-006 received-message circle order` (unit).
+  - Real: actual loadOrbitData and mergeInnerCircleItems. Faked: stored-history repositories and call activity.
+  - Proves: cases at :353 retain latest outgoing/call previews without circle promotion, received-first fallback and stable received-time behavior.
+- [test/features/orbit/application/load_orbit_groups_use_case_test.dart](../../test/features/orbit/application/load_orbit_groups_use_case_test.dart) — `NAV-006 received group-message circle order` (unit).
+  - Real: actual loadOrbitGroups and merged group placement. Faked: group/history repositories.
+  - Proves: cases at :137 separate outgoing previews from received group activity and require a new received group message to promote that tile.
+- [test/core/database/helpers/messages_db_helpers_test.dart](../../test/core/database/helpers/messages_db_helpers_test.dart) — `NAV-006 incoming history survives a real SQL close and reopen` (unit).
+  - Real: production direct-message SQL and file-backed production-schema reopen. Faked: synthetic mixed incoming/outgoing rows.
+  - Proves: cases at :1504 retain incoming history behind newer outgoing previews, preserve latest/unread/outgoing projections and existing hidden/deleted eligibility, cover null inbound history and SQL reconstruction.
+- [test/core/database/helpers/group_messages_db_helpers_test.dart](../../test/core/database/helpers/group_messages_db_helpers_test.dart) — `NAV-006 received group history` (unit).
+  - Real: production group-summary SQL and Feed-preview preservation controls. Faked: synthetic rows and removal-cutoff controls.
+  - Proves: cases at :316 recover incoming history behind an outgoing latest row, exclude removal controls and return null without inbound history; the Feed preview API stays unchanged.
+- [test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart](../../test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart) — `NAV-006 a durable pending send preserves received circle order across restart` (unit).
+  - Real: durable authored intents, MessageRepositoryImpl, loadOrbitData, merging and file-backed SQL/repository reconstruction. Faked: contact projection and sender identity callback.
+  - Proves: the case at :81 keeps B closest after B receives at 10, A receives at 9 and A queues at 11, preserving A's queued preview, outgoing projection and unread count across restart.
 
 **Remaining gaps**
 
-- lib/features/orbit/application/inner_circle_items.dart:5 derives membership/order. Inspected Orbit callbacks expose geometry editing, not a manual membership/reorder editor.
+- Actual available-device/manual execution, signed-candidate placement and native storage behavior remain not_run.
+- Host ordering and persistence assertions do not certify rendered geometry or complete device navigation flows.
 
 **Open questions**
 
-- Is manual Inner-Circle membership/order editing implemented anywhere? No entry discovered; do not treat it as a shipped missing test or a planned commitment without an owner decision.
+- None. The owner approved automatic received-message order; a manual membership editor is not required by this rule.
 
 #### NAV-007 — Orbit radial/list presentation and geometry preferences preserve selected people
 
@@ -9673,7 +9691,7 @@ Progress as of 2026-10-26T14:45:24Z. `ready` means reviewed preparation waiting 
 | 20 | MEDIA-018 | covered | 2026-11-01 | PASS: sender killed mid-send and receiver closed before download, one full playable video each time. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-018]. |
 | 21 | VC-024 | not_started | 2026-10-26 | Not started: sustained bidirectional audio/resource proof; only unavailable wired/Bluetooth accessory legs are N/A per owner; /Volumes/CrucialX9/Kayan/testplan.yaml (VC-024). |
 | 22 | GX-001 | n_a | 2026-10-26 | Owner reports eight concurrent targets unavailable; /Volumes/CrucialX9/Kayan/testplan.yaml (GX-001); N/A by available-target policy. |
-| 23 | NAV-006 | ready | 2026-11-01 | Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Verify automatic ordering; no manual membership editor required. |
+| 23 | NAV-006 | ready | 2026-11-01 | Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Approved automatic received-message order has 21 causal host cases and SQL/repository restart coverage; no manual membership editor required. Actual device/manual execution remains not_run. |
 
 DC-013 is outside this rank list; reuse `run_production_contact_delete.dart` (`kx0010`/`kx0011`) per `0d7e4f1f7:docs/testing/privacy-e2e-mcp.md`. No rank or journey rating is added.
 <!-- ranked-gap-status:end -->
@@ -9700,7 +9718,7 @@ DC-013 is outside this rank list; reuse `run_production_contact_delete.dart` (`k
 20. **MEDIA-018** (e2e): Kill sender/receiver at durable upload/download cuts and recover full native usable content once, preserving original failed attempt. Fake bridges/object reconstruction and thumbnail visibility are insufficient for native full-content recovery.
 21. **VC-024** (e2e): Specify duration/resource thresholds, hold real bidirectional audio and test only actually available output accessories with positive audio continuity. Short RTP/control runs and sampler unit tests cannot prove sustained audio/resource behavior.
 22. **GX-001** (e2e): When eight concurrent app targets are actually available, expand role binding and exact every-sender/every-receiver dedupe assertions. Five fake peers and three/four actual actors do not prove eight-member scale; unavailable topology N/A.
-23. **NAV-006** (manual): Owner identifies concrete supported manual Inner-Circle membership/order entry, or confirms automatic recency/sculpt-only policy. Unknown reachability should be resolved before inventing a shipped missing editor or planned commitment.
+23. **NAV-006** (manual): On available targets, received messages promote their friend or group tile; sent/queued messages and calls do not. Check received-first order, added/created empty fallback, stable friend/group/identity ties and restart while preserving geometry and membership. Product policy is resolved; actual device/manual execution remains unrun.
 
 ## Exclusions
 

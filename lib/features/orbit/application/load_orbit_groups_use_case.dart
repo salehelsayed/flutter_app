@@ -147,6 +147,7 @@ OrbitGroup _buildOrbitGroup({
     latestMessage: mayExposeLatest ? latestMessage.text : null,
     unreadCount: summary.unreadCount,
     lastActivityTimestamp: latestMessage?.timestamp ?? group.createdAt,
+    lastIncomingAt: summary.lastIncomingAt,
     latestMedia: mayExposeLatest ? descriptors[latestMessage.id] : null,
   );
 }
@@ -175,10 +176,32 @@ Future<GroupThreadSummary> _loadGroupThreadSummary({
     return summaryRepo.getGroupThreadSummary(groupId);
   }
 
+  DateTime? lastIncomingAt;
+  const pageSize = 500;
+  var offset = 0;
+  while (true) {
+    final page = await msgRepo.getMessagesPage(
+      groupId,
+      limit: pageSize,
+      offset: offset,
+    );
+    for (final message in page) {
+      if (!message.isIncoming || isGroupRemovalCutoffMessageId(message.id)) {
+        continue;
+      }
+      final at = message.timestamp.toUtc();
+      if (lastIncomingAt == null || at.isAfter(lastIncomingAt)) {
+        lastIncomingAt = at;
+      }
+    }
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
   return GroupThreadSummary(
     groupId: groupId,
     latestMessage: await msgRepo.getLatestMessage(groupId),
     unreadCount: await msgRepo.getUnreadCount(groupId),
+    lastIncomingAt: lastIncomingAt,
   );
 }
 
