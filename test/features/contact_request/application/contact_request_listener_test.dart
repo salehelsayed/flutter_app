@@ -162,6 +162,22 @@ class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
 }
 
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = _contacts[peerId];
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    _contacts[peerId] = updated;
+    return updated;
+  }
+
   final Map<String, ContactModel> _contacts = {};
 
   /// Seed a contact for testing.

@@ -4,6 +4,13 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<String> blockedPeerIds = [];
   bool shouldThrow = false;
 
@@ -45,20 +52,14 @@ void main() {
   group('blockContact use case', () {
     test('calls repo.blockContact with peerId', () async {
       final repo = FakeContactRepository();
-      await blockContact(
-        contactRepo: repo,
-        peerId: 'peer-1234567890',
-      );
+      await blockContact(contactRepo: repo, peerId: 'peer-1234567890');
       expect(repo.blockedPeerIds, ['peer-1234567890']);
     });
 
     test('rethrows errors from repository', () async {
       final repo = FakeContactRepository()..shouldThrow = true;
       expect(
-        () => blockContact(
-          contactRepo: repo,
-          peerId: 'peer-1234567890',
-        ),
+        () => blockContact(contactRepo: repo, peerId: 'peer-1234567890'),
         throwsException,
       );
     });

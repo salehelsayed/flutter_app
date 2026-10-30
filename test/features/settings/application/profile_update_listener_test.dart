@@ -74,6 +74,22 @@ class _FakeContactRepo implements ContactRepository {
   }
 
   @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = _contacts[peerId];
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    _contacts[peerId] = updated;
+    return updated;
+  }
+
+  @override
   Future<ContactModel?> getContact(String peerId) async => _contacts[peerId];
 
   @override
@@ -521,6 +537,20 @@ final class _ProfileWriteBoundary implements ContactRepository {
   Future<void> addContact(ContactModel contact) async {
     await pause?.wait();
     await inner.addContact(contact);
+  }
+
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    await pause?.wait();
+    return inner.updateContactAvatar(
+      peerId,
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
   }
 
   @override

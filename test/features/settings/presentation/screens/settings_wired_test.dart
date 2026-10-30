@@ -93,6 +93,13 @@ class _FakeBridge implements Bridge {
 
 class _FakeContactRepo implements ContactRepository {
   @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
+  @override
   Future<void> addContact(ContactModel contact) async {}
   @override
   Future<ContactModel?> getContact(String peerId) async => null;

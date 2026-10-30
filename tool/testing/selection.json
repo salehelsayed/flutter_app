@@ -465,7 +465,9 @@
         "test/integration/onboarding_golden_path_test.dart",
         "test/integration/contact_request_notification_dedupe_integration_test.dart",
         "test/features/orbit/presentation/screens/orbit_qr_entry_migration_test.dart",
-        "test/features/share/integration/share_to_contact_smoke_test.dart"
+        "test/features/share/integration/share_to_contact_smoke_test.dart",
+        "test/features/settings/application/profile_update_listener_test.dart",
+        "test/features/settings/application/download_profile_picture_use_case_test.dart"
       ],
       "boundary": "Trusted identity/contact/key state feeds all peer communication",
       "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",

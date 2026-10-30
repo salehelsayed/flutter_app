@@ -17,6 +17,13 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<ContactModel> contacts;
 
   FakeContactRepository({this.contacts = const []});

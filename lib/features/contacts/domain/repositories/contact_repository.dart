@@ -7,6 +7,14 @@ abstract class ContactRepository {
   /// If a contact with the same peerId already exists, it will be updated.
   Future<void> addContact(ContactModel contact);
 
+  /// Updates only avatar fields on an existing, unblocked contact.
+  /// Returns the current row, or null when no eligible contact remains.
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  });
+
   /// Retrieves a contact by their peer ID.
   ///
   /// Returns null if no contact with the given ID exists.

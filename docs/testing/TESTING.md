@@ -5659,6 +5659,16 @@ visible and cannot become an ordinary first-attempt PASS.
   [profile cases](../../test/features/settings/application/download_profile_picture_use_case_test.dart)
   cover interrupted transfer, a newly started owner without another profile
   event, normalized commit, supersession, terminal absence and recovery gates.
+  Avatar completion updates only `avatar_path` and `avatar_version` on an existing,
+  unblocked contact and publishes the current row. The listener's held-write
+  regression and the real-file SQL
+  [repository cases](../../test/features/contacts/domain/repositories/contact_repository_avatar_update_test.dart)
+  preserve a newer ML-KEM key/clock, name, archive and introduction fields through
+  database reopen; deleted contacts stay absent and blocked contacts stay unchanged.
+  The old whole-row write fails the listener case. Evidence:
+  `.codex-test-logs/contact-avatar-stale-write-post129-20261030/avatar-red.log`
+  and `avatar-green/`. This is host SQLite/listener evidence, not native crypto,
+  delivery or signed-device proof.
 
   Post downloads persist `retry_waiting` for classified transport interruption
   and reuse the existing pending-post-media owner for startup, relay readiness

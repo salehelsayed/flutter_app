@@ -29,6 +29,13 @@ import '../../../shared/fixtures/media_bytes.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<ContactModel> contacts;
 
   FakeContactRepository({this.contacts = const []});

@@ -4,6 +4,13 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contacts/application/unarchive_contact_use_case.dart';
 
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<String> unarchivedPeerIds = [];
   bool shouldThrow = false;
 
@@ -45,20 +52,14 @@ void main() {
   group('unarchiveContact use case', () {
     test('calls repo.unarchiveContact with peerId', () async {
       final repo = FakeContactRepository();
-      await unarchiveContact(
-        contactRepo: repo,
-        peerId: 'peer-1234567890',
-      );
+      await unarchiveContact(contactRepo: repo, peerId: 'peer-1234567890');
       expect(repo.unarchivedPeerIds, ['peer-1234567890']);
     });
 
     test('rethrows errors from repository', () async {
       final repo = FakeContactRepository()..shouldThrow = true;
       expect(
-        () => unarchiveContact(
-          contactRepo: repo,
-          peerId: 'peer-1234567890',
-        ),
+        () => unarchiveContact(contactRepo: repo, peerId: 'peer-1234567890'),
         throwsException,
       );
     });

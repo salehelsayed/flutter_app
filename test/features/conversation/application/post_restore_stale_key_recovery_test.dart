@@ -22,6 +22,22 @@ import '../../identity/domain/repositories/fake_identity_repository.dart';
 const _senderPeerId = 'sender-peer-stale-key-12345';
 
 class _SeededContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = _contacts[peerId];
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    _contacts[peerId] = updated;
+    return updated;
+  }
+
   final Map<String, ContactModel> _contacts = {};
 
   void seed(ContactModel contact) => _contacts[contact.peerId] = contact;

@@ -124,15 +124,13 @@ Future<ContactModel?> downloadProfilePicture({
     UserAvatar.invalidatePeer(ownerPeerId);
 
     // 4. Update contact
-    final currentContact = await contactRepo.getContact(ownerPeerId);
-    if (currentContact == null || currentContact.isBlocked) return null;
-
     final relativePath = p.join('media', 'avatars', '$ownerPeerId.jpg');
-    final updated = currentContact.copyWith(
+    final updated = await contactRepo.updateContactAvatar(
+      ownerPeerId,
       avatarPath: relativePath,
       avatarVersion: avatarVersion,
     );
-    await contactRepo.addContact(updated);
+    if (updated == null) return null;
 
     emitFlowEvent(
       layer: 'FL',

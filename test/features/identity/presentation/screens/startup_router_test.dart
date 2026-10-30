@@ -39,6 +39,13 @@ class _FakeIdentityRepo implements IdentityRepository {
 
 // ─── Fake Contact Repository ──────────────────────────────────
 class _FakeContactRepo implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final int count;
   _FakeContactRepo({this.count = 0});
 

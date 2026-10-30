@@ -1077,6 +1077,12 @@ final class ProductionApplicationBootstrap
       dbLoadAllContacts: () => dbLoadAllContacts(db),
       dbLoadContact: (peerId) => dbLoadContact(db, peerId),
       dbUpsertContact: (row) => dbUpsertContact(db, row),
+      dbUpdateContactAvatar: (peerId, path, version) => dbUpdateContactAvatar(
+        db,
+        peerId,
+        avatarPath: path,
+        avatarVersion: version,
+      ),
       dbDeleteContact: (peerId) => dbDeleteContact(db, peerId),
       dbGetContactCount: () => dbGetContactCount(db),
       dbContactExists: (peerId) => dbContactExists(db, peerId),

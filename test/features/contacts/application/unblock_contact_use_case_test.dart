@@ -4,6 +4,13 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/contacts/application/unblock_contact_use_case.dart';
 
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<String> unblockedPeerIds = [];
   bool shouldThrow = false;
 
@@ -45,20 +52,14 @@ void main() {
   group('unblockContact use case', () {
     test('calls repo.unblockContact with peerId', () async {
       final repo = FakeContactRepository();
-      await unblockContact(
-        contactRepo: repo,
-        peerId: 'peer-1234567890',
-      );
+      await unblockContact(contactRepo: repo, peerId: 'peer-1234567890');
       expect(repo.unblockedPeerIds, ['peer-1234567890']);
     });
 
     test('rethrows errors from repository', () async {
       final repo = FakeContactRepository()..shouldThrow = true;
       expect(
-        () => unblockContact(
-          contactRepo: repo,
-          peerId: 'peer-1234567890',
-        ),
+        () => unblockContact(contactRepo: repo, peerId: 'peer-1234567890'),
         throwsException,
       );
     });

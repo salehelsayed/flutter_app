@@ -13,6 +13,22 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 // -- Fakes (same pattern as handle_incoming_chat_message_use_case_test.dart) --
 
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = _contacts[peerId];
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    _contacts[peerId] = updated;
+    return updated;
+  }
+
   final Map<String, ContactModel> _contacts = {};
 
   void seedContact(ContactModel contact) {

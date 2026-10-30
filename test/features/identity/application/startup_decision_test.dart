@@ -22,6 +22,13 @@ class _FakeIdentityRepository implements IdentityRepository {
 }
 
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   int contactCountResult = 0;
   int getContactCountCallCount = 0;
 
@@ -309,10 +316,7 @@ void main() {
           AccountMigrationAuthorityState.migrationFailedActiveRestored,
         );
         expect(authorityRepo.authority?.accountPeerId, '12D3KooWTestPeerId');
-        expect(
-          authorityRepo.authority?.state.allowsNormalStartup,
-          isTrue,
-        );
+        expect(authorityRepo.authority?.state.allowsNormalStartup, isTrue);
       },
     );
 

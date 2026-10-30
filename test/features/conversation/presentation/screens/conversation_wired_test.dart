@@ -548,6 +548,13 @@ class FakeIdentityRepository implements IdentityRepository {
 }
 
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   FakeContactRepository({this.contactExistsResult = true});
 
   final bool contactExistsResult;

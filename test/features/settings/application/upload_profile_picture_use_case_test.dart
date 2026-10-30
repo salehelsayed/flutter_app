@@ -61,6 +61,13 @@ class _FakeIdentityRepository implements IdentityRepository {
 }
 
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   List<ContactModel> activeContacts = [];
 
   @override
@@ -117,7 +124,11 @@ class _FakeP2PService implements P2PService {
   }
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async {
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
     if (throwOnStore) throw Exception('store error');
     storedToPeers.add(toPeerId);
     if (storeResultsQueue.isNotEmpty) {
@@ -193,8 +204,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();

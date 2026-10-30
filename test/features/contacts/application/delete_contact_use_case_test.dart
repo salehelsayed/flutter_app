@@ -49,6 +49,13 @@ class _ContactDeletePathProvider extends PathProviderPlatform {
 }
 
 class FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   final List<String> deletedPeerIds = [];
   final List<String>? operations;
   bool shouldThrow = false;

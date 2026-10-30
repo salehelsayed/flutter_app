@@ -11,6 +11,12 @@ class ContactRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadAllContacts;
   final Future<Map<String, Object?>?> Function(String peerId) dbLoadContact;
   final Future<void> Function(Map<String, Object?> row) dbUpsertContact;
+  final Future<Map<String, Object?>?> Function(
+    String peerId,
+    String avatarPath,
+    String avatarVersion,
+  )?
+  dbUpdateContactAvatar;
   final Future<void> Function(String peerId) dbDeleteContact;
 
   /// 361: the exact final serialized purge owner (nullable so incumbent test
@@ -48,6 +54,7 @@ class ContactRepositoryImpl
     required this.dbUnblockContact,
     required this.dbDismissIntroBanner,
     required this.dbSetIntrosSentAt,
+    this.dbUpdateContactAvatar,
     this.dbPurgeDirectContactConversationAndContact,
     this.directReactionProjection,
     this.loadDirectNotificationAuthorizedTransports,
@@ -119,6 +126,22 @@ class ContactRepositoryImpl
   Future<ContactModel?> getContact(String peerId) async {
     final row = await dbLoadContact(peerId);
     if (row == null) return null;
+    return ContactModel.fromMap(row);
+  }
+
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final update = dbUpdateContactAvatar;
+    if (update == null) {
+      throw StateError('contact avatar update is unavailable');
+    }
+    final row = await update(peerId, avatarPath, avatarVersion);
+    if (row == null) return null;
+    _notifyPushEligibilityChanged();
     return ContactModel.fromMap(row);
   }
 

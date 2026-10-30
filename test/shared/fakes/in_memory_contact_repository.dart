@@ -3,6 +3,22 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 
 /// In-memory [ContactRepository] for integration tests.
 class InMemoryContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = _contacts[peerId];
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    _contacts[peerId] = updated;
+    return updated;
+  }
+
   final Map<String, ContactModel> _contacts = {};
 
   void addTestContact(ContactModel contact) {
@@ -48,10 +64,7 @@ class InMemoryContactRepository implements ContactRepository {
   Future<void> unarchiveContact(String peerId) async {
     final c = _contacts[peerId];
     if (c != null) {
-      _contacts[peerId] = c.copyWith(
-        isArchived: false,
-        clearArchivedAt: true,
-      );
+      _contacts[peerId] = c.copyWith(isArchived: false, clearArchivedAt: true);
     }
   }
 
@@ -78,10 +91,7 @@ class InMemoryContactRepository implements ContactRepository {
   Future<void> unblockContact(String peerId) async {
     final c = _contacts[peerId];
     if (c != null) {
-      _contacts[peerId] = c.copyWith(
-        isBlocked: false,
-        clearBlockedAt: true,
-      );
+      _contacts[peerId] = c.copyWith(isBlocked: false, clearBlockedAt: true);
     }
   }
 

@@ -240,6 +240,13 @@ class _FakeMessageRepository
 
 class _FakeContactRepository implements ContactRepository {
   @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
+  @override
   Future<void> addContact(ContactModel c) async {}
   @override
   Future<bool> contactExists(String peerId) async => false;

@@ -71,6 +71,29 @@ Future<Map<String, Object?>?> dbLoadContact(Database db, String peerId) async {
   }
 }
 
+/// Changes avatar fields without replaying unrelated contact state.
+Future<Map<String, Object?>?> dbUpdateContactAvatar(
+  Database db,
+  String peerId, {
+  required String avatarPath,
+  required String avatarVersion,
+}) => dbWriteTransaction(db, (txn) async {
+  final updated = await txn.update(
+    'contacts',
+    {'avatar_path': avatarPath, 'avatar_version': avatarVersion},
+    where: 'peer_id = ? AND is_blocked = 0',
+    whereArgs: [peerId],
+  );
+  if (updated == 0) return null;
+  final rows = await txn.query(
+    'contacts',
+    where: 'peer_id = ?',
+    whereArgs: [peerId],
+    limit: 1,
+  );
+  return rows.single;
+});
+
 /// Inserts or updates a contact.
 Future<void> dbUpsertContact(Database db, Map<String, Object?> row) async {
   final peerId = row['peer_id'] as String? ?? '';

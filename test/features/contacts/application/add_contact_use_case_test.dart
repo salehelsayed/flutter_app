@@ -8,6 +8,13 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 // Fake
 // ---------------------------------------------------------------------------
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async => null;
+
   bool existsResult = false;
   bool throwOnExists = false;
   bool throwOnAdd = false;

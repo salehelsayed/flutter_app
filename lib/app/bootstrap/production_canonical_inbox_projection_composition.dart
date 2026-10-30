@@ -944,6 +944,12 @@ ContactRepositoryImpl _buildContactRepository(Database database) =>
       dbLoadAllContacts: () => dbLoadAllContacts(database),
       dbLoadContact: (peerId) => dbLoadContact(database, peerId),
       dbUpsertContact: (row) => dbUpsertContact(database, row),
+      dbUpdateContactAvatar: (peerId, path, version) => dbUpdateContactAvatar(
+        database,
+        peerId,
+        avatarPath: path,
+        avatarVersion: version,
+      ),
       dbDeleteContact: (peerId) => dbDeleteContact(database, peerId),
       dbGetContactCount: () => dbGetContactCount(database),
       dbContactExists: (peerId) => dbContactExists(database, peerId),

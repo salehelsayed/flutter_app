@@ -65,6 +65,23 @@ class _MockBridge extends Bridge {
 }
 
 class _FakeContactRepository implements ContactRepository {
+  @override
+  Future<ContactModel?> updateContactAvatar(
+    String peerId, {
+    required String avatarPath,
+    required String avatarVersion,
+  }) async {
+    final current = contactResult;
+    if (current == null || current.isBlocked) return null;
+    final updated = current.copyWith(
+      avatarPath: avatarPath,
+      avatarVersion: avatarVersion,
+    );
+    contactResult = updated;
+    lastAdded = updated;
+    return updated;
+  }
+
   ContactModel? contactResult;
   ContactModel? lastAdded;
   Completer<void>? lookupStarted;
