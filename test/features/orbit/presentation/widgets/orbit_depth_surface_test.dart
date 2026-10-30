@@ -264,6 +264,26 @@ void main() {
     },
   );
 
+  testWidgets(
+    'the 3D ring and the thought sit where the shipped 3D Orbit put them',
+    (tester) async {
+      await mount(tester);
+      await enter(tester);
+      // Values from main's placement: 67 degree tilt, camera 3, ring radius
+      // 146, scale min(width / 390, height / 640), centre below the old
+      // outer ring's far edge, thought slot max(cy + 146 cos(tilt) 1.45 + 38,
+      // 140).
+      final center = tester.getCenter(centerSlot);
+      expect(center.dx, closeTo(195, .05));
+      expect(center.dy, closeTo(105.89, .05));
+      expect(tester.getTopLeft(card(0)).dy, closeTo(226.61, .05));
+      final next = tester.getCenter(seatOf(1));
+      expect(next.dx - 195, closeTo(149.35, .05));
+      expect(next.dy - 105.89, closeTo(33.69, .05));
+      await finish(tester);
+    },
+  );
+
   testWidgets('only friends with a live thought are on the ring', (
     tester,
   ) async {

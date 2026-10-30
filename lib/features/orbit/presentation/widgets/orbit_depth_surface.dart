@@ -629,7 +629,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       widget.topClearance -
                       widget.bottomClearance,
                 );
-                _scale = stage.width / 390;
+                _scale = math.min(stage.width / 390, stage.height / 640);
                 final depth = _depth;
                 return Stack(
                   fit: StackFit.expand,
@@ -674,9 +674,18 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final k = _scale;
     final tiltProgress = (_vertical.value / 320).clamp(0.0, 1.0);
     final e = _smooth(tiltProgress);
-    final extent = orbitCenterRingExtent(k, orbitCenterTilt);
     final top = _anchor == OrbitDepthAnchor.top;
-    final cy = top ? (35 + 14) * k + extent.far : size.height * .72;
+    // The shipped 3D Orbit's placement: at the top, the ring sits as low as
+    // its old waiting outer ring needed to stay clear of the header.
+    final (outerFarEdge, _) = projectOrbitCenter(
+      -math.pi / 2,
+      orbitCenterRadius * k * 1.12 * 1.45,
+      orbitCenterTilt,
+    );
+    final cy = top
+        ? math.max(size.height * .084, 35 * k - outerFarEdge.dy)
+        : size.height * .8;
+    final ringDepth = orbitCenterRadius * k * math.cos(orbitCenterTilt);
     final center = Offset(size.width / 2, cy);
     final colors = Theme.of(context).colorScheme;
     final queue = _queue;
@@ -731,13 +740,21 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final presence = _reduceMotion
         ? 1.0
         : math.pow(lifted?.lift ?? 0, 2).toDouble();
-    final slotTop = top ? cy + extent.near + 54 * k : 40 * k;
+    final slotTop = top
+        ? math.max(cy + ringDepth * 1.45 + 38 * k, 140 * k)
+        : 60 * k;
     final slotBottom = top
         ? 20 * k
-        : math.max(0.0, size.height - (cy - extent.far - 52 * k));
+        : math.max(0.0, size.height - cy + ringDepth + 30 * k);
     Widget fade(String key, Widget? child) => _reduceMotion
         ? AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
+            // The default layout centres the child; the name and the thought
+            // hang from the top of their slots.
+            layoutBuilder: (current, previous) => Stack(
+              alignment: Alignment.topCenter,
+              children: [...previous, ?current],
+            ),
             child: child == null
                 ? const SizedBox.shrink()
                 : KeyedSubtree(

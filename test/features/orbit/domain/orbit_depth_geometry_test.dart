@@ -59,24 +59,24 @@ void main() {
         ),
     };
     expect(ring, {
-      1: ('34.7', '0.075', 0.0),
-      11: ('34.7', '0.075', 0.0),
-      2: ('29.7', '0.225', 0.0),
-      10: ('29.7', '0.225', 0.0),
+      1: ('36.3', '0.075', 0.0),
+      11: ('36.3', '0.075', 0.0),
+      2: ('28.8', '0.225', 0.0),
+      10: ('28.8', '0.225', 0.0),
     });
   });
 
-  test('the ring is 228 px wide and its back edge sits 54 px above center', () {
+  test('the ring is 292 px wide and its back edge sits 44 px above center', () {
     final (side, near) = projectOrbitCenter(
       0,
       orbitCenterRadius,
       orbitCenterTilt,
     );
-    expect((2 * side.dx).toStringAsFixed(0), '228');
+    expect((2 * side.dx).toStringAsFixed(0), '292');
     expect(near, 1);
     final extent = orbitCenterRingExtent(1, orbitCenterTilt);
-    expect(extent.far.toStringAsFixed(1), '54.2');
-    expect(extent.near.toStringAsFixed(1), '82.1');
+    expect(extent.far.toStringAsFixed(1), '43.7');
+    expect(extent.near.toStringAsFixed(1), '82.3');
   });
 
   test('a face fades only within 0.35 rad of the far back and comes back '

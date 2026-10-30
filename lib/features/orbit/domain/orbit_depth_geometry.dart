@@ -33,10 +33,11 @@ PostModel? liveOrbitDepthThought(PostModel? thought, DateTime now) {
   return expiry != null && expiry.isAfter(now.toUtc()) ? thought : null;
 }
 
-/// Logical px on a 390 px wide screen; every length scales by width / 390.
-const orbitCenterTilt = 55 * math.pi / 180;
-const orbitCenterCamera = 4.0;
-const orbitCenterRadius = 146 * .78;
+/// Logical px on a 390 px wide screen. The tilt, perspective and ring size
+/// are the shipped 3D Orbit's, so the ring sits where users already know it.
+const orbitCenterTilt = 67 * math.pi / 180;
+const orbitCenterCamera = 3.0;
+const orbitCenterRadius = 146.0;
 const orbitCenterDiameter = 72.0;
 const orbitCenterRingFace = 40 * .8;
 const _soft = .75;
