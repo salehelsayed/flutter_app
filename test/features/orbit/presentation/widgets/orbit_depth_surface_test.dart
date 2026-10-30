@@ -8,11 +8,15 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_media.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../../../../shared/bidi_layout_checks.dart';
 import '../../support/depth_fixtures.dart';
+import '../../../translate_preview/fake_model_delivery_controller.dart';
 
 void main() {
   late DateTime now;
@@ -308,6 +312,87 @@ void main() {
       await finish(tester);
     },
   );
+
+  group('a photo thought\'s caption', () {
+    late _CaptionAi ai;
+    setUp(() {
+      ai = _CaptionAi();
+      debugTranslatePreviewEnabledOverride = true;
+      debugOnDeviceAiOverride = ai;
+      debugModelDeliveryOverride = FakeModelDeliveryController(
+        const ModelReady(sizeBytes: 2600000000),
+      );
+    });
+    tearDown(() {
+      debugTranslatePreviewEnabledOverride = null;
+      debugOnDeviceAiOverride = null;
+      debugModelDeliveryOverride = null;
+    });
+
+    testWidgets(
+      'in another language offers See translation, and the translation '
+      'appears under the caption, above the photo, in the app language',
+      (tester) async {
+        thoughts['peer-0'] = depthThought(
+          0,
+          mediaKind: 'image',
+          text: 'مرحبا كيف حالك',
+        );
+        await mount(tester, load: (_) async => const []);
+        await enter(tester);
+        final text = find.byKey(const ValueKey('orbit-depth-text-post-0'));
+        expect(find.text('See translation'), findsOneWidget);
+        await tester.tap(find.text('See translation'));
+        await rest(tester);
+        expect(ai.requests, ['English: مرحبا كيف حالك']);
+        final result = find.text('Hello, how are you');
+        expect(result, findsOneWidget);
+        expect(
+          tester.getTopLeft(result).dy,
+          greaterThan(tester.getBottomLeft(text).dy),
+        );
+        expect(
+          tester.getBottomLeft(result).dy,
+          lessThanOrEqualTo(tester.getTopLeft(find.byType(OrbitDepthMedia)).dy),
+        );
+        expect(chats, isEmpty);
+        expect(opened, isEmpty);
+        await finish(tester);
+      },
+    );
+
+    testWidgets('in the app language has no See translation', (tester) async {
+      thoughts['peer-0'] = depthThought(
+        0,
+        mediaKind: 'image',
+        text: 'Sunset walk by the river',
+      );
+      await mount(tester, load: (_) async => const []);
+      await enter(tester);
+      expect(find.byType(OrbitDepthMedia), findsOneWidget);
+      expect(find.text('See translation'), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('keeps its own right-to-left side in a right-to-left layout', (
+      tester,
+    ) async {
+      rtl = true;
+      thoughts['peer-0'] = depthThought(
+        0,
+        mediaKind: 'image',
+        text: 'مرحبا كيف حالك',
+      );
+      await mount(tester, load: (_) async => const []);
+      await enter(tester);
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.byKey(const ValueKey('orbit-depth-text-post-0')),
+      );
+      expect(paragraph.textDirection, TextDirection.rtl);
+      expect(find.text('See translation'), findsOneWidget);
+      await finish(tester);
+    });
+  });
 
   testWidgets('only friends with a live thought are on the ring', (
     tester,
@@ -732,6 +817,19 @@ void main() {
       );
     }
   }
+}
+
+class _CaptionAi implements OnDeviceAi {
+  final requests = <String>[];
+
+  @override
+  Future<String> translate(String text, {required String languageName}) async {
+    requests.add('$languageName: $text');
+    return 'Hello, how are you';
+  }
+
+  @override
+  Future<String> transcribe(String audioPath) => throw UnimplementedError();
 }
 
 class _TickCounter extends StatefulWidget {

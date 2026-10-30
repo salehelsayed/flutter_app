@@ -13,6 +13,9 @@ import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'orbit_depth_media.dart';
 
@@ -1028,18 +1031,49 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         ),
       ),
     );
+    // The caption of a photo thought is offered for translation like any
+    // text thought. The link sits outside the tap that opens the thought.
+    final caption = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        words,
+        if (translatePreviewEnabled && post.text.isNotEmpty)
+          TranslatePreview(
+            text: post.text,
+            ai: translatePreviewAi,
+            delivery: translatePreviewDelivery,
+            onFreeUpSpace: translatePreviewOpenStorage,
+            color: Theme.of(context).colorScheme.onSurface,
+          ),
+      ],
+    );
     // Screen readers hear whose thought it is; the name is under the face.
     return Semantics(
       key: ValueKey('orbit-depth-card-${post.id}'),
       container: true,
       label: '${seat.friend.username} · $ageText',
       child: photo
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                words,
-                Expanded(child: media),
-              ],
+          // The caption and its translation take at most half of the slot,
+          // clipped at its end, so the photo always keeps the rest; the tap
+          // opens the whole thought.
+          ? LayoutBuilder(
+              builder: (context, box) => Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ConstrainedBox(
+                    key: ValueKey('orbit-depth-caption-${post.id}'),
+                    constraints: BoxConstraints(maxHeight: box.maxHeight / 2),
+                    child: UnconstrainedBox(
+                      constrainedAxis: Axis.horizontal,
+                      alignment: Alignment.topCenter,
+                      clipBehavior: Clip.hardEdge,
+                      child: caption,
+                    ),
+                  ),
+                  Expanded(child: media),
+                ],
+              ),
             )
           // A drag on the card tilts or turns the orbit, so the card cannot
           // scroll. It clips to its slot; the tap opens the whole thought.
@@ -1050,7 +1084,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
-                children: [words, ?media],
+                children: [caption, ?media],
               ),
             ),
     );

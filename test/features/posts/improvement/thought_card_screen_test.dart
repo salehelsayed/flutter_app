@@ -1468,6 +1468,52 @@ void main() {
       expect(find.text('Ausblenden'), findsNothing);
       await finish(tester);
     });
+    testWidgets('a photo thought offers Translate for its caption, and the '
+        'translation shows under the caption', (tester) async {
+      tester.platformDispatcher.localeTestValue = const Locale('de');
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+      debugTranslatePreviewEnabledOverride = true;
+      final ai = _FakeTranslator();
+      debugOnDeviceAiOverride = ai;
+      final photo = _tempFile('caption.png', pngBytes: true);
+      final thought = _thought(
+        initialNow,
+      ).copyWith(text: 'How are you today?', mediaKind: 'image');
+      final attachment = _attachment('image');
+      await posts.savePost(thought);
+      await posts.savePostMediaAttachment(attachment);
+
+      await openCard(
+        tester,
+        thought,
+        locale: const Locale('de'),
+        download: (requested) async {
+          await posts.updatePostMediaLocalPath(
+            requested.mediaId,
+            photo.path,
+            postId: requested.postId,
+          );
+          return requested.copyWith(
+            localPath: photo.path,
+            downloadStatus: 'done',
+          );
+        },
+      );
+      await pumpMediaFrames(tester);
+      expect(find.byKey(const ValueKey('thought-photo-full')), findsOneWidget);
+      await tester.tap(find.text('Übersetzung anzeigen'));
+      await pumpMediaFrames(tester);
+
+      expect(ai.requests, ['German: How are you today?']);
+      final caption = find.text('How are you today?', findRichText: true);
+      final result = find.text('Wie geht es dir heute?');
+      expect(result, findsOneWidget);
+      expect(
+        tester.getTopLeft(result).dy,
+        greaterThan(tester.getBottomLeft(caption).dy),
+      );
+      await finish(tester);
+    });
   });
 }
 
