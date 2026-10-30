@@ -4832,15 +4832,6 @@ class AppLocalizationsDe extends AppLocalizations {
       'Etwas ist schiefgelaufen. Bitte versuch es erneut.';
 
   @override
-  String get translator_result_beta => 'BETA';
-
-  @override
-  String get translator_result_only_phone => 'Nur auf deinem Handy';
-
-  @override
-  String get translator_hide => 'Ausblenden';
-
-  @override
   String get translator_settings_title => 'Privater Übersetzer';
 
   @override

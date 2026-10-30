@@ -58,7 +58,6 @@ class TranslatePreview extends StatelessWidget {
           action: l10n.translator_see_translation,
           busy: l10n.translator_translating,
           failure: l10n.translator_translate_failed,
-          hide: l10n.translator_hide,
         ),
         run: () => ai.translate(text, languageName: languageName),
         color: color,
@@ -244,57 +243,16 @@ class _Link extends StatelessWidget {
   );
 }
 
-/// "BETA · Only on your phone", under every translation and transcript.
-class _BetaTag extends StatelessWidget {
-  const _BetaTag(this.color);
-
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsetsDirectional.symmetric(
-            horizontal: 5,
-            vertical: 1,
-          ),
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: color?.withValues(alpha: 0.6) ?? Colors.grey,
-            ),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            l10n.translator_result_beta,
-            style: _quiet(
-              color,
-            ).copyWith(fontSize: 10, fontWeight: FontWeight.w700),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Text(l10n.translator_result_only_phone, style: _quiet(color)),
-      ],
-    );
-  }
-}
-
 class _Labels {
   const _Labels({
     required this.action,
     required this.busy,
     required this.failure,
-    this.hide,
   });
 
   final String action;
   final String busy;
   final String failure;
-
-  /// Hides the result again. Null keeps it once shown.
-  final String? hide;
 }
 
 sealed class _Phase {
@@ -314,9 +272,8 @@ final class _Failed extends _Phase {
 }
 
 final class _Done extends _Phase {
-  const _Done(this.text, {required this.shown});
+  const _Done(this.text);
   final String text;
-  final bool shown;
 }
 
 class _AiAction extends StatefulWidget {
@@ -341,14 +298,11 @@ class _AiActionState extends State<_AiAction> {
   _Phase _phase = const _Idle();
 
   Future<void> _start() async {
-    if (_phase case _Done(:final text)) {
-      setState(() => _phase = _Done(text, shown: true));
-      return;
-    }
+    if (_phase is _Done) return;
     setState(() => _phase = const _Running());
     try {
       final result = await widget.run();
-      if (mounted) setState(() => _phase = _Done(result, shown: true));
+      if (mounted) setState(() => _phase = _Done(result));
     } on Object {
       if (mounted) setState(() => _phase = const _Failed());
     }
@@ -360,7 +314,7 @@ class _AiActionState extends State<_AiAction> {
     final quiet = TextStyle(color: base?.withValues(alpha: 0.75), fontSize: 12);
     final labels = widget.labels;
     final body = switch (_phase) {
-      _Idle() || _Done(shown: false) => _link(labels.action, base),
+      _Idle() => _link(labels.action, base),
       _Running() => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -388,23 +342,6 @@ class _AiActionState extends State<_AiAction> {
             text,
             textDirection: detectTextDirection(text),
             style: TextStyle(color: base, fontSize: 15, height: 1.3),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            children: [
-              _BetaTag(base),
-              if (labels.hide case final hide?) ...[
-                Text('·', style: quiet),
-                _Link(
-                  hide,
-                  base,
-                  onTap: () =>
-                      setState(() => _phase = _Done(text, shown: false)),
-                ),
-              ],
-            ],
           ),
           if (widget.below case final below?) below(text),
         ],

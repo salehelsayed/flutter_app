@@ -227,9 +227,9 @@ void main() {
       find.text("The weather is lovely today, who's coming to the beach?"),
       findsOneWidget,
     );
-    expect(find.text('BETA'), findsOneWidget);
-    expect(find.text('Only on your phone'), findsOneWidget);
-    expect(find.text('Hide'), findsOneWidget);
+    expect(find.text('BETA'), findsNothing);
+    expect(find.text('Only on your phone'), findsNothing);
+    expect(find.text('Hide'), findsNothing);
     expect(controller.calls, isEmpty);
   });
 }

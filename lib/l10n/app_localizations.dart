@@ -7862,24 +7862,6 @@ abstract class AppLocalizations {
   /// **'Something went wrong. Please try again.'**
   String get translator_failed_line;
 
-  /// Tag under every translation and transcript.
-  ///
-  /// In en, this message translates to:
-  /// **'BETA'**
-  String get translator_result_beta;
-
-  /// Next to the BETA tag.
-  ///
-  /// In en, this message translates to:
-  /// **'Only on your phone'**
-  String get translator_result_only_phone;
-
-  /// Hides a translation.
-  ///
-  /// In en, this message translates to:
-  /// **'Hide'**
-  String get translator_hide;
-
   /// Settings row title.
   ///
   /// In en, this message translates to:

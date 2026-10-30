@@ -4722,15 +4722,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Something went wrong. Please try again.';
 
   @override
-  String get translator_result_beta => 'BETA';
-
-  @override
-  String get translator_result_only_phone => 'Only on your phone';
-
-  @override
-  String get translator_hide => 'Hide';
-
-  @override
   String get translator_settings_title => 'Private translator';
 
   @override

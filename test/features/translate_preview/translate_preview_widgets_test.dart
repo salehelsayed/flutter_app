@@ -34,43 +34,37 @@ Widget _host(Widget child, {Locale locale = const Locale('en')}) =>
 // Each test makes its own fake: a Completer made in setUp lives outside the
 // test's fake-async zone, so completing it never reaches tester.pump().
 void main() {
-  testWidgets('Translate: loading, then the translation with its label, '
-      'BETA tag, and Hide hides it, in the Mknoon language', (tester) async {
-    final ai = _FakeAi();
-    tester.platformDispatcher.localeTestValue = const Locale('en');
-    addTearDown(tester.platformDispatcher.clearLocaleTestValue);
-    await tester.pumpWidget(
-      _host(
-        TranslatePreview(text: 'How are you today?', ai: ai),
-        locale: const Locale('de'),
-      ),
-    );
+  testWidgets(
+    'Translate: loading, then the translation without a result footer, '
+    'in the Mknoon language',
+    (tester) async {
+      final ai = _FakeAi();
+      tester.platformDispatcher.localeTestValue = const Locale('en');
+      addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+      await tester.pumpWidget(
+        _host(
+          TranslatePreview(text: 'How are you today?', ai: ai),
+          locale: const Locale('de'),
+        ),
+      );
 
-    await tester.tap(find.text('Übersetzung anzeigen'));
-    await tester.pump();
-    expect(find.text('Wird übersetzt…'), findsOneWidget);
-    expect(ai.translations, [
-      (text: 'How are you today?', languageName: 'German'),
-    ]);
+      await tester.tap(find.text('Übersetzung anzeigen'));
+      await tester.pump();
+      expect(find.text('Wird übersetzt…'), findsOneWidget);
+      expect(ai.translations, [
+        (text: 'How are you today?', languageName: 'German'),
+      ]);
 
-    ai.next.complete('Wie geht es dir heute?');
-    await tester.pump();
-    expect(find.text('Wie geht es dir heute?'), findsOneWidget);
-    expect(find.text('BETA'), findsOneWidget);
-    expect(find.text('Nur auf deinem Handy'), findsOneWidget);
-    expect(find.text('original thought'), findsOneWidget);
-
-    await tester.tap(find.text('Ausblenden'));
-    await tester.pump();
-    expect(find.text('Wie geht es dir heute?'), findsNothing);
-    expect(find.text('original thought'), findsOneWidget);
-    expect(find.text('Übersetzung anzeigen'), findsOneWidget);
-
-    await tester.tap(find.text('Übersetzung anzeigen'));
-    await tester.pump();
-    expect(find.text('Wie geht es dir heute?'), findsOneWidget);
-    expect(ai.translations, hasLength(1));
-  });
+      ai.next.complete('Wie geht es dir heute?');
+      await tester.pump();
+      expect(find.text('Wie geht es dir heute?'), findsOneWidget);
+      expect(find.text('BETA'), findsNothing);
+      expect(find.text('Nur auf deinem Handy'), findsNothing);
+      expect(find.text('Ausblenden'), findsNothing);
+      expect(find.text('original thought'), findsOneWidget);
+      expect(ai.translations, hasLength(1));
+    },
+  );
 
   testWidgets('Translate targets the Mknoon app language, not the phone '
       'language', (tester) async {
@@ -133,34 +127,41 @@ void main() {
     },
   );
 
-  testWidgets('Transcribe: loading, the transcript with its label, then '
-      'See translation on the transcript', (tester) async {
-    final ai = _FakeAi();
-    await tester.pumpWidget(
-      _host(TranscribePreview(audioPath: '/tmp/voice.m4a', ai: ai)),
-    );
+  testWidgets(
+    'Transcribe: loading, the transcript without a result footer, then '
+    'See translation on the transcript',
+    (tester) async {
+      final ai = _FakeAi();
+      await tester.pumpWidget(
+        _host(TranscribePreview(audioPath: '/tmp/voice.m4a', ai: ai)),
+      );
 
-    await tester.tap(find.text('Transcribe'));
-    await tester.pump();
-    expect(find.text('Transcribing…'), findsOneWidget);
-    expect(ai.transcriptions, ['/tmp/voice.m4a']);
+      await tester.tap(find.text('Transcribe'));
+      await tester.pump();
+      expect(find.text('Transcribing…'), findsOneWidget);
+      expect(ai.transcriptions, ['/tmp/voice.m4a']);
 
-    ai.next.complete('أنا في الطريق');
-    await tester.pump();
-    expect(find.text('أنا في الطريق'), findsOneWidget);
-    expect(find.text('Only on your phone'), findsOneWidget);
-    expect(find.text('Hide'), findsNothing);
+      ai.next.complete('أنا في الطريق');
+      await tester.pump();
+      expect(find.text('أنا في الطريق'), findsOneWidget);
+      expect(find.text('BETA'), findsNothing);
+      expect(find.text('Only on your phone'), findsNothing);
+      expect(find.text('Hide'), findsNothing);
 
-    ai.next = Completer<String>();
-    await tester.tap(find.text('See translation'));
-    await tester.pump();
-    ai.next.complete("I'm on my way");
-    await tester.pump();
-    expect(ai.translations, [(text: 'أنا في الطريق', languageName: 'English')]);
-    expect(find.text("I'm on my way"), findsOneWidget);
-    expect(find.text('Only on your phone'), findsNWidgets(2));
-    expect(find.text('Hide'), findsOneWidget);
-  });
+      ai.next = Completer<String>();
+      await tester.tap(find.text('See translation'));
+      await tester.pump();
+      ai.next.complete("I'm on my way");
+      await tester.pump();
+      expect(ai.translations, [
+        (text: 'أنا في الطريق', languageName: 'English'),
+      ]);
+      expect(find.text("I'm on my way"), findsOneWidget);
+      expect(find.text('BETA'), findsNothing);
+      expect(find.text('Only on your phone'), findsNothing);
+      expect(find.text('Hide'), findsNothing);
+    },
+  );
 
   testWidgets("Transcribe: a failure says Couldn't transcribe", (tester) async {
     final ai = _FakeAi();

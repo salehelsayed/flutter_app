@@ -4786,15 +4786,6 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_failed_line => 'حدث خطأ ما. حاول مجددًا.';
 
   @override
-  String get translator_result_beta => 'تجريبي';
-
-  @override
-  String get translator_result_only_phone => 'على هاتفك فقط';
-
-  @override
-  String get translator_hide => 'إخفاء';
-
-  @override
   String get translator_settings_title => 'المترجم الخاص';
 
   @override

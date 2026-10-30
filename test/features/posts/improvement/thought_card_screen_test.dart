@@ -1463,9 +1463,9 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Wie geht es dir heute?'), findsOneWidget);
-      expect(find.text('BETA'), findsOneWidget);
-      expect(find.text('Nur auf deinem Handy'), findsOneWidget);
-      expect(find.text('Ausblenden'), findsOneWidget);
+      expect(find.text('BETA'), findsNothing);
+      expect(find.text('Nur auf deinem Handy'), findsNothing);
+      expect(find.text('Ausblenden'), findsNothing);
       await finish(tester);
     });
   });
