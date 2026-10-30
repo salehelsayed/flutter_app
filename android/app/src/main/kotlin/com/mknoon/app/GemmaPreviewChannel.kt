@@ -89,7 +89,8 @@ object GemmaPreviewChannel {
             val input = extractor.getTrackFormat(track)
             var sampleRate = input.getInteger(MediaFormat.KEY_SAMPLE_RATE)
             var channels = input.getInteger(MediaFormat.KEY_CHANNEL_COUNT)
-            val codec = MediaCodec.createDecoderByType(input.getString(MediaFormat.KEY_MIME)!!)
+            val sourceCodec = input.getString(MediaFormat.KEY_MIME)!!
+            val codec = MediaCodec.createDecoderByType(sourceCodec)
             val pcm = ByteArrayOutputStream()
             try {
                 codec.configure(input, null, null, 0)
@@ -134,7 +135,12 @@ object GemmaPreviewChannel {
             } finally {
                 codec.release()
             }
-            return mapOf("pcm" to pcm.toByteArray(), "sampleRate" to sampleRate, "channels" to channels)
+            return mapOf(
+                "pcm" to pcm.toByteArray(),
+                "sampleRate" to sampleRate,
+                "channels" to channels,
+                "sourceCodec" to sourceCodec,
+            )
         } finally {
             extractor.release()
         }

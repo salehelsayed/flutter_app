@@ -2117,6 +2117,10 @@ final class IosSetupReadinessEntryCoordinator {
 
   private static func gemmaPreviewDecodePcm(path: String) throws -> [String: Any] {
     let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+    let sourceCodecID = file.fileFormat.streamDescription.pointee.mFormatID
+    let sourceCodecBytes = [24, 16, 8, 0].map { UInt8((sourceCodecID >> $0) & 0xff) }
+    let sourceCodec = String(bytes: sourceCodecBytes, encoding: .ascii)
+      ?? String(format: "0x%08x", sourceCodecID)
     let format = file.processingFormat
     guard let buffer = AVAudioPCMBuffer(
       pcmFormat: format,
@@ -2146,6 +2150,7 @@ final class IosSetupReadinessEntryCoordinator {
       "pcm": FlutterStandardTypedData(bytes: pcm),
       "sampleRate": Int(format.sampleRate),
       "channels": 1,
+      "sourceCodec": sourceCodec,
     ]
   }
 

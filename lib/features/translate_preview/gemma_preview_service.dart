@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
@@ -18,6 +20,8 @@ final class GemmaPreviewService implements OnDeviceAi {
   static final instance = GemmaPreviewService._();
 
   static const _channel = MethodChannel('mknoon/gemma_preview');
+  static const _diagnosticsEnabled =
+      kDebugMode && bool.fromEnvironment('TRANSLATE_PREVIEW_DIAG');
 
   Future<InferenceModel>? _model;
   bool _engineRegistered = false;
@@ -63,7 +67,7 @@ final class GemmaPreviewService implements OnDeviceAi {
                 isUser: true,
               ),
             );
-            return _reply(await session.getResponse());
+            return _reply(await session.getResponse(), operation: 'translate');
           } finally {
             await session.close();
           }
@@ -78,11 +82,56 @@ final class GemmaPreviewService implements OnDeviceAi {
         'decodePcm',
         {'path': audioPath},
       );
-      final wav = wav16kMono(
-        decoded!['pcm']! as Uint8List,
-        sampleRate: decoded['sampleRate']! as int,
-        channels: decoded['channels']! as int,
-      );
+      final pcm = decoded!['pcm']! as Uint8List;
+      final sampleRate = decoded['sampleRate']! as int;
+      final channels = decoded['channels']! as int;
+      if (_diagnosticsEnabled) {
+        final input = File(audioPath);
+        final inputBytes = await input.length();
+        final header = await input
+            .openRead(0, inputBytes < 16 ? inputBytes : 16)
+            .fold<List<int>>(<int>[], (bytes, chunk) => bytes..addAll(chunk));
+        final digest = await sha256.bind(input.openRead()).first;
+        final sampleCount = pcm.lengthInBytes ~/ 2;
+        final frameCount = channels > 0 ? sampleCount ~/ channels : null;
+        debugPrint(
+          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
+            'event': 'decoded_audio',
+            'operation': 'transcribe',
+            'inputBasename': input.uri.pathSegments.last,
+            'inputBytes': inputBytes,
+            'inputSha256': digest.toString(),
+            'inputHeaderHex': header
+                .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+                .join(),
+            'sourceContainer': decoded['sourceContainer'],
+            'sourceCodec': decoded['sourceCodec'],
+            'pcmBytes': pcm.lengthInBytes,
+            'sampleRate': sampleRate,
+            'channels': channels,
+            'sampleCount': sampleCount,
+            'frameCount': frameCount,
+            'durationMs': frameCount != null && sampleRate > 0
+                ? frameCount * 1000 / sampleRate
+                : null,
+          })}',
+        );
+      }
+      final wav = wav16kMono(pcm, sampleRate: sampleRate, channels: channels);
+      if (_diagnosticsEnabled) {
+        final wavHeader = ByteData.sublistView(wav);
+        final wavSampleRate = wavHeader.getUint32(24, Endian.little);
+        final wavSampleCount = wavHeader.getUint32(40, Endian.little) ~/ 2;
+        debugPrint(
+          'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
+            'event': 'normalized_wav',
+            'operation': 'transcribe',
+            'wavSampleRate': wavSampleRate,
+            'wavSampleCount': wavSampleCount,
+            'wavDurationMs': wavSampleCount * 1000 / wavSampleRate,
+          })}',
+        );
+      }
       final session = await model.createSession(
         temperature: gemmaTemperature,
         randomSeed: gemmaSeed,
@@ -99,7 +148,7 @@ final class GemmaPreviewService implements OnDeviceAi {
             isUser: true,
           ),
         );
-        return _reply(await session.getResponse());
+        return _reply(await session.getResponse(), operation: 'transcribe');
       } finally {
         await session.close();
       }
@@ -155,7 +204,17 @@ final class GemmaPreviewService implements OnDeviceAi {
     _engineRegistered = true;
   }
 
-  String _reply(String reply) {
+  String _reply(String reply, {required String operation}) {
+    if (_diagnosticsEnabled) {
+      debugPrint(
+        'TRANSLATE_PREVIEW_DIAG ${jsonEncode({
+          'event': 'raw_model_output',
+          'operation': operation,
+          'lengthCodeUnits': reply.length,
+          'text': reply,
+        })}',
+      );
+    }
     final text = reply.trim();
     if (text.isEmpty) throw StateError('empty reply');
     return text;
