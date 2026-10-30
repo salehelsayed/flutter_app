@@ -483,7 +483,12 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                   child: ScaffoldMessenger(
                     key: _feedbackMessengerKey,
                     child: Scaffold(
-                      backgroundColor: Colors.transparent,
+                      // The call screens' own fill is translucent in dark
+                      // mode; an open private photo must not show through.
+                      backgroundColor: context
+                          .backgroundReadableColors
+                          .surfaceBase
+                          .withAlpha(255),
                       resizeToAvoidBottomInset: false,
                       body: Stack(
                         fit: StackFit.expand,

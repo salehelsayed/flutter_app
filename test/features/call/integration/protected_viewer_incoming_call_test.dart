@@ -224,16 +224,13 @@ void main() {
                 reason: 'the retained viewer still owns its protection grant',
               );
               final screen = find.byType(IncomingCallScreen);
-              final cover = tester
-                  .widgetList<ColoredBox>(
-                    find.descendant(
-                      of: screen,
-                      matching: find.byType(ColoredBox),
-                    ),
-                  )
-                  .first;
+              final cover = tester.widget<Scaffold>(
+                find
+                    .ancestor(of: screen, matching: find.byType(Scaffold))
+                    .first,
+              );
               expect(
-                cover.color.a,
+                cover.backgroundColor?.a,
                 1,
                 reason:
                     'the real incoming screen must cover private pixels opaquely',
