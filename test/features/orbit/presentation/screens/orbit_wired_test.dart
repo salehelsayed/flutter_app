@@ -837,6 +837,50 @@ void main() {
       },
     );
 
+    testWidgets(
+      'entering 3D, each face starts on that friend\'s real 2D avatar',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final second = testContact.copyWith(
+          peerId: 'depth-second',
+          username: 'Second',
+        );
+        contactRepo.seed([testContact, second]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('depth-first'));
+        await posts.savePost(
+          thought(
+            'depth-second-post',
+          ).copyWith(authorPeerId: second.peerId, senderPeerId: second.peerId),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final flat = find.byKey(ValueKey(second.peerId));
+        expect(flat, findsWidgets);
+        final avatar = tester.getCenter(flat.first);
+        final surface = find.byType(OrbitDepthSurface);
+        final finger = await tester.startGesture(
+          tester.getBottomLeft(surface) + const Offset(40, -120),
+        );
+        await finger.moveBy(const Offset(0, -12));
+        await tester.pump();
+        final face = tester.getCenter(
+          find.byKey(const ValueKey('orbit-depth-seat-inner-depth-second')),
+        );
+        expect((face - avatar).distance, lessThan(3));
+        await finger.up();
+        await pumpOrbitFrames(tester, count: 30);
+        await finishThoughtCase(tester);
+      },
+    );
+
     group('Orbit intro', () {
       Finder step(String name) => find.byKey(ValueKey('orbit-intro-$name'));
 
@@ -999,7 +1043,7 @@ void main() {
         },
       );
 
-      testWidgets('changing rings vertically is not the sideways turn', (
+      testWidgets('a second vertical drag is not the sideways turn', (
         tester,
       ) async {
         setLargeTestSurface(tester);
@@ -1036,7 +1080,7 @@ void main() {
         );
         expect(
           (stage.child! as Semantics).properties.identifier,
-          contains('.outer.'),
+          contains('.inner.'),
         );
         expect(step('turn'), findsOneWidget);
         expect(await secureKeyStore.read('orbit_intro_seen_v1'), isNull);

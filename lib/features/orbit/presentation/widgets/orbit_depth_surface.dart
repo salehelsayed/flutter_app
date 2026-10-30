@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:typed_data';
+import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -25,9 +25,6 @@ class OrbitDepthSurface extends StatefulWidget {
     required this.thoughts,
     required this.onFriendTap,
     required this.onThoughtTap,
-    required this.onOpenFriends,
-    this.selfPeerId,
-    this.selfAvatarBytes,
     this.active = true,
     this.gesturesEnabled = true,
     this.topClearance = 0,
@@ -45,8 +42,6 @@ class OrbitDepthSurface extends StatefulWidget {
   final Widget child;
   final List<OrbitItem> items;
   final Map<String, PostModel> thoughts;
-  final String? selfPeerId;
-  final Uint8List? selfAvatarBytes;
   final bool active;
   final bool gesturesEnabled;
 
@@ -61,7 +56,7 @@ class OrbitDepthSurface extends StatefulWidget {
   final ValueChanged<VoidCallback?>? onBackActionChanged;
   final ValueChanged<String>? onThoughtDeparted;
 
-  /// The view came to rest: its ring, the friend in front, and whether a
+  /// The view came to rest: its ring, the friend in the center, and whether a
   /// sideways turn brought it there. Also called with flat after a reset.
   /// Always delivered after the current frame.
   final void Function(OrbitDepthLayer layer, String? frontPeerId, bool turned)?
@@ -69,13 +64,16 @@ class OrbitDepthSurface extends StatefulWidget {
   final VoidCallback? onThoughtsExpired;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<String>? onThoughtTap;
-  final VoidCallback? onOpenFriends;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadMedia;
   @override
   State<OrbitDepthSurface> createState() => _OrbitDepthSurfaceState();
 }
+
+/// Where the flat orbit showed each queued friend, and You, when the drag
+/// into depth began, in this surface's coordinates.
+typedef _FlatSeats = ({Map<String, Rect> faces, Rect? self});
 
 typedef _DepthLanding = ({
   int generation,
@@ -89,46 +87,39 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   late final AnimationController _vertical = AnimationController.unbounded(
     vsync: this,
   );
-  late final AnimationController _rotation = AnimationController.unbounded(
+
+  /// The turn position: friend `i` of the queue is `i - value` seats away
+  /// from the center.
+  late final AnimationController _turn = AnimationController.unbounded(
     vsync: this,
-  );
-  late final AnimationController _fold = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 160),
-    reverseDuration: const Duration(milliseconds: 260),
   );
   OrbitDepthLayer _layer = OrbitDepthLayer.flat;
   OrbitDepthAnchor _anchor = OrbitDepthAnchor.top;
   OrbitDepthGesture _gesture = OrbitDepthGesture.idle;
-  String? _frontPeer;
   String? _landedPostId;
-  late final AnimationController _overviewProgress = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 320),
-  );
   bool _owned = false;
   bool _routeActive = true;
   bool _foreground = true;
   bool _sequenceCancelled = false;
   // Retained through recognizer callbacks after raw pointer-up clears the map.
   bool _suppressTap = false;
-  bool _pinchDecided = false;
   final _pointers = <int, Offset>{};
   Offset? _start;
   double _startVertical = 0;
-  double _startRotation = 0;
-  double? _pinchDistance;
+  double _startTurn = 0;
   VelocityTracker? _velocity;
   int _settleGeneration = 0;
   _DepthLanding? _pendingLanding;
-  bool _overviewRequested = false;
   Timer? _expiry;
   final _lastLoadedMedia = <String, List<PostMediaAttachmentModel>>{};
   Timer? _age;
   double _scale = 1;
-  // Seats frozen for one visit into depth, so a re-sort of friends (a new
-  // message) cannot move faces or swap the front card under the finger.
-  OrbitDepthLayout? _seating;
+  // The queue order is frozen for one visit into depth, so a re-sort of
+  // friends (a new message) cannot move faces or swap the card under the
+  // finger. Newcomers join at the end.
+  List<String>? _order;
+  _FlatSeats? _flat;
+  List<String> _seated = const [];
   bool get _active => widget.active && _foreground;
   bool get _enabled => _active && _routeActive && widget.gesturesEnabled;
   bool get _depth => _layer != OrbitDepthLayer.flat || _vertical.value > 0.01;
@@ -137,27 +128,30 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       MediaQuery.accessibleNavigationOf(context);
   bool get _rtl => Directionality.of(context) == TextDirection.rtl;
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
-  Map<String, OrbitFriend> get _friends => {
-    for (final item in widget.items)
-      if (item is OrbitFriendItem) item.friend.peerId: item.friend,
-  };
-  OrbitDepthLayout get _layout => switch (_seating) {
-    null => OrbitDepthLayout.fromItems(
-      widget.items,
-      widget.thoughts,
-      _now,
-      mirrored: _rtl,
-    ),
-    final seating => seating.reseated(_friends, widget.thoughts, _now),
-  };
-  List<OrbitDepthSeat> get _seats => _layout.inLayer(_layer);
-  OrbitDepthSeat? get _front => _seats
-      .where((seat) => seat.friend.peerId == _frontPeer && seat.thought != null)
-      .firstOrNull;
+
+  List<OrbitDepthSeat> get _queue {
+    final live = orbitDepthQueue(widget.items, widget.thoughts, _now);
+    final order = _order;
+    if (order == null) return live;
+    final byPeer = {for (final seat in live) seat.friend.peerId: seat};
+    return [
+      for (final peer in order) ?byPeer.remove(peer),
+      ...live.where((seat) => byPeer.containsKey(seat.friend.peerId)),
+    ];
+  }
+
+  int? _centerIndex(int count, double turn) =>
+      count == 0 ? null : turn.round() % count;
+
+  OrbitDepthSeat? get _center {
+    final queue = _queue;
+    final index = _centerIndex(queue.length, _turn.value);
+    return index == null ? null : queue[index];
+  }
+
   double _stop(OrbitDepthLayer layer) => switch (layer) {
     OrbitDepthLayer.flat => 0,
     OrbitDepthLayer.inner => 320,
-    OrbitDepthLayer.outer => 580,
   };
 
   @override
@@ -187,21 +181,15 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   void _land() {
     final pending = _pendingLanding;
     _vertical.stop();
-    _rotation.stop();
-    _fold.stop();
-    _overviewProgress.stop();
+    _turn.stop();
     _vertical.value = _stop(_layer);
-    final front = _front;
-    if (front != null) {
-      _rotation.value = orbitDepthRotationFor(front, _rotation.value);
-    }
-    _fold.value = _gesture == OrbitDepthGesture.turn ? 1 : 0;
-    _overviewProgress.value = _overviewRequested ? 1 : 0;
+    _turn.value = _turn.value.roundToDouble();
     if (pending != null) _completeLanding(pending);
   }
 
   // A covering route (the card, a chat) freezes the dial at its stop and lends
-  // the host its gestures back. Ring, anchor and front friend wait for the pop.
+  // the host its gestures back. Ring, anchor and center friend wait for the
+  // pop.
   void _hold() {
     _gesture = OrbitDepthGesture.idle;
     _pointers.clear();
@@ -218,34 +206,31 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       widget.resetSignal?.addListener(_reset);
     }
     if (!_active || !widget.gesturesEnabled) _reset(notifyBuild: false);
-    if (_depth && _front == null) {
-      final next = orbitDepthNearest(_seats, _rotation.value);
-      _frontPeer = next?.friend.peerId;
-      _landedPostId = _gesture == OrbitDepthGesture.idle && !_overviewRequested
-          ? next?.thought?.id
-          : null;
-      if (next != null) {
-        _rotation.value = orbitDepthRotationFor(next, _rotation.value);
-      }
-    } else if (_depth &&
-        _gesture == OrbitDepthGesture.idle &&
-        !_overviewRequested &&
-        _fold.value == 0 &&
-        _pendingLanding == null &&
-        _landedPostId != null &&
-        _front?.thought?.id != _landedPostId) {
-      // Same author, new post: arrival is not a read of either version.
-      _landedPostId = _front?.thought?.id;
-    }
-    if (_depth &&
-        _gesture == OrbitDepthGesture.idle &&
-        !_rotation.isAnimating) {
-      final front = _front;
-      if (front != null) {
-        _rotation.value = orbitDepthRotationFor(front, _rotation.value);
-      }
-    }
+    _reseat();
     _armTimers();
+  }
+
+  /// Keeps the friend in the center there when friends join or leave the
+  /// queue, so the indices shifting under them cannot change who is shown.
+  void _reseat() {
+    final peers = [for (final seat in _queue) seat.friend.peerId];
+    final previous = _seated;
+    _seated = peers;
+    if (!_depth || previous.isEmpty || peers.isEmpty) return;
+    final oldIndex = _centerIndex(previous.length, _turn.value)!;
+    final newIndex = peers.indexOf(previous[oldIndex]);
+    if (newIndex == oldIndex && peers.length == previous.length) return;
+    final pending = _pendingLanding;
+    final turning = _turn.isAnimating;
+    if (turning) _turn.stop();
+    final seat = newIndex < 0 ? math.min(oldIndex, peers.length - 1) : newIndex;
+    final drift = turning ? 0.0 : _turn.value - _turn.value.round();
+    _turn.value = seat + drift;
+    if (newIndex < 0) {
+      // The friend in the center left: whoever takes the seat just arrived.
+      _landedPostId = _center?.thought.id;
+    }
+    if (turning && pending != null) _completeLanding(pending);
   }
 
   @override
@@ -279,19 +264,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     ++_settleGeneration;
     _pendingLanding = null;
     _vertical.stop();
-    _rotation.stop();
-    _fold.stop();
-    _overviewProgress.stop();
+    _turn.stop();
     _vertical.value = 0;
-    _rotation.value = 0;
-    _fold.value = 0;
+    _turn.value = 0;
     _layer = OrbitDepthLayer.flat;
     _gesture = OrbitDepthGesture.idle;
-    _frontPeer = null;
     _landedPostId = null;
-    _seating = null;
-    _overviewProgress.value = 0;
-    _overviewRequested = false;
+    _order = null;
+    _flat = null;
     _pointers.clear();
     _start = null;
     _sequenceCancelled = false;
@@ -315,19 +295,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (expiries.isNotEmpty) {
       _expiry = Timer(expiries.first.difference(_now), () {
         if (!mounted || !_active) return;
-        setState(() {
-          if (_front == null) {
-            final next = orbitDepthNearest(_seats, _rotation.value);
-            _frontPeer = next?.friend.peerId;
-            _landedPostId =
-                _gesture == OrbitDepthGesture.idle && !_overviewRequested
-                ? next?.thought?.id
-                : null;
-            if (next != null) {
-              _rotation.value = orbitDepthRotationFor(next, _rotation.value);
-            }
-          }
-        });
+        setState(_reseat);
         widget.onThoughtsExpired?.call();
         _armTimers();
       });
@@ -340,10 +308,40 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     });
   }
 
-  /// The flat orbit hands over to the stage in the first 30% of the tilt, as
-  /// in the approved mockup, so the two never show half-faded on each other.
-  static double _handover(double tiltProgress) =>
-      (tiltProgress / .3).clamp(0.0, 1.0);
+  static double _smooth(double value) {
+    final k = value.clamp(0.0, 1.0);
+    return k * k * (3 - 2 * k);
+  }
+
+  /// The flat orbit's avatars are keyed by peer id and its own photo by
+  /// `orbit-center-self-avatar`; measuring them is what lets each face fly
+  /// from where the user just saw it, whatever the orbit's geometry knobs.
+  _FlatSeats _measureFlat() {
+    final surface = context.findRenderObject();
+    final wanted = {for (final seat in _queue) seat.friend.peerId};
+    final faces = <String, Rect>{};
+    Rect? self;
+    void visit(Element element) {
+      if (element.widget.key case ValueKey<String>(
+        :final value,
+      ) when wanted.contains(value) || value == 'orbit-center-self-avatar') {
+        final box = element.renderObject;
+        if (box is RenderBox && box.hasSize && box.attached) {
+          final rect =
+              box.localToGlobal(Offset.zero, ancestor: surface) & box.size;
+          if (value == 'orbit-center-self-avatar') {
+            self ??= rect;
+          } else {
+            faces[value] ??= rect;
+          }
+        }
+      }
+      element.visitChildElements(visit);
+    }
+
+    context.visitChildElements(visit);
+    return (faces: faces, self: self);
+  }
 
   Future<void> _spring(
     AnimationController controller,
@@ -364,13 +362,15 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 
   /// [verticalVelocity] is the release speed, in tilt units per second, so a
-  /// flick glides into its stop instead of restarting from rest.
+  /// flick glides into its stop instead of restarting from rest. [turnTo] is
+  /// the turn position to come to rest at; [turnVelocity] is in seats per
+  /// second.
   Future<void> _settle(
     OrbitDepthLayer target, {
-    OrbitDepthSeat? selected,
+    double? turnTo,
     bool markDeparture = true,
     double verticalVelocity = 0,
-    double rotationVelocity = 0,
+    double turnVelocity = 0,
     bool byTurn = false,
   }) async {
     final generation = ++_settleGeneration;
@@ -381,23 +381,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       byTurn: byTurn,
     );
     _pendingLanding = landing;
-    final enteringRing = target != _layer;
-    final candidates = _layout.inLayer(target);
-    final front =
-        selected ??
-        (enteringRing
-            ? orbitDepthArrival(candidates, _rotation.value)
-            : _front);
+    if (_layer == OrbitDepthLayer.flat && target != OrbitDepthLayer.flat) {
+      _flat ??= _measureFlat();
+      // Every visit starts with the friend the user chatted with last.
+      _order = [for (final seat in _queue) seat.friend.peerId];
+      _seated = _order!;
+      _turn.value = 0;
+    }
     _layer = target;
-    _frontPeer = front?.friend.peerId;
     _gesture = OrbitDepthGesture.idle;
     if (target != OrbitDepthLayer.flat) _publish(true);
-    // As in the mockup, the card opens while the orbit glides to its friend,
-    // not after the spring has fully come to rest. Read-marking still waits
-    // for the landing.
-    if (!_reduceMotion && target != OrbitDepthLayer.flat) {
-      unawaited(_fold.reverse());
-    }
     setState(() {});
     try {
       await Future.wait([
@@ -408,12 +401,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           velocity: verticalVelocity,
         ),
         _spring(
-          _rotation,
-          front == null
-              ? _rotation.value
-              : orbitDepthRotationFor(front, _rotation.value),
-          const SpringDescription(mass: 1, stiffness: 90, damping: 15),
-          velocity: rotationVelocity,
+          _turn,
+          turnTo ?? _turn.value.roundToDouble(),
+          const SpringDescription(mass: 1, stiffness: 60, damping: 15.5),
+          velocity: turnVelocity,
         ),
       ]);
       _completeLanding(landing);
@@ -435,41 +426,22 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     // A landing can complete during build (Reduce Motion); tell the host
     // after the frame.
     final layer = _layer;
-    final front = _front?.friend.peerId;
+    final center = _layer == OrbitDepthLayer.flat ? null : _center;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onSettled?.call(layer, front, landing.byTurn);
+      if (mounted) {
+        widget.onSettled?.call(layer, center?.friend.peerId, landing.byTurn);
+      }
     });
-    final next = _layer == OrbitDepthLayer.flat ? null : _front?.thought?.id;
-    // Overview bubbles do not land a new expanded thought. A thought that
-    // was already read at the front remains owned until its actual departure.
-    _landedPostId = _overviewRequested
-        ? (landing.departedPostId == next ? next : null)
-        : next;
+    final next = center?.thought.id;
+    _landedPostId = next;
     if (landing.markDeparture &&
         landing.departedPostId != null &&
         landing.departedPostId != next) {
       widget.onThoughtDeparted?.call(landing.departedPostId!);
     }
-    if (_reduceMotion) {
-      _fold.value = 0;
-    } else {
-      unawaited(
-        _fold.reverse().then((_) {
-          if (mounted &&
-              _active &&
-              _gesture == OrbitDepthGesture.idle &&
-              !_overviewRequested &&
-              _pendingLanding == null &&
-              _layer != OrbitDepthLayer.flat) {
-            _landedPostId = _front?.thought?.id;
-          }
-        }),
-      );
-    }
     if (_layer == OrbitDepthLayer.flat) {
-      _overviewProgress.value = 0;
-      _overviewRequested = false;
-      _seating = null;
+      _order = null;
+      _flat = null;
       _publish(false);
     }
     _armTimers();
@@ -478,14 +450,15 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
 
   void _stepBack() {
     if (!_active || !_depth) return;
-    unawaited(
-      _settle(
-        _layer == OrbitDepthLayer.outer
-            ? OrbitDepthLayer.inner
-            : OrbitDepthLayer.flat,
-      ),
-    );
+    unawaited(_settle(OrbitDepthLayer.flat));
   }
+
+  /// One seat of horizontal finger travel.
+  double get _seatTravel => orbitCenterRadius * _scale;
+
+  /// The next friend waits on the right in a left-to-right app and on the
+  /// left in a right-to-left one, so pulling it in follows the finger.
+  double get _turnSign => _rtl ? 1 : -1;
 
   void _down(PointerDownEvent event) {
     if (!_enabled) return;
@@ -496,19 +469,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       ++_settleGeneration;
       _pendingLanding = null;
       _gesture = OrbitDepthGesture.pinch;
-      _pinchDistance =
-          (_pointers.values.first - _pointers.values.last).distance;
-      _pinchDecided = false;
       if (_depth) {
         _publish(true);
         _vertical.stop();
-        _rotation.stop();
+        _turn.stop();
         _vertical.value = _stop(_layer);
-        final front = _front;
-        if (front != null) {
-          _rotation.value = orbitDepthRotationFor(front, _rotation.value);
-        }
-        _fold.value = 0;
+        _turn.value = _turn.value.roundToDouble();
         setState(() {});
       }
       return;
@@ -517,7 +483,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _suppressTap = false;
     _start = event.localPosition;
     _startVertical = _vertical.value;
-    _startRotation = _rotation.value;
+    _startTurn = _turn.value;
     _velocity = VelocityTracker.withKind(event.kind)
       ..addPosition(event.timeStamp, event.localPosition);
   }
@@ -525,29 +491,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   void _move(PointerMoveEvent event) {
     if (!_enabled || !_pointers.containsKey(event.pointer)) return;
     _pointers[event.pointer] = event.localPosition;
-    if (_pointers.length > 1) {
-      if (_depth && !_pinchDecided && (_pinchDistance ?? 0) >= 24) {
-        final ratio =
-            (_pointers.values.first - _pointers.values.last).distance /
-            _pinchDistance!;
-        if (ratio < .88 || ratio > 1.12) {
-          _overviewRequested = ratio < .88;
-          if (_reduceMotion) {
-            _overviewProgress.value = _overviewRequested ? 1 : 0;
-          } else {
-            unawaited(
-              _overviewProgress.animateTo(
-                ratio < .88 ? 1 : 0,
-                curve: Curves.easeInOut,
-              ),
-            );
-          }
-          _pinchDecided = true;
-        }
-      }
-      return;
-    }
-    if (_sequenceCancelled || _start == null) return;
+    if (_pointers.length > 1 || _sequenceCancelled || _start == null) return;
     _velocity?.addPosition(event.timeStamp, event.localPosition);
     final delta = event.localPosition - _start!;
     if (_gesture == OrbitDepthGesture.idle) {
@@ -558,34 +502,34 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           _anchor = delta.dy < 0
               ? OrbitDepthAnchor.top
               : OrbitDepthAnchor.bottom;
-          _seating = _layout;
+          _flat = _measureFlat();
         }
-      } else if (_depth) {
+      } else if (_depth && _queue.length > 1) {
         _gesture = OrbitDepthGesture.turn;
-        if (_reduceMotion) {
-          _fold.value = 1;
-        } else {
-          unawaited(_fold.forward());
-        }
       } else {
         _sequenceCancelled = true;
         return;
       }
+      _suppressTap = true;
       ++_settleGeneration;
       _pendingLanding = null;
       _vertical.stop();
-      _rotation.stop();
+      _turn.stop();
+      _startTurn = _turn.value;
       _publish(true);
     }
     if (_gesture == OrbitDepthGesture.vertical) {
       final direction = _anchor == OrbitDepthAnchor.top ? -1 : 1;
       _vertical.value = (_startVertical + direction * delta.dy / _scale).clamp(
         0,
-        580,
+        _stop(OrbitDepthLayer.inner),
       );
     } else if (_gesture == OrbitDepthGesture.turn) {
-      _rotation.value =
-          _startRotation + (_rtl ? 1 : -1) * delta.dx / (128 * _scale);
+      final from = _startTurn.roundToDouble();
+      _turn.value = (_startTurn + _turnSign * delta.dx / _seatTravel).clamp(
+        from - 1,
+        from + 1,
+      );
     }
     setState(() {});
   }
@@ -606,40 +550,43 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       final direction = _anchor == OrbitDepthAnchor.top ? -1 : 1;
       var value = _vertical.value;
       if (dy.abs() > 400) value = _startVertical + direction * dy.sign * 200;
-      final target = value < 160
-          ? OrbitDepthLayer.flat
-          : value < 450
-          ? OrbitDepthLayer.inner
-          : OrbitDepthLayer.outer;
-      unawaited(_settle(target, verticalVelocity: direction * dy / _scale));
-    } else if (gesture == OrbitDepthGesture.turn) {
-      final dx = _velocity?.getVelocity().pixelsPerSecond.dx ?? 0;
-      final coast = ((_rtl ? 1 : -1) * dx * .25 / (128 * _scale)).clamp(
-        -math.pi,
-        math.pi,
-      );
-      var next = orbitDepthNearest(_seats, _rotation.value + coast);
-      final turned = _rotation.value - _startRotation;
-      final candidates = _seats.where((seat) => seat.thought != null).toList();
-      if (next?.friend.peerId == _frontPeer && candidates.length > 1) {
-        candidates.removeWhere((seat) => seat.friend.peerId == _frontPeer);
-        double distance(OrbitDepthSeat seat) =>
-            (turned.sign *
-                (math.pi / 2 - seat.placement.angle - _startRotation)) %
-            (2 * math.pi);
-        candidates.sort((a, b) => distance(a).compareTo(distance(b)));
-        if (turned.abs() > .2 * distance(candidates.first))
-          next = candidates.first;
-      }
       unawaited(
         _settle(
-          _layer,
-          selected: next,
-          rotationVelocity: (_rtl ? 1 : -1) * dx / (128 * _scale),
-          byTurn: true,
+          value < 160 ? OrbitDepthLayer.flat : OrbitDepthLayer.inner,
+          verticalVelocity: direction * dy / _scale,
         ),
       );
+    } else if (gesture == OrbitDepthGesture.turn) {
+      // One swipe moves exactly one seat; the flick speed seeds the spring.
+      final dx = _velocity?.getVelocity().pixelsPerSecond.dx ?? 0;
+      final speed = _turnSign * dx / _seatTravel;
+      final from = _startTurn.roundToDouble();
+      final reach = _turn.value - from + speed * .15;
+      final step = reach > .3
+          ? 1
+          : reach < -.3
+          ? -1
+          : 0;
+      unawaited(
+        _settle(_layer, turnTo: from + step, turnVelocity: speed, byTurn: true),
+      );
     }
+  }
+
+  void _tapFace(OrbitDepthSeat seat, int index, int count, double lift) {
+    if (!_enabled || _suppressTap || _pointers.length > 1) return;
+    if (lift > .5) {
+      widget.onFriendTap(seat.friend);
+      return;
+    }
+    final turn = _turn.value.roundToDouble();
+    unawaited(
+      _settle(
+        _layer,
+        turnTo: turn + orbitCenterWrap(index - turn, count).roundToDouble(),
+        byTurn: true,
+      ),
+    );
   }
 
   @override
@@ -651,9 +598,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _age?.cancel();
     _publish(false);
     _vertical.dispose();
-    _rotation.dispose();
-    _fold.dispose();
-    _overviewProgress.dispose();
+    _turn.dispose();
     super.dispose();
   }
 
@@ -675,12 +620,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           onVerticalDragStart: _enabled ? (_) {} : null,
           onHorizontalDragStart: _enabled && _depth ? (_) {} : null,
           child: AnimatedBuilder(
-            animation: Listenable.merge([
-              _vertical,
-              _rotation,
-              _fold,
-              _overviewProgress,
-            ]),
+            animation: Listenable.merge([_vertical, _turn]),
             builder: (context, _) => LayoutBuilder(
               builder: (context, constraints) {
                 final stage = Size(
@@ -689,7 +629,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       widget.topClearance -
                       widget.bottomClearance,
                 );
-                _scale = math.min(stage.width / 390, stage.height / 640);
+                _scale = stage.width / 390;
                 final depth = _depth;
                 return Stack(
                   fit: StackFit.expand,
@@ -701,7 +641,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       child: TickerMode(
                         enabled: !depth,
                         child: Opacity(
-                          opacity: 1 - _handover(_vertical.value / 320),
+                          opacity: 1 - _smooth(_vertical.value / 320 / .45),
                           child: ScrollConfiguration(
                             behavior: _enabled
                                 ? ScrollConfiguration.of(context).copyWith(
@@ -718,7 +658,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                       Positioned.fill(
                         top: widget.topClearance,
                         bottom: widget.bottomClearance,
-                        child: _dial(stage),
+                        child: RepaintBoundary(child: _dial(stage)),
                       ),
                   ],
                 );
@@ -733,222 +673,82 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   Widget _dial(Size size) {
     final k = _scale;
     final tiltProgress = (_vertical.value / 320).clamp(0.0, 1.0);
-    final tilt = 67 * math.pi / 180 * tiltProgress;
-    final camera = ((_vertical.value - 320) / 260).clamp(0.0, 1.0);
-    // At the top the waiting outer ring's far edge, and the peek label above
-    // it, must stay inside the stage instead of running under host chrome.
-    final (outerFarEdge, _) = projectOrbitDepth(
-      -math.pi / 2,
-      146 * k * 1.12 * 1.45,
-      67 * math.pi / 180,
-    );
-    final restY = _anchor == OrbitDepthAnchor.top
-        ? math.max(size.height * .084, 35 * k - outerFarEdge.dy)
-        : size.height * .8;
-    final cy = size.height * .5 + (restY - size.height * .5) * tiltProgress;
+    final e = _smooth(tiltProgress);
+    final extent = orbitCenterRingExtent(k, orbitCenterTilt);
+    final top = _anchor == OrbitDepthAnchor.top;
+    final cy = top ? (35 + 14) * k + extent.far : size.height * .72;
     final center = Offset(size.width / 2, cy);
-    final layout = _layout;
     final colors = Theme.of(context).colorScheme;
-    final children = <Widget>[];
-    final rings = <_DepthRingPaint>[];
-    final faces = <({double depth, Widget widget})>[];
-    for (final layer in [OrbitDepthLayer.inner, OrbitDepthLayer.outer]) {
-      final rel = (layer == OrbitDepthLayer.inner ? 0 : 1) - camera;
-      final away = Curves.easeInOut.transform(rel.abs().clamp(0.0, 1.0));
-      final scale =
-          (layer == OrbitDepthLayer.outer ? 1.12 : 1) *
-          (rel >= 0 ? 1 + .45 * away : 1 - .65 * away);
-      final opacity = rel >= 0 ? 1 - .6 * away : 1 - rel.abs().clamp(0.0, 1.0);
-      final radius = (140 + 6 * tiltProgress) * k * scale;
-      rings.add(_DepthRingPaint(center, radius, tilt, opacity, rel > 0));
-      for (final seat in layout.inLayer(layer)) {
-        final angle = seat.placement.angle + _rotation.value;
-        final (offset, near) = projectOrbitDepth(angle, radius, tilt);
-        final front = seat.friend.peerId == _frontPeer && layer == _layer;
-        final diameter =
-            (52 - 12 * tiltProgress) *
-            k *
-            scale *
-            near *
-            (layer == OrbitDepthLayer.outer ? .68 : 1) *
-            (front ? 1.15 : 1) *
-            (seat.thought?.isRead == true ? .84 : 1);
-        final position = center + offset;
-        final waiting = rel > 0
-            ? (1 - ((math.sin(angle) + .35) / .5).clamp(0, 1)) *
-                      rel.clamp(0, 1) +
-                  (1 - rel.clamp(0, 1))
-            : 1.0;
-        final alpha =
-            (opacity *
-                    waiting *
-                    (1 - .6 * (1 - math.sin(angle)) / 2 * math.sin(tilt)))
-                .clamp(0.0, 1.0);
-        if (alpha <= .01) continue;
-        final thought = seat.thought;
-        final face = thought == null
-            ? CustomPaint(
-                key: ValueKey('orbit-depth-empty-${seat.friend.peerId}'),
-                painter: _EmptySeatPainter(
-                  colors.onSurface.withValues(alpha: .35),
-                ),
-              )
-            : GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                key: ValueKey('orbit-depth-face-${seat.friend.peerId}'),
-                onTap: () {
-                  if (!_enabled || _suppressTap || _pointers.length > 1) return;
-                  if (front) {
-                    widget.onFriendTap(seat.friend);
-                  } else {
-                    unawaited(_settle(layer, selected: seat));
-                  }
-                },
-                child: Semantics(
-                  identifier: 'orbit.depth.face.${seat.friend.peerId}',
-                  button: true,
-                  label: seat.friend.username,
-                  child: UserAvatar(peerId: seat.friend.peerId, size: diameter),
-                ),
-              );
-        faces.add((
-          depth: position.dy,
-          widget: Positioned(
-            key: ValueKey(
-              'orbit-depth-seat-${layer.name}-${seat.friend.peerId}',
-            ),
-            left: position.dx - diameter / 2,
-            top: position.dy - diameter / 2,
-            width: diameter,
-            height: diameter,
-            child: Opacity(opacity: alpha, child: face),
+    final queue = _queue;
+    // Faces fly from where the flat orbit showed them to their seats, as the
+    // finger drags; a face the flat orbit did not show fades in at its seat.
+    final lift = Offset(0, -widget.topClearance);
+    final flat = _flat;
+    final origin =
+        flat?.self?.center.translate(0, lift.dy) ??
+        Offset(size.width / 2, size.height * .5);
+    final from = {
+      for (final MapEntry(:key, :value) in (flat?.faces ?? const {}).entries)
+        key: value.shift(lift),
+    };
+    final flatRadius = from.isEmpty
+        ? orbitCenterRadius * k
+        : from.values
+              .map((rect) => (rect.center - origin).distance)
+              .reduce(math.min);
+    final faces = [
+      for (final face in orbitCenterFaces(
+        count: queue.length,
+        pos: _turn.value,
+        scale: k,
+        nextOnRight: !_rtl,
+      ))
+        switch (from[queue[face.index].friend.peerId]) {
+          final rect? => (
+            index: face.index,
+            offset: Offset.lerp(rect.center, center + face.offset, e)! - center,
+            diameter: lerpDouble(rect.shortestSide, face.diameter, e)!,
+            opacity: lerpDouble(1, face.opacity, e)!,
+            darken: face.darken * e,
+            lift: face.lift * e,
           ),
-        ));
-        if (thought != null &&
-            (_overviewProgress.value > .01 || (front && _fold.value > .5))) {
-          final note = thought.text.isEmpty
-              ? seat.friend.username
-              : thought.text;
-          faces.add((
-            depth: position.dy + 1,
-            widget: Positioned(
-              key: ValueKey('orbit-depth-note-slot-${thought.id}'),
-              left: (position.dx - 52 * k).clamp(
-                0,
-                math.max(0, size.width - 104 * k),
-              ),
-              top: math.max(0, position.dy - diameter / 2 - 46 * k),
-              width: 104 * k,
-              child: IgnorePointer(
-                child: Container(
-                  key: ValueKey('orbit-depth-note-${thought.id}'),
-                  padding: EdgeInsets.all(6 * k),
-                  decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Text(
-                    note,
-                    textDirection: detectTextDirection(note),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11 * k,
-                      fontWeight: thought.isRead
-                          ? FontWeight.normal
-                          : FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ));
-        }
-      }
-      final live = layout
-          .inLayer(layer)
-          .where((seat) => seat.thought != null)
-          .length;
-      if (layer == OrbitDepthLayer.outer && rel > .01 && live > 0) {
-        final (back, _) = projectOrbitDepth(-math.pi / 2, radius, tilt);
-        children.add(
-          Positioned(
-            top: math.max(0, cy + back.dy - 35 * k),
-            left: 0,
-            right: 0,
-            child: Center(
-              child: TextButton(
-                key: const ValueKey('orbit-depth-outer-peek'),
-                onPressed: () {
-                  if (_enabled && !_suppressTap) {
-                    unawaited(_settle(OrbitDepthLayer.outer));
-                  }
-                },
-                child: Text(
-                  '${AppLocalizations.of(context)!.orbit_depth_outer_ring} · $live',
-                ),
-              ),
-            ),
+          null => (
+            index: face.index,
+            offset: face.offset,
+            diameter: face.diameter,
+            opacity: face.opacity * e,
+            darken: face.darken,
+            lift: face.lift * e,
           ),
-        );
-      }
-      if (layer == OrbitDepthLayer.outer && layout.overflow != null) {
-        final (badge, near) = projectOrbitDepth(
-          layout.overflow!.angle + _rotation.value,
-          radius,
-          tilt,
-        );
-        final point = center + badge;
-        final diameter = 32 * k * near;
-        faces.add((
-          depth: point.dy,
-          widget: Positioned(
-            left: point.dx - diameter / 2,
-            top: point.dy - diameter / 2,
-            width: diameter,
-            height: diameter,
-            child: GestureDetector(
-              key: const ValueKey('orbit-depth-overflow'),
-              onTap: () {
-                if (_enabled && !_suppressTap) widget.onOpenFriends?.call();
-              },
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: colors.surfaceContainerHighest,
-                ),
-                child: Center(
-                  child: Text(
-                    '+${layout.overflow!.overflowCount}',
-                    style: TextStyle(fontSize: 10 * k),
+        },
+    ];
+    final lifted = faces.isEmpty
+        ? null
+        : faces.reduce((a, b) => b.lift > a.lift ? b : a);
+    final shown = lifted == null ? null : queue[lifted.index];
+    final reveal = _smooth((tiltProgress - .5) / .5);
+    final named = _smooth((tiltProgress - .65) / .35);
+    final presence = _reduceMotion
+        ? 1.0
+        : math.pow(lifted?.lift ?? 0, 2).toDouble();
+    final slotTop = top ? cy + extent.near + 54 * k : 40 * k;
+    final slotBottom = top
+        ? 20 * k
+        : math.max(0.0, size.height - (cy - extent.far - 52 * k));
+    Widget fade(String key, Widget? child) => _reduceMotion
+        ? AnimatedSwitcher(
+            duration: const Duration(milliseconds: 200),
+            child: child == null
+                ? const SizedBox.shrink()
+                : KeyedSubtree(
+                    key: ValueKey('$key-${shown?.friend.peerId}'),
+                    child: child,
                   ),
-                ),
-              ),
-            ),
-          ),
-        ));
-      }
-    }
-    faces.sort((a, b) => a.depth.compareTo(b.depth));
-    final front = _front;
-    final slotSettled = _overviewProgress.value < .99 && _fold.value < .99;
-    // Faces and the own photo shrink from flat to dial sizes as it tilts.
-    final selfSize = (76 - 24 * tiltProgress) * k;
-    final cardVisible = front != null && slotSettled;
-    final ringEmpty =
-        slotSettled &&
-        _gesture != OrbitDepthGesture.vertical &&
-        _layer != OrbitDepthLayer.flat &&
-        !layout.inLayer(_layer).any((seat) => seat.thought != null);
-    final slotTop = _anchor == OrbitDepthAnchor.top
-        ? math.max(cy + 146 * k * math.cos(tilt) * 1.45 + 38 * k, 140 * k)
-        : 60 * k;
-    final slotBottom = _anchor == OrbitDepthAnchor.bottom
-        ? math.max(0.0, size.height - cy + 146 * k * math.cos(tilt) + 30 * k)
-        : 20 * k;
+          )
+        : child ?? const SizedBox.shrink();
     return Opacity(
       key: const ValueKey('orbit-depth-stage'),
-      opacity: _handover(tiltProgress),
+      opacity: 1,
       child: Semantics(
         identifier: 'orbit.depth.${_layer.name}.${_anchor.name}',
         child: Stack(
@@ -956,71 +756,172 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           fit: StackFit.expand,
           children: [
             CustomPaint(
-              painter: _DialPainter(
-                rings,
-                colors.onSurface.withValues(alpha: .25),
+              key: const ValueKey('orbit-depth-ring'),
+              painter: _RingPainter(
+                Offset.lerp(origin, center, e)!,
+                lerpDouble(flatRadius, orbitCenterRadius * k, e)!,
+                orbitCenterTilt * e,
+                back: colors.onSurface.withValues(alpha: .25 * e),
+                front: orbitDepthRingFront(
+                  Theme.of(context).brightness,
+                ).withValues(alpha: .45 * e),
               ),
             ),
-            ...children,
-            Positioned(
-              left: center.dx - selfSize / 2,
-              top: center.dy - selfSize / 2,
-              width: selfSize,
-              height: selfSize,
-              child: UserAvatar(
-                peerId: widget.selfPeerId ?? '',
-                size: selfSize,
-                avatarBytes: widget.selfAvatarBytes,
-              ),
-            ),
-            ...faces.map((face) => face.widget),
-            if (cardVisible)
-              // Faces come and go and re-sort every frame; without a key the
-              // card's subtree is rebuilt and its media reloads and flickers.
+            for (final face in faces)
+              if (!(_reduceMotion && face.lift > .5))
+                _seat(queue[face.index], face, center, queue.length, k),
+            if (_reduceMotion && lifted != null && lifted.lift > .5)
               Positioned(
-                key: const ValueKey('orbit-depth-card-slot'),
-                left: 14 * k,
-                right: 14 * k,
-                top: slotTop,
-                bottom: slotBottom,
-                child: Opacity(
-                  opacity:
-                      ((1 - _fold.value) *
-                              (1 - _overviewProgress.value) *
-                              ((tiltProgress - .55) / .35).clamp(0.0, 1.0))
-                          .clamp(0, 1),
-                  child: _card(front, k),
+                key: const ValueKey('orbit-depth-center-slot'),
+                left: center.dx - lifted.diameter / 2,
+                top: center.dy - lifted.diameter / 2,
+                width: lifted.diameter,
+                height: lifted.diameter,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: KeyedSubtree(
+                    key: ValueKey(shown!.friend.peerId),
+                    child: _face(shown, lifted, queue.length, k),
+                  ),
                 ),
               ),
-            if (ringEmpty)
+            if (shown != null)
               Positioned(
-                key: const ValueKey('orbit-depth-empty-ring'),
-                left: 14 * k,
-                right: 14 * k,
-                top: slotTop,
-                bottom: slotBottom,
+                key: const ValueKey('orbit-depth-name-slot'),
+                left: 0,
+                right: 0,
+                top: cy + (orbitCenterDiameter / 2 + 12) * k,
                 child: IgnorePointer(
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: Text(
-                      AppLocalizations.of(context)!.orbit_depth_empty_ring,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 15 * k,
-                        color: colors.onSurface.withValues(alpha: .7),
+                  child: Opacity(
+                    opacity: presence * named,
+                    child: fade(
+                      'orbit-depth-name',
+                      Text(
+                        shown.friend.username,
+                        key: const ValueKey('orbit-depth-name'),
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 17 * k,
+                          fontWeight: FontWeight.w700,
+                          color: colors.onSurface,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
+            // Faces come and go and re-sort every frame; without a key the
+            // card's subtree is rebuilt and its media reloads and flickers.
+            Positioned(
+              key: const ValueKey('orbit-depth-card-slot'),
+              left: 14 * k,
+              right: 14 * k,
+              top: slotTop,
+              bottom: slotBottom,
+              child: Transform.translate(
+                // The thought slides up into place as the orbit tilts.
+                offset: Offset(0, (1 - reveal) * 40 * k),
+                child: Opacity(
+                  opacity: (presence * reveal).clamp(0.0, 1.0).toDouble(),
+                  child: fade(
+                    'orbit-depth-content',
+                    shown != null
+                        ? _card(shown, k)
+                        : _layer == OrbitDepthLayer.flat ||
+                              _gesture == OrbitDepthGesture.vertical
+                        ? null
+                        : IgnorePointer(
+                            key: const ValueKey('orbit-depth-empty-ring'),
+                            child: Align(
+                              alignment: Alignment.topCenter,
+                              child: Text(
+                                AppLocalizations.of(
+                                  context,
+                                )!.orbit_depth_empty_ring,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 15 * k,
+                                  color: colors.onSurface.withValues(alpha: .7),
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _card(OrbitDepthSeat front, double k) {
-    final post = front.thought!;
+  Widget _seat(
+    OrbitDepthSeat seat,
+    OrbitCenterFace face,
+    Offset center,
+    int count,
+    double k,
+  ) {
+    final position = center + face.offset;
+    return Positioned(
+      key: ValueKey('orbit-depth-seat-inner-${seat.friend.peerId}'),
+      left: position.dx - face.diameter / 2,
+      top: position.dy - face.diameter / 2,
+      width: face.diameter,
+      height: face.diameter,
+      child: Opacity(opacity: face.opacity, child: _face(seat, face, count, k)),
+    );
+  }
+
+  Widget _face(OrbitDepthSeat seat, OrbitCenterFace face, int count, double k) {
+    final full = orbitCenterDiameter * k;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      key: ValueKey('orbit-depth-face-${seat.friend.peerId}'),
+      onTap: () => _tapFace(seat, face.index, count, face.lift),
+      child: Semantics(
+        identifier: 'orbit.depth.face.${seat.friend.peerId}',
+        button: true,
+        selected: face.lift > .5,
+        label: seat.friend.username,
+        // Every face is drawn at the center size and scaled down: the avatar
+        // decodes its photo at its own size, so a size that changed every
+        // frame of a turn reloaded the photo every frame and it flickered.
+        child: FittedBox(
+          fit: BoxFit.fill,
+          child: SizedBox.square(
+            dimension: full,
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withValues(alpha: face.darken),
+                border: face.lift > 0
+                    ? Border.all(
+                        color: Colors.white,
+                        width: 2.5 * face.lift * k * full / face.diameter,
+                        strokeAlign: BorderSide.strokeAlignOutside,
+                      )
+                    : null,
+              ),
+              child: UserAvatar(
+                peerId: seat.friend.peerId,
+                size: full,
+                showGlow: false,
+                showPhotoFrame: false,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _card(OrbitDepthSeat seat, double k) {
+    final post = seat.thought;
     final l10n = AppLocalizations.of(context)!;
     final created = DateTime.tryParse(post.createdAt)?.toUtc();
     final age = created == null ? Duration.zero : _now.difference(created);
@@ -1057,7 +958,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${front.friend.username} · $ageText',
+                    ageText,
                     style: TextStyle(
                       fontSize: 13 * k,
                       fontWeight: FontWeight.w600,
@@ -1099,77 +1000,71 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 }
 
-class _DepthRingPaint {
-  const _DepthRingPaint(
+/// The near half of the ring is tinted light blue, as in the agreed mock; on
+/// a light background the same tint would vanish, so it deepens there.
+Color orbitDepthRingFront(Brightness brightness) =>
+    (brightness == Brightness.dark
+            ? const Color(0xFFCFE0FF)
+            : const Color(0xFF2F5FB8))
+        .withValues(alpha: .45);
+
+class _RingPainter extends CustomPainter {
+  const _RingPainter(
     this.center,
     this.radius,
-    this.tilt,
-    this.opacity,
-    this.waiting,
-  );
+    this.tilt, {
+    required this.back,
+    required this.front,
+  });
   final Offset center;
-  final double radius, tilt, opacity;
-  final bool waiting;
-}
+  final double radius, tilt;
+  final Color back, front;
 
-class _DialPainter extends CustomPainter {
-  const _DialPainter(this.rings, this.color);
-  final List<_DepthRingPaint> rings;
-  final Color color;
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (final ring in rings) {
-      final paint = Paint()
-        ..color = color.withValues(alpha: color.a * ring.opacity)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-      final path = Path();
-      var drawing = false;
-      for (var i = 0; i <= 160; i++) {
-        final angle = i / 160 * 2 * math.pi;
-        if (ring.waiting && math.sin(angle) > .15) {
-          drawing = false;
-          continue;
-        }
-        final (offset, _) = projectOrbitDepth(angle, ring.radius, ring.tilt);
-        final point = ring.center + offset;
-        if (!drawing) {
-          path.moveTo(point.dx, point.dy);
-          drawing = true;
-        } else {
-          path.lineTo(point.dx, point.dy);
-        }
+  Path _half(bool front) {
+    final path = Path();
+    var drawing = false;
+    for (var i = 0; i <= 160; i++) {
+      final angle = i / 160 * 2 * math.pi;
+      final sin = math.sin(angle);
+      if (front ? sin < -.02 : sin > .02) {
+        drawing = false;
+        continue;
       }
-      canvas.drawPath(path, paint);
+      final (offset, _) = projectOrbitCenter(angle, radius, tilt);
+      final point = center + offset;
+      if (drawing) {
+        path.lineTo(point.dx, point.dy);
+      } else {
+        path.moveTo(point.dx, point.dy);
+        drawing = true;
+      }
     }
+    return path;
   }
 
-  @override
-  bool shouldRepaint(covariant _DialPainter oldDelegate) => true;
-}
-
-class _EmptySeatPainter extends CustomPainter {
-  const _EmptySeatPainter(this.color);
-  final Color color;
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    final rect = Offset.zero & size;
-    for (var i = 0; i < 12; i++) {
-      canvas.drawArc(
-        rect.deflate(2),
-        i * math.pi / 6,
-        math.pi / 12,
-        false,
-        paint,
-      );
-    }
+    canvas.drawPath(
+      _half(false),
+      Paint()
+        ..color = back
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    canvas.drawPath(
+      _half(true),
+      Paint()
+        ..color = front
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.4,
+    );
   }
 
   @override
-  bool shouldRepaint(covariant _EmptySeatPainter oldDelegate) =>
-      color != oldDelegate.color;
+  bool shouldRepaint(covariant _RingPainter old) =>
+      old.center != center ||
+      old.radius != radius ||
+      old.tilt != tilt ||
+      old.back != back ||
+      old.front != front;
 }

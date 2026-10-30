@@ -212,7 +212,6 @@
   "pinned_edit": "Edit",
   "pinned_remove": "Remove",
   "edit_pinned_hint": "Update your post",
-  "orbit_depth_outer_ring": "Outer circle",
   "orbit_depth_empty_ring": "No thoughts here right now.",
   "@orbit_depth_empty_ring": {
     "description": "3D orbit: shown in the card slot when no friend on this ring has a thought"

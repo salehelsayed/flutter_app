@@ -904,12 +904,6 @@ abstract class AppLocalizations {
   /// **'Update your post'**
   String get edit_pinned_hint;
 
-  /// No description provided for @orbit_depth_outer_ring.
-  ///
-  /// In en, this message translates to:
-  /// **'Outer circle'**
-  String get orbit_depth_outer_ring;
-
   /// 3D orbit: shown in the card slot when no friend on this ring has a thought
   ///
   /// In en, this message translates to:

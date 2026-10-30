@@ -1233,8 +1233,6 @@ class _OrbitScreenView extends StatelessWidget {
           builder: (context, findOpen, child) => OrbitDepthSurface(
             items: projection.innerItems,
             thoughts: depthThoughtsByPeerId,
-            selfPeerId: projection.userPeerId,
-            selfAvatarBytes: projection.userAvatarBytes,
             active: depthActive,
             gesturesEnabled: !innerEditing && !findOpen,
             topClearance: _kHeaderRowClearance,
@@ -1243,7 +1241,6 @@ class _OrbitScreenView extends StatelessWidget {
             nowProvider: thoughtNowProvider,
             onFriendTap: onFriendTap,
             onThoughtTap: onThoughtTap,
-            onOpenFriends: onToggleView,
             onOwnsHostGestureChanged: onDepthOwnsHostGestureChanged,
             onBackActionChanged: onDepthBackActionChanged,
             onThoughtDeparted: onDepthThoughtDeparted,

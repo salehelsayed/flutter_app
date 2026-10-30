@@ -5,7 +5,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
-import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_media.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -17,46 +16,39 @@ import '../../support/depth_fixtures.dart';
 
 void main() {
   late DateTime now;
-  late List<String> seen, chats, opened;
+  late List<String> seen, chats, opened, settled;
   late List<bool> ownership;
   late Map<String, PostModel> thoughts;
   late ValueNotifier<int> reset;
   VoidCallback? back;
-  bool active = true;
-  bool enabled = true;
   bool rtl = false;
   bool reduceMotion = true;
-  int population = 14;
+  Brightness brightness = Brightness.dark;
   setUp(() {
     now = depthNow;
     seen = [];
     chats = [];
     opened = [];
+    settled = [];
     ownership = [];
-    thoughts = {
-      for (var i = 0; i < 14; i++) 'peer-$i': depthThought(i, read: i == 0),
-    };
+    thoughts = {for (var i = 0; i < 12; i++) 'peer-$i': depthThought(i)};
     reset = ValueNotifier(0);
     back = null;
-    active = true;
-    enabled = true;
     rtl = false;
     reduceMotion = true;
-    population = 14;
+    brightness = Brightness.dark;
   });
   Future<void> mount(
     WidgetTester tester, {
     Future<List<PostMediaAttachmentModel>> Function(String)? load,
     Widget? child,
-    Size size = const Size(390, 640),
-    double topClearance = 0,
-    double bottomClearance = 0,
     List<int>? order,
   }) async {
-    tester.view.physicalSize = size;
+    tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     await tester.pumpWidget(
       MaterialApp(
+        theme: ThemeData(brightness: brightness),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         builder: (context, child) => MediaQuery(
@@ -70,23 +62,19 @@ void main() {
           child: Scaffold(
             body: OrbitDepthSurface(
               items: [
-                for (final i
-                    in order ?? [for (var i = 0; i < population; i++) i])
+                for (final i in order ?? [for (var i = 0; i < 12; i++) i])
                   OrbitFriendItem(depthFriend(i)),
               ],
               thoughts: thoughts,
-              active: active,
-              gesturesEnabled: enabled,
-              topClearance: topClearance,
-              bottomClearance: bottomClearance,
               nowProvider: () => now,
               resetSignal: reset,
               onThoughtDeparted: seen.add,
               onFriendTap: (friend) => chats.add(friend.peerId),
               onThoughtTap: opened.add,
-              onOpenFriends: () => opened.add('friends'),
               onOwnsHostGestureChanged: ownership.add,
               onBackActionChanged: (value) => back = value,
+              onSettled: (layer, front, turned) =>
+                  settled.add('${layer.name}:$front:$turned'),
               loadMedia: load,
               downloadMedia: (item) async => item,
               child:
@@ -114,18 +102,33 @@ void main() {
     reset.dispose();
   }
 
+  Future<void> rest(WidgetTester tester) async {
+    await tester.pump();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  }
+
   Future<void> swipe(WidgetTester tester, Offset delta) async {
     await tester.timedDrag(
       find.byType(OrbitDepthSurface),
       delta,
       const Duration(seconds: 1),
     );
-    await tester.pump();
-    await tester.pump();
+    await rest(tester);
   }
+
+  Future<void> tapFace(WidgetTester tester, int i) async {
+    await tester.tap(find.byKey(ValueKey('orbit-depth-face-peer-$i')));
+    await rest(tester);
+  }
+
+  Future<void> enter(WidgetTester tester) =>
+      swipe(tester, const Offset(0, -220));
 
   Finder card(int i) => find.byKey(ValueKey('orbit-depth-card-post-$i'));
   Finder face(int i) => find.byKey(ValueKey('orbit-depth-face-peer-$i'));
+  Finder seatOf(int i) =>
+      find.byKey(ValueKey('orbit-depth-seat-inner-peer-$i'));
   final anyCard = find.byWidgetPredicate(
     (w) => switch (w.key) {
       ValueKey<String>(:final value) =>
@@ -134,6 +137,9 @@ void main() {
       _ => false,
     },
   );
+  final centerSlot = find.byKey(const ValueKey('orbit-depth-center-slot'));
+  String centerName(WidgetTester tester) =>
+      tester.widget<Text>(find.byKey(const ValueKey('orbit-depth-name'))).data!;
   Future<void> lifecycle(WidgetTester tester, AppLifecycleState state) async {
     ServicesBinding.instance.channelBuffers.push(
       SystemChannels.lifecycle.name,
@@ -143,14 +149,9 @@ void main() {
     await tester.pump();
   }
 
-  void expectAt(WidgetTester tester, Finder finder, Offset where) {
-    final center = tester.getCenter(finder);
-    expect(center.dx, closeTo(where.dx, .01));
-    expect(center.dy, closeTo(where.dy, .01));
-  }
-
   testWidgets(
-    'vertical entry defeats flat scroll and lands first unseen without marking',
+    'a vertical swipe enters with the friend chatted with last in the '
+    'center, named, with their thought below, and marks nothing',
     (tester) async {
       await mount(tester);
       final scrollable = tester.state<ScrollableState>(
@@ -159,364 +160,401 @@ void main() {
           matching: find.byType(Scrollable),
         ),
       );
-      await swipe(tester, const Offset(0, -220));
+      await enter(tester);
       expect(
         find.byKey(const ValueKey('orbit-depth-inner-top')),
         findsOneWidget,
       );
-      expect(card(1), findsOneWidget);
+      expect(centerName(tester), 'Friend 0');
+      expect(tester.getSize(centerSlot), const Size(72, 72));
+      expect(tester.getCenter(centerSlot).dx, 195);
+      expect(anyCard, findsOneWidget);
+      expect(card(0), findsOneWidget);
+      expect(
+        tester.getTopLeft(card(0)).dy,
+        greaterThan(tester.getBottomLeft(seatOf(1)).dy),
+      );
       expect(scrollable.position.pixels, 0);
       expect(seen, isEmpty);
       expect(ownership, [true]);
       expect(back, isNotNull);
+      expect(settled, ['inner:peer-0:false']);
       expect(tester.binding.transientCallbackCount, 0);
       await finish(tester);
     },
   );
-  testWidgets(
-    'down entry puts dial below the card and returns outer inner flat via back',
-    (tester) async {
+
+  for (final (theme, tint) in [
+    (Brightness.dark, const Color(0xFFCFE0FF)),
+    (Brightness.light, const Color(0xFF2F5FB8)),
+  ]) {
+    testWidgets('the near half of the ring is tinted blue in ${theme.name} '
+        'theme and the far half keeps the plain line', (tester) async {
+      brightness = theme;
       await mount(tester);
-      await swipe(tester, const Offset(0, 220));
+      await enter(tester);
+      final text = Theme.of(
+        tester.element(find.byType(OrbitDepthSurface)),
+      ).colorScheme.onSurface;
       expect(
-        find.byKey(const ValueKey('orbit-depth-inner-bottom')),
-        findsOneWidget,
+        tester.renderObject(find.byKey(const ValueKey('orbit-depth-ring'))),
+        paints
+          ..path(color: text.withValues(alpha: .25))
+          ..path(color: tint.withValues(alpha: .45)),
       );
-      expect(
-        tester.getTopLeft(card(1)).dy,
-        lessThan(
-          tester
-              .getCenter(find.byKey(const ValueKey('orbit-depth-face-peer-1')))
-              .dy,
+      await finish(tester);
+    });
+  }
+
+  testWidgets(
+    'entering 3D, a face flies from where the 2D orbit showed it to its seat '
+    'as the finger drags; a face 2D did not show fades in at its seat',
+    (tester) async {
+      reduceMotion = false;
+      await mount(
+        tester,
+        child: const Stack(
+          children: [
+            Positioned(
+              left: 160,
+              top: 365,
+              width: 70,
+              height: 70,
+              child: SizedBox(key: ValueKey('orbit-center-self-avatar')),
+            ),
+            Positioned(
+              left: 242,
+              top: 379,
+              width: 42,
+              height: 42,
+              child: SizedBox(key: ValueKey('peer-1')),
+            ),
+          ],
         ),
       );
-      await swipe(tester, const Offset(0, 240));
-      expect(card(5), findsOneWidget);
-      expect(seen, ['post-1']);
-      await tester.binding.handlePopRoute();
+      final finger = await tester.startGesture(const Offset(195, 700));
+      await finger.moveBy(const Offset(0, -12));
       await tester.pump();
+      final start = tester.getRect(seatOf(1));
+      expect(start.center.dx, closeTo(263, 2));
+      expect(start.center.dy, closeTo(400, 2));
+      expect(start.width, closeTo(42, 1));
+      await finger.moveBy(const Offset(0, -148));
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('orbit-depth-inner-bottom')),
-        findsOneWidget,
-      );
-      expect(card(1), findsOneWidget);
-      back!();
+      final half = tester.getRect(seatOf(1)).center;
+      double alpha(int i) => tester
+          .widget<Opacity>(
+            find
+                .descendant(of: seatOf(i), matching: find.byType(Opacity))
+                .first,
+          )
+          .opacity;
+      final fadingIn = alpha(2);
+      await finger.up();
       await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
       await tester.pump();
-      expect(
-        find.byKey(const ValueKey('orbit-depth-inner-bottom')),
-        findsNothing,
-      );
-      expect(find.text('Flat circle'), findsOneWidget);
-      expect(back, isNull);
-      expect(ownership, [true, false]);
+      final seat = tester.getRect(seatOf(1)).center;
+      expect(seat.dy, lessThan(200));
+      expect(half.dx, closeTo((263 + seat.dx) / 2, 2));
+      expect(half.dy, closeTo((400 + seat.dy) / 2, 2));
+      expect(fadingIn, closeTo(.5, .02));
+      expect(alpha(2), 1);
       await finish(tester);
     },
   );
+
+  testWidgets('only friends with a live thought are on the ring', (
+    tester,
+  ) async {
+    thoughts = {
+      'peer-2': depthThought(2),
+      'peer-3': depthThought(3, expiry: depthNow),
+      'peer-5': depthThought(5),
+    };
+    await mount(tester);
+    await enter(tester);
+    expect(centerName(tester), 'Friend 2');
+    expect(face(2), findsOneWidget);
+    expect(face(5), findsOneWidget);
+    for (final i in [0, 1, 3, 4, 6]) {
+      expect(face(i), findsNothing, reason: 'peer-$i');
+    }
+    await finish(tester);
+  });
+
+  testWidgets('nothing turns on its own', (tester) async {
+    await mount(tester);
+    await enter(tester);
+    await tester.pump(const Duration(seconds: 10));
+    expect(centerName(tester), 'Friend 0');
+    expect(card(0), findsOneWidget);
+    expect(seen, isEmpty);
+    expect(tester.binding.transientCallbackCount, 0);
+    await finish(tester);
+  });
+
   testWidgets(
-    'turn folds while held, snaps on release, marks exact departed once',
+    'a right-to-left swipe brings the next friend, exactly one seat, and '
+    'marks the thought that left',
     (tester) async {
       await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final gesture = await tester.startGesture(const Offset(195, 300));
-      await gesture.moveBy(const Offset(-90, 0));
-      await tester.pump();
-      expect(card(1), findsNothing);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-note-post-1')),
-        findsOneWidget,
-      );
-      expect(seen, isEmpty);
-      await tester.pump(const Duration(seconds: 1));
-      await gesture.up();
-      await tester.pump();
-      await tester.pump();
-      expect(card(1), findsNothing);
-      expect(anyCard, findsOneWidget);
-      expect(seen, ['post-1']);
+      await enter(tester);
+      await swipe(tester, const Offset(-400, 0));
+      expect(centerName(tester), 'Friend 1');
+      expect(card(1), findsOneWidget);
+      expect(seen, ['post-0']);
+      expect(settled.last, 'inner:peer-1:true');
+      await swipe(tester, const Offset(400, 0));
+      expect(centerName(tester), 'Friend 0');
+      expect(seen, ['post-0', 'post-1']);
+      await swipe(tester, const Offset(400, 0));
+      expect(centerName(tester), 'Friend 11');
       await finish(tester);
     },
   );
+
+  testWidgets('a short drag springs back without marking', (tester) async {
+    await mount(tester);
+    await enter(tester);
+    await tester.drag(find.byType(OrbitDepthSurface), const Offset(-20, 0));
+    await tester.pump();
+    await tester.pump();
+    expect(centerName(tester), 'Friend 0');
+    expect(seen, isEmpty);
+    await finish(tester);
+  });
+
+  testWidgets('in a right-to-left app the next friend waits on the left and '
+      'a left-to-right swipe brings it', (tester) async {
+    rtl = true;
+    await mount(tester);
+    await enter(tester);
+    expect(
+      tester.getCenter(seatOf(1)).dx,
+      lessThan(tester.getCenter(centerSlot).dx),
+    );
+    await swipe(tester, const Offset(400, 0));
+    expect(centerName(tester), 'Friend 1');
+    await finish(tester);
+  });
+
   testWidgets(
-    'cancelled turn and second-finger remainder never mark or fling',
+    'tapping a ring face brings it to the center; tapping the center opens '
+    'the chat; tapping the thought opens it',
     (tester) async {
       await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final first = await tester.startGesture(
-        const Offset(130, 300),
-        pointer: 1,
-      );
-      await first.moveBy(const Offset(-50, 0));
-      await tester.pump();
-      await first.cancel();
-      await tester.pump();
-      await tester.pump();
-      expect(card(1), findsOneWidget);
-      expect(seen, isEmpty);
-      final a = await tester.startGesture(const Offset(110, 310), pointer: 2);
-      final b = await tester.startGesture(const Offset(270, 310), pointer: 3);
-      await a.moveBy(const Offset(35, 0));
-      await b.moveBy(const Offset(-35, 0));
-      await tester.pump();
-      expect(card(1), findsNothing);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-note-post-1')),
-        findsOneWidget,
-      );
-      await b.up();
-      await a.moveBy(const Offset(-200, 60));
-      await a.up();
-      await tester.pump();
-      await tester.pump();
-      expect(seen, isEmpty);
-      // Spread restores the front card; a leftover finger did not change it.
-      final c = await tester.startGesture(const Offset(150, 310), pointer: 4);
-      final d = await tester.startGesture(const Offset(240, 310), pointer: 5);
-      await c.moveBy(const Offset(-35, 0));
-      await d.moveBy(const Offset(35, 0));
-      await tester.pump();
-      await c.up();
-      await d.up();
-      await tester.pump();
-      await tester.pump();
-      expect(card(1), findsOneWidget);
-      expect(seen, isEmpty);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'tap nonfront selects, front opens chat, body opens existing thought route',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-face-peer-2')));
-      await tester.pump();
-      await tester.pump();
-      expect(card(2), findsOneWidget);
-      expect(seen, ['post-1']);
+      await enter(tester);
+      await tapFace(tester, 2);
+      expect(centerName(tester), 'Friend 2');
       expect(chats, isEmpty);
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-face-peer-2')));
-      await tester.pump();
-      expect(chats, ['peer-2']);
+      expect(seen, ['post-0']);
+      await tester.tap(face(2));
       await tester.tap(find.text('Thought 2'));
-      await tester.pump();
+      expect(chats, ['peer-2']);
       expect(opened, ['post-2']);
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-outer-peek')));
-      await tester.pump();
-      await tester.pump();
-      expect(card(5), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-overflow')));
-      await tester.pump();
-      expect(opened.last, 'friends');
       await finish(tester);
     },
   );
+
   testWidgets(
-    'read refresh keeps front, replacement switches exact card, expiry leaves empty seat',
+    'one seat from rest settles in about 0.9 s without overshooting the '
+    'center',
     (tester) async {
+      reduceMotion = false;
       await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      thoughts = {...thoughts, 'peer-1': depthThought(1, read: true)};
-      await mount(tester);
-      expect(card(1), findsOneWidget);
-      thoughts = {
-        ...thoughts,
-        'peer-1': depthThought(
-          1,
-          id: 'replacement',
-          expiry: now.add(const Duration(seconds: 3)),
-        ),
-      };
-      await mount(tester);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-card-replacement')),
-        findsOneWidget,
-      );
-      now = now.add(const Duration(seconds: 3));
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      expect(
-        find.byKey(const ValueKey('orbit-depth-card-replacement')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('orbit-depth-empty-peer-1')),
-        findsOneWidget,
-      );
-      expect(seen, isEmpty);
+      await enter(tester);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.tap(face(1));
+      // The friend leaving the center slides back to the ring at the turn's
+      // own pace, without the lift that pulls the arriving face in early.
+      final xs = <double>[];
+      for (var i = 0; i < 200; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+        xs.add(195 - tester.getCenter(seatOf(0)).dx);
+      }
+      final seat = xs.last;
+      final settledAt =
+          10 * (xs.lastIndexWhere((x) => (x - seat).abs() >= 1) + 2);
+      expect(seat, greaterThan(100));
+      expect(xs.reduce((a, b) => a > b ? a : b), lessThan(seat + .5));
+      expect(settledAt, inInclusiveRange(700, 1000));
+      expect(centerName(tester), 'Friend 1');
       await finish(tester);
     },
   );
+
   testWidgets(
-    'empty ring remains navigable and exact eligibility removal cannot preserve a face',
+    'photos keep one decode size through a turn, so they never reload and '
+    'flicker',
     (tester) async {
-      thoughts = {};
+      reduceMotion = false;
       await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-empty-peer-1')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('orbit-depth-face-peer-1')),
-        findsNothing,
-      );
-      back!();
-      await tester.pump();
-      await tester.pump();
-      expect(ownership.last, false);
+      await enter(tester);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.tap(face(1));
+      final sizes = <double>{};
+      for (var i = 0; i < 60; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        sizes.addAll(
+          tester
+              .widgetList<UserAvatar>(find.byType(UserAvatar))
+              .map((avatar) => avatar.size),
+        );
+      }
+      expect(sizes, {72.0});
+      expect(tester.getSize(seatOf(0)).width, lessThan(40));
       await finish(tester);
     },
   );
-  testWidgets(
-    'edit/find disable entry and inactive/reset clears back and media work without reads',
-    (tester) async {
-      enabled = false;
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(back, isNull);
-      enabled = true;
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(back, isNotNull);
-      active = false;
-      await mount(tester);
-      expect(back, isNull);
-      expect(seen, isEmpty);
-      active = true;
-      await mount(tester);
-      // Leaving the Orbit tab forgets the ring; coming back starts flat.
-      expect(find.byKey(const ValueKey('orbit-depth-inner-top')), findsNothing);
-      await swipe(tester, const Offset(0, -220));
-      reset.value++;
-      await tester.pump();
-      expect(back, isNull);
-      expect(seen, isEmpty);
-      await finish(tester);
-    },
-  );
-  testWidgets('RTL reverses dial rotation with mirrored seat geometry', (
+
+  testWidgets('Reduce Motion cuts to the next friend with a 200 ms crossfade', (
     tester,
   ) async {
     await mount(tester);
-    await swipe(tester, const Offset(0, -220));
-    await swipe(tester, const Offset(-90, 0));
-    final ltr = anyCard.evaluate().single.widget.key;
-    reset.value++;
+    await enter(tester);
+    await tester.tap(face(1));
     await tester.pump();
-    rtl = true;
-    await mount(tester);
-    await swipe(tester, const Offset(0, -220));
-    await swipe(tester, const Offset(-90, 0));
-    final mirrored = anyCard.evaluate().single.widget.key;
-    expect(mirrored, ltr);
+    await tester.pump(const Duration(milliseconds: 100));
+    final slot = centerSlot;
+    expect(
+      find.descendant(of: slot, matching: find.byType(UserAvatar)),
+      findsNWidgets(2),
+    );
+    expect(card(0), findsOneWidget);
+    expect(card(1), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(
+      find.descendant(of: slot, matching: find.byType(UserAvatar)),
+      findsOneWidget,
+    );
+    expect(anyCard, findsOneWidget);
+    expect(card(1), findsOneWidget);
     await finish(tester);
   });
-  testWidgets(
-    'late previous-card media never reappears after selection; a covering route holds the ring and resumes it on pop',
-    (tester) async {
-      final held = Completer<List<PostMediaAttachmentModel>>();
-      final loads = <String>[];
-      Future<List<PostMediaAttachmentModel>> load(String id) {
-        loads.add(id);
-        return held.future;
-      }
 
-      thoughts = {...thoughts, 'peer-1': depthThought(1, mediaKind: 'image')};
-      await mount(tester, load: load);
-      await swipe(tester, const Offset(0, -220));
-      expect(loads, ['post-1']);
-      await tester.tap(find.byKey(const ValueKey('orbit-depth-face-peer-2')));
-      await tester.pump();
-      await tester.pump();
-      held.complete([]);
-      await tester.pump();
-      expect(card(2), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-media-retry')),
-        findsNothing,
-      );
-      final context = tester.element(find.byType(OrbitDepthSurface));
-      unawaited(
-        Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => const Scaffold(body: Text('Covered')),
-          ),
-        ),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      expect(back, isNull);
-      expect(ownership.last, isFalse);
-      expect(seen, ['post-1']);
-      // The covering chat marks the thought read and re-sorts friends while
-      // the orbit waits underneath; popping finds the same ring and card.
-      thoughts = {...thoughts, 'peer-2': depthThought(2, read: true)};
-      await mount(tester, load: load);
-      Navigator.of(context).pop();
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-inner-top')),
-        findsOneWidget,
-      );
-      expect(card(2), findsOneWidget);
-      expect(back, isNotNull);
-      expect(ownership, [true, false, true]);
-      expect(seen, ['post-1']);
-      await finish(tester);
-    },
-  );
   testWidgets(
-    'expiry moves the replacement face to the same front position as its card',
+    'friends joining or leaving the queue never change who is in the center',
     (tester) async {
-      population = 3;
-      thoughts = {
-        'peer-0': depthThought(0, expiry: now.add(const Duration(seconds: 3))),
-        'peer-1': depthThought(1),
-      };
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final oldFront = tester.getCenter(
-        find.byKey(const ValueKey('orbit-depth-face-peer-0')),
-      );
-      now = now.add(const Duration(seconds: 3));
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      expect(card(1), findsOneWidget);
-      final replacement = tester.getCenter(
-        find.byKey(const ValueKey('orbit-depth-face-peer-1')),
-      );
-      expect(replacement.dx, closeTo(oldFront.dx, .01));
-      expect(replacement.dy, closeTo(oldFront.dy, .01));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-empty-peer-0')),
-        findsOneWidget,
-      );
+      await mount(tester, order: [0, 1, 2, 3, 4, 5, 6, 7]);
+      await enter(tester);
+      await tapFace(tester, 2);
+      expect(centerName(tester), 'Friend 2');
+      thoughts = {...thoughts, 'peer-20': depthThought(20)};
+      await mount(tester, order: [20, 0, 1, 2, 3, 4, 5, 6, 7]);
+      expect(centerName(tester), 'Friend 2');
+      thoughts = {...thoughts}..remove('peer-0');
+      await mount(tester, order: [20, 0, 1, 2, 3, 4, 5, 6, 7]);
+      expect(centerName(tester), 'Friend 2');
+      expect(card(2), findsOneWidget);
+      seen.clear();
+      thoughts = {...thoughts}..remove('peer-2');
+      await mount(tester, order: [20, 1, 2, 3, 4, 5, 6, 7]);
+      await rest(tester);
+      expect(card(2), findsNothing);
+      expect(anyCard, findsOneWidget);
       expect(seen, isEmpty);
+      // The newcomer joined the end of the frozen queue and is on the ring.
+      expect(face(20), findsOneWidget);
       await finish(tester);
     },
   );
-  for (final control in ['face', 'peek', 'card', 'overflow']) {
+
+  testWidgets('with no live thoughts the ring says so', (tester) async {
+    thoughts = {};
+    await mount(tester);
+    await enter(tester);
+    expect(
+      find.byKey(const ValueKey('orbit-depth-empty-ring')),
+      findsOneWidget,
+    );
+    expect(find.text('No thoughts here right now.'), findsOneWidget);
+    expect(anyCard, findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets(
+    'back returns to flat, marks the shown thought once, and lets the route '
+    'pop again',
+    (tester) async {
+      await mount(tester);
+      await enter(tester);
+      back!();
+      await tester.pump();
+      await tester.pump();
+      expect(find.byKey(const ValueKey('orbit-depth-stage')), findsNothing);
+      expect(back, isNull);
+      expect(seen, ['post-0']);
+      expect(ownership, [true, false]);
+      expect(
+        tester
+            .widget<PopScope>(
+              find.byWidgetPredicate((widget) => widget is PopScope),
+            )
+            .canPop,
+        isTrue,
+      );
+      expect(settled.last, 'flat:null:false');
+      await finish(tester);
+    },
+  );
+
+  testWidgets('a covering route holds the ring and resumes it on pop', (
+    tester,
+  ) async {
+    await mount(tester);
+    await enter(tester);
+    await swipe(tester, const Offset(-400, 0));
+    final context = tester.element(find.byType(OrbitDepthSurface));
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('Covered')),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(back, isNull);
+    expect(ownership.last, isFalse);
+    Navigator.of(context).pop();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(centerName(tester), 'Friend 1');
+    expect(card(1), findsOneWidget);
+    expect(back, isNotNull);
+    expect(ownership, [true, false, true]);
+    expect(seen, ['post-0']);
+    await finish(tester);
+  });
+
+  testWidgets(
+    'a notification shade or dialog keeps 3D; backgrounding the app resets it',
+    (tester) async {
+      await mount(tester);
+      await enter(tester);
+      await lifecycle(tester, AppLifecycleState.inactive);
+      expect(card(0), findsOneWidget);
+      expect(back, isNotNull);
+      await lifecycle(tester, AppLifecycleState.paused);
+      expect(back, isNull);
+      await lifecycle(tester, AppLifecycleState.resumed);
+      expect(card(0), findsNothing);
+      expect(find.text('Flat circle'), findsOneWidget);
+      await finish(tester);
+    },
+  );
+
+  for (final control in ['center', 'ring', 'card']) {
     testWidgets(
-      'small second-finger pinch suppresses $control tap for the entire sequence',
+      'a second finger suppresses the $control tap for the whole sequence',
       (tester) async {
         await mount(tester);
-        await swipe(tester, const Offset(0, -220));
-        if (control == 'overflow') {
-          await tester.tap(
-            find.byKey(const ValueKey('orbit-depth-outer-peek')),
-          );
-          await tester.pump();
-          await tester.pump();
-          seen.clear();
-        }
-        final Finder target = switch (control) {
-          'face' => find.byKey(const ValueKey('orbit-depth-face-peer-1')),
-          'peek' => find.byKey(const ValueKey('orbit-depth-outer-peek')),
-          'overflow' => find.byKey(const ValueKey('orbit-depth-overflow')),
-          _ => find.text('Thought 1'),
+        await enter(tester);
+        final target = switch (control) {
+          'center' => face(0),
+          'ring' => face(1),
+          _ => find.text('Thought 0'),
         };
         final point = tester.getCenter(target);
         final side = point.dx < 200 ? 1.0 : -1.0;
@@ -534,530 +572,41 @@ void main() {
         expect(chats, isEmpty);
         expect(opened, isEmpty);
         expect(seen, isEmpty);
-        expect(
-          find.byKey(
-            ValueKey(
-              'orbit-depth-${control == 'overflow' ? 'outer' : 'inner'}-top',
-            ),
-          ),
-          findsOneWidget,
-        );
-        expect(
-          find.byKey(
-            ValueKey('orbit-depth-note-post-${control == 'overflow' ? 5 : 1}'),
-          ),
-          findsOneWidget,
-        );
+        expect(centerName(tester), 'Friend 0');
         await finish(tester);
       },
     );
   }
-  testWidgets(
-    'spring back keeps route pop blocked until the final flat landing',
-    (tester) async {
-      reduceMotion = false;
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      await tester.pump(const Duration(seconds: 3));
-      back!();
-      await tester.pump(const Duration(milliseconds: 30));
-      expect(
-        tester
-            .widget<PopScope>(
-              find.byWidgetPredicate((widget) => widget is PopScope),
-            )
-            .canPop,
-        isFalse,
-      );
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      expect(back, isNull);
-      expect(
-        tester
-            .widget<PopScope>(
-              find.byWidgetPredicate((widget) => widget is PopScope),
-            )
-            .canPop,
-        isTrue,
-      );
-      expect(seen, ['post-1']);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'turning Reduce Motion on during back finalizes flat and departure exactly once',
-    (tester) async {
-      reduceMotion = false;
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      back!();
-      await tester.pump(const Duration(milliseconds: 30));
-      reduceMotion = true;
-      await mount(tester);
-      final backCleared = back == null;
-      final released = ownership.last == false;
-      final canPop = tester
-          .widget<PopScope>(
-            find.byWidgetPredicate((widget) => widget is PopScope),
-          )
-          .canPop;
-      final writes = List<String>.of(seen);
-      final depthGone = find
-          .byKey(const ValueKey('orbit-depth-inner-top'))
-          .evaluate()
-          .isEmpty;
-      await tester.pump(const Duration(seconds: 3));
-      final finalWrites = List<String>.of(seen);
-      await finish(tester);
-      expect(depthGone, isTrue);
-      expect(backCleared, isTrue);
-      expect(released, isTrue);
-      expect(canPop, isTrue);
-      expect(writes, ['post-1']);
-      expect(finalWrites, ['post-1']);
-    },
-  );
-  testWidgets(
-    'partial entry tilts from the flat center before springing to the dock',
-    (tester) async {
-      reduceMotion = false;
-      await mount(tester);
-      final gesture = await tester.startGesture(const Offset(195, 350));
-      await gesture.moveBy(const Offset(0, -80));
-      await tester.pump();
-      final self = find.byWidgetPredicate(
-        (widget) => widget is UserAvatar && widget.peerId == '',
-      );
-      final partialY = tester.getCenter(self).dy;
-      await gesture.moveBy(const Offset(0, -140));
-      await gesture.up();
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 3));
-      await tester.pump();
-      final finalY = tester.getCenter(self).dy;
-      await finish(tester);
-      expect(partialY, closeTo(266.47, .01));
-      expect(finalY, closeTo(105.89, .01));
-    },
-  );
-  group('2D to 3D handover matches the approved mockup', () {
-    double flatOpacity(WidgetTester tester) => tester
-        .widget<Opacity>(
-          find
-              .ancestor(
-                of: find.byKey(const ValueKey('flat-scroll')),
-                matching: find.byType(Opacity),
-              )
-              .first,
-        )
-        .opacity;
-    double stageOpacity(WidgetTester tester) => tester
-        .widget<Opacity>(find.byKey(const ValueKey('orbit-depth-stage')))
-        .opacity;
-    double selfSize(WidgetTester tester) => tester
-        .widget<UserAvatar>(
-          find.byWidgetPredicate(
-            (widget) => widget is UserAvatar && widget.peerId == '',
-          ),
-        )
-        .size;
 
-    testWidgets(
-      'mid-swipe the flat orbit is gone and the dial is solid, never both half-faded',
-      (tester) async {
-        await mount(tester);
-        final gesture = await tester.startGesture(const Offset(195, 350));
-        await gesture.moveBy(const Offset(0, -20));
-        await gesture.moveBy(const Offset(0, -40));
-        await tester.pump();
-        final early = (flatOpacity(tester), stageOpacity(tester));
-        await gesture.moveBy(const Offset(0, -120));
-        await tester.pump();
-        final mid = (flatOpacity(tester), stageOpacity(tester));
-        final midSelf = selfSize(tester);
-        await gesture.up();
-        await tester.pump(const Duration(seconds: 3));
-        final docked = selfSize(tester);
-        await finish(tester);
-
-        expect(early.$1 + early.$2, closeTo(1, .001));
-        expect(early.$2, inExclusiveRange(0, 1));
-        expect(mid, (0.0, 1.0));
-        expect(midSelf, inExclusiveRange(52, 76));
-        expect(docked, closeTo(52, .01));
-      },
-    );
-
-    testWidgets(
-      'after a turn the next card opens while the orbit still glides',
-      (tester) async {
-        reduceMotion = false;
-        await mount(tester);
-        await swipe(tester, const Offset(0, -220));
-        await tester.pump(const Duration(seconds: 3));
-        expect(card(1), findsOneWidget);
-
-        final gesture = await tester.startGesture(const Offset(195, 300));
-        await gesture.moveBy(const Offset(-20, 0));
-        await gesture.moveBy(const Offset(-70, 0));
-        await tester.pump();
-        await gesture.up();
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
-        final early = slot.evaluate().isEmpty
-            ? 0.0
-            : tester
-                  .widget<Opacity>(
-                    find
-                        .descendant(of: slot, matching: find.byType(Opacity))
-                        .first,
-                  )
-                  .opacity;
-        await tester.pump(const Duration(seconds: 3));
-        await finish(tester);
-
-        expect(early, greaterThan(.9));
-      },
-    );
-
-    testWidgets('the card fades out while swiping back, not all at once', (
-      tester,
-    ) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(card(1), findsOneWidget);
-
-      final gesture = await tester.startGesture(const Offset(195, 300));
-      await gesture.moveBy(const Offset(0, 20));
-      await gesture.moveBy(const Offset(0, 80));
-      await tester.pump();
-      final slot = find.byKey(const ValueKey('orbit-depth-card-slot'));
-      final fading = tester
-          .widget<Opacity>(
-            find.descendant(of: slot, matching: find.byType(Opacity)).first,
-          )
-          .opacity;
-      await gesture.up();
-      await tester.pump(const Duration(seconds: 3));
-      await finish(tester);
-
-      expect(fading, inExclusiveRange(0, 1));
-    });
-  });
-
-  testWidgets(
-    'reverse vertical swipes traverse outer inner flat with a top card below its face',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(
-        tester.getTopLeft(card(1)).dy,
-        greaterThan(
-          tester
-              .getCenter(find.byKey(const ValueKey('orbit-depth-face-peer-1')))
-              .dy,
-        ),
-      );
-      await swipe(tester, const Offset(0, -240));
-      expect(card(5), findsOneWidget);
-      await swipe(tester, const Offset(0, 240));
-      expect(card(1), findsOneWidget);
-      await swipe(tester, const Offset(0, 220));
-      expect(back, isNull);
-      expect(ownership.last, isFalse);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'deliberate turn advances twenty percent of the real next thought gap without repacking empty seats',
-    (tester) async {
-      population = 5;
-      thoughts = {'peer-0': depthThought(0), 'peer-1': depthThought(1)};
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(card(0), findsOneWidget);
-      await swipe(tester, const Offset(40, 0));
-      expect(card(1), findsOneWidget);
-      expect(seen, ['post-0']);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-empty-peer-2')),
-        findsOneWidget,
-      );
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'replacement arriving during a held turn never inherits the departed read',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final gesture = await tester.startGesture(const Offset(195, 300));
-      await gesture.moveBy(const Offset(-90, 0));
-      await tester.pump();
-      thoughts = {...thoughts, 'peer-1': depthThought(1, id: 'replacement')};
-      await mount(tester);
-      await gesture.up();
-      await tester.pump();
-      await tester.pump();
-      final writes = List<String>.of(seen);
-      await finish(tester);
-      expect(writes, ['post-1']);
-    },
-  );
-  testWidgets(
-    'replacement shown only as an overview bubble is not marked on leaving',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final a = await tester.startGesture(const Offset(110, 310), pointer: 41);
-      final b = await tester.startGesture(const Offset(270, 310), pointer: 42);
-      await a.moveBy(const Offset(35, 0));
-      await b.moveBy(const Offset(-35, 0));
-      await a.up();
-      await b.up();
-      await tester.pump();
-      await tester.pump();
-      thoughts = {...thoughts, 'peer-1': depthThought(1, id: 'replacement')};
-      await mount(tester);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-note-replacement')),
-        findsOneWidget,
-      );
-      back!();
-      await tester.pump();
-      await tester.pump();
-      final writes = List<String>.of(seen);
-      await finish(tester);
-      expect(writes, isNot(contains('replacement')));
-    },
-  );
-  testWidgets(
-    'the front card keeps its media while the orbit springs into depth',
-    (tester) async {
-      reduceMotion = false;
-      thoughts['peer-1'] = depthThought(1, mediaKind: 'image');
-      await mount(tester, load: (_) async => const []);
-      final gesture = await tester.startGesture(const Offset(195, 560));
-      for (var i = 0; i < 10; i++) {
-        await gesture.moveBy(const Offset(0, -22));
-        await tester.pump(const Duration(milliseconds: 40));
-      }
-      await gesture.up();
-      final mediaStates = <State>{};
-      for (var i = 0; i < 60; i++) {
-        await tester.pump(const Duration(milliseconds: 25));
-        final media = find.byType(OrbitDepthMedia);
-        if (media.evaluate().isNotEmpty) mediaStates.add(tester.state(media));
-      }
-      expect(card(1), findsOneWidget);
-      expect(mediaStates, hasLength(1));
-      await finish(tester);
-    },
-  );
   testWidgets(
     'entering depth again shows the card media it already loaded at once',
     (tester) async {
       final photo = PostMediaAttachmentModel(
-        mediaId: 'photo-1',
-        postId: 'post-1',
-        blobId: 'blob-1',
+        mediaId: 'photo-0',
+        postId: 'post-0',
+        blobId: 'blob-0',
         kind: 'image',
         mime: 'image/jpeg',
         sizeBytes: 1,
         createdAt: depthNow.toIso8601String(),
       );
-      thoughts['peer-1'] = depthThought(1, mediaKind: 'image');
+      thoughts['peer-0'] = depthThought(0, mediaKind: 'image');
       Completer<List<PostMediaAttachmentModel>>? held;
       await mount(tester, load: (_) => held?.future ?? Future.value([photo]));
-      await swipe(tester, const Offset(0, -220));
+      await enter(tester);
       expect(find.byType(MediaGrid), findsOneWidget);
       await swipe(tester, const Offset(0, 220));
-      expect(card(1), findsNothing);
+      expect(card(0), findsNothing);
       held = Completer();
-      await swipe(tester, const Offset(0, -220));
-      expect(card(1), findsOneWidget);
+      await enter(tester);
+      expect(card(0), findsOneWidget);
       expect(find.byType(MediaGrid), findsOneWidget);
       held.complete([photo]);
       await tester.pump();
       await finish(tester);
     },
   );
-  testWidgets(
-    'a notification shade or dialog keeps 3D; backgrounding the app resets it',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      await lifecycle(tester, AppLifecycleState.inactive);
-      expect(card(1), findsOneWidget);
-      expect(back, isNotNull);
-      // Flutter stops drawing frames while paused; the reset shows on resume.
-      await lifecycle(tester, AppLifecycleState.paused);
-      expect(back, isNull);
-      await lifecycle(tester, AppLifecycleState.resumed);
-      expect(card(1), findsNothing);
-      expect(find.text('Flat circle'), findsOneWidget);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'seats hold still while friends re-sort in 3D, a friend who leaves takes the seat along, flat re-seats',
-    (tester) async {
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final face1 = tester.getCenter(face(1));
-      final face3 = tester.getCenter(face(3));
-      final byRecency = [for (var i = 13; i >= 0; i--) i];
-      await mount(tester, order: byRecency);
-      expect(card(1), findsOneWidget);
-      expectAt(tester, face(1), face1);
-      expectAt(tester, face(3), face3);
-      expect(seen, isEmpty);
-      await mount(tester, order: byRecency.where((i) => i != 3).toList());
-      expect(face(3), findsNothing);
-      expect(
-        find.byKey(const ValueKey('orbit-depth-seat-inner-peer-3')),
-        findsNothing,
-      );
-      expectAt(tester, face(1), face1);
-      await swipe(tester, const Offset(0, 220));
-      expect(find.text('Flat circle'), findsOneWidget);
-      await swipe(tester, const Offset(0, -220));
-      expect(card(13), findsOneWidget);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'a thought taller than the card slot is clipped to it and still opens on tap',
-    (tester) async {
-      final long = List.filled(40, 'A long thought that keeps going').join(' ');
-      thoughts['peer-1'] = depthThought(1, text: long);
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final slot = tester.getRect(card(1));
-      expect(slot.bottom, lessThanOrEqualTo(620));
-      expect(tester.getRect(find.text(long)).bottom, greaterThan(slot.bottom));
-      expect(tester.takeException(), isNull);
-      await tester.tapAt(slot.topLeft + const Offset(24, 24));
-      await tester.pump();
-      expect(opened, ['post-1']);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'bottom-anchored 3D keeps the front face and card above the nav band on a short screen',
-    (tester) async {
-      await mount(tester, size: const Size(360, 640), bottomClearance: 80);
-      await swipe(tester, const Offset(0, 220));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-inner-bottom')),
-        findsOneWidget,
-      );
-      final front = tester.getRect(face(1));
-      expect(front.bottom, lessThanOrEqualTo(560));
-      expect(tester.getRect(card(1)).bottom, lessThanOrEqualTo(front.top));
-      await finish(tester);
-    },
-  );
-  for (final size in const [Size(360, 640), Size(390, 844)]) {
-    testWidgets(
-      'top-anchored 3D keeps every seat and the outer peek below the header on ${size.width.toInt()}x${size.height.toInt()}',
-      (tester) async {
-        await mount(tester, size: size, topClearance: 56, bottomClearance: 80);
-        await swipe(tester, const Offset(0, -220));
-        expect(
-          find.byKey(const ValueKey('orbit-depth-inner-top')),
-          findsOneWidget,
-        );
-        final seats = find.byWidgetPredicate(
-          (w) => switch (w.key) {
-            ValueKey<String>(:final value) => value.startsWith(
-              'orbit-depth-seat-',
-            ),
-            _ => false,
-          },
-        );
-        final tops = [
-          for (var i = 0; i < seats.evaluate().length; i++)
-            tester.getRect(seats.at(i)).top,
-        ];
-        expect(tops.length, greaterThan(5));
-        expect(tops.reduce((a, b) => a < b ? a : b), greaterThanOrEqualTo(56));
-        expect(
-          tester
-              .getRect(find.byKey(const ValueKey('orbit-depth-outer-peek')))
-              .top,
-          greaterThanOrEqualTo(56),
-        );
-        expect(
-          tester.getRect(card(1)).bottom,
-          lessThanOrEqualTo(size.height - 80),
-        );
-        await finish(tester);
-      },
-    );
-  }
-  testWidgets(
-    'a ring with no thoughts says so in the card slot instead of a blank dial',
-    (tester) async {
-      thoughts = {};
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-inner-top')),
-        findsOneWidget,
-      );
-      expect(find.text('No thoughts here right now.'), findsOneWidget);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'flying to an empty outer ring says so; the inner card shows no such line',
-    (tester) async {
-      thoughts = {
-        for (var i = 0; i < 5; i++) 'peer-$i': depthThought(i, read: i == 0),
-      };
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      expect(anyCard, findsOneWidget);
-      expect(find.text('No thoughts here right now.'), findsNothing);
-      await swipe(tester, const Offset(0, -300));
-      expect(
-        find.byKey(const ValueKey('orbit-depth-outer-top')),
-        findsOneWidget,
-      );
-      expect(anyCard, findsNothing);
-      expect(find.text('No thoughts here right now.'), findsOneWidget);
-      await finish(tester);
-    },
-  );
-  testWidgets(
-    'the outer-ring peek counts live thoughts and hides when there are none',
-    (tester) async {
-      thoughts = {
-        for (var i = 0; i < 7; i++) 'peer-$i': depthThought(i, read: i == 0),
-      };
-      await mount(tester);
-      await swipe(tester, const Offset(0, -220));
-      final peek = find.byKey(const ValueKey('orbit-depth-outer-peek'));
-      expect(
-        tester
-            .widget<Text>(
-              find.descendant(of: peek, matching: find.byType(Text)),
-            )
-            .data,
-        'Outer circle · 2',
-      );
-      thoughts = {
-        for (var i = 0; i < 5; i++) 'peer-$i': depthThought(i, read: i == 0),
-      };
-      await mount(tester);
-      expect(peek, findsNothing);
-      await finish(tester);
-    },
-  );
+
   testWidgets(
     'the flat orbit stops ticking under the 3D stage and ticks again in flat',
     (tester) async {
@@ -1068,7 +617,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 16));
       }
       expect(ticks.value - from, 3);
-      await swipe(tester, const Offset(0, -220));
+      await enter(tester);
       from = ticks.value;
       for (var i = 0; i < 3; i++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -1084,21 +633,20 @@ void main() {
       ticks.dispose();
     },
   );
+
   for (final c in bidiCases) {
     testWidgets('the 3D card lays out mixed text: ${c.label}', (tester) async {
-      thoughts['peer-1'] = depthThought(1, text: c.text);
+      thoughts['peer-0'] = depthThought(0, text: c.text);
       await mount(tester);
-      await swipe(tester, const Offset(0, -220));
+      await enter(tester);
       final paragraph = tester.renderObject<RenderParagraph>(
-        find.byKey(const ValueKey('orbit-depth-text-post-1')),
+        find.byKey(const ValueKey('orbit-depth-text-post-0')),
       );
       expectBidiLayout(
         c,
         direction: paragraph.textDirection,
         boxes: paragraph.getBoxesForSelection,
-        area: tester.getRect(
-          find.byKey(const ValueKey('orbit-depth-card-post-1')),
-        ),
+        area: tester.getRect(card(0)),
         toGlobal: paragraph.localToGlobal,
       );
       await finish(tester);
@@ -1114,11 +662,11 @@ void main() {
         'in a ${appRtl ? 'right-to-left' : 'left-to-right'} app',
         (tester) async {
           rtl = appRtl;
-          thoughts['peer-1'] = depthThought(1, text: text);
+          thoughts['peer-0'] = depthThought(0, text: text);
           await mount(tester);
-          await swipe(tester, const Offset(0, -220));
+          await enter(tester);
           final paragraph = tester.renderObject<RenderParagraph>(
-            find.byKey(const ValueKey('orbit-depth-text-post-1')),
+            find.byKey(const ValueKey('orbit-depth-text-post-0')),
           );
           expect(paragraph.textDirection, direction);
           final start = paragraph
@@ -1129,9 +677,7 @@ void main() {
                 ),
               )
               .dx;
-          final area = tester.getRect(
-            find.byKey(const ValueKey('orbit-depth-card-post-1')),
-          );
+          final area = tester.getRect(card(0));
           expect(
             start,
             closeTo(direction == TextDirection.rtl ? area.right : area.left, 2),

@@ -491,9 +491,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get edit_pinned_hint => 'Update your post';
 
   @override
-  String get orbit_depth_outer_ring => 'Outer circle';
-
-  @override
   String get orbit_depth_empty_ring => 'No thoughts here right now.';
 
   @override
