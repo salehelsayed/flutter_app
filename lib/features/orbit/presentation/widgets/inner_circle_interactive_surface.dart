@@ -54,9 +54,6 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
   final VoidCallback? onSelfAvatarTap;
   final VoidCallback? onComposeThought;
 
-  /// A first-use label beside the "+", or null for none.
-  final String? composeHint;
-
   /// The user spread two fingers to show the thought notes.
   final VoidCallback? onThoughtsSpread;
 
@@ -106,7 +103,6 @@ class InnerCircleInteractiveSurface extends StatefulWidget {
     this.nowProvider,
     this.onSelfAvatarTap,
     this.onComposeThought,
-    this.composeHint,
     this.onThoughtsSpread,
     this.secureKeyStore,
     this.onEditSessionActiveChanged,
@@ -939,7 +935,6 @@ class _InnerCircleInteractiveSurfaceState
                                       widget.onComposeThought == null
                                       ? null
                                       : _onComposeThought,
-                                  composeHint: widget.composeHint,
                                   geometry: _geometry,
                                   overflowExpanded: _overflowExpanded,
                                   onBadgeTap: _onBadgeTap,

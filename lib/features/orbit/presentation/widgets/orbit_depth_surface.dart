@@ -5,6 +5,7 @@ import 'dart:ui' show lerpDouble;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
@@ -38,6 +39,7 @@ class OrbitDepthSurface extends StatefulWidget {
     this.onThoughtsExpired,
     this.loadMedia,
     this.downloadMedia,
+    this.hostChrome,
   });
   final Widget child;
   final List<OrbitItem> items;
@@ -50,6 +52,10 @@ class OrbitDepthSurface extends StatefulWidget {
 
   /// Host chrome (the persistent nav band) that the dial must stay above.
   final double bottomClearance;
+
+  /// Written with how much of the host's controls should show: 1 flat, 0 in
+  /// depth. The dial keeps its place; only the controls leave.
+  final ValueNotifier<double>? hostChrome;
   final Listenable? resetSignal;
   final DateTime Function()? nowProvider;
   final ValueChanged<bool>? onOwnsHostGestureChanged;
@@ -159,6 +165,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.resetSignal?.addListener(_reset);
+    _vertical.addListener(_publishChrome);
   }
 
   @override
@@ -306,6 +313,23 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         _armTimers();
       }
     });
+  }
+
+  /// The host's controls leave with the flat orbit, on the same curve.
+  void _publishChrome() {
+    final chrome = widget.hostChrome;
+    if (chrome == null) return;
+    void write() {
+      if (mounted) chrome.value = 1 - _smooth(_vertical.value / 320 / .45);
+    }
+
+    // Resets move the tilt during build, when the host cannot rebuild yet.
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => write());
+    } else {
+      write();
+    }
   }
 
   static double _smooth(double value) {
@@ -955,64 +979,80 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       }
     }
 
-    // A drag on the card tilts or turns the orbit, so the card cannot scroll.
-    // It clips to its slot; the tap opens the whole thought.
-    return UnconstrainedBox(
+    final media =
+        post.mediaKind != 'none' &&
+            widget.loadMedia != null &&
+            widget.downloadMedia != null
+        ? OrbitDepthMedia(
+            key: ValueKey('orbit-depth-media-${post.id}'),
+            postId: post.id,
+            load: widget.loadMedia!,
+            download: widget.downloadMedia!,
+            onOpen: open,
+            lastLoaded: _lastLoadedMedia,
+          )
+        : null;
+    // A photo fills the slot below the text, shown whole. Voice and text
+    // thoughts keep their own height.
+    final photo = media != null && post.mediaKind != 'voice';
+    final words = GestureDetector(
+      onTap: open,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: EdgeInsets.symmetric(vertical: 8 * k),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              ageText,
+              style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
+            ),
+            if (post.text.isNotEmpty)
+              Padding(
+                padding: EdgeInsets.only(top: 12 * k),
+                // Full width, so the text sits on its own side: an Arabic
+                // thought on the right even in an English app.
+                child: SizedBox(
+                  width: double.infinity,
+                  child: Text(
+                    post.text,
+                    key: ValueKey('orbit-depth-text-${post.id}'),
+                    textDirection: detectTextDirection(post.text),
+                    maxLines: photo ? 3 : null,
+                    overflow: photo ? TextOverflow.ellipsis : null,
+                    style: TextStyle(fontSize: 22 * k, height: 1.3),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+    // Screen readers hear whose thought it is; the name is under the face.
+    return Semantics(
       key: ValueKey('orbit-depth-card-${post.id}'),
-      constrainedAxis: Axis.horizontal,
-      alignment: Alignment.topCenter,
-      clipBehavior: Clip.hardEdge,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GestureDetector(
-            onTap: open,
-            behavior: HitTestBehavior.opaque,
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 8 * k),
+      container: true,
+      label: '${seat.friend.username} · $ageText',
+      child: photo
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                words,
+                Expanded(child: media),
+              ],
+            )
+          // A drag on the card tilts or turns the orbit, so the card cannot
+          // scroll. It clips to its slot; the tap opens the whole thought.
+          : UnconstrainedBox(
+              constrainedAxis: Axis.horizontal,
+              alignment: Alignment.topCenter,
+              clipBehavior: Clip.hardEdge,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    ageText,
-                    style: TextStyle(
-                      fontSize: 13 * k,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  if (post.text.isNotEmpty)
-                    Padding(
-                      padding: EdgeInsets.only(top: 12 * k),
-                      // Full width, so the text sits on its own side: an Arabic
-                      // thought on the right even in an English app.
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: Text(
-                          post.text,
-                          key: ValueKey('orbit-depth-text-${post.id}'),
-                          textDirection: detectTextDirection(post.text),
-                          style: TextStyle(fontSize: 22 * k, height: 1.3),
-                        ),
-                      ),
-                    ),
-                ],
+                mainAxisSize: MainAxisSize.min,
+                children: [words, ?media],
               ),
             ),
-          ),
-          if (post.mediaKind != 'none' &&
-              widget.loadMedia != null &&
-              widget.downloadMedia != null)
-            OrbitDepthMedia(
-              key: ValueKey('orbit-depth-media-${post.id}'),
-              postId: post.id,
-              load: widget.loadMedia!,
-              download: widget.downloadMedia!,
-              onOpen: open,
-              lastLoaded: _lastLoadedMedia,
-            ),
-        ],
-      ),
     );
   }
 }

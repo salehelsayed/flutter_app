@@ -406,19 +406,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   StreamSubscription<String>? _groupReadSubscription;
   ImageQualityPreference _qualityPreference = ImageQualityPreference.compressed;
 
-  /// Starts true so the first-use hint never flashes before storage answers.
-  bool _thoughtHintSeen = true;
-
-  /// The composer has opened in this session; a late initial read is ignored.
-  bool _thoughtComposerOpened = false;
-
   /// The Orbit intro: starts seen so it never flashes before storage answers.
   bool _introSeen = true;
   OrbitIntroStep _introStep = OrbitIntroStep.spread;
   OrbitDepthLayer _depthLayer = OrbitDepthLayer.flat;
   String? _introTurnFrom;
   static const _introSeenKey = 'orbit_intro_seen_v1';
-  static const _thoughtHintSeenKey = 'orbit_thought_hint_seen_v1';
   ImageQualityPreference _videoQualityPreference =
       ImageQualityPreference.compressed;
   int _introsCount = 0;
@@ -653,7 +646,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     widget.pendingPostTargetStore?.addListener(_onPendingThoughtTargetChanged);
     _loadIdentity();
     _loadQualityPreference();
-    unawaited(_loadThoughtHintSeen());
     unawaited(_loadIntroSeen());
     _loadVideoQualityPreference();
     _loadOrbitData();
@@ -888,26 +880,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     );
   }
 
-  Future<void> _loadThoughtHintSeen() async {
-    try {
-      final seen = await widget.secureKeyStore.read(_thoughtHintSeenKey);
-      if (mounted && seen == null && !_thoughtComposerOpened) {
-        setState(() => _thoughtHintSeen = false);
-      }
-    } catch (_) {}
-  }
-
-  void _markThoughtHintSeen() {
-    if (_thoughtComposerOpened) return;
-    _thoughtComposerOpened = true;
-    setState(() => _thoughtHintSeen = true);
-    unawaited(
-      widget.secureKeyStore
-          .write(_thoughtHintSeenKey, '1')
-          .catchError((Object _) {}),
-    );
-  }
-
   Future<void> _loadQualityPreference() async {
     final pref = await loadImageQualityPreference(
       secureKeyStore: widget.secureKeyStore,
@@ -1075,7 +1047,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final identity = _identity;
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
-    _markThoughtHintSeen();
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
@@ -3882,13 +3853,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),
-      composeHint:
-          _thoughtPosts == null ||
-              _identity == null ||
-              _thoughtHintSeen ||
-              _thoughtsByPeerId.containsKey(_identity!.peerId)
-          ? null
-          : AppLocalizations.of(context)!.thought_compose_open,
       onThoughtsExpired: () => unawaited(_reloadThoughts()),
       thoughtNowProvider: widget.thoughtNowProvider,
       onFriendAvatarTap: _onFriendAvatarTap,

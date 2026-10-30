@@ -43,6 +43,8 @@ void main() {
     Future<List<PostMediaAttachmentModel>> Function(String)? load,
     Widget? child,
     List<int>? order,
+    double topClearance = 0,
+    ValueNotifier<double>? hostChrome,
   }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -66,6 +68,8 @@ void main() {
                   OrbitFriendItem(depthFriend(i)),
               ],
               thoughts: thoughts,
+              topClearance: topClearance,
+              hostChrome: hostChrome,
               nowProvider: () => now,
               resetSignal: reset,
               onThoughtDeparted: seen.add,
@@ -280,6 +284,27 @@ void main() {
       final next = tester.getCenter(seatOf(1));
       expect(next.dx - 195, closeTo(149.35, .05));
       expect(next.dy - 105.89, closeTo(33.69, .05));
+      await finish(tester);
+    },
+  );
+
+  testWidgets(
+    'in 3D the host hides its controls, and the ring keeps its place',
+    (tester) async {
+      await mount(tester, topClearance: 56);
+      await enter(tester);
+      final plain = tester.getCenter(centerSlot);
+      await finish(tester);
+      reset = ValueNotifier(0);
+      final chrome = ValueNotifier<double>(1);
+      addTearDown(chrome.dispose);
+      await mount(tester, topClearance: 56, hostChrome: chrome);
+      await enter(tester);
+      expect(chrome.value, 0);
+      expect(tester.getCenter(centerSlot), plain);
+      back!();
+      await rest(tester);
+      expect(chrome.value, 1);
       await finish(tester);
     },
   );

@@ -184,7 +184,16 @@ void main() {
               .first,
         );
         expect(rect.height / rect.width, closeTo(ratio, .01));
-        expect(rect.height, lessThanOrEqualTo(600 * .45));
+        final frame = tester.getRect(
+          find.byKey(const ValueKey('orbit-depth-photo-frame')),
+        );
+        // As large as the frame allows: it meets the frame on one side.
+        expect(
+          (rect.width - frame.width).abs() < .5 ||
+              (rect.height - frame.height).abs() < .5,
+          isTrue,
+          reason: '$rect in $frame',
+        );
         await tester.pump(const Duration(seconds: 1));
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(seconds: 1));

@@ -42,6 +42,7 @@ import 'package:flutter_app/features/introduction/domain/models/introduction_mod
 import 'package:flutter_app/features/introduction/domain/repositories/intro_review_seen_repository.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/cosmic_background.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/expandable_fab.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_search_trigger.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbital_visualization.dart';
@@ -1478,6 +1479,63 @@ void main() {
         await tester.drag(surface, const Offset(190, 0));
         await pumpFeedFrames(tester, count: 10);
         expect(appShellController.activeTab, 'feed');
+      },
+    );
+
+    testWidgets(
+      'in 3D the orbit controls fade away and come back on the flat orbit',
+      (tester) async {
+        setPhoneViewport(tester);
+        suppressFeedNavErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await tester.pumpWidget(buildFeedWired());
+        await pumpFeedFrames(tester, count: 8);
+        await tester.tap(find.text('Orbit'));
+        await pumpFeedFrames(tester, count: 10);
+        Finder hidden(Finder control) => find.ancestor(
+          of: control,
+          matching: find.byWidgetPredicate(
+            (widget) => widget is Opacity && widget.opacity == 0,
+          ),
+        );
+        Finder inert(Finder control) => find.ancestor(
+          of: control,
+          matching: find.byWidgetPredicate(
+            (widget) => widget is IgnorePointer && widget.ignoring,
+          ),
+        );
+        final settings = find.byKey(const ValueKey('orbit-settings-button'));
+        final create = find.byType(ExpandableFab);
+        expect(settings, findsOneWidget);
+        expect(hidden(settings), findsNothing);
+
+        final surface = find.byType(OrbitDepthSurface);
+        final entry = await tester.startGesture(tester.getCenter(surface));
+        await entry.moveBy(const Offset(0, -30));
+        await tester.pump();
+        await entry.moveBy(const Offset(0, -200));
+        await entry.up();
+        await pumpFeedFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-inner-top')),
+          findsOneWidget,
+        );
+        for (final control in [settings, create]) {
+          expect(hidden(control), findsOneWidget);
+          expect(inert(control), findsOneWidget);
+        }
+
+        await tester.binding.handlePopRoute();
+        await pumpFeedFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-inner-top')),
+          findsNothing,
+        );
+        for (final control in [settings, create]) {
+          expect(hidden(control), findsNothing);
+          expect(inert(control), findsNothing);
+        }
       },
     );
 

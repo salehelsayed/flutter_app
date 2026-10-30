@@ -127,7 +127,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   Widget build(BuildContext context) {
     final visual = _media.where((item) => item.kind != 'voice').toList();
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: visual.isEmpty ? MainAxisSize.min : MainAxisSize.max,
       children: [
         if (_loading && _media.isEmpty)
           const SizedBox(
@@ -146,14 +146,31 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
             attachment: item.toSharedMediaAttachment(),
             onRetryUnavailableMedia: () => unawaited(_load()),
           ),
+        // The whole photo, as large as the space allows, on black.
         if (visual.isNotEmpty)
-          MediaGrid(
-            media: visual
-                .map((item) => item.toSharedMediaAttachment())
-                .toList(),
-            singleMaxHeight: MediaQuery.sizeOf(context).height * .45,
-            onTap: (_) => widget.onOpen(),
-            onRetryUnavailableMedia: (_) => unawaited(_load()),
+          Expanded(
+            child: GestureDetector(
+              key: const ValueKey('orbit-depth-photo-frame'),
+              onTap: widget.onOpen,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: ColoredBox(
+                  color: Colors.black,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Center(
+                      child: MediaGrid(
+                        media: visual
+                            .map((item) => item.toSharedMediaAttachment())
+                            .toList(),
+                        singleMaxHeight: constraints.maxHeight,
+                        onTap: (_) => widget.onOpen(),
+                        onRetryUnavailableMedia: (_) => unawaited(_load()),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
       ],
     );

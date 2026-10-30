@@ -64,9 +64,6 @@ class OrbitalVisualization extends StatelessWidget {
   final VoidCallback? onSelfAvatarLongPress;
   final VoidCallback? onComposeThought;
 
-  /// A first-use label beside the "+", or null for none.
-  final String? composeHint;
-
   /// 198 — the five sculpt knobs (defaults ⇒ pre-198 geometry, INV-6).
   final OrbitGeometryPrefs geometry;
 
@@ -121,7 +118,6 @@ class OrbitalVisualization extends StatelessWidget {
     this.onSelfAvatarTap,
     this.onSelfAvatarLongPress,
     this.onComposeThought,
-    this.composeHint,
     this.geometry = OrbitGeometryPrefs.defaults,
     this.overflowExpanded = false,
     this.onBadgeTap,
@@ -531,39 +527,6 @@ class OrbitalVisualization extends StatelessWidget {
           ),
         ),
       );
-      final hint = composeHint;
-      if (hint != null) {
-        children.add(
-          Positioned(
-            left: cx + 36,
-            top: cy + 6,
-            child: ExcludeSemantics(
-              child: GestureDetector(
-                key: const ValueKey('orbit-compose-hint'),
-                onTap: onComposeThought,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF262626),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    hint,
-                    style: const TextStyle(
-                      color: Color(0xFFF5F5F5),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      }
     }
 
     // Seats — rings always; arcs only when expanded.

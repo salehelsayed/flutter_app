@@ -1661,70 +1661,23 @@ void main() {
       },
     );
 
-    testWidgets(
-      'the share hint shows until the composer first opens, then never again',
-      (tester) async {
-        setLargeTestSurface(tester);
-        identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
-        final posts = InMemoryPostRepository();
-        addTearDown(posts.dispose);
-        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
-        await pumpOrbitFrames(tester, count: 6);
-        final hint = find.byKey(const ValueKey('orbit-compose-hint'));
-        expect(hint, findsOneWidget);
-        expect(
-          find.descendant(of: hint, matching: find.text('Share a thought')),
-          findsOneWidget,
-        );
-
-        await tester.tap(hint);
-        await pumpOrbitFrames(tester, count: 6);
-        expect(find.byType(ComposePostSheet), findsOneWidget);
-        await tester.binding.handlePopRoute();
-        await pumpOrbitFrames(tester, count: 6);
-        expect(hint, findsNothing);
-        expect(await secureKeyStore.read('orbit_thought_hint_seen_v1'), '1');
-
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
-        await pumpOrbitFrames(tester, count: 6);
-        expect(hint, findsNothing);
-        await finishThoughtCase(tester);
-      },
-    );
-
-    testWidgets(
-      'opening the composer before the hint flag loads still retires the hint',
-      (tester) async {
-        setLargeTestSurface(tester);
-        identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
-        final held = _HeldReadSecureKeyStore('orbit_thought_hint_seen_v1');
-        secureKeyStore = held;
-        final posts = InMemoryPostRepository();
-        addTearDown(posts.dispose);
-        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
-        await pumpOrbitFrames(tester, count: 6);
-        expect(held.heldReads, 1);
-
-        await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
-        await pumpOrbitFrames(tester, count: 6);
-        expect(find.byType(ComposePostSheet), findsOneWidget);
-        held.release();
-        await tester.binding.handlePopRoute();
-        await pumpOrbitFrames(tester, count: 6);
-        final hint = find.byKey(const ValueKey('orbit-compose-hint'));
-        expect(hint, findsNothing);
-        expect(await held.read('orbit_thought_hint_seen_v1'), '1');
-
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
-        await pumpOrbitFrames(tester, count: 6);
-        expect(hint, findsNothing);
-        await finishThoughtCase(tester);
-      },
-    );
+    testWidgets('no share hint sits beside the plus, even on first use', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = InMemoryPostRepository();
+      addTearDown(posts.dispose);
+      await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+      await pumpOrbitFrames(tester, count: 6);
+      expect(
+        find.byKey(const ValueKey('orbit-compose-thought')),
+        findsOneWidget,
+      );
+      expect(find.text('Share a thought'), findsNothing);
+      await finishThoughtCase(tester);
+    });
 
     testWidgets(
       'the plus is a 44 px target that stays off the centre of the own avatar',
@@ -1772,7 +1725,6 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
-        expect(find.byKey(const ValueKey('orbit-compose-hint')), findsNothing);
 
         await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
         await pumpOrbitFrames(tester, count: 6);
