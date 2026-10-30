@@ -594,12 +594,17 @@ class _SettingsWiredState extends State<SettingsWired>
   }
 
   Future<void> _onThoughtsMetricsChanged(bool enabled) async {
+    final previous = _thoughtsMetricsEnabled;
     setState(() => _thoughtsMetricsEnabled = enabled);
-    await saveThoughtsMetricsEnabled(
-      secureKeyStore: widget.secureKeyStore,
-      enabled: enabled,
-      postRepository: widget.postRepository,
-    );
+    try {
+      await saveThoughtsMetricsEnabled(
+        secureKeyStore: widget.secureKeyStore,
+        enabled: enabled,
+        postRepository: widget.postRepository,
+      );
+    } catch (_) {
+      if (mounted) setState(() => _thoughtsMetricsEnabled = previous);
+    }
   }
 
   Future<void> _loadDebugIntroductions({IdentityModel? identity}) async {

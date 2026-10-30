@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
@@ -197,6 +198,103 @@ void main() {
     });
   });
 
+  group('Thoughts metrics ordering', () {
+    late FakeP2PNetwork network;
+    late FakeP2PService alice;
+    late _GatedPostRepository posts;
+    late InMemoryContactRepository contacts;
+    late FakeSecureKeyStore store;
+
+    setUp(() {
+      network = FakeP2PNetwork();
+      alice = FakeP2PService(peerId: 'peer-alice', network: network);
+      posts = _GatedPostRepository();
+      contacts = InMemoryContactRepository()..addTestContact(_contact('bob'));
+      store = FakeSecureKeyStore();
+    });
+
+    tearDown(() => posts.dispose());
+
+    Future<(SendPostResult, CreatedLocalPost?)> create() => createLocalPost(
+      postRepo: posts,
+      contactRepo: contacts,
+      senderPeerId: 'peer-alice',
+      senderUsername: 'Alice',
+      text: 'Thought',
+      audience: PostAudience.allFriends(),
+      secureKeyStore: store,
+    );
+
+    Map<String, dynamic> bobWire() =>
+        jsonDecode(network.retrieveInbox('bob').single['message'] as String)
+            as Map<String, dynamic>;
+
+    test(
+      'a Thought saved while switching off is marked and sends the key',
+      () async {
+        posts.holdSave = Completer<void>();
+        final creating = create();
+        await posts.saveReached.future;
+
+        final off = saveThoughtsMetricsEnabled(
+          secureKeyStore: store,
+          enabled: false,
+          postRepository: posts,
+        );
+        await pumpEventQueue();
+        expect(await loadThoughtsMetricsEnabled(secureKeyStore: store), isTrue);
+
+        posts.holdSave!.complete();
+        final (result, created) = await creating;
+        await off;
+
+        expect(result, SendPostResult.success);
+        expect((await posts.getPost(created!.post.id))!.metricsOptOut, isTrue);
+        await PostDeliveryRunner(
+          p2pService: alice,
+          postRepo: posts,
+          bridge: FakeBridge(),
+        ).execute(created);
+        expect(bobWire()['thoughts_metrics_opt_out'], true);
+      },
+    );
+
+    test('a Thought created while switching off reads off', () async {
+      posts.holdMark = Completer<void>();
+      final off = saveThoughtsMetricsEnabled(
+        secureKeyStore: store,
+        enabled: false,
+        postRepository: posts,
+      );
+      await posts.markReached.future;
+
+      final creating = create();
+      await pumpEventQueue();
+      expect(posts.saved, isEmpty);
+
+      posts.holdMark!.complete();
+      await off;
+      final (_, created) = await creating;
+
+      expect((await posts.getPost(created!.post.id))!.metricsOptOut, isTrue);
+    });
+
+    test('a failed off keeps the switch on', () async {
+      posts.failMark = true;
+
+      await expectLater(
+        saveThoughtsMetricsEnabled(
+          secureKeyStore: store,
+          enabled: false,
+          postRepository: posts,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(await loadThoughtsMetricsEnabled(secureKeyStore: store), isTrue);
+    });
+  });
+
   group('posts table', () {
     late Database db;
     late PostRepositoryImpl posts;
@@ -279,5 +377,91 @@ void main() {
         expect((await posts.getPost('pending'))!.metricsOptOut, isTrue);
       },
     );
+
+    PostRepositoryImpl failingMarks() => PostRepositoryImpl(
+      dbInsertPost: (row) async {
+        if (row.length == 2 && row.containsKey('metrics_opt_out')) {
+          throw StateError('disk full');
+        }
+        await dbInsertPost(db, row);
+      },
+      dbLoadPost: (postId) => dbLoadPost(db, postId),
+      dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+      dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),
+      dbUpsertRecipientDelivery: (row) =>
+          dbUpsertPostRecipientDelivery(db, row),
+      dbLoadRecipientDeliveries: (postId) =>
+          dbLoadPostRecipientDeliveries(db, postId),
+      dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
+    );
+
+    test('a mark that fails on a live Thought is reported', () async {
+      await posts.savePost(thought('pending', 'sending'));
+
+      await expectLater(
+        failingMarks().markUndeliveredOwnThoughtsMetricsOptOut(),
+        throwsA(isA<StateError>()),
+      );
+      expect(await row('pending'), {
+        'metrics_opt_out': 0,
+        'delivery_status': 'sending',
+      });
+    });
+
+    test('a Thought deleted before its mark is skipped', () async {
+      await posts.savePost(thought('gone', 'sending'));
+      final repo = PostRepositoryImpl(
+        dbInsertPost: (row) async {
+          if (row.length == 2 && row.containsKey('metrics_opt_out')) {
+            await db.delete('posts', where: 'post_id = ?', whereArgs: ['gone']);
+            throw StateError('no such row');
+          }
+          await dbInsertPost(db, row);
+        },
+        dbLoadPost: (postId) => dbLoadPost(db, postId),
+        dbLoadPostsFeed: () => dbLoadPostsFeed(db),
+        dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),
+        dbUpsertRecipientDelivery: (row) =>
+            dbUpsertPostRecipientDelivery(db, row),
+        dbLoadRecipientDeliveries: (postId) =>
+            dbLoadPostRecipientDeliveries(db, postId),
+        dbMarkPostFocused: (postId) => dbMarkPostFocused(db, postId),
+      );
+
+      await repo.markUndeliveredOwnThoughtsMetricsOptOut();
+
+      expect(await repo.getPost('gone'), isNull);
+    });
   });
+}
+
+class _GatedPostRepository extends InMemoryPostRepository {
+  Completer<void>? holdSave;
+  final saveReached = Completer<void>();
+  Completer<void>? holdMark;
+  final markReached = Completer<void>();
+  bool failMark = false;
+  final saved = <String>[];
+
+  @override
+  Future<void> savePost(PostModel post) async {
+    final hold = holdSave;
+    if (hold != null && !post.isIncoming && !saveReached.isCompleted) {
+      saveReached.complete();
+      await hold.future;
+    }
+    saved.add(post.id);
+    await super.savePost(post);
+  }
+
+  @override
+  Future<void> markUndeliveredOwnThoughtsMetricsOptOut() async {
+    if (failMark) throw StateError('disk full');
+    final hold = holdMark;
+    if (hold != null) {
+      markReached.complete();
+      await hold.future;
+    }
+    await super.markUndeliveredOwnThoughtsMetricsOptOut();
+  }
 }

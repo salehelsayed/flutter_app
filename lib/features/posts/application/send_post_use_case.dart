@@ -216,9 +216,6 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     return (SendPostResult.noEligibleRecipients, null);
   }
 
-  final metricsOptOut =
-      secureKeyStore != null &&
-      !await loadThoughtsMetricsEnabled(secureKeyStore: secureKeyStore);
   final now = DateTime.now().toUtc();
   final createdAt = now.toIso8601String();
   var post = PostModel(
@@ -239,7 +236,6 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     nearbySenderCapturedAt: nearbySettings?.lastLocalCapturedAt,
     nearbySenderAccuracyM: nearbySettings?.lastLocalAccuracyM,
     isIncoming: false,
-    metricsOptOut: metricsOptOut,
     deliveryStatus: 'sending',
   );
   if (hasMedia) {
@@ -268,7 +264,13 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
   }
   var postSaved = false;
   try {
-    await postRepo.savePost(post);
+    await inThoughtsMetricsOrder(() async {
+      if (secureKeyStore != null &&
+          !await loadThoughtsMetricsEnabled(secureKeyStore: secureKeyStore)) {
+        post = post.copyWith(metricsOptOut: true);
+      }
+      await postRepo.savePost(post);
+    });
     postSaved = true;
     emitFlowEvent(
       layer: 'FL',

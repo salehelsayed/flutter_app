@@ -359,7 +359,10 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
           'metrics_opt_out': 1,
         });
       } catch (_) {
-        // The Thought was deleted meanwhile; nothing is left to send.
+        // A Thought deleted meanwhile has nothing left to send; any other
+        // failure must not let the switch read off while the row stays
+        // unmarked.
+        if (await getPost(post.id) != null) rethrow;
       }
     }
   }

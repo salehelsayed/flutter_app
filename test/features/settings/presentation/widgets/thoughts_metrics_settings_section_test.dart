@@ -124,4 +124,26 @@ void main() {
       expect((await posts.getPost('pending'))!.metricsOptOut, isTrue);
     },
   );
+
+  testWidgets('if a pending Thought cannot be marked, the switch stays on', (
+    tester,
+  ) async {
+    posts.dispose();
+    posts = _FailingMarkRepository();
+    await pumpSettings(tester);
+
+    await tester.tap(find.byKey(_switchKey));
+    await tester.pump();
+    await tester.pump();
+
+    expect(switchValue(tester), isTrue);
+    expect(await store.read(thoughtsMetricsEnabledStorageKey), isNull);
+  });
+}
+
+class _FailingMarkRepository extends InMemoryPostRepository {
+  @override
+  Future<void> markUndeliveredOwnThoughtsMetricsOptOut() async {
+    throw StateError('disk full');
+  }
 }
