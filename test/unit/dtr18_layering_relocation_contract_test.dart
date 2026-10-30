@@ -330,6 +330,8 @@ const _applicationRootNormalizedSha256 =
 // under contact-request-decisions-20261026 reconstructs the prior identities.
 // Thoughts 128: owner-approved additive view/reaction repository callbacks and
 // the view listener stream retain the same database and startup owners.
+// Local preview persistence binds account database callbacks and clears that
+// binding on shutdown; no lifecycle owner, adapter or notification proof moves.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -442,7 +444,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    'd4589b24147d513fc42f6b9570fc310770a39aea36365af7a8259440c72a6bae';
+    '986e8b29ce002dffd0b33be3465d317d2adbdb7c9f6f030744a640569aff5886';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -478,7 +480,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same retry composition leaves the historical notification callback exact.
 // The same additive Thoughts bindings leave the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '0cd9f009fbc2b49914d24798708ee4cfc764e2aab8e492bbfad02dd1f5bb42dd';
+    'b18401cce14f9b5307cdc3690d08f2cc8b86f43c90c1a7baadd440a2bd07001f';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
