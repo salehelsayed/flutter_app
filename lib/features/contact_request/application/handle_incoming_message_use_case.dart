@@ -609,6 +609,24 @@ handleIncomingMessage({
     await repairRepository?.recordPeerSupportsMarked(peerId);
   }
 
+  // The contact snapshot may predate a delete or block during the request
+  // and consent reads. Revalidate before persisting either wake capability.
+  if (existingContact != null) {
+    final current = await contactRepo.getContact(peerId);
+    final currentConsent = await repairRepository?.readConsent(peerId);
+    if (current == null ||
+        current.isBlocked ||
+        current.publicKey != existingContact.publicKey ||
+        currentConsent?.revision != consent?.revision) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_RELATIONSHIP_CHANGED_DURING_RECEIVE',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+  }
+
   // Known withdrawn peers get no new authority state from a passive message.
   if (!refused) {
     var exactCallWakeHandleIsDurable = false;

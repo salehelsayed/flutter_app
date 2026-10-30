@@ -3203,7 +3203,22 @@ checks blocked authority before choosing a request or conversation and rechecks
 the current pending decision before presentation. Blocked pending rows remain
 pending during passive replay. Resolver/materializer controls cover blocked
 peers with/without requests, removal/replacement during awaits and blocking or
-deletion before reciprocal/profile work. Contact-request relay pushes use the generic English body "New contact request"
+deletion before reciprocal/profile work. Before received wake-grant/token writes,
+an existing-contact receive rechecks the current contact, block state, public key
+and consent revision.
+The held verified-authority-read
+[deletion regression](../../test/features/contact_request/integration/deleted_contact_capability_recreation_test.dart)
+uses real Ed25519 verification and file-backed SQL/key-store fixtures, explicitly
+removes received credentials after deletion, then releases the stale continuation.
+After both stores reopen, the contact/grant/token remain absent, consent is
+unchanged and no repair request is created. The old handler recreates both
+credentials. Evidence:
+`.codex-test-logs/contact-avatar-stale-write-post129-20261030/authority-red.log`
+and `authority-green/`. This proves that await cut; it does not establish that
+production contact deletion owns secure-store cleanup, atomically fence deletion
+during a later secure-store await, or prove native persistence, waking or ringing.
+
+Contact-request relay pushes use the generic English body "New contact request"
 and brand title, omitting unsigned sender display names from visible copy and
 push data. Routing identifiers and silent key-exchange repair remain intact.
 A five-case payload regression covers v2 outer names, v1 outer/payload aliases
