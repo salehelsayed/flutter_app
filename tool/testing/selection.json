@@ -5197,10 +5197,12 @@
       "paths": [
         "test/features/translate_preview/",
         "test/features/posts/improvement/thought_card_screen_test.dart",
-        "test/features/conversation/presentation/screens/conversation_audio_source_regression_test.dart"
+        "test/features/conversation/presentation/screens/conversation_audio_source_regression_test.dart",
+        "test/features/orbit/presentation/widgets/orbit_depth_surface_test.dart",
+        "test/core/database/migrations/125_local_ai_previews_test.dart"
       ],
-      "boundary": "Preview language/script decisions, WAV conversion and language-neutral prompts, translation/transcription states and errors, opt-in model download policy, verification, restart recovery and owned-task cancellation, original-content retention, and flag-off Thought/direct-voice rendering preservation",
-      "limitations": "Host fake-AI/audio/network/downloader coverage and tiny real-file size/hash checks; native model execution, background transfer, cellular policy, backup exclusion, platform memory, provisioning and signed builds remain separate checks",
+      "boundary": "Preview language/script decisions, WAV conversion and data-only prompts, local transcript and per-target translation persistence/lifecycle cleanup, translation/transcription states and errors, opt-in model delivery, original-content retention, and flag-off Thought/Orbit/direct-voice rendering preservation",
+      "limitations": "Host fake-AI/audio/network/downloader coverage and SQLite/tiny real-file persistence checks; native model accuracy, background transfer, SQLCipher binary behavior, platform memory, provisioning and signed builds remain separate checks",
       "timeout_seconds": 900,
       "estimated_seconds": null,
       "requirements": [
@@ -5210,7 +5212,9 @@
         "lib/features/translate_preview/",
         "lib/features/posts/presentation/screens/thought_card_screen.dart",
         "lib/features/conversation/presentation/screens/conversation_screen.dart",
-        "lib/features/conversation/presentation/widgets/letter_card.dart"
+        "lib/features/conversation/presentation/widgets/letter_card.dart",
+        "lib/core/database/helpers/local_ai_preview_db_helpers.dart",
+        "lib/features/orbit/presentation/widgets/orbit_depth_surface.dart"
       ],
       "inspected": true
     }
@@ -5330,9 +5334,10 @@
         "affected-groups",
         "affected-push",
         "affected-calls",
-        "affected-media"
+        "affected-media",
+        "affected-translate-preview"
       ],
-      "why": "Schema and secure authority are shared by identity, chat, groups, calls and upgrade recovery"
+      "why": "Schema and secure authority are shared by identity, chat, groups, calls, local AI preview persistence and upgrade recovery"
     },
     {
       "id": "transport",
@@ -6932,12 +6937,14 @@
         "test/features/translate_preview/*",
         "lib/features/posts/presentation/screens/thought_card_screen.dart",
         "lib/features/conversation/presentation/screens/conversation_screen.dart",
-        "lib/features/conversation/presentation/widgets/letter_card.dart"
+        "lib/features/conversation/presentation/widgets/letter_card.dart",
+        "lib/features/orbit/presentation/widgets/orbit_depth_surface.dart",
+        "lib/app/bootstrap/production_application_bootstrap.dart"
       ],
       "checks": [
         "affected-translate-preview"
       ],
-      "why": "The preview module and its exact Thought/direct-voice entrypoints require the preview tests and existing widget/audio preservation sentinels"
+      "why": "The preview module, persisted-result composition and exact Thought/Orbit/direct-voice entrypoints require preview and existing widget/audio preservation tests"
     }
   ],
   "documentation_only": [

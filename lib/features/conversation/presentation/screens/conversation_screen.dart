@@ -43,6 +43,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/letter_ca
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/message_context_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/offline_message_banner.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/protected_photo_thumbnail_tile.dart';
@@ -508,6 +509,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     return TranscribePreview(
       key: ValueKey('transcribe-preview-${audio.id}'),
       audioPath: MediaFileManager.resolveStoredPathSync(localPath),
+      owner: PreviewOwner.voiceAttachment(audio.id, messageId: audio.messageId),
       ai: translatePreviewAi,
       delivery: translatePreviewDelivery,
       onFreeUpSpace: translatePreviewOpenStorage,

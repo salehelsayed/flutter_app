@@ -16,6 +16,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'orbit_depth_media.dart';
 
@@ -1041,6 +1042,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         if (translatePreviewEnabled && post.text.isNotEmpty)
           TranslatePreview(
             text: post.text,
+            owner: PreviewOwner.thought(post.id),
             ai: translatePreviewAi,
             delivery: translatePreviewDelivery,
             onFreeUpSpace: translatePreviewOpenStorage,

@@ -22,6 +22,7 @@ import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
@@ -865,6 +866,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         text,
         TranslatePreview(
           text: _post.text,
+          owner: PreviewOwner.thought(_post.id),
           ai: translatePreviewAi,
           delivery: translatePreviewDelivery,
           onFreeUpSpace: translatePreviewOpenStorage,

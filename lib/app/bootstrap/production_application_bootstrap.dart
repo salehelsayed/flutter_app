@@ -58,6 +58,8 @@ import 'package:flutter_app/core/device/disk_space.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/local_ai_preview_db_helpers.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
@@ -718,8 +720,12 @@ final class ProductionApplicationBootstrap
     // first, so its terminate can still resolve the peer from SQLCipher and
     // leave through Go before either is shut down.
     void Function()? disposeThoughtExpiry;
+    TranslatePreviewPersistence? accountPreviewPersistence;
     final canonicalRuntimeShutdownSequence = CanonicalRuntimeShutdownSequence(
       shutdownRuntime: () {
+        if (identical(translatePreviewPersistence, accountPreviewPersistence)) {
+          translatePreviewPersistence = null;
+        }
         disposeThoughtExpiry?.call();
         return canonicalWritableRuntimeSession?.shutdown() ??
             Future<bool>.value(true);
@@ -897,6 +903,33 @@ final class ProductionApplicationBootstrap
             binding: canonicalRuntimeStartupBinding!.leaseBinding,
             openDatabase: openIdentityDatabase,
           );
+    accountPreviewPersistence = TranslatePreviewPersistence(
+      loadTranscript: (owner) => owner.messageId == null
+          ? Future<String?>.value()
+          : dbLoadLocalTranscript(db, owner.id, owner.messageId!),
+      saveTranscript: (owner, result) => owner.messageId == null
+          ? Future<bool>.value(false)
+          : dbSaveLocalTranscript(db, owner.id, owner.messageId!, result),
+      loadTranslation: (owner, source, target) => dbLoadLocalTranslation(
+        db,
+        ownerKind: owner.kind.name,
+        ownerId: owner.id,
+        messageId: owner.messageId,
+        source: source,
+        targetLanguage: target,
+      ),
+      saveTranslation: (owner, source, target, result) =>
+          dbSaveLocalTranslation(
+            db,
+            ownerKind: owner.kind.name,
+            ownerId: owner.id,
+            messageId: owner.messageId,
+            source: source,
+            targetLanguage: target,
+            result: result,
+          ),
+    );
+    translatePreviewPersistence = accountPreviewPersistence;
     await repairDirectNotificationDurabilityDeleteTriggers(db);
     await repairLegacyPushMessageTransports(db);
     StartupTiming.instance.mark('database_ready');

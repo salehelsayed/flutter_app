@@ -7108,6 +7108,14 @@ visible and cannot become an ordinary first-attempt PASS.
   repository ownership. Keep the exact fingerprints and repository behavior
   tests together; older fingerprints failed the combined sweep despite the
   retained data-layer placement.
+  The non-main source manifest at base `4187f0f2c` has an unresolved,
+  separate inventory drift: 77 stale JSON relationships, 78 unreviewed external
+  entrypoints and one unreviewed model-delivery VM entrypoint across 79 sources.
+  A read-only baseline CLI audit reproduced the same 156 diagnostics as the
+  current repository-inventory test case; all flagged source and inventory
+  inputs were byte-identical. This is not a passing runtime-roots gate.
+  Evidence: `translate-persist-129-20261030/baseline-equality-proof.json` and
+  `runtime-inventory-baseline-audit.txt` under `.codex-test-logs/`.
 
 - **Group media proof schema:** endpoint admission, Android receipts, shared
   criteria and iOS boundary validation must require exactly
@@ -10474,6 +10482,26 @@ State an investigation area separately from a proven root cause.
   baseline/fix replay remains required to distinguish wrong/empty audio from
   model echo; host prompt/WAV tests and Swift syntax parsing do not provide
   that proof. Evidence: `.codex-test-logs/transcription-prompt-129-20261030/`.
+  Local preview persistence uses DB v125: one nullable
+  `media_attachments.local_transcript` column and one installation-local
+  `local_ai_translations` table keyed by item and target language, with an exact
+  source-text SHA-256. Current voice and Thought/viewer/Orbit-caption entrypoints
+  pass stable owner IDs; file-path moves do not invalidate a voice transcript.
+  Saved results restore before model-delivery gating, including after model
+  removal/failure. A live locale change hides the prior output until requested;
+  an already saved target is reused without another model call.
+  Transactional owner/source checks prevent stale saves after deletion, edits
+  or expiry. Migration triggers clear derived data with retained tombstones,
+  parent/message/chat deletion and terminal media state. The existing post
+  writer updates a stable owner instead of replacing it, preserving an
+  unchanged replay's translations while source edits invalidate them.
+  Account-transfer exports erase the local table and transcript column in the
+  exported copy before checksum; import rejects a staged nonnull transcript.
+  The source database keeps its results. Host tests use a real file-backed
+  SQLite DB close/reopen and fake AI, plus synthetic exported-file payload-byte
+  checks. They do not prove SQLCipher's native binary, signed mobile restart,
+  model accuracy or the full account-transfer journey. Evidence and per-file
+  commands: `.codex-test-logs/translate-persist-129-20261030/`.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.
