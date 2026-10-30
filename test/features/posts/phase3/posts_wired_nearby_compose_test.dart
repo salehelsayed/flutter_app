@@ -301,9 +301,13 @@ void main() {
       expect(find.text('Settings'), findsOneWidget);
       expect(find.text('Share People Nearby'), findsOneWidget);
 
-      await tester.ensureVisible(find.byType(Switch));
+      final nearbySwitch = find.descendant(
+        of: find.byKey(const ValueKey('settings-row-nearby')),
+        matching: find.byType(Switch),
+      );
+      await tester.ensureVisible(nearbySwitch);
       await tester.pump();
-      await tester.tap(find.byType(Switch));
+      await tester.tap(nearbySwitch);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
 

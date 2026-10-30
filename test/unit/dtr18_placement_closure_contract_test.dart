@@ -234,8 +234,9 @@ const _relocations = <String, List<String>>{
       'post_repository_impl.dart': <String>[
     'lib/features/posts/data/repositories/post_repository_impl.dart',
     // Thoughts 128 adds view receipts and photo previews in this same data
-    // adapter; placement is unchanged.
-    '1ff25d408a984092c2d550d48c53f76f2bf499432b023e1621a82b22b3d918e7',
+    // adapter; placement is unchanged. Thoughts 129 adds the metrics opt-out
+    // mark through the same injected insert; imports are unchanged.
+    'f84f43f4f202d26e384ae10c6ff7dad833bd2b986491733d67c02b09d2253f6f',
   ],
 };
 
