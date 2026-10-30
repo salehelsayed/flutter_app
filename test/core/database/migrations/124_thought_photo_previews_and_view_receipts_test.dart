@@ -41,7 +41,7 @@ void main() {
         }
         final db = await open(currentIdentityDatabaseVersion);
         addTearDown(db.close);
-        expect(await db.getVersion(), 124);
+        expect(await db.getVersion(), currentIdentityDatabaseVersion);
 
         final mediaColumns = await db.rawQuery(
           'PRAGMA table_info(post_media_attachments)',
