@@ -106,15 +106,27 @@ Future<void> dbInsertPost(Database db, Map<String, Object?> row) async {
     if (!hasNearbySenderAccuracyM) {
       insertRow.remove('nearby_sender_accuracy_m');
     }
-    await db.insert(
-      'posts',
-      insertRow,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    await db.insert('post_feed_state', <String, Object?>{
-      'post_id': postId,
-      'is_hidden': 0,
-    }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    await dbWriteTransaction(db, (txn) async {
+      // Keep same-item replay an UPDATE: REPLACE would delete local previews.
+      final updated = await txn.update(
+        'posts',
+        insertRow,
+        where: 'post_id = ?',
+        whereArgs: [postId],
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      if (updated == 0) {
+        await txn.insert(
+          'posts',
+          insertRow,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await txn.insert('post_feed_state', <String, Object?>{
+        'post_id': postId,
+        'is_hidden': 0,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    });
     emitFlowEvent(
       layer: 'DB',
       event: 'POSTS_DB_INSERT_SUCCESS',

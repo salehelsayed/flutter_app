@@ -152,6 +152,14 @@ class MigrationDatabaseSnapshotExporter {
   }
 
   static Future<void> _eraseInstallationLocalRows(Database db) async {
+    // sqlcipher_export creates a fresh copy. Wipe local cells before that
+    // copy's checksum is taken, including their released page contents.
+    final secureDelete = await db.rawQuery('PRAGMA secure_delete = ON');
+    if (secureDelete.isEmpty || secureDelete.first.values.first != 1) {
+      throw const MigrationDatabaseSnapshotExportException(
+        'Exported database cannot erase installation-local data',
+      );
+    }
     for (final tableName
         in MigrationDatabaseSchemaInventory.installationLocalTableNames) {
       final present = await db.rawQuery(
@@ -161,6 +169,11 @@ class MigrationDatabaseSnapshotExporter {
       if (present.isNotEmpty) {
         await db.delete(tableName);
       }
+    }
+    final columns = await db.rawQuery('PRAGMA table_info(media_attachments)');
+    if (columns.any((row) => row['name'] == 'local_transcript')) {
+      await db.update('media_attachments', {'local_transcript': null});
+      await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
     }
   }
 

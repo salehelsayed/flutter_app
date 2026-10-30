@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 124);
+        expect(currentIdentityDatabaseVersion, 125);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -169,7 +169,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 124);
+        expect(currentIdentityDatabaseVersion, 125);
         // 362: v114 adds the two nullable linked-fanout columns.
         // 365: v115 adds blob identity, group scope, and explicit owner lane.
         expect(inventory.tables['direct_media_blob_custody'], <String>[
@@ -224,13 +224,14 @@ void main() {
         );
 
         const tableName = 'notification_completed_outcome_outbox';
-        expect(currentIdentityDatabaseVersion, 124);
+        expect(currentIdentityDatabaseVersion, 125);
         expect(inventory.tableNames, contains(tableName));
         expect(
           MigrationDatabaseSchemaInventory.transferPolicyFor(tableName),
           MigrationDatabaseTableTransferPolicy.installationLocal,
         );
         expect(inventory.presentInstallationLocalTableNames, <String>[
+          'local_ai_translations',
           tableName,
         ]);
         expect(inventory.transferableTableNames, isNot(contains(tableName)));

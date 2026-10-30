@@ -87,4 +87,5 @@
 // 407: DB v122 removes all legacy Posts data before Thoughts starts.
 // v123 retains authored direct text until the atomic encrypted custody commit.
 // v124 adds thought photo previews and first-view receipts (407, build 128).
-const int currentIdentityDatabaseVersion = 124;
+// v125 stores local AI previews; the Thoughts metrics switch moves to v126.
+const int currentIdentityDatabaseVersion = 125;

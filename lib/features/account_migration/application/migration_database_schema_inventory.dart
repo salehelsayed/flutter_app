@@ -8,6 +8,7 @@ enum MigrationDatabaseTableTransferPolicy { accountPortable, installationLocal }
 class MigrationDatabaseSchemaInventory {
   static const Set<String> installationLocalTableNames = <String>{
     'notification_completed_outcome_outbox',
+    'local_ai_translations',
   };
 
   final Map<String, List<String>> tables;

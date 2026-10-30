@@ -67,6 +67,19 @@ class MigrationDatabaseActiveImporter {
         'Active database schema does not match staged migration manifest',
       );
     }
+    if (activeInventory.hasColumn('media_attachments', 'local_transcript')) {
+      final localResults = await staged.database.query(
+        'media_attachments',
+        columns: const ['id'],
+        where: 'local_transcript IS NOT NULL',
+        limit: 1,
+      );
+      if (localResults.isNotEmpty) {
+        throw const MigrationDatabaseActiveImportException(
+          'Staged database contains installation-local transcripts',
+        );
+      }
+    }
 
     final stagedLogicalChecksum = await _computeTransferableLogicalChecksum(
       staged.database,

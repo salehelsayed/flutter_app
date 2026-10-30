@@ -4,10 +4,15 @@ import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/116_notification_completed_outcome_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_snapshot_exporter.dart';
+import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
+import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_database_manifest.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../translate_preview/local_preview_fixture.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -207,6 +212,94 @@ void main() {
     );
 
     test(
+      'local AI results leave no rows or payload bytes in the exported copy',
+      () async {
+        final fixture = LocalPreviewFixture();
+        await fixture.open();
+        addTearDown(fixture.dispose);
+        await fixture.seedVoice();
+        const owner = PreviewOwner.voiceAttachment(
+          'voice',
+          messageId: 'message',
+        );
+        const transcript = 'LOCAL_TRANSCRIPT_ONLY_ON_THIS_INSTALL_7E9182';
+        const translation = 'LOCAL_TRANSLATION_ONLY_ON_THIS_INSTALL_A54C26';
+        expect(await fixture.store.saveTranscript(owner, transcript), isTrue);
+        expect(
+          await fixture.store.saveTranslation(
+            owner,
+            transcript,
+            'en',
+            translation,
+          ),
+          isTrue,
+        );
+        await fixture.db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+        expect(
+          String.fromCharCodes(await File(fixture.db.path).readAsBytes()),
+          contains(transcript),
+        );
+        final outputPath = p.join(tempDir!.path, 'local-preview.snapshot.db');
+        final result =
+            await MigrationDatabaseSnapshotExporter(
+              adapter: const PlainSqliteCopyExportAdapter(),
+            ).exportSnapshot(
+              sourceDb: fixture.db,
+              destinationPath: outputPath,
+              destinationKey: 'fixture-copy-key',
+              sourceAppVersion: '1.2.3',
+              sourceBuildNumber: '129',
+            );
+        expect(await fixture.store.loadTranscript(owner), transcript);
+        expect(
+          await fixture.store.loadTranslation(owner, transcript, 'en'),
+          translation,
+        );
+        expect(
+          result.manifest.schemaInventory.transferableTableNames,
+          isNot(contains('local_ai_translations')),
+        );
+        final bytes = String.fromCharCodes(
+          await File(outputPath).readAsBytes(),
+        );
+        expect(bytes, isNot(contains(transcript)));
+        expect(bytes, isNot(contains(translation)));
+        final copied = await databaseFactoryFfi.openDatabase(
+          outputPath,
+          options: OpenDatabaseOptions(singleInstance: false),
+        );
+        addTearDown(copied.close);
+        expect(await copied.query('local_ai_translations'), isEmpty);
+        expect(
+          (await copied.query('media_attachments')).single['local_transcript'],
+          isNull,
+        );
+        await copied.update('media_attachments', {
+          'local_transcript': 'must not import',
+        });
+        await expectLater(
+          MigrationDatabaseActiveImporter(
+            activeDatabase: fixture.db,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: copied,
+              manifest: result.manifest,
+              stagedDatabasePath: outputPath,
+            ),
+          ),
+          throwsA(
+            isA<MigrationDatabaseActiveImportException>().having(
+              (error) => error.message,
+              'message',
+              contains('installation-local transcripts'),
+            ),
+          ),
+        );
+        expect(await fixture.store.loadTranscript(owner), transcript);
+      },
+    );
+
+    test(
       'SQLCipher export capability',
       () async {
         final capability =
@@ -263,6 +356,46 @@ CREATE TABLE identity (
     'created_at': '2026-06-07T00:00:00Z',
     'updated_at': '2026-06-07T00:00:00Z',
   });
+}
+
+/// Exercises copy sanitation with real SQLite pages, not native SQLCipher.
+class PlainSqliteCopyExportAdapter implements MigrationSqlCipherExportAdapter {
+  const PlainSqliteCopyExportAdapter();
+
+  @override
+  Future<MigrationDatabaseCipherMetadata> captureCipherMetadata(
+    Database db,
+  ) async => const MigrationDatabaseCipherMetadata(
+    cipherVersion: '4.6.0',
+    kdfIter: 256000,
+    cipherPageSize: 4096,
+    policy: MigrationDatabaseCipherPolicy.compatible,
+  );
+
+  @override
+  Future<void> exportSqlCipherDatabase({
+    required Database sourceDb,
+    required String destinationPath,
+    required String destinationKey,
+    required MigrationDatabaseCipherMetadata cipherMetadata,
+  }) async {
+    await sourceDb.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    await File(sourceDb.path).copy(destinationPath);
+  }
+
+  @override
+  Future<Database> openExportedDatabase({
+    required String path,
+    required String key,
+    required MigrationDatabaseCipherMetadata cipherMetadata,
+  }) => databaseFactoryFfi.openDatabase(
+    path,
+    options: OpenDatabaseOptions(singleInstance: false),
+  );
+
+  @override
+  Future<String> runIntegrityCheck(Database db) async =>
+      (await db.rawQuery('PRAGMA quick_check')).first.values.first as String;
 }
 
 class RecordingSnapshotExportAdapter

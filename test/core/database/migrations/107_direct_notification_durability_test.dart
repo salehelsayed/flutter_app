@@ -119,7 +119,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 124);
+      expect(currentIdentityDatabaseVersion, 125);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
@@ -135,9 +135,9 @@ void main() {
         expect(registry.last.version, currentIdentityDatabaseVersion);
         expect(
           registry.last.name,
-          '124_thought_photo_previews_and_view_receipts',
+          '125_local_ai_previews',
         );
-        expect(registry[registry.length - 13].version, 112);
+        expect(registry[registry.length - 14].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
