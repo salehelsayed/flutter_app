@@ -6406,9 +6406,10 @@ void main() {
       );
     }
 
-    for (final scenario in [0, 1, 2, 3]) {
-      final admitted = scenario != 0;
-      final edited = scenario >= 2;
+    for (final scenario in [0, 1, 2, 3, 4]) {
+      final writeThrows = scenario == 4;
+      final admitted = scenario != 0 && !writeThrows;
+      final edited = scenario == 2 || scenario == 3;
       final updatedDraft = scenario == 3
           ? 'durable authored text '
           : 'new draft';
@@ -6418,7 +6419,9 @@ void main() {
           ? 'keeps new typing'
           : '';
       testWidgets(
-        'authored text $editDescription ${admitted ? 'commits before draft release and bg:begin' : 'write refusal retains draft without bubble'}',
+        writeThrows
+            ? 'LL-41 authored text write exception retains draft without bubble'
+            : 'authored text $editDescription ${admitted ? 'commits before draft release and bg:begin' : 'write refusal retains draft without bubble'}',
         (tester) async {
           final repository = _IntentMessageRepository();
           final bridge = _HeldTextBeginBridge();
@@ -6459,7 +6462,13 @@ void main() {
             await tester.enterText(find.byType(TextField), updatedDraft);
             await tester.pump();
           }
-          repository.admission.complete(admitted);
+          if (writeThrows) {
+            repository.admission.completeError(
+              StateError('injected write failure'),
+            );
+          } else {
+            repository.admission.complete(admitted);
+          }
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 50));
           expect(bridge.beginCalled, admitted);
@@ -16563,118 +16572,176 @@ void main() {
       },
     );
 
-    testWidgets(
-      'send failure after upload restores quote draft and attachments',
-      (tester) async {
-        final identityRepo = FakeIdentityRepository(makeIdentity());
-        final messageRepo = FakeMessageRepository();
-        final chatListener = ChatMessageListener(
-          chatMessageStream: const Stream.empty(),
-          messageRepo: messageRepo,
-          contactRepo: FakeContactRepository(),
-        );
-        final incoming = ConversationMessage(
-          id: 'incoming-send-fail',
-          contactPeerId: makeContact().peerId,
-          senderPeerId: makeContact().peerId,
-          text: 'Send parent',
-          timestamp: '2026-02-09T15:30:00.000Z',
-          status: 'delivered',
-          isIncoming: true,
-          createdAt: '2026-02-09T15:30:01.000Z',
-        );
-        await messageRepo.saveMessage(incoming);
+    for (final newerDraft in [false, true]) {
+      for (final throws in [false, true]) {
+        testWidgets(
+          newerDraft
+              ? 'LL-41 late media send ${throws ? 'exception' : 'failure'} preserves a newer unsent draft'
+              : throws
+              ? 'LL-41 send exception after upload restores quote draft and attachments'
+              : 'send failure after upload restores quote draft and attachments',
+          (tester) async {
+            final identityRepo = FakeIdentityRepository(makeIdentity());
+            final messageRepo = FakeMessageRepository();
+            final chatListener = ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: messageRepo,
+              contactRepo: FakeContactRepository(),
+            );
+            final incoming = ConversationMessage(
+              id: 'incoming-send-fail',
+              contactPeerId: makeContact().peerId,
+              senderPeerId: makeContact().peerId,
+              text: 'Send parent',
+              timestamp: '2026-02-09T15:30:00.000Z',
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: '2026-02-09T15:30:01.000Z',
+            );
+            await messageRepo.saveMessage(incoming);
 
-        final tempDir = Directory.systemTemp.createTempSync('conv_retry_send_');
-        addTearDown(() {
-          if (tempDir.existsSync()) {
-            tempDir.deleteSync(recursive: true);
-          }
-        });
-        final attachment = File('${tempDir.path}/retry.jpg')
-          ..writeAsStringSync('image');
+            final tempDir = Directory.systemTemp.createTempSync(
+              'conv_retry_send_',
+            );
+            addTearDown(() {
+              if (tempDir.existsSync()) {
+                tempDir.deleteSync(recursive: true);
+              }
+            });
+            final attachment = File('${tempDir.path}/retry.jpg')
+              ..writeAsStringSync('image');
 
-        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
-          required P2PService p2pService,
-          required MessageRepository messageRepo,
-          required String targetPeerId,
-          required String text,
-          required String senderPeerId,
-          required String senderUsername,
-          String? messageId,
-          required bool preassignedMessageIdIsFresh,
-          String? authoredTextIntentToken,
-          String? timestamp,
-          Bridge? bridge,
-          String? recipientMlKemPublicKey,
-          String? quotedMessageId,
-          List<MediaAttachment>? mediaAttachments,
-          PrivateMediaPolicy? privateMediaPolicy,
-          MediaAttachmentRepository? mediaAttachmentRepo,
-          TransportMetrics? transportMetrics,
-          DirectEventFanoutAuthoring? directEventFanout,
-        }) async => (SendChatMessageResult.sendFailed, null);
+            final sendCompletion = Completer<void>();
+            var sendCalls = 0;
+            addTearDown(() {
+              if (!sendCompletion.isCompleted) {
+                sendCompletion.complete();
+              }
+            });
 
-        await pumpScreen(
-          tester,
-          identityRepo: identityRepo,
-          messageRepo: messageRepo,
-          chatListener: chatListener,
-          sendFn: sendFn,
-          bridge: FakeBridge(),
-          uploadMediaFn:
-              ({
-                required bridge,
-                required localFilePath,
-                required mime,
-                required recipientPeerId,
-                mediaFileManager,
-                blobId,
-                width,
-                height,
-                durationMs,
-                waveform,
-                allowedPeers,
-                deleteSourceWhenDone = false,
-                preparedArtifact,
-              }) async => MediaAttachment(
-                id: 'uploaded-1',
-                messageId: '',
-                mime: mime,
-                size: 1,
-                mediaType: MediaAttachment.mediaTypeFromMime(mime),
-                localPath: localFilePath,
-                downloadStatus: 'done',
-                createdAt: DateTime.now().toUtc().toIso8601String(),
-              ),
-          initialAttachments: [attachment],
+            Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+              required P2PService p2pService,
+              required MessageRepository messageRepo,
+              required String targetPeerId,
+              required String text,
+              required String senderPeerId,
+              required String senderUsername,
+              String? messageId,
+              required bool preassignedMessageIdIsFresh,
+              String? authoredTextIntentToken,
+              String? timestamp,
+              Bridge? bridge,
+              String? recipientMlKemPublicKey,
+              String? quotedMessageId,
+              List<MediaAttachment>? mediaAttachments,
+              PrivateMediaPolicy? privateMediaPolicy,
+              MediaAttachmentRepository? mediaAttachmentRepo,
+              TransportMetrics? transportMetrics,
+              DirectEventFanoutAuthoring? directEventFanout,
+            }) async {
+              sendCalls++;
+              await sendCompletion.future;
+              if (throws) {
+                throw StateError('injected send failure');
+              }
+              return (SendChatMessageResult.sendFailed, null);
+            }
+
+            await pumpScreen(
+              tester,
+              identityRepo: identityRepo,
+              messageRepo: messageRepo,
+              chatListener: chatListener,
+              sendFn: sendFn,
+              bridge: FakeBridge(),
+              uploadMediaFn:
+                  ({
+                    required bridge,
+                    required localFilePath,
+                    required mime,
+                    required recipientPeerId,
+                    mediaFileManager,
+                    blobId,
+                    width,
+                    height,
+                    durationMs,
+                    waveform,
+                    allowedPeers,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
+                  }) async => MediaAttachment(
+                    id: 'uploaded-1',
+                    messageId: '',
+                    mime: mime,
+                    size: 1,
+                    mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                    localPath: localFilePath,
+                    downloadStatus: 'done',
+                    createdAt: DateTime.now().toUtc().toIso8601String(),
+                  ),
+              initialAttachments: [attachment],
+            );
+
+            final screen = tester.widget<ConversationScreen>(
+              find.byType(ConversationScreen),
+            );
+            screen.onQuoteReply!.call('incoming-send-fail');
+            await tester.pump();
+
+            await tester.enterText(find.byType(TextField), 'Retry send');
+            await tester.pump(const Duration(milliseconds: 300));
+            await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+            await pumpUntil(tester, () => sendCalls == 1);
+            expect(
+              tester.widget<TextField>(find.byType(TextField)).controller!.text,
+              isEmpty,
+              reason: 'the first send has released the composer',
+            );
+            if (newerDraft) {
+              await tester.enterText(
+                find.byType(TextField),
+                'New unsent draft',
+              );
+              await tester.pump();
+              expect(
+                tester
+                    .widget<TextField>(find.byType(TextField))
+                    .controller!
+                    .text,
+                'New unsent draft',
+              );
+            }
+            sendCompletion.complete();
+            await tester.pump(const Duration(milliseconds: 100));
+            await tester.pump(const Duration(milliseconds: 100));
+
+            expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+            expect(find.text('Replying to'), findsOneWidget);
+            expect(find.text('Send parent'), findsWidgets);
+            expect(
+              tester.widget<TextField>(find.byType(TextField)).controller?.text,
+              newerDraft ? 'New unsent draft' : 'Retry send',
+              reason: 'a late failure must not erase text typed after Send',
+            );
+            expect(sendCalls, 1);
+            expect(
+              messageRepo.store.values.where((message) => !message.isIncoming),
+              hasLength(1),
+            );
+            expect(
+              messageRepo.store.values
+                  .singleWhere((message) => !message.isIncoming)
+                  .status,
+              'failed',
+            );
+            expect(
+              find.text('Failed to send message. Message saved.'),
+              findsOneWidget,
+            );
+          },
         );
-
-        final screen = tester.widget<ConversationScreen>(
-          find.byType(ConversationScreen),
-        );
-        screen.onQuoteReply!.call('incoming-send-fail');
-        await tester.pump();
-
-        await tester.enterText(find.byType(TextField), 'Retry send');
-        await tester.pump(const Duration(milliseconds: 300));
-        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-
-        expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
-        expect(find.text('Replying to'), findsOneWidget);
-        expect(find.text('Send parent'), findsWidgets);
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller?.text,
-          'Retry send',
-        );
-        expect(
-          find.text('Failed to send message. Message saved.'),
-          findsOneWidget,
-        );
-      },
-    );
+      }
+    }
   });
 
   group('ConversationWired recording lifecycle', () {

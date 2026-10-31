@@ -2515,6 +2515,21 @@ are in `.codex-test-logs/composer-clear-20261026/padded-composer-red-5.log`;
 `composer-order-red.log` also reproduces the edge-control normalization case.
 `composer-green-order.log` in that directory has 49 passes and no skips.
 These are host widget/transport-fake results, not signed-device evidence.
+
+The LL-41 follow-up on `f217047f4` distinguishes admission from a later media
+failure. Its authored-text write-exception control preserves the draft without
+publishing a bubble or starting background send. Both no-new-typing media
+failure controls restore the original caption, quote and attachment. However,
+a returned media-send failure and a thrown send exception both overwrite text
+typed after the first send released the composer. The two unskipped
+`LL-41 late media send` cases in `conversation_wired_test.dart` reproduce that
+loss at `_restoreComposerSnapshot`'s unconditional draft assignment. This is
+an open defect, not a passing preservation claim; no app fix accompanies the
+tests. The first focused result is three passes and two failures under
+`.codex-test-logs/lessons-critical-20261031/ll41-draft-first/` in the
+`flutter_app-astra-lessons-critical-post129` worktree. These are host widget
+results with injected send outcomes, not signed-device evidence.
+
 Voice saves its parent before the attachment because real pending-attachment
 preparation requires that parent. The Conversation screen withholds voice
 row-change events while those saves are pending and publishes its bubble only
@@ -4986,7 +5001,22 @@ Exact selectors and paths are in the manifest. Useful assertion anchors include
 `two_user_message_exchange_test.dart` (bidirectional exchange),
 `one_to_one_media_encryption_round_trip_test.dart` (receiver byte equality),
 `conversation_received_media_actions_test.dart` (typed viewer opening), and
-`full_migration_chain_test.dart` (seeded data preservation). The legacy media
+`full_migration_chain_test.dart` (seeded data preservation).
+The LL-34/35 host controls at `f217047f4` also use real file-backed SQLite:
+`migration_chain_rollback_test.dart` passes five failure/reopen/retry cases,
+including failures after upgrade versions 4, 44, 100 and 126 and a real CHECK
+failure during migration005's table replacement. `disk_full_recovery_test.dart`
+passes four cases: SQLite page-cap exhaustion during insert/replacement,
+upgrade failure with the original schema/version preserved, and interrupted
+rekey backup-file recovery through the production opener's existing open hook.
+These establish readable accepted history, propagated write errors and retry
+at those host boundaries, not physical filesystem exhaustion, an abrupt OS
+kill, native SQLCipher encryption/export, or a storage-full user interface.
+The opener's logged encryption claim is not cipher evidence when its open hook
+uses SQLite FFI. The initial analyzer failure was a missing test-only Sqflite
+import, corrected without changing assertions. Receipts are under
+`.codex-test-logs/lessons-critical-20261031/` in the
+`flutter_app-astra-lessons-critical-post129` worktree. The legacy media
 envelope fixture proves a format fixture, not communication with an old binary.
 
 `bidi_transport_rendering_test.dart` joins two-peer production message send and
