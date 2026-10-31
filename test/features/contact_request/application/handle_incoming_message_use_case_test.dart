@@ -27,8 +27,22 @@ class _FakeReceivedWakeTokenStore implements ReceivedWakeTokenStore {
       tokens[peerId] == null ? null : Map<String, String>.from(tokens[peerId]!);
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async =>
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
+    Future<void> write() async {
       tokens[peerId] = {'tok': token, 'ts': ts};
+    }
+
+    if (writeIfAuthorized != null) {
+      await writeIfAuthorized(write);
+    } else {
+      await write();
+    }
+  }
 
   @override
   Future<void> removeTokenFor(String peerId) async => tokens.remove(peerId);
@@ -52,15 +66,24 @@ class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) async {
-    if (!grant.isValidAt(nowMs)) {
-      return false;
+    var stored = false;
+    Future<void> write() async {
+      if (!grant.isValidAt(nowMs)) return;
+      final prior = grants[issuerAccountPeerId];
+      if (prior != null && !grant.isStrictlyNewerThan(prior)) return;
+      grants[issuerAccountPeerId] = grant;
+      writes += 1;
+      stored = true;
     }
-    final prior = grants[issuerAccountPeerId];
-    if (prior != null && !grant.isStrictlyNewerThan(prior)) return false;
-    grants[issuerAccountPeerId] = grant;
-    writes += 1;
-    return true;
+
+    if (writeIfAuthorized != null) {
+      await writeIfAuthorized(write);
+    } else {
+      await write();
+    }
+    return stored;
   }
 
   @override

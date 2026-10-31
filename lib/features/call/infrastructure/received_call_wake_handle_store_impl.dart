@@ -30,18 +30,29 @@ final class ReceivedCallWakeHandleStoreImpl
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) => _mutate<bool>((grants) async {
-    if (!CallWakeHandleGrant.hasValidPeerIdGrammar(issuerAccountPeerId) ||
-        !grant.isValidAt(nowMs)) {
+    var stored = false;
+    Future<void> write() async {
+      if (!CallWakeHandleGrant.hasValidPeerIdGrammar(issuerAccountPeerId) ||
+          !grant.isValidAt(nowMs)) {
+        return;
+      }
+      final prior = grants[issuerAccountPeerId];
+      if (prior != null && !grant.isStrictlyNewerThan(prior)) {
+        return;
+      }
+      grants[issuerAccountPeerId] = grant;
+      await _persist(grants);
+      stored = true;
+    }
+
+    if (writeIfAuthorized == null) {
+      await write();
+    } else if (!await writeIfAuthorized(write)) {
       return false;
     }
-    final prior = grants[issuerAccountPeerId];
-    if (prior != null && !grant.isStrictlyNewerThan(prior)) {
-      return false;
-    }
-    grants[issuerAccountPeerId] = grant;
-    await _persist(grants);
-    return true;
+    return stored;
   });
 
   @override

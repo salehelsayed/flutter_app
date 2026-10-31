@@ -3214,9 +3214,34 @@ After both stores reopen, the contact/grant/token remain absent, consent is
 unchanged and no repair request is created. The old handler recreates both
 credentials. Evidence:
 `.codex-test-logs/contact-avatar-stale-write-post129-20261030/authority-red.log`
-and `authority-green/`. This proves that await cut; it does not establish that
-production contact deletion owns secure-store cleanup, atomically fence deletion
-during a later secure-store await, or prove native persistence, waking or ringing.
+and `authority-green/`. That initial result covered the verified-read cut only.
+
+CR-019 now guards the actual received grant/token mutation using the current
+contact authority and consent revision in the same SQL transaction. Only secure
+storage I/O runs inside that transaction: no repository calls on its outer
+handle, nested write transactions, bridge calls, or presentation callbacks.
+Store mutation ownership precedes the SQL guard; revocation commits SQL before
+requesting secure-store cleanup. Do not invert that ordering. Token freshness
+comparison runs inside its serialized mutation, and key rotation uses a guarded
+partial SQL update rather than replaying a whole contact row. Committed-contact
+projection publication stays outside the transaction.
+
+The full `contact_authority_freshness_await_race_test.dart` passes all forty
+supersession/cut combinations plus three preservation cases, with all nineteen
+former gap skips removed. Its contact-write pause now targets admission to the
+conditional update; every superseding action still finishes before the stale
+continuation resumes. `received_authority_write_transaction_test.dart` adds
+three real SQL/file-backed cases: held secure writes keep revocation queued,
+then cleanup and reopening preserve withdrawn authority; prior revocation
+refuses writes before persistence. The earlier deletion, receive unit, grant
+store, token store and repair receive suites also pass: 144 cases total, no
+failures or skips. Evidence is
+`.codex-test-logs/cr019-late-write-cuts-20261031/` in
+`flutter_app-astra-cr019-late-write-cuts`, based on `d21e99f69`.
+Both foreground and headless production receive owners supply the SQL repair
+repository. Legacy callers without it retain non-atomic behavior; the host
+fixtures do not establish production ownership of secure-store cleanup, native
+keychain/SQLCipher persistence, waking, ringing, or signed-candidate behavior.
 
 Contact-request relay pushes use the generic English body "New contact request"
 and brand title, omitting unsigned sender display names from visible copy and
@@ -3268,7 +3293,7 @@ joined retry boundary. Host scanner/event-channel substitutes prove Dart
 routing and persisted state, never optical capture or native protection.
 
 The P0 host regressions on base
-`fd63d23aa3f775a965f6a5d25564c00565f24b6b` retain three unskipped application
+`fd63d23aa3f775a965f6a5d25564c00565f24b6b` initially recorded three application
 failures: `profile_update_listener_test.dart` exposes a late avatar repository
 write restoring an obsolete whole contact row; `contact_authority_freshness_await_race_test.dart`
 exposes a grant/token write after completed contact deletion; and

@@ -440,7 +440,9 @@
       "kind": "flutter",
       "paths": [
         "test/features/push/",
-        "test/core/notifications/"
+        "test/core/notifications/",
+        "test/core/debug/wake_token_directionality_e2e_test.dart",
+        "test/core/debug/wake_token_directionality_readiness_test.dart"
       ],
       "boundary": "Visibility, shared message events, mute and route ordering affect both conversation families",
       "limitations": "Discovered directory selection; only representative assertions inspected. Entire existing directory runs, runtime unknown",
@@ -5270,7 +5272,9 @@
         "lib/features/push/*",
         "lib/core/notifications/*",
         "test/features/push/*",
-        "test/core/notifications/*"
+        "test/core/notifications/*",
+        "test/core/debug/wake_token_directionality_e2e_test.dart",
+        "test/core/debug/wake_token_directionality_readiness_test.dart"
       ],
       "checks": [
         "notifications",

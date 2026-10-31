@@ -60,30 +60,6 @@ enum _SupersedingAction {
   decline,
 }
 
-// KNOWN GAP [CR-019]: the relationship recheck runs before the capability
-// writes, so a receive paused at a grant, token or contact write still lands
-// its stale write after a delete, block, decline or newer key update. The
-// earlier cuts are fixed and stay active.
-const _cr019WriteGapCuts = {
-  _AwaitCut.grantRead,
-  _AwaitCut.grantWrite,
-  _AwaitCut.tokenRead,
-  _AwaitCut.tokenWrite,
-  _AwaitCut.contactWrite,
-};
-const _cr019KnownGapCuts = <_SupersedingAction, Set<_AwaitCut>>{
-  _SupersedingAction.replaceAuthority: {
-    _AwaitCut.tokenRead,
-    _AwaitCut.tokenWrite,
-    _AwaitCut.contactWrite,
-  },
-  _SupersedingAction.delete: _cr019WriteGapCuts,
-  _SupersedingAction.decline: _cr019WriteGapCuts,
-  _SupersedingAction.block: {..._cr019WriteGapCuts, _AwaitCut.finalContactRead},
-};
-bool _cr019KnownGap(_SupersedingAction action, _AwaitCut cut) =>
-    _cr019KnownGapCuts[action]!.contains(cut);
-
 final class _Pause {
   final entered = Completer<void>();
   final release = Completer<void>();
@@ -162,12 +138,14 @@ final class _GrantBoundary implements ReceivedCallWakeHandleStore {
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) async {
     if (cut == _AwaitCut.grantWrite) await pause.wait();
     return inner.storeIfStrictlyNewer(
       issuerAccountPeerId: issuerAccountPeerId,
       grant: grant,
       nowMs: nowMs,
+      writeIfAuthorized: writeIfAuthorized,
     );
   }
 
@@ -198,9 +176,19 @@ final class _TokenBoundary implements ReceivedWakeTokenStore {
   }
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async {
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
     if (cut == _AwaitCut.tokenWrite) await pause.wait();
-    await inner.writeTokenFor(peerId, token, ts);
+    await inner.writeTokenFor(
+      peerId,
+      token,
+      ts,
+      writeIfAuthorized: writeIfAuthorized,
+    );
   }
 
   @override
@@ -209,8 +197,8 @@ final class _TokenBoundary implements ReceivedWakeTokenStore {
   Future<void> clear() => inner.clear();
 }
 
-// Unmarked receive messages use only readConsent. Unexpected repair operations
-// throw, rather than silently fabricating a successful reply claim.
+// Forward actual authority persistence; unexpected repair reply operations
+// still throw rather than fabricating a successful reply claim.
 final class _ConsentBoundary implements ContactRepairRepository {
   _ConsentBoundary(this.inner, this.cut, this.pause);
   final SqlContactRepairRepository inner;
@@ -222,6 +210,40 @@ final class _ConsentBoundary implements ContactRepairRepository {
     final result = await inner.readConsent(peerId);
     if (cut == _AwaitCut.consentRead) await pause.wait();
     return result;
+  }
+
+  @override
+  Future<bool> writeIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required Future<void> Function() write,
+  }) => inner.writeIfAuthorityCurrent(
+    peerId: peerId,
+    authorityFingerprint: authorityFingerprint,
+    relationshipRevision: relationshipRevision,
+    write: write,
+  );
+
+  @override
+  Future<({bool authorized, bool updated, bool hadKey})>
+  updateContactKeyIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required String mlKemPublicKey,
+    required String? signedAt,
+  }) async {
+    // The old upsert is now a conditional partial write. Keep the same
+    // completed-supersession-before-write schedule at its actual admission.
+    if (cut == _AwaitCut.contactWrite) await pause.wait();
+    return inner.updateContactKeyIfAuthorityCurrent(
+      peerId: peerId,
+      authorityFingerprint: authorityFingerprint,
+      relationshipRevision: relationshipRevision,
+      mlKemPublicKey: mlKemPublicKey,
+      signedAt: signedAt,
+    );
   }
 
   @override
@@ -246,7 +268,6 @@ ContactRepositoryImpl _contactsAtBoundary(
       return row;
     },
     dbUpsertContact: (row) async {
-      if (cut == _AwaitCut.contactWrite) await pause.wait();
       await dbUpsertContact(db, row);
     },
     dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -776,7 +797,7 @@ void main() {
           );
         }
         expect(await db.query('contact_repair_requests'), isEmpty);
-      }, skip: _cr019KnownGap(action, cut));
+      });
     }
   }
 

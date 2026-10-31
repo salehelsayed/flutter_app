@@ -614,9 +614,30 @@ class _RecordingWakeTokenStore implements ReceivedWakeTokenStore {
       tokens[peerId];
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async {
-    writes++;
-    tokens[peerId] = {'tok': token, 'ts': ts};
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
+    Future<void> write() async {
+      if (writeIfAuthorized != null) {
+        final incoming = DateTime.tryParse(ts);
+        final previous = DateTime.tryParse(tokens[peerId]?['ts'] ?? '');
+        if (incoming == null ||
+            (previous != null && !incoming.isAfter(previous))) {
+          return;
+        }
+      }
+      writes++;
+      tokens[peerId] = {'tok': token, 'ts': ts};
+    }
+
+    if (writeIfAuthorized == null) {
+      await write();
+    } else {
+      await writeIfAuthorized(write);
+    }
   }
 
   @override

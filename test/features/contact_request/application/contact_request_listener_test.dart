@@ -145,12 +145,23 @@ class _FakeReceivedCallWakeHandleStore implements ReceivedCallWakeHandleStore {
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) async {
-    if (!grant.isValidAt(nowMs)) return false;
-    final prior = grants[issuerAccountPeerId];
-    if (prior != null && !grant.isStrictlyNewerThan(prior)) return false;
-    grants[issuerAccountPeerId] = grant;
-    return true;
+    var stored = false;
+    Future<void> write() async {
+      if (!grant.isValidAt(nowMs)) return;
+      final prior = grants[issuerAccountPeerId];
+      if (prior != null && !grant.isStrictlyNewerThan(prior)) return;
+      grants[issuerAccountPeerId] = grant;
+      stored = true;
+    }
+
+    if (writeIfAuthorized == null) {
+      await write();
+    } else if (!await writeIfAuthorized(write)) {
+      return false;
+    }
+    return stored;
   }
 
   @override

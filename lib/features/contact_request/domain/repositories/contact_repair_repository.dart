@@ -130,6 +130,25 @@ final class ContactRepairJob {
 abstract interface class ContactRepairRepository {
   Future<ContactRelationshipConsent?> readConsent(String peerId);
 
+  /// Runs only a secure-store mutation while the same SQL transaction protects
+  /// the expected live relationship. [write] must not query/write this DB.
+  Future<bool> writeIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required Future<void> Function() write,
+  });
+
+  /// Changes only key fields on the still-authorized current contact row.
+  Future<({bool authorized, bool updated, bool hadKey})>
+  updateContactKeyIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required String mlKemPublicKey,
+    required String? signedAt,
+  });
+
   /// The signed digest already recorded for this request ID, if any. A
   /// different digest under the same ID is a conflict and must be rejected
   /// before any incoming state is applied.

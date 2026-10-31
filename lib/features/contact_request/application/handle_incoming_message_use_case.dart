@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_repair_repository.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/domain/received_wake_token_store.dart';
@@ -627,6 +628,26 @@ handleIncomingMessage({
     }
   }
 
+  // Both production receive owners provide the SQL repair repository. Legacy
+  // callers without it retain their existing non-transactional behavior.
+  final authorityFingerprint =
+      existingContact != null && repairRepository != null
+      ? ed25519AuthorityFingerprint(existingContact.publicKey)
+      : null;
+  var authorityRefused = false;
+  Future<bool> guardWrite(Future<void> Function() write) async {
+    final authorized = await repairRepository!.writeIfAuthorityCurrent(
+      peerId: peerId,
+      authorityFingerprint: authorityFingerprint!,
+      relationshipRevision: consent?.revision ?? 0,
+      write: write,
+    );
+    authorityRefused = authorityRefused || !authorized;
+    return authorized;
+  }
+
+  final writeIfAuthorized = authorityFingerprint == null ? null : guardWrite;
+
   // Known withdrawn peers get no new authority state from a passive message.
   if (!refused) {
     var exactCallWakeHandleIsDurable = false;
@@ -636,7 +657,11 @@ handleIncomingMessage({
         issuerAccountPeerId: peerId,
         grant: callWakeHandleGrant,
         nowMs: nowMsValue,
+        writeIfAuthorized: writeIfAuthorized,
       );
+      if (authorityRefused) {
+        return (HandleMessageResult.invalidMessage, null, null);
+      }
       final current = await receivedCallWakeHandleStore.readForIssuer(peerId);
       exactCallWakeHandleIsDurable =
           current == callWakeHandleGrant &&
@@ -682,7 +707,15 @@ handleIncomingMessage({
         final storedAtMs = parseSignedInstantMs(existing?['ts']);
         final storedToken = existing?['tok'];
         if (storedAtMs == null || wtAtMs > storedAtMs) {
-          await receivedWakeTokenStore.writeTokenFor(peerId, wt, wtTs);
+          await receivedWakeTokenStore.writeTokenFor(
+            peerId,
+            wt,
+            wtTs,
+            writeIfAuthorized: writeIfAuthorized,
+          );
+          if (authorityRefused) {
+            return (HandleMessageResult.invalidMessage, null, null);
+          }
           emitFlowEvent(
             layer: 'FL',
             event: 'WAKE_TOKEN_RECEIVED_STORED',
@@ -811,6 +844,34 @@ handleIncomingMessage({
           payloadAtMs != null &&
           (lastKeyUpdateAtMs == null || payloadAtMs > lastKeyUpdateAtMs);
       if (!hadKey || tsIsNewer) {
+        if (authorityFingerprint != null) {
+          final update = await repairRepository!
+              .updateContactKeyIfAuthorityCurrent(
+                peerId: peerId,
+                authorityFingerprint: authorityFingerprint,
+                relationshipRevision: consent?.revision ?? 0,
+                mlKemPublicKey: mlkemFromPayload,
+                signedAt: payloadTs,
+              );
+          if (!update.authorized) {
+            return (HandleMessageResult.invalidMessage, null, null);
+          }
+          if (!update.updated) {
+            return withRepair(HandleMessageResult.alreadyContact, peerId);
+          }
+          // Publish from the committed row, outside the SQL transaction.
+          if (contactRepo is ContactRepositoryImpl) {
+            await contactRepo.publishCommittedContact(peerId);
+          }
+          emitFlowEvent(
+            layer: 'FL',
+            event: update.hadKey
+                ? 'CONTACT_KEY_ROTATED'
+                : 'CONTACT_REQUEST_KEY_UPDATED',
+            details: {'peerId': peerIdPrefix},
+          );
+          return withRepair(HandleMessageResult.contactKeyUpdated, peerId);
+        }
         await contactRepo.addContact(
           current.copyWith(
             mlKemPublicKey: mlkemFromPayload,

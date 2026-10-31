@@ -81,8 +81,30 @@ final class InMemoryReceivedWakeTokens implements ReceivedWakeTokenStore {
       tokens[peerId] == null ? null : Map<String, String>.of(tokens[peerId]!);
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async =>
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
+    Future<void> write() async {
+      if (writeIfAuthorized != null) {
+        final incoming = DateTime.tryParse(ts);
+        final previous = DateTime.tryParse(tokens[peerId]?['ts'] ?? '');
+        if (incoming == null ||
+            (previous != null && !incoming.isAfter(previous))) {
+          return;
+        }
+      }
       tokens[peerId] = <String, String>{'tok': token, 'ts': ts};
+    }
+
+    if (writeIfAuthorized == null) {
+      await write();
+    } else {
+      await writeIfAuthorized(write);
+    }
+  }
 
   @override
   Future<void> removeTokenFor(String peerId) async => tokens.remove(peerId);

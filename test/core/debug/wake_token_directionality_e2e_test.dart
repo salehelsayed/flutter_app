@@ -284,7 +284,16 @@ final class _ReceivedStore implements ReceivedWakeTokenStore {
   Future<void> removeTokenFor(String peerId) async {}
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async {}
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
+    if (writeIfAuthorized != null) {
+      await writeIfAuthorized(() async {});
+    }
+  }
 }
 
 final class _ObservedInboxStore implements DetailedInboxStore {

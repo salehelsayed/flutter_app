@@ -125,6 +125,7 @@ final class _PausedReceivedGrantStore implements ReceivedCallWakeHandleStore {
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) async {
     entered.complete();
     await release.future;
@@ -132,6 +133,7 @@ final class _PausedReceivedGrantStore implements ReceivedCallWakeHandleStore {
       issuerAccountPeerId: issuerAccountPeerId,
       grant: grant,
       nowMs: nowMs,
+      writeIfAuthorized: writeIfAuthorized,
     );
   }
 

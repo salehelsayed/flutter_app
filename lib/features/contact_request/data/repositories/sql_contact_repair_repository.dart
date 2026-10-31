@@ -42,6 +42,76 @@ final class SqlContactRepairRepository implements ContactRepairRepository {
   }
 
   @override
+  Future<bool> writeIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required Future<void> Function() write,
+  }) => dbWriteTransaction(_db, (txn) async {
+    if (!await _authorityIsCurrent(
+      txn,
+      peerId: peerId,
+      authorityFingerprint: authorityFingerprint,
+      relationshipRevision: relationshipRevision,
+    )) {
+      return false;
+    }
+    // Only secure storage runs here. Repository calls on the outer DB handle
+    // would queue behind this transaction and deadlock.
+    await write();
+    return true;
+  });
+
+  @override
+  Future<({bool authorized, bool updated, bool hadKey})>
+  updateContactKeyIfAuthorityCurrent({
+    required String peerId,
+    required String authorityFingerprint,
+    required int relationshipRevision,
+    required String mlKemPublicKey,
+    required String? signedAt,
+  }) => dbWriteTransaction(_db, (txn) async {
+    if (!await _authorityIsCurrent(
+      txn,
+      peerId: peerId,
+      authorityFingerprint: authorityFingerprint,
+      relationshipRevision: relationshipRevision,
+    )) {
+      return (authorized: false, updated: false, hadKey: false);
+    }
+    final rows = await txn.query(
+      'contacts',
+      columns: ['ml_kem_public_key', 'ml_kem_key_updated_ts', 'scanned_at'],
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+      limit: 1,
+    );
+    final current = rows.single;
+    final hadKey = current['ml_kem_public_key'] != null;
+    final incomingTime = parseSignedInstantMs(signedAt);
+    final currentTime = parseSignedInstantMs(
+      current['ml_kem_key_updated_ts'] ?? current['scanned_at'],
+    );
+    if (current['ml_kem_public_key'] == mlKemPublicKey ||
+        (hadKey &&
+            (incomingTime == null ||
+                (currentTime != null && incomingTime <= currentTime)))) {
+      return (authorized: true, updated: false, hadKey: hadKey);
+    }
+    await txn.update(
+      'contacts',
+      {
+        'ml_kem_public_key': mlKemPublicKey,
+        'ml_kem_key_updated_ts':
+            signedAt ?? DateTime.now().toUtc().toIso8601String(),
+      },
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+    );
+    return (authorized: true, updated: true, hadKey: hadKey);
+  });
+
+  @override
   Future<String?> lookupRequestDigest({
     required String peerId,
     required String requestId,

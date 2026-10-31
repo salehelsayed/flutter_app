@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -11,8 +12,8 @@ import 'package:flutter_app/features/push/domain/received_wake_token_store.dart'
 ///
 /// Holds an in-memory cache loaded ONCE: the 1:1 `inbox:store` funnel resolves a
 /// wake-token on every send, so a SecureKeyStore read per message would be a
-/// hot-path cost. The cache is kept coherent on write (updated in place, never
-/// invalidated-then-reloaded), so reads after the first load never touch
+/// hot-path cost. Successful serialized writes publish the updated cache,
+/// so reads after the first load never touch
 /// SecureKeyStore. A corrupt/legacy blob clears itself and reads empty (never
 /// throws).
 const receivedWakeTokensSecureStorageKey = 'fdc09_received_wake_tokens';
@@ -23,12 +24,8 @@ class ReceivedWakeTokenStoreImpl implements ReceivedWakeTokenStore {
   /// Loaded once from SecureKeyStore, then kept coherent on write.
   Map<String, Map<String, String>>? _cache;
 
-  /// The in-flight cold load, shared by ALL concurrent first-callers. Without
-  /// this, two handlers racing the very first load each parse their OWN map and
-  /// the second writer clobbers the first's entry (a lost update). Memoizing the
-  /// Future makes every caller resolve to the SAME map reference, so concurrent
-  /// writes mutate one shared map coherently.
   Future<Map<String, Map<String, String>>>? _loading;
+  Future<void> _mutationTail = Future<void>.value();
 
   ReceivedWakeTokenStoreImpl({required SecureKeyStore secureKeyStore})
     : _secureKeyStore = secureKeyStore;
@@ -41,7 +38,9 @@ class ReceivedWakeTokenStoreImpl implements ReceivedWakeTokenStore {
 
   Future<Map<String, Map<String, String>>> _load() async {
     try {
-      final raw = await _secureKeyStore.read(receivedWakeTokensSecureStorageKey);
+      final raw = await _secureKeyStore.read(
+        receivedWakeTokensSecureStorageKey,
+      );
       if (raw == null || raw.isEmpty) {
         return _cache = <String, Map<String, String>>{};
       }
@@ -60,8 +59,8 @@ class ReceivedWakeTokenStoreImpl implements ReceivedWakeTokenStore {
         return _cache = parsed;
       } catch (_) {
         // Corrupt/legacy blob: clear and start fresh (never throws on read).
-        await clear();
-        return _cache!;
+        await _secureKeyStore.delete(receivedWakeTokensSecureStorageKey);
+        return _cache = <String, Map<String, String>>{};
       }
     } finally {
       _loading = null;
@@ -70,32 +69,50 @@ class ReceivedWakeTokenStoreImpl implements ReceivedWakeTokenStore {
 
   @override
   Future<Map<String, String>?> readTokenFor(String peerId) async {
-    final map = await _ensureLoaded();
-    final entry = map[peerId];
+    await _mutationTail;
+    final entry = (await _ensureLoaded())[peerId];
     return entry == null ? null : Map<String, String>.from(entry);
   }
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async {
-    final map = await _ensureLoaded();
-    map[peerId] = {'tok': token, 'ts': ts};
-    await _persist(map);
-  }
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) => _mutate<void>((map) async {
+    Future<void> write() async {
+      if (writeIfAuthorized != null) {
+        final incoming = DateTime.tryParse(ts);
+        final previous = DateTime.tryParse(map[peerId]?['ts'] ?? '');
+        if (incoming == null ||
+            (previous != null && !incoming.isAfter(previous))) {
+          return;
+        }
+      }
+      map[peerId] = {'tok': token, 'ts': ts};
+      await _persist(map);
+    }
+
+    if (writeIfAuthorized == null) {
+      await write();
+    } else {
+      await writeIfAuthorized(write);
+    }
+  });
 
   @override
-  Future<void> removeTokenFor(String peerId) async {
-    final map = await _ensureLoaded();
+  Future<void> removeTokenFor(String peerId) => _mutate<void>((map) async {
     if (map.remove(peerId) != null) {
       await _persist(map);
     }
-  }
+  });
 
   @override
-  Future<void> clear() async {
-    _cache = <String, Map<String, String>>{};
-    _loading = null;
+  Future<void> clear() => _mutate<void>((map) async {
+    map.clear();
     await _secureKeyStore.delete(receivedWakeTokensSecureStorageKey);
-  }
+  });
 
   Future<void> _persist(Map<String, Map<String, String>> map) async {
     if (map.isEmpty) {
@@ -106,5 +123,24 @@ class ReceivedWakeTokenStoreImpl implements ReceivedWakeTokenStore {
       receivedWakeTokensSecureStorageKey,
       jsonEncode(map),
     );
+  }
+
+  Future<T> _mutate<T>(
+    Future<T> Function(Map<String, Map<String, String>>) action,
+  ) {
+    final completer = Completer<T>();
+    _mutationTail = _mutationTail.then<void>((_) async {
+      try {
+        final staged = Map<String, Map<String, String>>.of(
+          await _ensureLoaded(),
+        );
+        final result = await action(staged);
+        _cache = staged;
+        completer.complete(result);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
   }
 }

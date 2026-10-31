@@ -15,8 +15,16 @@ abstract class ReceivedWakeTokenStore {
   Future<Map<String, String>?> readTokenFor(String peerId);
 
   /// Stores/replaces the received token for [peerId]. Anti-rollback is the
-  /// caller's responsibility (only write when the inbound ts is strictly newer).
-  Future<void> writeTokenFor(String peerId, String token, String ts);
+  /// caller's responsibility unless [writeIfAuthorized] is supplied. Guarded
+  /// writes check that [ts] is strictly newer inside the serialized mutation.
+  /// The guard must await the write inside its authority boundary, or return
+  /// false without invoking it when authority changed.
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  });
 
   /// Removes the received token for [peerId] (contact archived/blocked/removed).
   Future<void> removeTokenFor(String peerId);

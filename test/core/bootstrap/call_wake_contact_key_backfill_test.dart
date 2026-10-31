@@ -1056,8 +1056,16 @@ final class _MemoryReceivedCallWakeHandleStore
     required String issuerAccountPeerId,
     required CallWakeHandleGrant grant,
     required int nowMs,
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
   }) async {
-    grants[issuerAccountPeerId] = grant;
+    Future<void> write() async {
+      grants[issuerAccountPeerId] = grant;
+    }
+
+    if (writeIfAuthorized != null) {
+      return writeIfAuthorized(write);
+    }
+    await write();
     return true;
   }
 }

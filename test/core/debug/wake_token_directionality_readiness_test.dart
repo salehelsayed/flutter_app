@@ -182,7 +182,16 @@ final class _ReceivedTokenStore implements ReceivedWakeTokenStore {
       : <String, String>{'tok': token!, 'ts': '2026-07-27T00:00:00.000Z'};
 
   @override
-  Future<void> writeTokenFor(String peerId, String token, String ts) async {}
+  Future<void> writeTokenFor(
+    String peerId,
+    String token,
+    String ts, {
+    Future<bool> Function(Future<void> Function() write)? writeIfAuthorized,
+  }) async {
+    if (writeIfAuthorized != null) {
+      await writeIfAuthorized(() async {});
+    }
+  }
 
   @override
   Future<void> removeTokenFor(String peerId) async {}
