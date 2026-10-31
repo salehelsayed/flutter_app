@@ -258,3 +258,31 @@ func TestReservationConcurrentResponsesKeepLatestSuccessfulRevision(t *testing.T
 	}
 	assertReservationBinding(t, r, streams[attempts-1].conn, 0)
 }
+
+func TestReservationExpiredAfterFailedRenewalReleasesCapacity(t *testing.T) {
+	r := newReservationTestRelay(t)
+	r.rc.MaxReservations = 1
+	r.rc.MaxReservationsPerIP = 1
+	old := &reservationTestConn{remote: peer.ID("destination")}
+	if got := r.handleReserve(&reservationTestStream{conn: old}); got != pbv2.Status_OK {
+		t.Fatal(got)
+	}
+	r.rc.ReservationTTL = 2 * time.Hour
+	fresh := &reservationTestConn{remote: old.remote}
+	if got := r.handleReserve(&reservationTestStream{conn: fresh, writeErr: errors.New("renewal response failed")}); got != pbv2.Status_CONNECTION_FAILED {
+		t.Fatal(got)
+	}
+	// Advance the preserved working binding past expiry. The failed renewal
+	// has already moved constraint occupancy to its later TTL.
+	r.mx.Lock()
+	r.rsvp[old.remote].expire = time.Now().Add(-time.Second)
+	r.mx.Unlock()
+	r.gc()
+	if len(r.rsvp) != 0 || len(r.constraints.total) != 0 || len(r.constraints.ips["127.0.0.1"]) != 0 {
+		t.Fatalf("expired binding left phantom capacity: reservations=%d total=%d ip=%d", len(r.rsvp), len(r.constraints.total), len(r.constraints.ips["127.0.0.1"]))
+	}
+	next := &reservationTestConn{remote: peer.ID("next-destination")}
+	if got := r.handleReserve(&reservationTestStream{conn: next}); got != pbv2.Status_OK {
+		t.Fatalf("new peer refused after binding expired: %v", got)
+	}
+}

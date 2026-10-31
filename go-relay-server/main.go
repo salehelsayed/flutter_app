@@ -41,6 +41,10 @@ func relayMetricsListenAddress() (string, error) {
 	return net.JoinHostPort(ip, "2112"), nil
 }
 
+func newCircuitRelayService(h host.Host, limits ServerLimits, registerer prometheus.Registerer) (*relay.Relay, error) {
+	return relay.New(h, relay.WithResources(relayResourcesFromServerLimits(limits)))
+}
+
 func main() {
 	// Handle subcommands
 	if len(os.Args) > 1 {
@@ -105,7 +109,7 @@ func main() {
 		_ = h.Close()
 		log.Fatalf("Failed to activate relay IPv6: %v", err)
 	}
-	relayService, err := relay.New(h, relay.WithResources(relayResourcesFromServerLimits(limitsCfg)))
+	relayService, err := newCircuitRelayService(h, limitsCfg, prometheus.DefaultRegisterer)
 	if err != nil {
 		_ = h.Close()
 		log.Fatalf("Failed to create circuit relay service: %v", err)
