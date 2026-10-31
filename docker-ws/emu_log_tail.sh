@@ -1,6 +1,5 @@
 #!/bin/bash
-# Read-only: last lines of an emulator launch log written by start_emulator.sh / start_second_avd.sh.
-#   host-run bash docker-ws/emu_log_tail.sh <avd> [port] [lines]
-AVD="${1:?avd}"; PORT="${2:-}"; N="${3:-25}"
-F="/tmp/emulator_${AVD}${PORT:+_$PORT}.log"
-ls -la "$F" && tail -n "$N" "$F"
+# Read-only: tail the host log of one disposable emulator started by mlkit_start_avd_image.sh, plus load and memory.
+#   host-run bash docker-ws/emu_log_tail.sh <avd> <port> [lines]
+tail -n "${3:-20}" "/tmp/emulator_${1}_${2}.log"
+sysctl -n vm.loadavg; memory_pressure 2>/dev/null | tail -1

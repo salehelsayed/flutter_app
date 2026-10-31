@@ -62,6 +62,12 @@ def main() -> int:
             sftp.close()
             print(f"put {sys.argv[2]} -> {sys.argv[3]}")
             return 0
+        if len(sys.argv) == 4 and sys.argv[1] == "--get":
+            sftp = client.open_sftp()
+            sftp.get(sys.argv[2], sys.argv[3])
+            sftp.close()
+            print(f"get {sys.argv[2]} -> {sys.argv[3]}")
+            return 0
         script = sys.stdin.read()
         if not script.strip():
             sys.stderr.write("hetzner_ssh.py: empty script on stdin\n")

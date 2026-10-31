@@ -3,6 +3,7 @@
 
 Usage: ap.py <phone> <command> [args]
   phone: 11 or 13
+  (env AP_BASE overrides the server URL, default http://host.docker.internal:4725)
   open                         create a session (noReset, keeps app data); id saved in ap_sessions.json
   close                        delete the session
   shot <name>                  screenshot -> artifacts/beta-20260928/r2o-shots/<name>_<phone>.png
@@ -16,6 +17,9 @@ Usage: ap.py <phone> <command> [args]
   key <text>                   type text into the focused element (W3C key actions)
   app <activate|terminate|background|state> [secs]
   wait <predicate> [secs]      wait until an element matching the predicate exists
+  lock / islocked / unlockscreen   lock the screen, query lock state, wake (no passcode)
+  recstart / recstop <out.mp4>  screen recording (start refuses unless Mknoon is foreground)
+  attr <predicate> <name>       read one attribute (e.g. value of a switch)
 """
 import base64
 import json
@@ -25,7 +29,7 @@ import sys
 import time
 import urllib.request
 
-BASE = "http://host.docker.internal:4725"
+BASE = os.environ.get("AP_BASE", "http://host.docker.internal:4725")  # AP_BASE=http://192.168.65.254:4725 when host.docker.internal resolves to unreachable IPv6
 HERE = os.path.dirname(os.path.abspath(__file__))
 STORE = os.path.join(HERE, "ap_sessions.json")
 SHOTS = os.path.join(HERE, "..", "..", "artifacts", "beta-20260928", "r2o-shots")
@@ -92,6 +96,10 @@ def main():
         req("DELETE", f"/session/{sid(phone)}")
         s = sessions(); s.pop(phone, None); json.dump(s, open(STORE, "w")); print("closed")
     elif cmd == "shot":
+        st = req("POST", f"/session/{sid(phone)}/execute/sync",
+                 {"script": "mobile: queryAppState", "args": [{"bundleId": BUNDLE}]})
+        if st != 4:
+            raise SystemExit(f"NOT MKNOON FOREGROUND (state {st}), no screenshot")
         os.makedirs(SHOTS, exist_ok=True)
         f = os.path.join(SHOTS, f"{args[0]}_{phone}.png")
         open(f, "wb").write(base64.b64decode(req("GET", f"/session/{sid(phone)}/screenshot")))
@@ -144,16 +152,39 @@ def main():
         print("keys sent")
     elif cmd == "app":
         a = args[0]
+        bid = args[1] if a in ("state", "activate", "terminate") and len(args) > 1 else BUNDLE
         if a == "state":
             print(req("POST", f"/session/{sid(phone)}/execute/sync",
-                      {"script": "mobile: queryAppState", "args": [{"bundleId": BUNDLE}]}))
+                      {"script": "mobile: queryAppState", "args": [{"bundleId": bid}]}))
         elif a == "background":
             req("POST", f"/session/{sid(phone)}/execute/sync",
                 {"script": "mobile: backgroundApp", "args": [{"seconds": float(args[1]) if len(args) > 1 else -1}]})
             print("backgrounded")
         else:
             req("POST", f"/session/{sid(phone)}/execute/sync",
-                {"script": f"mobile: {a}App", "args": [{"bundleId": BUNDLE}]}); print(a + "d")
+                {"script": f"mobile: {a}App", "args": [{"bundleId": bid}]}); print(a + "d")
+    elif cmd == "recstart":
+        # Only with Mknoon verified in the foreground (state 4).
+        st = req("POST", f"/session/{sid(phone)}/execute/sync",
+                 {"script": "mobile: queryAppState", "args": [{"bundleId": BUNDLE}]})
+        if st != 4:
+            raise SystemExit(f"NOT MKNOON FOREGROUND (state {st}), no recording")
+        req("POST", f"/session/{sid(phone)}/appium/start_recording_screen",
+            {"options": {"videoType": "libx264", "videoQuality": "medium", "videoFps": 10, "timeLimit": "60",
+                         "forceRestart": True}})
+        print("recording started")
+    elif cmd == "recstop":
+        v = req("POST", f"/session/{sid(phone)}/appium/stop_recording_screen", {})
+        os.makedirs(os.path.dirname(os.path.abspath(args[0])), exist_ok=True)
+        open(args[0], "wb").write(base64.b64decode(v or ""))
+        print(args[0], os.path.getsize(args[0]), "bytes")
+    elif cmd == "attr":
+        e = el(phone, args[0])
+        print(req("GET", f"/session/{sid(phone)}/element/{e}/attribute/{args[1]}"))
+    elif cmd in ("lock", "islocked", "unlockscreen"):
+        # lock: screen lock; islocked: print true/false; unlockscreen: wake only (no passcode entry).
+        script = {"lock": "mobile: lock", "islocked": "mobile: isLocked", "unlockscreen": "mobile: unlock"}[cmd]
+        print(cmd, req("POST", f"/session/{sid(phone)}/execute/sync", {"script": script, "args": [{}]}))
     elif cmd == "wait":
         end = time.time() + (float(args[1]) if len(args) > 1 else 30)
         while time.time() < end:

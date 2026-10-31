@@ -1,0 +1,9 @@
+backup=/usr/local/bin/relay-server.pre-1.11.2-20261026T122550Z sha=2bf883dcc1214a32
+installed sha=e0b6e8e4ba655ee97b4238278f467c7d5d6786324518d161517336526dba1484
+t+ NRestarts=0 ActiveState=active 
+t+ NRestarts=0 ActiveState=active 
+t+ NRestarts=0 ActiveState=active 
+Oct 26 12:26:25 ip-172-31-34-24 relay-server[313820]: 2026/10/26 12:26:25 [INBOX] ack custody contract=ack_or_expiry_v1 admission_enabled=true backend=redis (default off; DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED)
+Oct 26 12:26:25 ip-172-31-34-24 relay-server[313820]: 2026/10/26 12:26:25 Starting relay-server v1.11.2
+Oct 26 12:26:25 ip-172-31-34-24 relay-server[313820]: 2026/10/26 12:26:25 Control-plane: backend=redis durable=true prefix=relay:
+relay_backend_durable 1
