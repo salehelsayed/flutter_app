@@ -21,7 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	relay "github.com/mknoon/relay-server/internal/circuitrelay"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -96,9 +96,6 @@ func main() {
 		libp2p.ResourceManager(resourceManager),
 		libp2p.ListenAddrs(addressPlan.listen...),
 		libp2p.AddrsFactory(addressPlan.advertisedAddresses),
-		libp2p.EnableRelayService(
-			relay.WithResources(relayResourcesFromServerLimits(limitsCfg)),
-		),
 		libp2p.ForceReachabilityPublic(),
 	)
 	if err != nil {
@@ -107,6 +104,11 @@ func main() {
 	if err := addressPlan.verifyIPv6Listeners(h.Network().ListenAddresses()); err != nil {
 		_ = h.Close()
 		log.Fatalf("Failed to activate relay IPv6: %v", err)
+	}
+	relayService, err := relay.New(h, relay.WithResources(relayResourcesFromServerLimits(limitsCfg)))
+	if err != nil {
+		_ = h.Close()
+		log.Fatalf("Failed to create circuit relay service: %v", err)
 	}
 	announceAddrs := h.Addrs()
 
@@ -339,6 +341,9 @@ func main() {
 	sub.Close()
 	store.StopCleanup()
 	media.StopCleanup()
+	if err := relayService.Close(); err != nil {
+		log.Printf("[NODE] Error stopping circuit relay service: %v", err)
+	}
 	if err := h.Close(); err != nil {
 		log.Printf("[NODE] Error during shutdown: %v", err)
 	}

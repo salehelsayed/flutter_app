@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,8 +17,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/client"
-	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
+	"github.com/mknoon/relay-server/internal/circuitrelay"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
@@ -151,6 +153,103 @@ func TestLL24RelayStopUsesFreshReservation(t *testing.T) {
 				t.Fatal("fix closed the old connection instead of choosing the reservation connection")
 			}
 		})
+	}
+}
+
+func TestLL24RelayRenewalPreservesExistingStreams(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	t.Cleanup(cancel)
+	relayHost := ll24Host(t, libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+	service, err := relay.New(relayHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	var tcp ma.Multiaddr
+	for _, address := range relayHost.Network().ListenAddresses() {
+		if _, err := address.ValueForProtocol(ma.P_TCP); err == nil {
+			tcp = address
+			break
+		}
+	}
+	if tcp == nil {
+		t.Fatal("relay has no TCP listener")
+	}
+	relayInfo := peer.AddrInfo{ID: relayHost.ID(), Addrs: []ma.Multiaddr{tcp}}
+	key, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := ll24Host(t, libp2p.Identity(key))
+	if _, err := client.Reserve(ctx, old, relayInfo); err != nil {
+		t.Fatal(err)
+	}
+	relayHost.SetStreamHandler("/mknoon/test/ll24-live/1", func(s network.Stream) {
+		defer s.Close()
+		_, _ = io.Copy(s, s)
+	})
+	live, err := old.NewStream(ctx, relayHost.ID(), "/mknoon/test/ll24-live/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = live.Close() })
+	_ = live.SetDeadline(time.Now().Add(10 * time.Second))
+	fresh := ll24Host(t, libp2p.Identity(key))
+	if _, err := client.Reserve(ctx, fresh, relayInfo); err != nil {
+		t.Fatal(err)
+	}
+	fresh.SetStreamHandler("/mknoon/test/ll24-fresh/1", func(s network.Stream) {
+		defer s.Close()
+		_, _ = io.Copy(s, s)
+	})
+	prober := ll24Host(t)
+	circuit := tcp.Encapsulate(ma.StringCast("/p2p/" + relayHost.ID().String() + "/p2p-circuit"))
+	if err := prober.Connect(ctx, peer.AddrInfo{ID: fresh.ID(), Addrs: []ma.Multiaddr{circuit}}); err != nil {
+		t.Fatal(err)
+	}
+	// Keep traffic on the old reservation connection while several relayed
+	// application streams use the new one. Renewal must not close either path.
+	errors := make(chan error, 9)
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		payload := []byte("old-stream-still-live")
+		if _, err := live.Write(payload); err != nil {
+			errors <- err
+			return
+		}
+		got := make([]byte, len(payload))
+		if _, err := io.ReadFull(live, got); err != nil || string(got) != string(payload) {
+			errors <- fmt.Errorf("old stream read %q: %v", got, err)
+		}
+	}()
+	for i := range 8 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			s, err := prober.NewStream(network.WithAllowLimitedConn(ctx, "LL-24 preservation"), fresh.ID(), "/mknoon/test/ll24-fresh/1")
+			if err != nil {
+				errors <- err
+				return
+			}
+			defer s.Close()
+			_ = s.SetDeadline(time.Now().Add(10 * time.Second))
+			payload := []byte(fmt.Sprintf("fresh-stream-%d", i))
+			if _, err := s.Write(payload); err != nil {
+				errors <- err
+				return
+			}
+			got := make([]byte, len(payload))
+			if _, err := io.ReadFull(s, got); err != nil || string(got) != string(payload) {
+				errors <- fmt.Errorf("new stream read %q: %v", got, err)
+			}
+		}()
+	}
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		t.Error(err)
 	}
 }
 

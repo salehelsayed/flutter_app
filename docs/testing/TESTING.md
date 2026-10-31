@@ -6458,6 +6458,24 @@ visible and cannot become an ordinary first-attempt PASS.
   Dart-only quiet tests alone did not cover these projection boundaries. The
   memory-bounded iOS extension's fail-closed stub remains unchanged.
   Evidence is in `.codex-test-logs/dual-stack-recovery/`.
+- **Relay reservation connection ownership (LL-24):** the app already closes
+  its old local relay connection on handoff, but a blackholed close cannot
+  retire the relay's copy. A held old stream makes upstream libp2p select that
+  stale connection for inbound STOP even after a new reservation succeeds.
+  `relay_stop_binding_test.go` preserves the no-held-stream observation control
+  and reproduces the five-second inbound timeout before the fix. The pinned
+  `internal/circuitrelay` implementation binds successful reservations to their
+  authenticated connections; response ordering and old disconnects cannot
+  replace or remove a successor. Focused lifecycle tests pass under `-race`,
+  and real sockets preserve an old live stream alongside eight new streams.
+  The existing interop helper passes circuit-only old-to-new, new-to-old and
+  old-to-old pairs through the patched local relay, using libp2p 0.39.1/Go 1.25.0
+  for the legacy helper and libp2p 0.50.0/Go 1.27.1 for the candidate. These are
+  host proofs, not deployed-relay or signed-phone handoff evidence. An initial
+  virtual-listener setup failure remains separate from the causal RED result.
+  Evidence: `.codex-test-logs/ll24-20261031/` in the
+  `ll24-relay-stop-binding-20261031` worktree. Upstream provenance and the narrow
+  fork delta are documented in `go-relay-server/internal/circuitrelay/UPSTREAM.md`.
 - **Integrated dual-stack evidence boundaries:** the production relay address
   plan retains IPv4, requires an explicit assigned public native IPv6 address,
   and refuses startup after an incomplete opted-in bind. DNS IPv6 advertisement
