@@ -858,6 +858,153 @@ void main() {
     expect(p2pService.lastStoreInInboxPeerId, _fx('late').peerId);
   });
 
+  for (final entry in ['camera', 'paste']) {
+    testWidgets(
+      'CR-005 CONTACT-002 repeated $entry results during pending parse and '
+      'send persist and transmit once, then a deliberate rescan sends again',
+      (tester) async {
+        suppressShellRenderErrors();
+        final mutations = _MutationRecordingContactRepository();
+        contactRepository = mutations;
+        final gatedBridge = _VerifyGatedBridge()
+          ..responses.addAll(bridge.responses);
+        bridge = gatedBridge;
+        final sendGate = Completer<bool>();
+        addTearDown(() {
+          gatedBridge.releaseVerify();
+          if (!sendGate.isCompleted) sendGate.complete(true);
+        });
+        p2pService.emitState(
+          const NodeState(isStarted: true, peerId: ownPeerId),
+        );
+        p2pService.onStoreInInbox = (peerId, message, {timeoutMs}) =>
+            sendGate.future;
+        final scanned = _fx('inflight-$entry');
+        final qrData = _buildValidQrData(identity: scanned, username: 'Bob');
+        final scanner = (buildScanner() as MaterialApp).home!;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).push(MaterialPageRoute<void>(builder: (_) => scanner)),
+                  child: const Text('Open scanner'),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Open scanner'));
+        await pumpFrames(tester);
+
+        if (entry == 'camera') {
+          // Repeated native scanner deliveries arrive before verification can
+          // finish. This is host injection, not optical camera proof.
+          final detect = tester
+              .widget<MobileScanner>(find.byType(MobileScanner))
+              .onDetect!;
+          final capture = BarcodeCapture(
+            barcodes: [
+              Barcode(rawValue: qrData),
+              Barcode(rawValue: qrData),
+            ],
+          );
+          for (var result = 0; result < 8; result++) {
+            detect(capture);
+          }
+        } else {
+          await tester.tap(find.text('Paste QR Data'));
+          await pumpFrames(tester);
+          await tester.enterText(find.byType(TextField).last, qrData);
+          // Real rapid tap attempts may be absorbed by the closing route.
+          // Either way, no second parse/request may escape while the first
+          // verification is unresolved, and the parent route must survive.
+          await tester.tap(find.text('Submit'));
+          await tester.tap(find.text('Submit'), warnIfMissed: false);
+        }
+        await pumpFrames(tester);
+
+        expect(gatedBridge.verifyRequestCount, 1);
+        expect(find.text('Open scanner'), findsOneWidget);
+        expect(await contactRepository.getContactCount(), 0);
+        expect(mutations.addedPeerIds, isEmpty);
+        expect(await contactRequestRepository.getPendingRequests(), isEmpty);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+
+        gatedBridge.releaseVerify();
+        await pumpFrames(tester);
+
+        expect(sendGate.isCompleted, isFalse);
+        expect(mutations.addedPeerIds, [scanned.peerId]);
+        expect(await contactRepository.getContactCount(), 1);
+        final persisted = (await contactRepository.getContact(scanned.peerId))!;
+        expect(persisted.publicKey, scanned.publicKey);
+        expect(persisted.username, 'Bob');
+        expect(p2pService.storeInInboxLog, hasLength(1));
+        expect(p2pService.storeInInboxLog.single.toPeerId, scanned.peerId);
+        expect(
+          (jsonDecode(p2pService.storeInInboxLog.single.message)
+              as Map<String, dynamic>)['type'],
+          'contact_request',
+        );
+        expect(_contactRequestRecipientKeys(bridge), [scanned.publicKey]);
+        expect(find.text('Added to your circle!'), findsOneWidget);
+
+        sendGate.complete(true);
+        await pumpFrames(tester);
+        expect(await contactRepository.getContactCount(), 1);
+        expect(mutations.addedPeerIds, [scanned.peerId]);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+
+        await tester.tap(find.text('OK'));
+        await pumpFrames(tester, count: 20);
+        expect(find.byType(FeedWired), findsOneWidget);
+
+        // A new scanner route is a deliberate user action. The exact same QR
+        // must remain eligible for the existing-contact resend after the first
+        // request resolves, while the stored contact remains unchanged.
+        unawaited(
+          Navigator.of(
+            tester.element(find.byType(FeedWired)),
+          ).push<void>(MaterialPageRoute<void>(builder: (_) => scanner)),
+        );
+        await pumpFrames(tester);
+        tester.widget<MobileScanner>(find.byType(MobileScanner)).onDetect!(
+          BarcodeCapture(barcodes: [Barcode(rawValue: qrData)]),
+        );
+        await pumpFrames(tester, count: 20);
+
+        expect(mutations.addedPeerIds, [scanned.peerId]);
+        expect(await contactRepository.getContactCount(), 1);
+        expect(
+          (await contactRepository.getContact(scanned.peerId))!.toMap(),
+          persisted.toMap(),
+        );
+        expect(p2pService.storeInInboxCallCount, 2);
+        expect(p2pService.storeInInboxLog.map((entry) => entry.toPeerId), [
+          scanned.peerId,
+          scanned.peerId,
+        ]);
+        expect(_contactRequestRecipientKeys(bridge), [
+          scanned.publicKey,
+          scanned.publicKey,
+        ]);
+        expect(await contactRequestRepository.getPendingRequests(), isEmpty);
+        expect(find.text('Already in your circle!'), findsOneWidget);
+      },
+    );
+  }
+
   testWidgets('contact QR success forwards Move Account runner into feed', (
     tester,
   ) async {
@@ -993,17 +1140,31 @@ String _buildMigrationQrData({
 class _VerifyGatedBridge extends FakeBridge {
   final _verifyGate = Completer<void>();
   bool verifyRequested = false;
+  int verifyRequestCount = 0;
 
-  void releaseVerify() => _verifyGate.complete();
+  void releaseVerify() {
+    if (!_verifyGate.isCompleted) _verifyGate.complete();
+  }
 
   @override
   Future<String> send(String message) async {
     final cmd = (jsonDecode(message) as Map<String, dynamic>)['cmd'];
     if (cmd == 'payload.verify') {
       verifyRequested = true;
+      verifyRequestCount++;
       await _verifyGate.future;
     }
     return super.send(message);
+  }
+}
+
+class _MutationRecordingContactRepository extends InMemoryContactRepository {
+  final addedPeerIds = <String>[];
+
+  @override
+  Future<void> addContact(ContactModel contact) async {
+    addedPeerIds.add(contact.peerId);
+    await super.addContact(contact);
   }
 }
 

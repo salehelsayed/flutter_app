@@ -1,4 +1,14 @@
 import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/durable_conversation_notification_id_registry.dart';
+import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
+import 'package:flutter_app/features/call/application/call_coordinator.dart';
+import 'package:flutter_app/features/call/application/call_history_projector.dart';
+import '../shared/fakes/ed25519_contact_request_crypto.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -354,6 +364,138 @@ void main() {
       });
     }
   }
+
+  testWidgets(
+    'CALL-001/VC-005 real notification Call back action uses current history contact, deduplicates plugin action replay and preserves an unrelated canonical call',
+    (tester) async {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      AndroidFlutterLocalNotificationsPlugin.registerWith();
+      const channel = MethodChannel(
+        'dexterous.com/flutter/local_notifications',
+      );
+      const taskChannel = MethodChannel('mknoon/call_task');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'initialize') return true;
+        if (call.method == 'getNotificationAppLaunchDetails') {
+          return <String, Object?>{'notificationLaunchedApp': false};
+        }
+        return null;
+      });
+      messenger.setMockMethodCallHandler(taskChannel, (_) async => true);
+      final directory = Directory.systemTemp.createTempSync(
+        'call-entry-notification-',
+      );
+      final notifications = FlutterNotificationService(
+        notificationIdRegistryResolver: () async =>
+            DurableConversationNotificationIdRegistry(directory: directory),
+      );
+      final history = _CallbackHistory();
+      final calls = _CanonicalCallbackCalls(history);
+      final updates = UpdateCheckController(service: FakeUpdateCheckService());
+      final completed = <OutgoingCallStartResult?>[];
+      try {
+        await notifications.initialize();
+        await tester.pumpWidget(
+          _callbackEntryApp(
+            calls: calls,
+            notifications: notifications,
+            contacts: _CallbackContacts(),
+            history: history,
+            updates: updates,
+            completed: completed,
+          ),
+        );
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        final navigator = MyApp.navigatorKey.currentState!;
+        unawaited(
+          navigator.push(
+            MaterialPageRoute<void>(
+              builder: (_) =>
+                  const Scaffold(body: Text('retained notification root')),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        // A plain card tap asks the root to route a conversation; it must not
+        // redial. This fixture holds ordinary startup, so full conversation
+        // rendering is outside this assertion.
+        await _pluginCallResponse(
+          MissedCallActionPayload(_callbackOther.peerId, _missedId.value),
+        );
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(calls.coordinator.activeSession, isNull);
+        expect(calls.startRequests, 0);
+        expect(completed, isEmpty);
+
+        // The payload contact is deliberately different. The explicit action
+        // contains only a call ID, and MyApp must resolve today's history row.
+        final selected = MissedCallActionPayload(
+          _callbackOther.peerId,
+          _missedId.value,
+        );
+        await _pluginCallResponse(selected, callBack: true);
+        for (var i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(completed, [OutgoingCallStartResult.started]);
+        final canonical = calls.coordinator.activeSession!;
+        expect(canonical.contactPeerId, _callbackSelected.peerId);
+        expect(canonical.callId, isNot(_missedId));
+        expect(canonical.direction, CallDirection.outgoing);
+        expect(calls.admitted, [_callbackSelected.peerId]);
+        expect(calls.current!.session.callId, canonical.callId);
+        await _pluginCallResponse(selected, callBack: true);
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(calls.startRequests, 1);
+        expect(calls.admitted, [_callbackSelected.peerId]);
+        expect(calls.coordinator.activeSession?.callId, canonical.callId);
+
+        await _pluginCallResponse(
+          MissedCallActionPayload(
+            _callbackOther.peerId,
+            _callbackOtherMissed.value,
+          ),
+          callBack: true,
+        );
+        for (var i = 0; i < 12; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(completed, [
+          OutgoingCallStartResult.started,
+          OutgoingCallStartResult.unavailable,
+        ]);
+        expect(calls.startRequests, 2);
+        expect(calls.admitted, [_callbackSelected.peerId]);
+        expect(calls.coordinator.activeSession?.callId, canonical.callId);
+        expect(
+          calls.coordinator.activeSession?.contactPeerId,
+          _callbackSelected.peerId,
+        );
+        expect(calls.coordinator.activeSession?.state, canonical.state);
+        expect(calls.actions, isEmpty);
+        expect(MyApp.navigatorKey.currentState, same(navigator));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        await calls.dispose();
+        updates.dispose();
+        notifications.dispose();
+        messenger.setMockMethodCallHandler(channel, null);
+        messenger.setMockMethodCallHandler(taskChannel, null);
+        debugDefaultTargetPlatformOverride = null;
+        directory.deleteSync(recursive: true);
+      }
+    },
+  );
 }
 
 // Unused process owners are inert. Only the explicit fake methods below may
@@ -646,3 +788,233 @@ class _ReactionRepositoryImpl extends _Unused
     implements ReactionRepositoryImpl {}
 
 class _SecureKeyStore extends _Unused implements SecureKeyStore {}
+
+final _callbackSelected = TestEd25519Identity.fromSeedByte(107);
+final _callbackOther = TestEd25519Identity.fromSeedByte(108);
+final _callbackLocal = TestEd25519Identity.fromSeedByte(109);
+final _callbackOtherMissed = CallId.parse(
+  '44444444-4444-4444-8444-444444444444',
+);
+
+Future<void> _pluginCallResponse(
+  MissedCallActionPayload payload, {
+  bool callBack = false,
+}) async {
+  await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .handlePlatformMessage(
+        'dexterous.com/flutter/local_notifications',
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('didReceiveNotificationResponse', <String, Object?>{
+            'notificationId': 991,
+            'actionId': callBack ? missedCallBackActionId : null,
+            'input': null,
+            'notificationResponseType':
+                (callBack
+                        ? NotificationResponseType.selectedNotificationAction
+                        : NotificationResponseType.selectedNotification)
+                    .index,
+            'payload': payload.encode(),
+          }),
+        ),
+        (_) {},
+      );
+}
+
+class _CallbackContacts extends _Contacts {
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    final identity = peerId == _callbackSelected.peerId
+        ? _callbackSelected
+        : _callbackOther;
+    return ContactModel(
+      peerId: identity.peerId,
+      publicKey: identity.publicKey,
+      rendezvous: 'test-only-rendezvous',
+      username: 'Saved callback contact',
+      signature: 'test-only-signature',
+      scannedAt: _now.toIso8601String(),
+    );
+  }
+}
+
+class _CallbackHistory extends _History implements CallHistoryRepository {
+  final _terminal = <CallId, CallHistoryEntry>{};
+  late final _missed = <CallId, CallHistoryEntry>{
+    _missedId: _entry(_missedId, _callbackSelected.peerId),
+    _callbackOtherMissed: _entry(_callbackOtherMissed, _callbackOther.peerId),
+  };
+  CallHistoryEntry _entry(CallId id, String peer) => CallHistoryEntry(
+    callId: id,
+    contactAccountPeerId: peer,
+    direction: CallDirection.incoming,
+    terminalReason: CallEndReason.noAnswer,
+    status: CallHistoryStatus.missed,
+    startedAt: _now,
+    endedAt: _now,
+    transportRoute: null,
+    createdAt: _now,
+    updatedAt: _now,
+  );
+  @override
+  Future<CallHistoryEntry?> findCall(CallId id) async => _missed[id];
+  @override
+  Future<List<CallHistoryEntry>> recentCallsForContact(String id) async =>
+      _missed.values.where((row) => row.contactAccountPeerId == id).toList();
+  @override
+  Future<CallHistoryEntry?> getByCallId(CallId id) async => _terminal[id];
+  @override
+  Future<List<CallHistoryEntry>> listForContact(String id) async =>
+      _terminal.values.where((row) => row.contactAccountPeerId == id).toList();
+  @override
+  Future<void> upsertTerminal(CallHistoryEntry row) async {
+    _terminal.putIfAbsent(row.callId, () => row);
+  }
+}
+
+class _CanonicalCallbackCalls extends _BusyCall {
+  _CanonicalCallbackCalls(_CallbackHistory history)
+    : super(
+        active: false,
+        controlled: false,
+        result: OutgoingCallStartResult.started,
+      ) {
+    coordinator = CallCoordinator(
+      reducer: const CallReducer(),
+      cleanupCoordinator: CallCleanupCoordinator(const []),
+      historyProjector: CallHistoryProjector(history),
+      clock: () => _now,
+      idSource: () => CallId.parse(
+        'cccccccc-cccc-4ccc-8ccc-${(++_ids).toString().padLeft(12, '0')}',
+      ),
+    );
+    _subscription = coordinator.snapshots.listen((snapshot) {
+      current = ForegroundCallProjection(
+        session: snapshot,
+        audio: CallAudioControlState.idle,
+      );
+      _changes.add(current);
+    });
+  }
+  late final CallCoordinator coordinator;
+  late final StreamSubscription<CallSessionSnapshot> _subscription;
+  final admitted = <String>[];
+  int _ids = 0;
+  @override
+  Stream<bool> get outgoingCallAvailabilityChanges => const Stream.empty();
+  @override
+  Future<OutgoingCallStartResult> startOutgoingCall(
+    String peerId, {
+    OutgoingCallStartRequest? request,
+  }) async {
+    startRequests++;
+    request?.checkPending();
+    final result = await coordinator.placeCall(
+      contactPeerId: peerId,
+      localAccountPeerId: _callbackLocal.peerId,
+      localDeviceId: 'test-local-device',
+      canPlace: () => request?.isCanceled != true,
+      onApplied: (reduction) {
+        if (reduction.decision == CallEventDecision.applied) {
+          request?.admit();
+          admitted.add(peerId);
+        }
+      },
+    );
+    return result.decision == CallEventDecision.applied
+        ? OutgoingCallStartResult.started
+        : OutgoingCallStartResult.unavailable;
+  }
+
+  @override
+  Future<void> dispose() async {
+    await coordinator.dispose();
+    await _subscription.cancel();
+    await super.dispose();
+  }
+}
+
+MyApp _callbackEntryApp({
+  required _BusyCall calls,
+  required NotificationService notifications,
+  required _Contacts contacts,
+  required _History history,
+  required UpdateCheckController updates,
+  required List<OutgoingCallStartResult?> completed,
+}) => MyApp(
+  repository: _Identity(),
+  contactRepository: contacts,
+  contactRequestRepository: _ContactRequestRepositoryImpl(),
+  contactRequestListener: _ContactRequestListener(),
+  contactRequestPresentationGate: ContactRequestPresentationGate(),
+  messageRepository: _MessageRepositoryImpl(),
+  postRepository: _PostRepositoryImpl(),
+  postsPrivacySettingsRepository: _PostsPrivacySettingsRepositoryImpl(),
+  feedClearedRepository: _FeedClearedRepository(),
+  contactPresenceSnapshotRepository: _ContactPresenceSnapshotRepositoryImpl(),
+  nearbyLocationService: _NearbyLocationService(),
+  mediaAttachmentRepository: _MediaAttachmentRepositoryImpl(),
+  groupMediaDeleteForMeCoordinator: _GroupMediaDeleteForMeCoordinator(),
+  groupMediaDeletionCleanup: () async {},
+  chatMessageListener: _ChatMessageListener(),
+  postListener: _PostListener(),
+  postCommentListener: _PostCommentListener(),
+  postReactionListener: _PostReactionListener(),
+  postPresenceListener: _PostPresenceListener(),
+  postPassListener: _PostPassListener(),
+  postPinListener: _PostPinListener(),
+  reactionListener: _ReactionListener(),
+  messageDeletionListener: _MessageDeletionListener(),
+  profileUpdateListener: _ProfileUpdateListener(),
+  messageRouter: _IncomingMessageRouter(),
+  pendingMessageRetrier: _PendingMessageRetrier(),
+  pendingPostMediaUploadRetrier: _PendingPostMediaUploadRetrier(),
+  pendingPostDeliveryRetrier: _PendingPostDeliveryRetrier(),
+  pendingPostFollowOnRetrier: _PendingPostFollowOnRetrier(),
+  keyExchangeRetrier: _KeyExchangeRetrier(),
+  bridge: _Bridge(),
+  p2pService: _P2P(),
+  mediaFileManager: _MediaFileManager(),
+  secureKeyStore: _SecureKeyStore(),
+  imageProcessor: _ImageProcessor(),
+  audioRecorderService: _AudioRecorderService(),
+  reactionRepository: _ReactionRepositoryImpl(),
+  isDesktop: false,
+  notificationService: notifications,
+  appShellController: AppShellController(),
+  pendingPostTargetStore: PendingPostTargetStore(),
+  conversationTracker: ActiveConversationTracker(),
+  groupRepository: _GroupRepositoryImpl(),
+  groupMessageRepository: _GroupMessageRepositoryImpl(),
+  groupInviteDeliveryAttemptRepository:
+      _GroupInviteDeliveryAttemptRepositoryImpl(),
+  groupPendingKeyRepairRepository: _GroupPendingKeyRepairRepositoryImpl(),
+  groupPendingReactionRepository: _GroupPendingReactionRepository(),
+  groupPendingKeyRepairRunner: _GroupPendingKeyRepairRunner(),
+  groupPendingKeyRepairBackoffTimer: _GroupPendingKeyRepairBackoffTimer(),
+  groupPendingKeyDistributionRunner: _GroupPendingKeyDistributionRunner(),
+  groupHistoryGapRepairRepository: _GroupHistoryGapRepairRepositoryImpl(),
+  groupReactionReplayOutboxRepository:
+      _GroupReactionReplayOutboxRepositoryImpl(),
+  groupMessageListener: _GroupMessageListener(),
+  groupInviteListener: _GroupInviteListener(),
+  groupKeyUpdateListener: _GroupKeyUpdateListener(),
+  groupKeyRepairResponderListener: _GroupKeyRepairResponderListener(),
+  requestGroupKeyRepair: (_) async {},
+  groupMembershipUpdateListener: _GroupMembershipUpdateListener(),
+  groupConversationTracker: ActiveConversationTracker(),
+  introductionRepository: _IntroductionRepositoryImpl(),
+  introReviewSeenRepository: _IntroReviewSeenRepositoryImpl(),
+  introductionListener: _IntroductionListener(),
+  shareIntentService: _Shares(),
+  updateCheckController: updates,
+  outgoingCallCapability: calls,
+  foregroundCallCapability: calls,
+  callTimelineSource: history,
+  deferredRuntimeStartup: () async => true,
+  callBackReadinessBarrier: () async => true,
+  onCallBackObservation: (event, id, result) {
+    if (event == CallBackActionObservation.completed) {
+      completed.add(result);
+    }
+  },
+);

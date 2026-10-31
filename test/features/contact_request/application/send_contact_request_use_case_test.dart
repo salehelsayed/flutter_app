@@ -94,6 +94,8 @@ class _FakeP2PService implements P2PService {
   FutureOr<SendMessageResult> Function(String peerId, String message)?
   sendWithReplyHandler;
   int sendWithReplyCalls = 0;
+  int sendMessageCalls = 0;
+  final outboundMessages = <String>[];
   int localSendCalls = 0;
   int storeInInboxCalls = 0;
 
@@ -120,6 +122,8 @@ class _FakeP2PService implements P2PService {
 
   @override
   Future<bool> sendMessage(String peerId, String message) async {
+    sendMessageCalls += 1;
+    outboundMessages.add(message);
     lastSentPeerId = peerId;
     lastSentMessage = message;
     return sendWithReplyResult.sent && sendWithReplyResult.acknowledged;
@@ -132,6 +136,7 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async {
     sendWithReplyCalls += 1;
+    outboundMessages.add(msg);
     lastSentPeerId = pid;
     lastSentMessage = msg;
     return sendWithReplyHandler?.call(pid, msg) ?? sendWithReplyResult;
@@ -155,6 +160,7 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async {
     storeInInboxCalls += 1;
+    outboundMessages.add(message);
     return storeInInboxResult;
   }
 
@@ -207,6 +213,7 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async {
     localSendCalls += 1;
+    outboundMessages.add(msg);
     return localSendResult;
   }
 
@@ -873,6 +880,11 @@ void main() {
 
     // Does NOT fall back to v1
     expect(result, equals(SendContactRequestResult.encryptionError));
+    expect(p2pService.sendMessageCalls, 0);
+    expect(p2pService.sendWithReplyCalls, 0);
+    expect(p2pService.localSendCalls, 0);
+    expect(p2pService.storeInInboxCalls, 0);
+    expect(p2pService.outboundMessages, isEmpty);
   });
 
   test(
@@ -890,6 +902,11 @@ void main() {
       );
 
       expect(result, equals(SendContactRequestResult.encryptionError));
+      expect(p2pService.sendMessageCalls, 0);
+      expect(p2pService.sendWithReplyCalls, 0);
+      expect(p2pService.localSendCalls, 0);
+      expect(p2pService.storeInInboxCalls, 0);
+      expect(p2pService.outboundMessages, isEmpty);
     },
   );
 
@@ -912,8 +929,75 @@ void main() {
       );
 
       expect(result, equals(SendContactRequestResult.encryptionError));
+      expect(p2pService.sendMessageCalls, 0);
+      expect(p2pService.sendWithReplyCalls, 0);
+      expect(p2pService.localSendCalls, 0);
+      expect(p2pService.storeInInboxCalls, 0);
+      expect(p2pService.outboundMessages, isEmpty);
     },
   );
+
+  for (final route in <({String name, bool local, bool inbox})>[
+    (name: 'direct', local: false, inbox: false),
+    (name: 'local', local: true, inbox: false),
+    (name: 'inbox', local: false, inbox: true),
+  ]) {
+    test('CR-010 encrypted positive control reaches ${route.name} with only '
+        'allowed outer metadata and no signed secrets', () async {
+      p2pService
+        ..localPeerResult = route.local
+        ..localSendResult = route.local
+        ..dialResult = !route.inbox
+        ..storeInInboxResult = route.inbox;
+      final result = await sendContactRequest(
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        bridge: bridge,
+        targetPeerId: 'targetPeer123456789',
+        recipientPublicKey: 'recipientEdPubBase64',
+        resolveWakeToken: (_) async => 'private-wake-token',
+      );
+
+      expect(result, SendContactRequestResult.success);
+      expect(p2pService.outboundMessages, hasLength(1));
+      expect(p2pService.sendWithReplyCalls, route.local || route.inbox ? 0 : 1);
+      expect(p2pService.localSendCalls, route.local ? 1 : 0);
+      expect(p2pService.storeInInboxCalls, route.inbox ? 1 : 0);
+      final wire = p2pService.outboundMessages.single;
+      final outer = jsonDecode(wire) as Map<String, dynamic>;
+      expect(outer.keys.toSet(), <String>{
+        'type',
+        'version',
+        'intent',
+        'msgId',
+        'ts',
+        'senderUsername',
+        'encrypted',
+      });
+      expect(outer['senderUsername'], _testIdentity.username);
+      expect(outer['type'], 'contact_request');
+      expect(outer['version'], '2');
+      expect(outer['encrypted'], <String, String>{
+        'ephemeralPublicKey': 'ephPubBase64',
+        'ciphertext': 'ctBase64',
+        'nonce': 'nonceBase64',
+      });
+      for (final secret in <String>[
+        _testIdentity.privateKey,
+        _testIdentity.mnemonic12,
+        _testIdentity.publicKey,
+        _testIdentity.mlKemPublicKey!,
+        'fakeSig',
+        'private-wake-token',
+      ]) {
+        expect(wire, isNot(contains(secret)));
+      }
+      expect(
+        bridge.lastEncryptPayload!['plaintext'],
+        contains('private-wake-token'),
+      );
+    });
+  }
 
   test('v1: sends v1 when recipientPublicKey is null', () async {
     final result = await sendContactRequest(

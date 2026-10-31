@@ -31,11 +31,13 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/in_memory_contact_presence_snapshot_repository.dart';
 import '../../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../../shared/fakes/in_memory_feed_cleared_repository.dart';
@@ -198,6 +200,12 @@ void main() {
         accountMigrationRunTransfer: accountMigrationRunTransfer,
       ),
     );
+  }
+
+  Future<void> pumpFrames(WidgetTester tester, {int count = 12}) async {
+    for (var frame = 0; frame < count; frame++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
   }
 
   group('FirstTimeExperienceWired', () {
@@ -387,6 +395,124 @@ void main() {
       // Verify the crop_free icon (the scan icon) is present
       expect(find.byIcon(Icons.crop_free), findsOneWidget);
     });
+
+    testWidgets(
+      'RG-002 IDENTITY-008 saved first-time name reaches the contact request '
+      'after a valid scanner result and lands in the real shell',
+      (tester) async {
+        suppressShellRenderErrors();
+        identityRepo.seed(testIdentity);
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'initial-name-signature',
+        };
+        bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+        bridge.responses['contactrequest.encrypt'] = {
+          'ok': true,
+          'ephemeralPublicKey': 'fixture-ephemeral-key',
+          'ciphertext': 'fixture-ciphertext',
+          'nonce': 'fixture-nonce',
+        };
+        p2pService.emitState(
+          NodeState(isStarted: true, peerId: testIdentity.peerId),
+        );
+        final friend = TestEd25519Identity.fromSeedByte(0x48);
+
+        await tester.pumpWidget(buildFTE());
+        await pumpFrames(tester);
+        final initialQr = tester
+            .widget<FirstTimeExperienceScreen>(
+              find.byType(FirstTimeExperienceScreen),
+            )
+            .qrData!;
+        expect((jsonDecode(initialQr) as Map<String, dynamic>)['un'], 'Alice');
+
+        bridge.responses['payload.sign'] = {
+          'ok': true,
+          'signature': 'saved-name-signature',
+        };
+        await tester.tap(find.textContaining('Alice'));
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), 'Lina');
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await pumpFrames(tester);
+
+        expect((await identityRepo.loadIdentity())!.username, 'Lina');
+        final updatedQr =
+            jsonDecode(
+                  tester
+                      .widget<FirstTimeExperienceScreen>(
+                        find.byType(FirstTimeExperienceScreen),
+                      )
+                      .qrData!,
+                )
+                as Map<String, dynamic>;
+        expect(updatedQr['un'], 'Lina');
+        expect(updatedQr['sig'], 'saved-name-signature');
+
+        await tester.tap(find.text("Scan a friend's code"));
+        await pumpFrames(tester);
+        expect(find.byType(QRScannerScreen), findsOneWidget);
+        // Host injection at the native scanner port proves route wiring, not
+        // optical recognition or an OS camera-permission boundary.
+        tester.widget<MobileScanner>(find.byType(MobileScanner)).onDetect!(
+          BarcodeCapture(
+            barcodes: [
+              Barcode(
+                rawValue: jsonEncode({
+                  'ns': friend.peerId,
+                  'pk': friend.publicKey,
+                  'rv': '/dns4/relay/tcp/443/p2p/relay',
+                  'ts': DateTime.now().toUtc().toIso8601String(),
+                  'un': 'Omar',
+                  'sig': 'friend-signature',
+                }),
+              ),
+            ],
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        final stored = (await contactRepo.getContact(friend.peerId))!;
+        expect(stored.username, 'Omar');
+        expect(stored.publicKey, friend.publicKey);
+        expect(await contactRepo.getContactCount(), 1);
+        expect(await contactRequestRepo.getPendingRequests(), isEmpty);
+        expect(find.text('Added to your circle!'), findsOneWidget);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastStoreInInboxPeerId, friend.peerId);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        final outbound =
+            jsonDecode(p2pService.lastStoreInInboxMessage!)
+                as Map<String, dynamic>;
+        expect(outbound['type'], 'contact_request');
+        expect(outbound['version'], '2');
+        expect(outbound['senderUsername'], 'Lina');
+        final encryptRequests = bridge.sentMessages
+            .map((message) => jsonDecode(message) as Map<String, dynamic>)
+            .where((message) => message['cmd'] == 'contactrequest.encrypt')
+            .toList();
+        expect(encryptRequests, hasLength(1));
+        final encryptionInput =
+            encryptRequests.single['payload'] as Map<String, dynamic>;
+        expect(encryptionInput['recipientPublicKey'], friend.publicKey);
+        final signedIdentity =
+            jsonDecode(encryptionInput['plaintext'] as String)
+                as Map<String, dynamic>;
+        expect(signedIdentity['un'], 'Lina');
+        expect(signedIdentity['ns'], testIdentity.peerId);
+
+        await tester.tap(find.text('OK'));
+        await pumpFrames(tester, count: 20);
+        expect(find.byType(FirstTimeExperienceWired), findsNothing);
+        expect(find.byType(QRScannerScreen), findsNothing);
+        expect(find.byType(FeedWired), findsOneWidget);
+        expect(find.byType(OrbitWired), findsOneWidget);
+        expect(await contactRepo.getContactCount(), 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+      },
+    );
 
     for (final entry in ['paste', 'camera']) {
       testWidgets(
