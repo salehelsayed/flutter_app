@@ -560,6 +560,19 @@ forces that token shape without changing production randomness; it reproduced
 the failure and passed after the fix. The first owning SIMS contract attempt
 remains 53 passed/one failed until its full recheck completes.
 
+Docker Claude launchers use `--init` so Docker's init process collects orphaned
+children. Long-running CLI sessions without it can accumulate exited `timeout`,
+`git`, and shell children under Claude as PID 1. Sending SIGCHLD did not clear
+the observed backlog. The Docker-update contract requires `--init` for normal
+launches and image-version probes. A network-disabled disposable container
+reproduced 24 zombie children without init and zero with init. The user-home
+session recorder/discovery also supports Claude as init's direct child, validates
+that child's PID/start time, and rejects nested SDK sessions; both PID 1 and init
+fixtures recovered the exact saved conversation. Existing containers need a
+controlled restart to apply init. Preserve their conversation IDs and review
+running work before stopping them. Evidence:
+`.codex-test-logs/docker-child-cleanup-20261028/`.
+
 The SIMS shell adapter is tracked at `scripts/run_with_devices.sh`; isolated
 checkouts and the detached launcher use that path. This supersedes restoring an
 ignored `.claude/skills/sims/scripts/run_with_devices.sh` before running contracts.

@@ -44,6 +44,17 @@ printf '%s\n' \
   '  exit "${FAKE_DOCKER_IMAGE_MISSING:-0}"' \
   'fi' \
   'if [ "${1:-}" = "run" ]; then' \
+  '  if [ "${FAKE_CLAUDE_RESOLVE:-0}" = "1" ]; then' \
+  '    container_path=""' \
+  '    for argument in "$@"; do' \
+  '      case "${argument}" in PATH=*) container_path="${argument#PATH=}" ;; esac' \
+  '    done' \
+  '    [ -n "${container_path}" ] || exit 1' \
+  '    container_path="${container_path//\/claude-home/${FAKE_CLAUDE_HOME:?}}"' \
+  '    container_path="${container_path//\/usr\/local\/bin/${FAKE_CLAUDE_IMAGE_BIN:?}}"' \
+  '    PATH="${container_path}" claude --version' \
+  '    exit "$?"' \
+  '  fi' \
   '  printf "2.1.209\n"' \
   'fi' \
   >"${fake_bin}/docker"
@@ -72,6 +83,8 @@ run_runner() {
   PATH="${fake_bin}:${PATH}" \
     CONTRACT_PYTHON_BIN="${contract_python_bin}" \
     FAKE_DOCKER_LOG="${docker_log}" \
+    FAKE_CLAUDE_HOME="${tmp_dir}/claude-home" \
+    FAKE_CLAUDE_IMAGE_BIN="${tmp_dir}/image-bin" \
     HOME="${tmp_dir}/host-home" \
     CLAUDE_DOCKER_HOME="${tmp_dir}/claude-home" \
     CLAUDE_DOCKER_IMAGE="claude-code-test" \
@@ -90,6 +103,7 @@ grep -Fxq $'ARG\t--pull' "${docker_log}" || fail 'update did not refresh the bas
 grep -Fxq $'ARG\t--no-cache' "${docker_log}" || fail 'update reused the npm install layer'
 grep -Fxq $'ARG\trun' "${docker_log}" || fail 'update did not verify the rebuilt image'
 grep -Fxq $'ARG\t--version' "${docker_log}" || fail 'update did not request the image version'
+grep -Fxq $'ARG\t--init' "${docker_log}" || fail 'image verification did not enable child-process reaping'
 grep -Fxq $'ARG\tDISABLE_AUTOUPDATER=1' "${docker_log}" ||
   fail 'container launch did not disable the in-container auto-updater'
 if grep -Fxq $'ARG\tupdate' "${docker_log}"; then
@@ -105,10 +119,11 @@ if grep -Fxq $'ARG\t--pull' "${docker_log}" || grep -Fxq $'ARG\t--no-cache' "${d
   fail 'normal launch unexpectedly bypassed the cheap cached build'
 fi
 grep -Fxq $'ARG\t--version' "${docker_log}" || fail 'normal CLI arguments were not forwarded'
+grep -Fxq $'ARG\t--init' "${docker_log}" || fail 'normal launch did not enable child-process reaping'
 grep -Fxq $'ARG\tDISABLE_AUTOUPDATER=1' "${docker_log}" ||
   fail 'normal launch did not disable the in-container auto-updater'
-grep -Fq $'ARG\tPATH=/claude-host-bin:/usr/local/go/bin:' "${docker_log}" ||
-  fail 'normal launch did not put host shims before the Go-enabled container PATH'
+grep -Fq $'ARG\tPATH=/claude-host-bin:/claude-home/.local/bin:/usr/local/go/bin:' "${docker_log}" ||
+  fail 'normal launch did not prefer persistent Claude while preserving host shims and Go'
 for clipboard_shim in xclip wl-paste wl-copy xsel pbpaste pbcopy; do
   [ -x "${tmp_dir}/claude-home/host-bin/${clipboard_shim}" ] ||
     fail "missing executable clipboard shim: ${clipboard_shim}"
@@ -130,5 +145,27 @@ grep -Fxq $'ARG\t--pull' "${docker_log}" || fail 'missing image build did not re
 : >"${docker_log}"
 CLAUDE_DOCKER_REBUILD=1 run_runner --version >/dev/null
 grep -Fxq $'ARG\tbuild' "${docker_log}" || fail 'explicit rebuild was ignored'
+
+# Resolve actual disposable executables using the PATH passed to Docker.
+# The image stays unchanged while an update in the shared home takes effect.
+mkdir -p "${tmp_dir}/claude-home/.local/bin" "${tmp_dir}/image-bin"
+printf '#!/bin/sh\nprintf "image-cli\\n"\n' >"${tmp_dir}/image-bin/claude"
+printf '#!/bin/sh\nprintf "persistent-v1\\n"\n' >"${tmp_dir}/claude-home/.local/bin/claude"
+chmod +x "${tmp_dir}/image-bin/claude" "${tmp_dir}/claude-home/.local/bin/claude"
+native_output="$(FAKE_CLAUDE_RESOLVE=1 run_runner --version)"
+grep -Fxq 'persistent-v1' <<<"${native_output}" || fail 'launch selected the image instead of persistent Claude'
+printf '#!/bin/sh\nprintf "persistent-v2\\n"\n' >"${tmp_dir}/claude-home/.local/bin/claude"
+: >"${docker_log}"
+updated_output="$(FAKE_CLAUDE_RESOLVE=1 run_runner --version)"
+grep -Fxq 'persistent-v2' <<<"${updated_output}" || fail 'launch did not use the updated shared Claude CLI'
+if grep -Fxq $'ARG\tbuild' "${docker_log}"; then
+  fail 'using an updated persistent CLI rebuilt the Docker image'
+fi
+image_update_output="$(FAKE_CLAUDE_RESOLVE=1 run_runner update)"
+grep -Fq 'Updated Claude Code version: image-cli' <<<"${image_update_output}" ||
+  fail 'image update verified the persistent CLI instead of its rebuilt image'
+rm "${tmp_dir}/claude-home/.local/bin/claude"
+fallback_output="$(FAKE_CLAUDE_RESOLVE=1 run_runner --version)"
+grep -Fxq 'image-cli' <<<"${fallback_output}" || fail 'image CLI fallback broke when no persistent CLI exists'
 
 printf 'PASS: Claude Docker update contract\n'

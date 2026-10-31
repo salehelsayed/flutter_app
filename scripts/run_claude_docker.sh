@@ -395,7 +395,7 @@ start_host_bridge() {
   CONTAINER_PATH="/claude-host-bin:${CONTAINER_PATH}"
 }
 
-DOCKER_RUN_ARGS=(--rm)
+DOCKER_RUN_ARGS=(--init --rm)
 if [ -t 0 ] && [ -t 1 ]; then
   DOCKER_RUN_ARGS+=(-it)
 fi
@@ -488,6 +488,9 @@ if [ -f "${REPO_ROOT}/.git" ]; then
   fi
 fi
 
+# Prefer the user-owned CLI shared with claude-kayan. Keep this after the
+# image-update branch so that branch still verifies the rebuilt image binary.
+CONTAINER_PATH="/claude-home/.local/bin:${CONTAINER_PATH}"
 start_host_bridge
 
 DOCKER_RUN_ARGS+=(
