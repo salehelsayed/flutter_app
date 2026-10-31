@@ -486,7 +486,9 @@ void main() {
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
-        await calls.dispose();
+        // dispose() waits on a shutdown deadline Timer and real async work,
+        // neither of which completes inside the fake-async test zone.
+        await tester.runAsync(calls.dispose);
         updates.dispose();
         notifications.dispose();
         messenger.setMockMethodCallHandler(channel, null);
