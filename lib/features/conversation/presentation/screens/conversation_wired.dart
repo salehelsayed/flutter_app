@@ -5614,7 +5614,10 @@ class _ConversationWiredState extends State<ConversationWired>
     bool transitionMessageToFailed = true,
   }) async {
     final commonSnapshot = snapshot.common;
-    _draftText = commonSnapshot.draftText;
+    final restoreDraftText = _draftText.isEmpty;
+    if (restoreDraftText) {
+      _draftText = commonSnapshot.draftText;
+    }
     _privateMediaPolicy = snapshot.privateMediaPolicy;
     _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
     final authoritativeMessage = transitionMessageToFailed
@@ -5633,7 +5636,8 @@ class _ConversationWiredState extends State<ConversationWired>
     } else {
       await _refreshMessageWithHydratedMedia(optimisticMessageId);
     }
-    if (commonSnapshot.pendingAttachments.isEmpty &&
+    if (restoreDraftText &&
+        commonSnapshot.pendingAttachments.isEmpty &&
         commonSnapshot.draftText.isNotEmpty) {
       _restoredFailedMessageId = optimisticMessageId;
       _restoredFailedDraftText = commonSnapshot.draftText;

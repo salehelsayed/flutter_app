@@ -2523,12 +2523,21 @@ failure controls restore the original caption, quote and attachment. However,
 a returned media-send failure and a thrown send exception both overwrite text
 typed after the first send released the composer. The two unskipped
 `LL-41 late media send` cases in `conversation_wired_test.dart` reproduce that
-loss at `_restoreComposerSnapshot`'s unconditional draft assignment. This is
-an open defect, not a passing preservation claim; no app fix accompanies the
-tests. The first focused result is three passes and two failures under
+loss at `_restoreComposerSnapshot`'s unconditional draft assignment. The
+tests initially shipped without an app fix. The first focused result is
+three passes and two failures under
 `.codex-test-logs/lessons-critical-20261031/ll41-draft-first/` in the
 `flutter_app-astra-lessons-critical-post129` worktree. These are host widget
 results with injected send outcomes, not signed-device evidence.
+
+LL-41 restoration now fills snapshot text only when the composer is empty
+and associates failed-text retry tracking only with restored text. Nonempty
+newer typing survives both failure paths; attachment, quote and failed-row
+controls remain intact. The same five cases pass with no skips after a local
+three-pass/two-failure baseline. Evidence is in
+`.codex-test-logs/ll41-20261031/{red,green}.{log,json}` in the
+`ll41-draft-restore-post129-20261031` worktree. Empty-composer restoration
+retains its existing behavior; these host tests do not prove device delivery.
 
 Voice saves its parent before the attachment because real pending-attachment
 preparation requires that parent. The Conversation screen withholds voice
