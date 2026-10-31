@@ -9,9 +9,13 @@ MIT license is preserved in LICENSE. No wire protocol or module pin changes.
 
 - acl.go, constraints.go, options.go: unchanged upstream source.
 - relay.go: LL-24 reservation connection binding, exact-connection STOP
-  negotiation, and connection-aware reservation lifecycle.
+  negotiation, bounded acknowledgement/publication synchronization, and
+  connection-aware lifecycle with matching constraint cleanup.
 - resources.go and metrics.go: adapters to upstream public types/defaults and
   shared metric collectors, avoiding nominal type and registration conflicts.
+
+Production startup installs the shared default metrics tracer through
+`newCircuitRelayService`; its registry is exercised after real relay traffic.
 
 Upstream source SHA-256:
 

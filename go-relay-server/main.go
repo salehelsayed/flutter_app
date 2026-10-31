@@ -42,7 +42,10 @@ func relayMetricsListenAddress() (string, error) {
 }
 
 func newCircuitRelayService(h host.Host, limits ServerLimits, registerer prometheus.Registerer) (*relay.Relay, error) {
-	return relay.New(h, relay.WithResources(relayResourcesFromServerLimits(limits)))
+	return relay.New(h,
+		relay.WithResources(relayResourcesFromServerLimits(limits)),
+		relay.WithMetricsTracer(relay.NewMetricsTracer(relay.WithRegisterer(registerer))),
+	)
 }
 
 func main() {

@@ -46,7 +46,8 @@ type reservation struct {
 	expire   time.Time
 	conn     network.Conn
 	revision uint64
-	pending  int
+	pending  map[uint64]struct{}
+	changed  chan struct{}
 }
 
 // Relay is the (limited) relay service object.
@@ -236,12 +237,16 @@ func (r *Relay) handleReserve(s network.Stream) pbv2.Status {
 	}
 
 	if !exists {
-		current = &reservation{expire: expire}
+		current = &reservation{
+			expire:  expire,
+			pending: make(map[uint64]struct{}),
+			changed: make(chan struct{}),
+		}
 		r.rsvp[p] = current
 	}
-	current.pending++
 	r.nextRevision++
 	revision := r.nextRevision
+	current.pending[revision] = struct{}{}
 	r.host.ConnManager().TagPeer(p, "relay-reservation", ReservationTagWeight)
 	r.mx.Unlock()
 	if r.metricsTracer != nil {
@@ -278,7 +283,7 @@ func (r *Relay) finishReservation(p peer.ID, current *reservation, revision uint
 	if r.rsvp[p] != current {
 		return
 	}
-	current.pending--
+	delete(current.pending, revision)
 	// Only successful responses can replace the authenticated STOP destination;
 	// an older response completing late cannot undo a newer reservation.
 	if responseErr == nil && !r.closed && !conn.IsClosed() && revision > current.revision {
@@ -286,11 +291,13 @@ func (r *Relay) finishReservation(p peer.ID, current *reservation, revision uint
 		current.conn = conn
 		current.revision = revision
 	}
-	if current.conn == nil && current.pending == 0 {
+	if current.conn == nil && len(current.pending) == 0 {
 		delete(r.rsvp, p)
 		r.constraints.cleanupPeer(p)
 		r.host.ConnManager().UntagPeer(p, "relay-reservation")
 	}
+	close(current.changed)
+	current.changed = make(chan struct{})
 }
 
 func (r *Relay) handleConnect(s network.Stream, msg *pbv2.HopMessage) pbv2.Status {
@@ -340,7 +347,35 @@ func (r *Relay) handleConnect(s network.Stream, msg *pbv2.HopMessage) pbv2.Statu
 		return pbv2.Status_PERMISSION_DENIED
 	}
 
+	ctx, cancel := context.WithTimeout(r.ctx, ConnectTimeout)
+	defer cancel()
+
 	r.mx.Lock()
+	for {
+		var changed <-chan struct{}
+		if current := r.rsvp[dest.ID]; current != nil {
+			for revision := range current.pending {
+				if revision > current.revision {
+					changed = current.changed
+					break
+				}
+			}
+		}
+		if changed == nil {
+			break
+		}
+		// A client can receive OK before its handler publishes the binding.
+		// Wait for newer attempts only; an older stalled response must not
+		// delay a connection whose successor is already published.
+		r.mx.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			fail(pbv2.Status_CONNECTION_FAILED)
+			return pbv2.Status_CONNECTION_FAILED
+		}
+		r.mx.Lock()
+	}
 	reservation, rsvp := r.rsvp[dest.ID]
 	if !rsvp || reservation.conn == nil {
 		r.mx.Unlock()
@@ -394,9 +429,6 @@ func (r *Relay) handleConnect(s network.Stream, msg *pbv2.HopMessage) pbv2.Statu
 			r.metricsTracer.ConnectionClosed(time.Since(connStTime))
 		}
 	}
-
-	ctx, cancel := context.WithTimeout(r.ctx, ConnectTimeout)
-	defer cancel()
 
 	bs, err := openStopStream(ctx, destConn)
 	if err != nil {
@@ -753,9 +785,11 @@ func (r *Relay) gc() {
 	now := time.Now()
 	cnt := 0
 	for p, reservation := range r.rsvp {
-		if r.closed || (reservation.pending == 0 && reservation.expire.Before(now)) {
+		if r.closed || (len(reservation.pending) == 0 && reservation.expire.Before(now)) {
 			delete(r.rsvp, p)
+			r.constraints.cleanupPeer(p)
 			r.host.ConnManager().UntagPeer(p, "relay-reservation")
+			close(reservation.changed)
 			cnt++
 		}
 	}
@@ -781,11 +815,13 @@ func (r *Relay) disconnected(n network.Network, c network.Conn) {
 	current.conn = nil
 	// A successor's accepted RESERVE may still be writing its response. Keep
 	// its admission accounting until that attempt finishes outside the lock.
-	if current.pending == 0 {
+	if len(current.pending) == 0 {
 		delete(r.rsvp, p)
 		r.constraints.cleanupPeer(p)
 		r.host.ConnManager().UntagPeer(p, "relay-reservation")
 	}
+	close(current.changed)
+	current.changed = make(chan struct{})
 	r.mx.Unlock()
 
 	if ok && r.metricsTracer != nil {

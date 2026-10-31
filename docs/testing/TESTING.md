@@ -6466,7 +6466,16 @@ visible and cannot become an ordinary first-attempt PASS.
   and reproduces the five-second inbound timeout before the fix. The pinned
   `internal/circuitrelay` implementation binds successful reservations to their
   authenticated connections; response ordering and old disconnects cannot
-  replace or remove a successor. Focused lifecycle tests pass under `-race`,
+  replace or remove a successor. An unmodified client can receive OK before
+  publication, so HOP waits outside the global mutex for newer pending attempts;
+  an older unfinished response cannot delay an already published successor.
+  Deterministic post-OK and failed-renewal expiry cuts verify acknowledgement
+  visibility and release of total/IP capacity when GC removes the binding.
+  The production constructor installs the shared default metrics tracer;
+  registry gathers after real reservation/traffic verify status, request,
+  connection and byte counters. These review regressions first fail, then pass
+  under `.codex-test-logs/ll24-review-20261031/`. Focused lifecycle tests pass
+  under `-race`,
   and real sockets preserve an old live stream alongside eight new streams.
   The existing interop helper passes circuit-only old-to-new, new-to-old and
   old-to-old pairs through the patched local relay, using libp2p 0.39.1/Go 1.25.0
@@ -6811,6 +6820,15 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions and fixture diagnostics, focused race checks and the explicit-base
   change selection are retained in ignored
   `.codex-test-logs/shared-connection-recovery/`.
+  `TestSendConnectionRecovery_ConcurrentTimeoutsCoalesce` also has an
+  unchanged-source reliability limitation: a full-node run failed with
+  `retained 1 connection checks`, while the preceding full run and one exact
+  isolated diagnostic passed. The cause is not isolated; the diagnostic does
+  not clear the failed full gate. The Go tree matches `95d0545bb` exactly.
+  Failed full-run and passing diagnostic evidence is retained in
+  `.codex-test-logs/ll24-review-20261031/{final-node,node-coalesce-diagnostic}.{log,json}`
+  in the `ll24-relay-stop-binding-20261031` worktree. No recovery-code or
+  deadline changes accompany that diagnostic.
   A UDP blackhole also preserves TCP
   and TLS WebSocket messaging, with the selected address observed and a
   fixture-local trusted certificate for WSS. Dart integration separately proves

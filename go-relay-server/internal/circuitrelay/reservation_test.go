@@ -136,7 +136,7 @@ func assertReservationBinding(t *testing.T, r *Relay, conn network.Conn, pending
 	r.mx.Lock()
 	defer r.mx.Unlock()
 	current := r.rsvp[peer.ID("destination")]
-	if current == nil || current.conn != conn || current.pending != pending {
+	if current == nil || current.conn != conn || len(current.pending) != pending {
 		t.Fatalf("reservation = %+v, want conn %p and %d pending", current, conn, pending)
 	}
 	if len(r.constraints.total) != 1 {
