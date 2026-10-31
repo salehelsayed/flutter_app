@@ -25,7 +25,11 @@ for pattern in \
     echo "alive     [$pattern]: $pids"
   else
     echo "killing   [$pattern]: $pids"
-    pkill -f "$pattern" || true
+    for pid in $pids; do
+      case "$(ps -o args= -p "$pid" 2>/dev/null)" in
+        *"$pattern"*) kill "$pid" 2>/dev/null || true ;;
+      esac
+    done
   fi
 done
 

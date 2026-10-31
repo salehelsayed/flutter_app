@@ -11,9 +11,20 @@ U13=00008110-00184D622289801E
 PIXEL=21071FDF600CSC
 CUR=build/se41-proof/current.txt
 mkdir -p build/se41-proof
+# Stop processes by exact PID only: list via ps, filter on the literal command text, re-check that PID's command line, then kill <pid>. No pattern kills.
+stop_matching() {  # $1 = text the command line must contain, $2 = optional second text it must also contain
+  local pat="$1" pat2="${2:-}" pids pid n=0 a
+  pids=$(ps -axo pid=,args= | awk -v pat="$pat" -v pat2="$pat2" -v me="$$" '$1!=me && $2!~/(^|\/)(awk|ps|grep|pgrep)$/ && index($0,pat) && (pat2=="" || index($0,pat2)) {print $1}')
+  for pid in $pids; do
+    a=$(ps -o args= -p "$pid" 2>/dev/null)
+    case "$a" in *"$pat"*) case "$a" in *"$pat2"*) kill "$pid" 2>/dev/null && { echo "stopped $pid: ${a:0:100}"; n=$((n+1)); };; esac;; esac
+  done
+  [ "$n" -gt 0 ]
+}
 stop_all() {
-  pkill -f "idevicesyslog -u $U13" 2>/dev/null
-  pkill -f "adb -s $PIXEL logcat -v threadtime" 2>/dev/null
+  stop_matching "idevicesyslog -u $U13"
+  stop_matching "adb -s $PIXEL logcat -v threadtime"
+  return 0
 }
 case "${1:-status}" in
   start)
