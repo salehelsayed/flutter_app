@@ -1101,6 +1101,60 @@ classify_path() {
       ;;
   esac
 
+  case "$path" in
+    integration_test/scripts/contact_transfer_native_evidence.dart|\
+    integration_test/scripts/media_recorded_control_process.dart|\
+    integration_test/scripts/run_account_transfer_continuity.dart|\
+    integration_test/scripts/run_account_transfer_local_only.dart|\
+    integration_test/scripts/run_account_transfer_media_open.dart|\
+    integration_test/scripts/run_account_transfer_pairing.dart|\
+    integration_test/scripts/run_background_call_delivery.dart|\
+    integration_test/scripts/run_bidirectional_direct_media_decode.dart|\
+    integration_test/scripts/run_call_audio_interruption.dart|\
+    integration_test/scripts/run_call_audio_soak.dart|\
+    integration_test/scripts/run_call_microphone_content_privacy.dart|\
+    integration_test/scripts/run_call_network_recovery.dart|\
+    integration_test/scripts/run_call_permission_recovery.dart|\
+    integration_test/scripts/run_call_process_loss.dart|\
+    integration_test/scripts/run_call_terminal_matrix.dart|\
+    integration_test/scripts/run_camera_caption_roundtrip.dart|\
+    integration_test/scripts/run_candidate_platform_contract.dart|\
+    integration_test/scripts/run_contact_request_notification_lifecycle.dart|\
+    integration_test/scripts/run_cross_platform_audio_call.dart|\
+    integration_test/scripts/run_cross_platform_camera_caption.dart|\
+    integration_test/scripts/run_cross_platform_contact_add.dart|\
+    integration_test/scripts/run_cross_platform_direct_media.dart|\
+    integration_test/scripts/run_cross_platform_group_journey.dart|\
+    integration_test/scripts/run_document_open_roundtrip.dart|\
+    integration_test/scripts/run_fresh_onboarding_first_messages.dart|\
+    integration_test/scripts/run_group_camera_full_decode.dart|\
+    integration_test/scripts/run_group_full_media_decode.dart|\
+    integration_test/scripts/run_group_media_membership_entitlement.dart|\
+    integration_test/scripts/run_introduction_notification_lifecycle.dart|\
+    integration_test/scripts/run_ios_active_call_lifecycle.dart|\
+    integration_test/scripts/run_ios_call_identity_privacy.dart|\
+    integration_test/scripts/run_ios_system_call_controls.dart|\
+    integration_test/scripts/run_local_only_media_roundtrip.dart|\
+    integration_test/scripts/run_locked_call_privacy.dart|\
+    integration_test/scripts/run_media_egress_permission_journey.dart|\
+    integration_test/scripts/run_media_permission_recovery.dart|\
+    integration_test/scripts/run_mixed_network_media_agreement.dart|\
+    integration_test/scripts/run_native_image_format_acceptance.dart|\
+    integration_test/scripts/run_native_video_caption_roundtrip.dart|\
+    integration_test/scripts/run_native_video_playback_lifecycle.dart|\
+    integration_test/scripts/run_notification_permission_channel_recovery.dart|\
+    integration_test/scripts/run_ordinary_media_process_cuts.dart|\
+    integration_test/scripts/run_private_media_remote_delivery.dart|\
+    integration_test/scripts/run_qr_camera_permission_journey.dart|\
+    integration_test/scripts/run_signed_upgrade_preservation.dart|\
+    integration_test/scripts/run_voice_permission_call_takeover.dart|\
+    integration_test/scripts/run_voice_playback_interruption.dart|\
+    integration_test/scripts/run_voice_record_lock_review.dart)
+      record "ignored" "$path" "ignored" "P0 physical-phone native evidence boundary (KNOWN GAP phone steps), not a sims reliability route"
+      return
+      ;;
+  esac
+
   record "unclassified" "$path" "unclassified" "candidate matched discovery but has no classification rule"
 }
 

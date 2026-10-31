@@ -38,7 +38,9 @@ const _relocations = <String, List<String>>{
     // reconciliation surface to the SAME data adapter; nothing relocates.
     // Atomic consent adds pre-write retirement and post-commit publication
     // hooks to this same adapter; removing those two methods restores the pin.
-    '5ec64e5d6e0ad8dfc0ff7018baf24f086a5d12bbefc7a03fe9b9f100119ddac2',
+    // CONTACT-008 adds the targeted avatar UPDATE to this same adapter;
+    // imports and placement are unchanged.
+    'b06d1b04668afe70e9e66cf8705bcff998ae4df13d2976b4aaf80f0ea9e7df5e',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[

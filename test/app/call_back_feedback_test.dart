@@ -791,7 +791,7 @@ class _ReactionRepositoryImpl extends _Unused
 
 class _SecureKeyStore extends _Unused implements SecureKeyStore {}
 
-final _callbackSelected = TestEd25519Identity.fromSeedByte(107);
+final _callbackSelected = TestEd25519Identity.fromSeedByte(110);
 final _callbackOther = TestEd25519Identity.fromSeedByte(108);
 final _callbackLocal = TestEd25519Identity.fromSeedByte(109);
 final _callbackOtherMissed = CallId.parse(
