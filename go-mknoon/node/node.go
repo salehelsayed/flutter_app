@@ -523,9 +523,6 @@ func (n *Node) Start(cfg NodeConfig) (state *NodeState, err error) {
 
 	announceAddrs := h.Addrs()
 	log.Printf("[NODE] Announcing %d addresses (loopback/link-local filtered out)", len(announceAddrs))
-	for _, a := range announceAddrs {
-		log.Printf("[NODE]   %s", a.String())
-	}
 
 	namespace := cfg.Namespace
 	if namespace == "" {
