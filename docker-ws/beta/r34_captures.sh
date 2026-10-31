@@ -9,13 +9,17 @@ set -u
 B="$(cd "$(dirname "$0")" && pwd)"; D="$(cd "$B/.." && pwd)"
 CUR="$B/r34_capture_dir.txt"
 U11=00008030-001A6D2801BB802E; U13=00008110-00184D622289801E
-start_one() {  # the --process filter stays bound to the old Runner process after an app restart: filter on the Mac
-  if true; then
-    pkill -f "idevicesyslog -u $1" 2>/dev/null; sleep 1
-    nohup /bin/bash -c "/opt/homebrew/bin/idevicesyslog -u $1 | grep --line-buffered -E 'Runner|mknoon' > '$D/$2'" >/dev/null 2>&1 &
-  else
-    nohup "$D/capture_iphone_syslog_any.sh" "$1" "$2" >/dev/null 2>&1 &
-  fi
+stop_one() {  # by exact PID from the pid file, only if that PID is still idevicesyslog for this phone (no pattern kills)
+  local f="$B/r34_capture_$1.pid" p
+  [ -f "$f" ] || return 0
+  p=$(cat "$f")
+  case "$(ps -o args= -p "$p" 2>/dev/null)" in *"idevicesyslog -u $1"*) kill "$p" && echo "stopped $p";; esac
+  rm -f "$f"
+}
+start_one() {  # unfiltered capture straight into the file, so $! is idevicesyslog itself; the grep command filters on read
+  stop_one "$1"; sleep 1
+  nohup /opt/homebrew/bin/idevicesyslog -u "$1" > "$D/$2" 2>/dev/null &
+  echo $! > "$B/r34_capture_$1.pid"
 }
 case "${1:-status}" in
   start)
@@ -32,7 +36,7 @@ case "${1:-status}" in
     pgrep -fl idevicesyslog ;;
   grep)
     DIR=$(cat "$CUR")
-    for p in iphone11 iphone13; do echo "=== $p"; cat "$DIR"/${p}_syslog*.txt 2>/dev/null | grep -E "$2" | tail -"${3:-40}" | cut -c1-320; done ;;
+    for p in iphone11 iphone13; do echo "=== $p"; cat "$DIR"/${p}_syslog*.txt 2>/dev/null | grep -E 'Runner|mknoon' | grep -E "$2" | tail -"${3:-40}" | cut -c1-320; done ;;
   stop)
-    pkill -f "idevicesyslog -u $U11"; pkill -f "idevicesyslog -u $U13"; sleep 1; pgrep -fl idevicesyslog || echo "no captures running" ;;
+    stop_one $U11; stop_one $U13; sleep 1; pgrep -fl idevicesyslog || echo "no captures running" ;;
 esac
