@@ -795,13 +795,14 @@ void main() {
   for (final scenario in [
     'ringing',
     'connected',
+    'connected late observation',
     'Android ringing',
     'blocked contact',
     'rekeyed contact',
     'deleted and re-added contact',
     'rekeyed identity',
   ]) {
-    final connected = scenario == 'connected';
+    final connected = scenario.startsWith('connected');
     final android = scenario == 'Android ringing';
     final shouldRecover = scenario == 'ringing' || connected || android;
     test(
@@ -976,6 +977,29 @@ void main() {
           expect(graph.coordinator.activeSession?.state, CallState.connected);
         }
         final connectedAt = graph.coordinator.activeSession?.connectedAt;
+        if (scenario == 'connected late observation') {
+          const checkpointKey = 'vc2_active_call_history_v1';
+          final checkpoint =
+              jsonDecode((await keys.read(checkpointKey))!)
+                  as Map<String, dynamic>;
+          expect(checkpoint['call_id'], callId.value);
+          expect(checkpoint['connected_at'], connectedAt!.toIso8601String());
+          // Model a periodic save without advancing the canonical snapshot.
+          checkpoint['observed_at'] = connectedAt
+              .add(const Duration(seconds: 30))
+              .toIso8601String();
+          await keys.write(checkpointKey, jsonEncode(checkpoint));
+          final late = await graph.coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.directAccepted,
+              eventId: 'vc026-connected-late-observation',
+              occurredAt: connectedAt,
+              callId: callId,
+            ),
+          );
+          expect(late.decision, CallEventDecision.applied);
+          expect(graph.coordinator.activeSession?.state, CallState.connected);
+        }
         expect(
           await graph.coordinator.historyProjector.repository.getByCallId(
             callId,
@@ -1084,6 +1108,10 @@ void main() {
         );
         expect(row.connectedAt, connectedAt);
         expect(row.startedAt, startedAt);
+        if (scenario == 'connected late observation') {
+          expect(row.duration, const Duration(seconds: 30));
+          expect(row.endedAt, connectedAt!.add(const Duration(seconds: 30)));
+        }
         expect(
           announcedHistory,
           [(callId, true)],

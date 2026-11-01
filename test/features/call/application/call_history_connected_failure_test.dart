@@ -50,6 +50,45 @@ CallSessionSnapshot _ended({
 }
 
 void main() {
+  for (final reason in [CallEndReason.noAnswer, CallEndReason.expired]) {
+    for (final direction in CallDirection.values) {
+      test(
+        'VC-026 connected ${direction.name} call ended by ${reason.wireName} '
+        'keeps completed status and talk duration',
+        () async {
+          final connectedAt = DateTime.utc(2026, 9, 24, 22, 57, 7);
+          final entry = await CallHistoryProjector(_Repository())
+              .projectTerminal(
+                _ended(
+                  reason: reason,
+                  connectedAt: connectedAt,
+                  direction: direction,
+                ),
+              );
+
+          expect(entry.status, CallHistoryStatus.completed);
+          expect(entry.direction, direction);
+          expect(entry.terminalReason, reason);
+          expect(entry.connectedAt, connectedAt);
+          expect(entry.duration, const Duration(minutes: 3, seconds: 5));
+        },
+      );
+
+      test('VC-026 never-connected ${direction.name} call ended by '
+          '${reason.wireName} remains missed without talk duration', () async {
+        final entry = await CallHistoryProjector(_Repository()).projectTerminal(
+          _ended(reason: reason, connectedAt: null, direction: direction),
+        );
+
+        expect(entry.status, CallHistoryStatus.missed);
+        expect(entry.direction, direction);
+        expect(entry.terminalReason, reason);
+        expect(entry.connectedAt, isNull);
+        expect(entry.duration, isNull);
+      });
+    }
+  }
+
   const failures = <CallEndReason>[
     CallEndReason.mediaFailed,
     CallEndReason.reconnectFailed,

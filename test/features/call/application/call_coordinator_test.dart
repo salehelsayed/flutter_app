@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
+
 import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
@@ -180,6 +182,7 @@ CallCoordinator _coordinator({
   )?
   onAppliedStateTransition,
   CallScheduledTimerObserver? onTimerScheduled,
+  Future<void> Function(CallSessionSnapshot)? persistActiveCall,
 }) => CallCoordinator(
   reducer: const CallReducer(),
   cleanupCoordinator:
@@ -196,6 +199,7 @@ CallCoordinator _coordinator({
   onInternalFailure: onInternalFailure,
   onAppliedStateTransition: onAppliedStateTransition,
   onTimerScheduled: onTimerScheduled,
+  persistActiveCall: persistActiveCall,
 );
 
 final class _Scheduled {
@@ -237,6 +241,185 @@ final class _FakeTimerScheduler implements CallTimerScheduler {
 }
 
 void main() {
+  test(
+    'VC-026 quiet connected 31s refreshes the last checkpoint observation',
+    () {
+      fakeAsync((time) {
+        final history = _MemoryHistoryRepository();
+        final saved = <CallSessionSnapshot>[];
+        final emitted = <CallSessionSnapshot>[];
+        final coordinator = _coordinator(
+          history: history,
+          clock: () => _now.add(time.elapsed),
+          persistActiveCall: (snapshot) async {
+            saved.add(snapshot);
+          },
+        );
+        final subscription = coordinator.snapshots.listen(emitted.add);
+        var disposed = false;
+        try {
+          Future<void> connect() async {
+            for (final type in [
+              CallEventType.place,
+              CallEventType.outgoingInviteReady,
+              CallEventType.remoteAccept,
+              CallEventType.negotiationReady,
+              CallEventType.mediaConnected,
+            ]) {
+              await coordinator.dispatch(_event(type));
+            }
+          }
+
+          unawaited(connect());
+          time.flushMicrotasks();
+          final connected = coordinator.activeSession!;
+          expect(connected.state, CallState.connected);
+          expect(connected.connectedAt, _now);
+          expect(
+            saved.last.connectedAt,
+            _now,
+            reason: 'connection itself must already be durable',
+          );
+          final emissionCount = emitted.length;
+          final saveCount = saved.length;
+
+          // No state, media, route or signaling events arrive during this talk.
+          time.elapse(const Duration(seconds: 31));
+          time.flushMicrotasks();
+          expect(
+            saved.length,
+            greaterThan(saveCount),
+            reason: 'quiet talk still needs a bounded process-loss observation',
+          );
+          final cutoff = saved.last;
+          expect(cutoff.callId, connected.callId);
+          expect(cutoff.connectedAt, connected.connectedAt);
+          expect(
+            cutoff.observedAt.difference(connected.connectedAt!).inSeconds,
+            inInclusiveRange(21, 31),
+          );
+          expect(coordinator.activeSession, same(connected));
+          expect(
+            emitted,
+            hasLength(emissionCount),
+            reason: 'history refresh must not publish a new call state',
+          );
+          expect(
+            history.rows,
+            isEmpty,
+            reason: 'refresh is a checkpoint, never an early terminal row',
+          );
+        } finally {
+          unawaited(subscription.cancel());
+          unawaited(coordinator.dispose().then((_) => disposed = true));
+          time.flushMicrotasks();
+          expect(disposed, isTrue);
+        }
+      });
+    },
+  );
+
+  test(
+    'VC-026 stalled connected refresh stays single-flight through disposal',
+    () {
+      fakeAsync((time) {
+        final heldWrite = Completer<void>();
+        final history = _MemoryHistoryRepository();
+        var refreshWrites = 0;
+        var hungUp = false;
+        var disposed = false;
+        final coordinator = _coordinator(
+          history: history,
+          clock: () => _now.add(time.elapsed),
+          effectTimeout: const Duration(seconds: 1),
+          persistActiveCall: (snapshot) async {
+            if (snapshot.connectedAt != null &&
+                snapshot.observedAt.isAfter(_now)) {
+              refreshWrites++;
+              await heldWrite.future;
+            }
+          },
+        );
+        try {
+          Future<void> connect() async {
+            for (final type in [
+              CallEventType.place,
+              CallEventType.outgoingInviteReady,
+              CallEventType.remoteAccept,
+              CallEventType.negotiationReady,
+              CallEventType.mediaConnected,
+            ]) {
+              await coordinator.dispatch(_event(type));
+            }
+          }
+
+          unawaited(connect());
+          time.flushMicrotasks();
+          expect(coordinator.activeSession?.state, CallState.connected);
+          time.elapse(const Duration(seconds: 10));
+          time.flushMicrotasks();
+          expect(
+            refreshWrites,
+            1,
+            reason: 'the first periodic write must begin',
+          );
+          time.elapse(const Duration(seconds: 70));
+          time.flushMicrotasks();
+          expect(
+            refreshWrites,
+            1,
+            reason: 'a timeout must not admit another underlying storage write',
+          );
+          unawaited(
+            coordinator
+                .dispatch(
+                  _event(CallEventType.end, occurredAt: _now.add(time.elapsed)),
+                )
+                .then((_) => hungUp = true),
+          );
+          time.flushMicrotasks();
+          expect(
+            hungUp,
+            isTrue,
+            reason: 'the effect budget must release the serialized hangup lane',
+          );
+          expect(heldWrite.isCompleted, isFalse);
+          expect(coordinator.activeSession, isNull);
+          expect(coordinator.lastSnapshot?.state, CallState.ended);
+          expect(
+            coordinator.lastSnapshot?.endReason,
+            CallEndReason.localHangup,
+          );
+          final terminal = history.rows[_callId];
+          expect(terminal, isNotNull);
+          expect(terminal!.status, CallHistoryStatus.completed);
+          expect(terminal.terminalReason, CallEndReason.localHangup);
+          unawaited(coordinator.dispose().then((_) => disposed = true));
+          time.flushMicrotasks();
+          expect(disposed, isTrue);
+          time.elapse(const Duration(seconds: 30));
+          expect(refreshWrites, 1);
+          heldWrite.complete();
+          time.flushMicrotasks();
+          time.elapse(const Duration(seconds: 30));
+          time.flushMicrotasks();
+          expect(
+            refreshWrites,
+            1,
+            reason: 'late storage completion must not restart a retired call',
+          );
+        } finally {
+          if (!heldWrite.isCompleted) {
+            heldWrite.complete();
+          }
+          unawaited(coordinator.dispose().then((_) => disposed = true));
+          time.flushMicrotasks();
+          expect(disposed, isTrue);
+        }
+      });
+    },
+  );
+
   for (final throwing in [false, true]) {
     test(
       'scheduled deadline observation preserves actual origins and no-answer when sink throws=$throwing',
