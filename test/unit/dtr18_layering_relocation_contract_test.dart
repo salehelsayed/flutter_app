@@ -252,8 +252,9 @@ const _privacySha256 =
 // Thoughts 128: one owner-approved Orbit retry binding reuses the existing
 // post-delivery worker and its media-upload prerequisite.
 const _applicationRootNormalizedSha256 =
-    // The translator notice listener wraps the existing app surface.
-    '7390e8d9442d98646a70392d52e56d23071c26a208486b6a02b5e9623a344213';
+    // Startup handoff rebuilds the existing translator notice owner after the
+    // route Scaffold mounts, including an already-latched notification fallback.
+    'c4ced3e102bdcc984752b2b73bb57df778db7a3523f13e33fd94f85ccce4e43e';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME

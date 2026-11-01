@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
+import 'package:flutter_app/features/identity/presentation/widgets/startup_loading_gate.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_model_delivery_controller.dart';
@@ -58,6 +61,75 @@ void main() {
           'لا يحتوي هذا الهاتف على ذاكرة كافية لتشغيل المترجم الخاص. إذا غيّرت هاتفك أو حدّثت هذا الهاتف، يمكنك المحاولة مرة أخرى من الإعدادات.',
     ),
   ];
+
+  testWidgets(
+    'startup notice remains pending until the real loading gate hands off to a route Scaffold',
+    (tester) async {
+      final delivery = FakeModelDeliveryController(const ModelUnsupported())
+        ..memoryNoticePending.value = true;
+      final navigatorKey = GlobalKey<NavigatorState>();
+      final messengerKey = GlobalKey<ScaffoldMessengerState>();
+      final readiness = Completer<void>();
+      final homeReady = ValueNotifier(false);
+      addTearDown(homeReady.dispose);
+      Widget app() => ValueListenableBuilder<bool>(
+        valueListenable: homeReady,
+        builder: (context, ready, child) => MaterialApp(
+          navigatorKey: navigatorKey,
+          scaffoldMessengerKey: messengerKey,
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) => TranslatorMemoryNoticeListener(
+            controller: delivery,
+            messengerKey: messengerKey,
+            child: child!,
+          ),
+          home: const StartupLoadingGate(stage: startupStageCheckingIdentity),
+        ),
+      );
+      final handoff = readiness.future.then((_) {
+        navigatorKey.currentState!.pushReplacement<void, void>(
+          buildStartupReplacementRoute<void>(
+            builder: (_) => const Scaffold(body: Text('Startup route ready')),
+          ),
+        );
+        // The app's existing onStartupHomeReady boundary must invalidate its
+        // root so the listener retries after the replacement Scaffold mounts.
+        homeReady.value = true;
+      });
+
+      await tester.pumpWidget(app());
+      await tester.pump();
+      expect(find.byType(StartupLoadingGate), findsOneWidget);
+      expect(find.byType(Scaffold), findsNothing);
+      expect(delivery.memoryNoticePending.value, isTrue);
+      expect(delivery.memoryNoticesConsumed, 0);
+      expect(find.text(memoryWords.first.unsupported), findsNothing);
+      expect(tester.takeException(), isNull);
+
+      readiness.complete();
+      await handoff;
+      await tester.pumpAndSettle();
+      expect(find.byType(StartupLoadingGate), findsNothing);
+      expect(find.text('Startup route ready'), findsOneWidget);
+      expect(find.text(memoryWords.first.unsupported), findsOneWidget);
+      expect(delivery.memoryNoticePending.value, isFalse);
+      expect(delivery.memoryNoticesConsumed, 1);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      expect(find.text(memoryWords.first.unsupported), findsOneWidget);
+      expect(delivery.memoryNoticesConsumed, 1);
+      messengerKey.currentState!.removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(app());
+      await tester.pumpAndSettle();
+      expect(find.text(memoryWords.first.unsupported), findsNothing);
+      expect(delivery.memoryNoticesConsumed, 1);
+    },
+  );
 
   for (final words in memoryWords) {
     for (final transcribe in [false, true]) {

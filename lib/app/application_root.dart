@@ -2362,8 +2362,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void _onStartupHomeReady() {
     _homeReadyFallbackTimer?.cancel();
     _homeReadyFallbackTimer = null;
-    if (_startupHomeReady) return;
-    _startupHomeReady = true;
+    if (!mounted) {
+      return;
+    }
+    final wasReady = _startupHomeReady;
+    // The route handoff must rebuild pending UI owners even if the notification
+    // fallback already latched readiness before any Scaffold was mounted.
+    setState(() => _startupHomeReady = true);
+    if (wasReady) {
+      return;
+    }
     unawaited(_flushDeferredNotificationRouteTarget());
   }
 

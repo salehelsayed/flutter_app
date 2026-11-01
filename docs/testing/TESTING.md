@@ -11492,7 +11492,11 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   refusal does not. A leftover marker establishes interruption, not OS OOM.
   Typed LiteRT-LM load resource exhaustion (`nativeCode == 8`, including backend
   attempt errors) blocks immediately; generic error text is never classified.
-  One mounted app listener consumes the persisted notice; Settings Try again
+  One mounted app listener presents the notice only after a Scaffold exists,
+  then durably consumes it. The real StartupLoadingGate has no Scaffold;
+  startup route handoff rebuilds the existing listener even if notification
+  fallback already latched readiness. The guard uses mounted Scaffold presence
+  in release as well as debug, without timer/frame polling. Settings Try again
   clears safety and rechecks static/current RAM without loading or downloading.
   Active inference retains its marker, and ordinary model removal preserves
   safety. Safety writes have their own controller queue so Remove awaiting
@@ -11516,6 +11520,13 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   analysis failure is retained. Evidence is in `calibration-causal-red.log`,
   `calibration-analyze.log` and `calibration-final-selected/` in the same directory;
   tested source is `21a404e86361ab2b84bd77751210e23db72cb69f99e8d1d6ade47e06e7947999`.
+  The real loading-gate notice regression failed before the fix with its pending
+  notice already consumed. After explicit mounted-Scaffold deferral and the
+  existing startup-home rebuild, the affected lane passed 361 cases and bootstrap
+  passed 23, with no failures/skips; targeted analysis passed. The first GREEN
+  was budget-cancelled after 218 passes and is retained as incomplete. Evidence:
+  `startup-notice-red.log`, `startup-green-selected/`, `startup-final-selected/`;
+  tested source `a1fd5d0b229ad86e6ec1f5a231c725fdf3facd73c3c592f310556055c04525fd`.
   `TRANSLATION_CAPABILITY` retains numeric RAM/OS, ABI and decision
   without identifiers. Host policy/mock-channel tests and native source checks
   do not establish device performance or signed-artifact behavior.

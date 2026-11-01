@@ -77,27 +77,50 @@ class _TranslatorMemoryNoticeListenerState
       final messenger =
           widget.messengerKey?.currentState ??
           ScaffoldMessenger.maybeOf(context);
-      if (messenger == null) return;
+      if (messenger == null || !messenger.mounted || !_hasScaffold(messenger)) {
+        return;
+      }
       _consuming = true;
       try {
-        if (await widget.controller.consumeMemoryNotice() &&
-            mounted &&
-            messenger.mounted) {
-          messenger.showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context)!.translator_memory_unsupported,
-              ),
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.translator_memory_unsupported,
             ),
-          );
-        }
+          ),
+        );
+        await widget.controller.consumeMemoryNotice();
       } on Object {
-        // A failed durable consumption leaves the notice pending for recovery.
+        // Failed presentation or durable consumption leaves the notice pending.
       } finally {
         _consuming = false;
       }
     });
     WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  // showSnackBar guards this only with an assert. Check the mounted tree so
+  // release builds also retain a startup notice while no Scaffold exists.
+  bool _hasScaffold(ScaffoldMessengerState messenger) {
+    final ancestor = Scaffold.maybeOf(context);
+    if (ancestor != null &&
+        ScaffoldMessenger.maybeOf(ancestor.context) == messenger) {
+      return true;
+    }
+    var found = false;
+    void visit(Element element) {
+      if (found || element.widget is ScaffoldMessenger) {
+        return;
+      }
+      if (element.widget is Scaffold) {
+        found = ScaffoldMessenger.maybeOf(element) == messenger;
+        return;
+      }
+      element.visitChildren(visit);
+    }
+
+    context.visitChildElements(visit);
+    return found;
   }
 
   @override
