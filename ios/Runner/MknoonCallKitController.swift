@@ -857,7 +857,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
         guard let self else { completion(false); return }
         let succeeded: Bool = self.synchronized {
           guard error == nil else {
-            _ = self.record(callId, .nativeFailure)
+            _ = self.record(callId, .nativeFailure, failureOrigin: .outgoingTransaction)
             return false
           }
           let live = self.store.snapshot()
@@ -1217,7 +1217,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             descriptor.direction == .outgoing, descriptor.terminalEvent == nil
       else { return false }
       guard configureCallAudioSession(stage: "start") else {
-        _ = terminate(action.callUUID, type: .nativeFailure, reason: .failed)
+        _ = terminate(action.callUUID, type: .nativeFailure, reason: .failed, failureOrigin: .audioConfiguration)
         return false
       }
       return true
@@ -1263,7 +1263,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           return
         }
       } catch {
-        _ = terminate(descriptor.nativeCallId, type: .nativeFailure, reason: .failed)
+        _ = terminate(descriptor.nativeCallId, type: .nativeFailure, reason: .failed, failureOrigin: .audioActivation)
       }
     }
   }
@@ -1292,7 +1292,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
     MknoonCallDiagnostics.shared.record(handle: callAction.callUUID.uuidString.lowercased(), stage: "answer",
                                         action: "accept", outcome: "timeout", reason: "action_timeout")
     synchronized {
-      _ = terminate(callAction.callUUID, type: .nativeFailure, reason: .failed)
+      _ = terminate(callAction.callUUID, type: .nativeFailure, reason: .failed, failureOrigin: .actionTimeout)
     }
   }
 
@@ -1309,7 +1309,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
       scheduleAnswerAdoptionBound(nativeCallId)
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer=recorded")
       guard configureCallAudioSession(stage: "answer") else {
-        _ = terminate(nativeCallId, type: .nativeFailure, reason: .failed)
+        _ = terminate(nativeCallId, type: .nativeFailure, reason: .failed, failureOrigin: .audioConfiguration)
         return false
       }
       return true
@@ -1330,7 +1330,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
             nowMs() - answer.occurredAtMs >= Self.answerAdoptionBoundMs
       else { return false }
       mknoonCallKitDiag("[MKNOON_CALLKIT_DIAG] answer_adoption_bound=exceeded")
-      return terminate(nativeCallId, type: .nativeFailure, reason: .failed)
+      return terminate(nativeCallId, type: .nativeFailure, reason: .failed, failureOrigin: .answerAdoptionTimeout)
     }
   }
 
@@ -1642,7 +1642,7 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
           result = self.callsEnabled ? .callKitFailure : .disabled
         } else if let error, !adoptedExistingCall {
           diagnosticError = error
-          _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed)
+          _ = self.terminate(payload.nativeCallId, type: .nativeFailure, reason: .failed, failureOrigin: .incomingReport)
           result = .callKitFailure
         } else if !self.record(payload.nativeCallId, .presented) {
           self.failClosedAfterPersistenceFailure(payload.nativeCallId)
@@ -1809,14 +1809,18 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   }
 
   @discardableResult
-  private func record(_ nativeCallId: UUID, _ type: PendingNativeCallEventType) -> Bool {
+  private func record(
+    _ nativeCallId: UUID,
+    _ type: PendingNativeCallEventType,
+    failureOrigin: NativeFailureOrigin? = nil
+  ) -> Bool {
     // A retained descriptor is not live authority after withdrawal, even if
     // persistence later recovers. Terminal cleanup and audio release remain
     // writable while every nonterminal transition stays fenced.
     guard callsEnabled || type.isTerminal || type == .audioDeactivated else { return false }
     switch store.append(nativeCallId: nativeCallId, type: type) {
     case let .appended(_, event):
-      MknoonCallDiagnostics.shared.journal(nativeCallId.uuidString.lowercased(), type)
+      MknoonCallDiagnostics.shared.journal(nativeCallId.uuidString.lowercased(), type, failureOrigin: failureOrigin)
       eventHandler?(event)
       return true
     case .ignoredAfterTerminal:
@@ -1849,13 +1853,14 @@ internal final class MknoonCallKitController: NSObject, CXProviderDelegate {
   private func terminate(
     _ nativeCallId: UUID,
     type: PendingNativeCallEventType,
-    reason: CXCallEndedReason
+    reason: CXCallEndedReason,
+    failureOrigin: NativeFailureOrigin? = nil
   ) -> Bool {
     guard type.isTerminal, let descriptor = store.snapshot(),
           descriptor.nativeCallId == nativeCallId
     else { return false }
     let newlyRecorded = descriptor.terminalEvent == nil
-    if newlyRecorded, !record(nativeCallId, type) {
+    if newlyRecorded, !record(nativeCallId, type, failureOrigin: failureOrigin) {
       failClosedAfterPersistenceFailure(nativeCallId)
       return false
     }

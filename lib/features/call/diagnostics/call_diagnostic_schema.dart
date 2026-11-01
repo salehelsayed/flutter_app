@@ -392,6 +392,15 @@ const Map<String, dynamic> callDiagnosticSchemaV1 = {
       "not_started",
       "unknown",
     ],
+    "nativeFailureOrigin": [
+      "incoming_report",
+      "outgoing_transaction",
+      "audio_configuration",
+      "audio_activation",
+      "action_timeout",
+      "answer_adoption_timeout",
+      "unknown",
+    ],
   },
   "limits": {
     "localRetentionDays": 7,

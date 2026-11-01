@@ -10880,6 +10880,24 @@ existing sender-custody/duplicate-receive retry contract. This observation
 change does not fix or establish a delivery failure on an exported trace.
 Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
+Eight build128/129 incoming-domain CallKit code3 traces were OS Do Not Disturb filtering.
+The released report/completion path stays unchanged; duplicate UUID is code2.
+
+The five `media_failed` trace groups in that export contain only pre-accept
+terminal summaries: `accepted`, `connected` and `mediaFlowVerified` are false.
+Each contains a committed native-failure journal event; `nativeCommitted` proves
+journal persistence, not connected audio. The old records do not identify its
+failure site or justify an ICE, TURN or permission diagnosis. App and call
+collector labels cannot be joined to assign the DND cases to these calls.
+`nativeFailureOrigin` now preserves the closed native fault site on that existing
+committed terminal event, with `unknown` for unclassified paths. It does not
+change call ending, journal storage, completion or audio control. Its schema
+mirrors stay synchronized, and v1 uploads strip this local-only field while
+retaining event IDs and ACKs. The focused regression first failed seven origin
+cases, then passed all13 cases. Native capture fixtures use explicit increasing
+consent epochs, serial execution and opt-out/clear teardown. Their simulator
+execution remains owned by Flutter; host checks do not certify native behavior.
+
 - **Go final-only diagnostic records:** `app_diagnostics_store.go` leaves the
   ordinary-event slice nil when only finals have been stored, so JSON contains
   `events: null`. The Python reader treats only that null as an empty list;

@@ -885,6 +885,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       'trustedDeviceCount',
       'remoteRingingObserved',
       'timeToRemoteRingingMs',
+      'nativeFailureOrigin',
     ]) {
       values.remove(key);
     }

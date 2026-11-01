@@ -21,5 +21,6 @@ internal object MknoonCallDiagnosticSchema {
         "completeness" to setOf("complete", "partial", "legacy", "interrupted", "truncated", "unknown"),
         "route" to setOf("system_default", "earpiece", "speaker", "bluetooth", "wired_headset", "unknown"),
         "failureStage" to setOf("android_audio_focus", "peer_create", "user_media", "track_invariant", "add_track", "snapshot_senders", "snapshot_transceivers", "snapshot_transceiver_direction", "snapshot_receivers", "snapshot_stats", "snapshot_deadline", "set_audio_session_active", "create_connection", "supported_output_routes", "snapshot"),
+        "nativeFailureOrigin" to setOf("incoming_report", "outgoing_transaction", "audio_configuration", "audio_activation", "action_timeout", "answer_adoption_timeout", "unknown"),
     )
 }

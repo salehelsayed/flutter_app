@@ -258,21 +258,33 @@ final class MknoonCallDiagnosticSpoolTests: XCTestCase {
 }
 
 private let nativeCallDiagnosticCaptureTrace = "423e4567-e89b-42d3-a456-426614174003"
+private var nativeCallDiagnosticCaptureConsentEpoch: Int64 = 0
+
+private func nextNativeCallDiagnosticCaptureConsentEpoch() -> Int64 {
+  let now = Int64(Date().timeIntervalSince1970 * 1_000)
+  nativeCallDiagnosticCaptureConsentEpoch = max(now, nativeCallDiagnosticCaptureConsentEpoch + 1)
+  return nativeCallDiagnosticCaptureConsentEpoch
+}
 
 extension XCTestCase {
   // Use the existing command queue so drains follow the controller's queued journal
-  // writes. Captures in this RunnerTests process run serially and always opt out
-  // and clear at teardown; no app/device session supplies their diagnostic state.
+  // writes. Captures in this RunnerTests process run serially. Like the Dart
+  // collector, consent epochs use current milliseconds and advance for each
+  // transition; teardown always opts out with a newer epoch and clears.
   func beginNativeCallDiagnosticCapture() throws {
+    addTeardownBlock {
+      XCTAssertEqual(try self.nativeCallDiagnosticCommand("configure", [
+        "enabled": false, "consentEpoch": nextNativeCallDiagnosticCaptureConsentEpoch(),
+      ]) as? Bool, true)
+      XCTAssertEqual(try self.nativeCallDiagnosticCommand("clear") as? Bool, true)
+    }
     XCTAssertEqual(try nativeCallDiagnosticCommand("clear") as? Bool, true)
-    XCTAssertEqual(try nativeCallDiagnosticCommand("configure", ["enabled": true]) as? Bool, true)
+    XCTAssertEqual(try nativeCallDiagnosticCommand("configure", [
+      "enabled": true, "consentEpoch": nextNativeCallDiagnosticCaptureConsentEpoch(),
+    ]) as? Bool, true)
     XCTAssertEqual(try nativeCallDiagnosticCommand("bind", [
       "callHandle": "123e4567-e89b-42d3-a456-426614174000", "traceId": nativeCallDiagnosticCaptureTrace,
     ]) as? Bool, true)
-    addTeardownBlock {
-      XCTAssertEqual(try self.nativeCallDiagnosticCommand("configure", ["enabled": false]) as? Bool, true)
-      XCTAssertEqual(try self.nativeCallDiagnosticCommand("clear") as? Bool, true)
-    }
   }
 
   func nativeCallDiagnosticCommand(_ method: String, _ args: [String: Any] = [:]) throws -> Any {

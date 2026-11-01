@@ -349,6 +349,16 @@ internal final class MknoonCallDiagnosticSpool {
   }
 }
 
+internal enum NativeFailureOrigin: String {
+  case incomingReport = "incoming_report"
+  case outgoingTransaction = "outgoing_transaction"
+  case audioConfiguration = "audio_configuration"
+  case audioActivation = "audio_activation"
+  case actionTimeout = "action_timeout"
+  case answerAdoptionTimeout = "answer_adoption_timeout"
+  case unknown
+}
+
 /// Serial, asynchronous sink: no file or bridge operation is on PushKit's completion path.
 internal final class MknoonCallDiagnostics {
   static let shared = MknoonCallDiagnostics()
@@ -388,7 +398,7 @@ internal final class MknoonCallDiagnostics {
   func bind(handle: String, traceId: String, context: [String: Any] = [:]) {
     queue.async { [weak self] in _ = self?.spool?.bind(handle, traceId: traceId, context: context) }
   }
-  func journal(_ handle: String, _ type: PendingNativeCallEventType) {
+  func journal(_ handle: String, _ type: PendingNativeCallEventType, failureOrigin: NativeFailureOrigin? = nil) {
     let stage: String
     switch type {
     case .presented: stage = "presentation"
@@ -397,8 +407,10 @@ internal final class MknoonCallDiagnostics {
     default: stage = "terminal"
     }
     let reason = MknoonCallDiagnosticSpool.journalReason(type, context: MknoonCallDiagnosticScope.current)
+    var values: [String: Any] = ["nativeCommitted": true, "terminal": type.isTerminal]
+    if type == .nativeFailure { values["nativeFailureOrigin"] = (failureOrigin ?? .unknown).rawValue }
     record(handle: handle, stage: stage, action: "commit", outcome: "ok", reason: reason,
-           values: ["nativeCommitted": true, "terminal": type.isTerminal])
+           values: values)
   }
   /// Strip optional diagnostics before the existing strict authority parser.
   /// Invalid metadata is ignored and never changes an otherwise valid call.
@@ -471,5 +483,6 @@ internal enum MknoonCallDiagnosticSchema {
     "completeness": Set(["complete", "partial", "legacy", "interrupted", "truncated", "unknown"]),
     "route": Set(["system_default", "earpiece", "speaker", "bluetooth", "wired_headset", "unknown"]),
     "failureStage": Set(["android_audio_focus", "peer_create", "user_media", "track_invariant", "add_track", "snapshot_senders", "snapshot_transceivers", "snapshot_transceiver_direction", "snapshot_receivers", "snapshot_stats", "snapshot_deadline", "set_audio_session_active", "create_connection", "supported_output_routes", "snapshot"]),
+    "nativeFailureOrigin": Set(["incoming_report", "outgoing_transaction", "audio_configuration", "audio_activation", "action_timeout", "answer_adoption_timeout", "unknown"]),
   ]
 }
