@@ -709,6 +709,50 @@ void main() {
     }
   });
 
+  testWidgets('a callee whose microphone is off is named, not shown as no '
+      'answer or as the caller\'s own permission problem', (tester) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    await tester.pumpWidget(
+      harness(
+        capability: capability,
+        loadContactDisplayName: (_) async => 'Layla',
+      ),
+    );
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _activeId,
+        peerId: 'callee-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.ringing,
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+    capability.emit(
+      _projection(
+        now: now,
+        callId: _activeId,
+        peerId: 'callee-peer',
+        direction: CallDirection.outgoing,
+        state: CallState.ended,
+        endReason: CallEndReason.remotePermissionDenied,
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.text("Layla can't take calls right now. Their microphone is off."),
+      findsOneWidget,
+    );
+    expect(find.text('No answer.'), findsNothing);
+    expect(
+      find.text('Microphone permission is needed to make calls.'),
+      findsNothing,
+    );
+  });
+
   group('microphone denial notice', () {
     Future<void> endWithPermissionDenied(
       WidgetTester tester,

@@ -122,101 +122,112 @@ void main() {
     ]);
   });
 
-  test('terminal reasons map to stable privacy-safe history statuses', () async {
-    final repository = _Repository();
-    final projector = CallHistoryProjector(repository);
-    final cases = <(CallDirection, CallEndReason, CallHistoryStatus)>[
-      (
-        CallDirection.incoming,
-        CallEndReason.declined,
-        CallHistoryStatus.declined,
-      ),
-      (CallDirection.outgoing, CallEndReason.busy, CallHistoryStatus.busy),
-      (
-        CallDirection.outgoing,
-        CallEndReason.callerCancelled,
-        CallHistoryStatus.cancelled,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.noAnswer,
-        CallHistoryStatus.missed,
-      ),
-      // Hangups before media connected (no connectedAt in this table).
-      (
-        CallDirection.outgoing,
-        CallEndReason.remoteHangup,
-        CallHistoryStatus.declined,
-      ),
-      (
-        CallDirection.incoming,
-        CallEndReason.remoteHangup,
-        CallHistoryStatus.missed,
-      ),
-      (
-        CallDirection.incoming,
-        CallEndReason.localHangup,
-        CallHistoryStatus.declined,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.localHangup,
-        CallHistoryStatus.cancelled,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.permissionDenied,
-        CallHistoryStatus.failed,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.unsupported,
-        CallHistoryStatus.failed,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.signalingFailed,
-        CallHistoryStatus.failed,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.mediaFailed,
-        CallHistoryStatus.failed,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.reconnectFailed,
-        CallHistoryStatus.failed,
-      ),
-      (CallDirection.incoming, CallEndReason.expired, CallHistoryStatus.missed),
-      (
-        CallDirection.outgoing,
-        CallEndReason.appShutdown,
-        CallHistoryStatus.failed,
-      ),
-      (
-        CallDirection.outgoing,
-        CallEndReason.policyRejected,
-        CallHistoryStatus.failed,
-      ),
-    ];
-
-    for (var index = 0; index < cases.length; index++) {
-      final value = cases[index];
-      final hex = index.toRadixString(16);
-      final id =
-          '$hex$hex$hex$hex$hex$hex$hex$hex-$hex$hex$hex$hex-4$hex$hex$hex-8$hex$hex$hex-$hex$hex$hex$hex$hex$hex$hex$hex$hex$hex$hex$hex';
-      final entry = await projector.projectTerminal(
-        _terminal(
-          id: id,
-          direction: value.$1,
-          reason: value.$2,
-          startedAt: DateTime.utc(2026, 8, 30, 12, index),
+  test(
+    'terminal reasons map to stable privacy-safe history statuses',
+    () async {
+      final repository = _Repository();
+      final projector = CallHistoryProjector(repository);
+      final cases = <(CallDirection, CallEndReason, CallHistoryStatus)>[
+        (
+          CallDirection.incoming,
+          CallEndReason.declined,
+          CallHistoryStatus.declined,
         ),
-      );
-      expect(entry.status, value.$3, reason: value.$2.name);
-    }
-  });
+        (CallDirection.outgoing, CallEndReason.busy, CallHistoryStatus.busy),
+        (
+          CallDirection.outgoing,
+          CallEndReason.callerCancelled,
+          CallHistoryStatus.cancelled,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.noAnswer,
+          CallHistoryStatus.missed,
+        ),
+        // Hangups before media connected (no connectedAt in this table).
+        (
+          CallDirection.outgoing,
+          CallEndReason.remoteHangup,
+          CallHistoryStatus.declined,
+        ),
+        (
+          CallDirection.incoming,
+          CallEndReason.remoteHangup,
+          CallHistoryStatus.missed,
+        ),
+        (
+          CallDirection.incoming,
+          CallEndReason.localHangup,
+          CallHistoryStatus.declined,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.localHangup,
+          CallHistoryStatus.cancelled,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.permissionDenied,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.remotePermissionDenied,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.unsupported,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.signalingFailed,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.mediaFailed,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.reconnectFailed,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.incoming,
+          CallEndReason.expired,
+          CallHistoryStatus.missed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.appShutdown,
+          CallHistoryStatus.failed,
+        ),
+        (
+          CallDirection.outgoing,
+          CallEndReason.policyRejected,
+          CallHistoryStatus.failed,
+        ),
+      ];
+
+      for (var index = 0; index < cases.length; index++) {
+        final value = cases[index];
+        final id =
+            '00000000-0000-4000-8000-${index.toString().padLeft(12, '0')}';
+        final entry = await projector.projectTerminal(
+          _terminal(
+            id: id,
+            direction: value.$1,
+            reason: value.$2,
+            startedAt: DateTime.utc(2026, 8, 30, 12, index),
+          ),
+        );
+        expect(entry.status, value.$3, reason: value.$2.name);
+      }
+    },
+  );
 
   test('a callee that could not present the call keeps a busy row', () async {
     final projector = CallHistoryProjector(_Repository());

@@ -73,7 +73,8 @@ void main() {
   );
 
   testWidgets(
-    'a caller whose callee denied the microphone reads "No answer", never "on another call"',
+    'a caller whose callee denied the microphone reads that their microphone '
+    'is off, never "No answer" or "on another call"',
     (tester) async {
       // The wire keeps permission_denied, so older callees still send it.
       final terminate = CallSignal.create(
@@ -96,11 +97,17 @@ void main() {
 
       expect(caller.outcome, IncomingCallSignalOutcome.accepted);
       expect(caller.ended.state, CallState.ended);
-      expect(caller.ended.endReason, CallEndReason.noAnswer);
+      expect(caller.ended.endReason, CallEndReason.remotePermissionDenied);
 
       await _pumpCallerOverlay(tester, caller.ended);
 
-      expect(find.text('No answer.'), findsOneWidget);
+      expect(
+        find.textContaining(
+          "can't take calls right now. Their microphone is off.",
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('No answer.'), findsNothing);
       expect(find.text('The contact is on another call.'), findsNothing);
     },
   );

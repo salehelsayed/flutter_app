@@ -177,6 +177,19 @@ void main() {
       expect(find.text('Call failed'), findsOneWidget);
     });
 
+    testWidgets('a callee with the microphone off reads as such', (
+      tester,
+    ) async {
+      await pumpRow(
+        tester,
+        makeEntry(
+          direction: ConversationCallDirection.outgoing,
+          status: ConversationCallStatus.microphoneOff,
+        ),
+      );
+      expect(find.text("Couldn't connect: microphone off"), findsOneWidget);
+    });
+
     testWidgets('TC-405-12 a duration never appears on a call that never '
         'connected', (tester) async {
       await pumpRow(

@@ -34,6 +34,34 @@ void main() {
     );
   }
 
+  test('an outgoing call the callee could not take for a muted microphone '
+      'reads as microphone off, while other failures stay failed', () {
+    final startedAt = DateTime.utc(2026, 2, 9, 15, 30);
+    CallHistoryEntry failed(CallEndReason reason) => CallHistoryEntry(
+      callId: CallId.parse('a2f0a1d6-0000-4000-8000-000000000009'),
+      contactAccountPeerId: '12D3KooWTestPeerId1234567890',
+      direction: CallDirection.outgoing,
+      terminalReason: reason,
+      status: CallHistoryStatus.failed,
+      startedAt: startedAt,
+      endedAt: startedAt.add(const Duration(seconds: 2)),
+      transportRoute: null,
+      createdAt: startedAt,
+      updatedAt: startedAt,
+    );
+
+    expect(
+      projectCallTimelineEntry(
+        failed(CallEndReason.remotePermissionDenied),
+      ).status,
+      ConversationCallStatus.microphoneOff,
+    );
+    expect(
+      projectCallTimelineEntry(failed(CallEndReason.permissionDenied)).status,
+      ConversationCallStatus.failed,
+    );
+  });
+
   test('TC-405-40 the source republishes the injected change signal', () async {
     final controller = StreamController<void>.broadcast();
     addTearDown(controller.close);

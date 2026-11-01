@@ -45,7 +45,7 @@ void main() {
         }
         final db = await open(currentIdentityDatabaseVersion);
         addTearDown(db.close);
-        expect(await db.getVersion(), 126);
+        expect(await db.getVersion(), currentIdentityDatabaseVersion);
 
         final column = (await db.rawQuery(
           'PRAGMA table_info(posts)',
@@ -80,17 +80,16 @@ void main() {
     );
   }
 
-  test('v126 is the last entry of both production registries', () {
-    expect(currentIdentityDatabaseVersion, 126);
+  test('v126 follows v125 once in both production registries', () {
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
       expect(registry.where((entry) => entry.version == 126), hasLength(1));
-      expect(registry.last.version, 126);
-      expect(registry.last.name, '126_thoughts_metrics_opt_out');
-      expect(registry.last.run, same(runThoughtsMetricsOptOutMigration));
-      expect(registry[registry.length - 2].version, 125);
+      final index = registry.indexWhere((entry) => entry.version == 126);
+      expect(registry[index].name, '126_thoughts_metrics_opt_out');
+      expect(registry[index].run, same(runThoughtsMetricsOptOutMigration));
+      expect(registry[index - 1].version, 125);
     }
   });
 }

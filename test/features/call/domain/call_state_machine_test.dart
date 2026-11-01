@@ -1404,6 +1404,7 @@ void main() {
         'remote_hangup',
         'local_hangup',
         'permission_denied',
+        'remote_permission_denied',
         'unsupported',
         'signaling_failed',
         'media_failed',
@@ -1412,6 +1413,15 @@ void main() {
         'app_shutdown',
         'policy_rejected',
       ]);
+      expect(
+        () => CallEndReason.parseWire('remote_permission_denied'),
+        throwsFormatException,
+        reason: 'the callee-microphone-off reason is local and never sent',
+      );
+      expect(
+        CallEndReason.parseStored('remote_permission_denied'),
+        CallEndReason.remotePermissionDenied,
+      );
     });
   });
 

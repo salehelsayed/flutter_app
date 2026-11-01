@@ -128,8 +128,9 @@ void main() {
       );
     }
 
-    test('a caller reads a callee microphone denial as no answer, never as '
-        'busy or its own permission problem', () {
+    test('a caller reads a callee microphone denial as the callee\'s '
+        'microphone being off, never as no answer or its own permission '
+        'problem', () {
       final ended = _reduce(<CallEvent>[
         ..._outgoingRinging,
         _event(
@@ -137,7 +138,7 @@ void main() {
           endReason: CallEndReason.permissionDenied,
         ),
       ]);
-      expect(ended.endReason, CallEndReason.noAnswer);
+      expect(ended.endReason, CallEndReason.remotePermissionDenied);
     });
 
     test(
