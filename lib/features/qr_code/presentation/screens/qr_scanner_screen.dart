@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import '../widgets/scan_overlay.dart';
@@ -44,8 +45,21 @@ class QRScannerScreen extends StatefulWidget {
   /// Callback when a QR code is successfully scanned.
   final void Function(String qrData) onScanned;
   final QRScannerScreenCopy? copy;
+  final Future<bool> Function() openAppSettings;
+  final Future<bool> Function() isCameraDenied;
 
-  const QRScannerScreen({super.key, required this.onScanned, this.copy});
+  const QRScannerScreen({
+    super.key,
+    required this.onScanned,
+    this.copy,
+    this.openAppSettings = ph.openAppSettings,
+    this.isCameraDenied = _osCameraDenied,
+  });
+
+  static Future<bool> _osCameraDenied() async {
+    final status = await ph.Permission.camera.status;
+    return status.isDenied || status.isPermanentlyDenied || status.isRestricted;
+  }
 
   @override
   State<QRScannerScreen> createState() => _QRScannerScreenState();
@@ -60,9 +74,30 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   );
 
   bool _hasScanned = false;
+  bool _cameraDenied = false;
+  bool _cameraDeniedChecked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onScannerState);
+  }
+
+  // iOS can report a refused camera as a generic start error, so any start
+  // error asks the OS once.
+  Future<void> _onScannerState() async {
+    final error = _controller.value.error;
+    if (error == null || _cameraDenied || _cameraDeniedChecked) return;
+    _cameraDeniedChecked = true;
+    final denied =
+        error.errorCode == MobileScannerErrorCode.permissionDenied ||
+        await widget.isCameraDenied().catchError((_) => false);
+    if (denied && mounted) setState(() => _cameraDenied = true);
+  }
 
   @override
   void dispose() {
+    _controller.removeListener(_onScannerState);
     _controller.dispose();
     super.dispose();
   }
@@ -94,16 +129,21 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   @override
   Widget build(BuildContext context) {
     final copy = _copyFor(context);
+    final denied = _cameraDenied;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
           // Camera preview
-          MobileScanner(controller: _controller, onDetect: _onDetect),
+          MobileScanner(
+            controller: _controller,
+            onDetect: _onDetect,
+            errorBuilder: (context, error) =>
+                denied ? _buildCameraDenied() : _buildScannerError(error),
+          ),
 
-          // Scan overlay with cutout
-          const ScanOverlay(),
+          if (!denied) const ScanOverlay(),
 
           // Top bar with close button and title
           SafeArea(
@@ -130,29 +170,30 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
           ),
 
           // Instructions at bottom
-          Positioned(
-            bottom: MediaQuery.of(context).padding.bottom + 80,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                Text(
-                  copy.instruction,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  copy.subtitle,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: AppColors.primaryAccent,
-                    fontSize: 12,
+          if (!denied)
+            Positioned(
+              bottom: MediaQuery.of(context).padding.bottom + 80,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  Text(
+                    copy.instruction,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    copy.subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.primaryAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
 
           // Debug: Paste QR button (only in debug mode)
           if (kDebugMode)
@@ -176,6 +217,61 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildScannerError(MobileScannerException error) {
+    return ColoredBox(
+      color: Colors.black,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error, color: Colors.white),
+            const SizedBox(height: 16),
+            Text(
+              error.errorCode.message,
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraDenied() {
+    final l10n = AppLocalizations.of(context)!;
+    return SizedBox.expand(
+      child: ColoredBox(
+        color: Colors.black,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.photo_camera_outlined,
+                  color: Colors.white70,
+                  size: 48,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.perm_camera,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+                const SizedBox(height: 24),
+                FilledButton.icon(
+                  onPressed: widget.openAppSettings,
+                  icon: const Icon(Icons.settings_outlined),
+                  label: Text(l10n.compose_open_settings),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

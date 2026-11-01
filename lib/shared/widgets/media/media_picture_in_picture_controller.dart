@@ -294,10 +294,15 @@ class MediaPictureInPictureController {
     final knownDurationMs =
         current.item.durationMs ??
         (adapterDurationMs > 0 ? adapterDurationMs : null);
-    final positionMs = _normalizePosition(
+    final observedPositionMs = _normalizePosition(
       playback.position.inMilliseconds,
       knownDurationMs,
     );
+    // Native completes at once from the end, so an ended video replays.
+    final positionMs =
+        knownDurationMs != null && observedPositionMs >= knownDurationMs
+        ? 0
+        : observedPositionMs;
     final wasPlaying = playback.isPlaying;
     final sessionId = _sessionIdFactory();
     if (sessionId.trim().isEmpty) {
@@ -511,12 +516,8 @@ class MediaPictureInPictureController {
         ? 0
         : _normalizePosition(event.positionMs, session.knownDurationMs);
     await _resumeStore.writeResumePosition(current.item, positionMs);
-
-    final shouldRestore =
-        event.state == PictureInPictureState.restoring ||
-        (event.state == PictureInPictureState.stopped &&
-            event.reason == PictureInPictureTerminalReason.systemClose);
-    if (!shouldRestore) return;
+    // The Flutter player was released at handoff, so every native end hands
+    // it back; only an expand resumes playback.
     await _restorePlayback(
       MediaPictureInPictureRestore(
         item: current.item,

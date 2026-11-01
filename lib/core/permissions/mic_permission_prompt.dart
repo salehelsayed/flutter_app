@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -18,6 +19,43 @@ Future<void> showMicPermissionDeniedPrompt(
   BuildContext context, {
   required MicPermissionGateway gateway,
 }) {
+  final l10n = AppLocalizations.of(context)!;
+  return _showPermissionDeniedPrompt(
+    context,
+    gateway: gateway,
+    keyPrefix: 'mic-perm',
+    icon: Icons.mic_rounded,
+    title: l10n.mic_perm_dialog_title,
+    body: l10n.mic_perm_dialog_body,
+  );
+}
+
+/// image_picker's error when the OS refuses camera access.
+bool isCameraAccessDenied(Object error) =>
+    error is PlatformException && error.code == 'camera_access_denied';
+
+/// The same recovery as the microphone sheet, for a refused camera.
+Future<void> showCameraPermissionDeniedPrompt(
+  BuildContext context, {
+  required MicPermissionGateway gateway,
+}) {
+  return _showPermissionDeniedPrompt(
+    context,
+    gateway: gateway,
+    keyPrefix: 'camera-perm',
+    icon: Icons.photo_camera_outlined,
+    body: AppLocalizations.of(context)!.perm_camera,
+  );
+}
+
+Future<void> _showPermissionDeniedPrompt(
+  BuildContext context, {
+  required MicPermissionGateway gateway,
+  required String keyPrefix,
+  required IconData icon,
+  String? title,
+  required String body,
+}) {
   return showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
@@ -26,7 +64,7 @@ Future<void> showMicPermissionDeniedPrompt(
       final l10n = AppLocalizations.of(sheetContext)!;
       final scheme = Theme.of(sheetContext).colorScheme;
       return Padding(
-        key: const ValueKey('mic-perm-sheet'),
+        key: ValueKey('$keyPrefix-sheet'),
         padding: const EdgeInsets.fromLTRB(24, 4, 24, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -39,22 +77,15 @@ Future<void> showMicPermissionDeniedPrompt(
               ),
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Icon(
-                  Icons.mic_rounded,
-                  color: scheme.onPrimaryContainer,
-                ),
+                child: Icon(icon, color: scheme.onPrimaryContainer),
               ),
             ),
             const SizedBox(height: 16),
-            Text(
-              l10n.mic_perm_dialog_title,
-              style: Theme.of(sheetContext).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.mic_perm_dialog_body,
-              style: Theme.of(sheetContext).textTheme.bodyMedium,
-            ),
+            if (title != null) ...[
+              Text(title, style: Theme.of(sheetContext).textTheme.titleLarge),
+              const SizedBox(height: 8),
+            ],
+            Text(body, style: Theme.of(sheetContext).textTheme.bodyMedium),
             const SizedBox(height: 20),
             OverflowBar(
               alignment: MainAxisAlignment.end,
@@ -63,12 +94,12 @@ Future<void> showMicPermissionDeniedPrompt(
               overflowSpacing: 8,
               children: [
                 TextButton(
-                  key: const ValueKey('mic-perm-not-now'),
+                  key: ValueKey('$keyPrefix-not-now'),
                   onPressed: () => Navigator.of(sheetContext).pop(),
                   child: Text(l10n.mic_perm_not_now),
                 ),
                 FilledButton.icon(
-                  key: const ValueKey('mic-perm-open-settings'),
+                  key: ValueKey('$keyPrefix-open-settings'),
                   onPressed: () async {
                     Navigator.of(sheetContext).pop();
                     await gateway.openAppSettings();

@@ -5959,6 +5959,15 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_PICK_CAMERA_ERROR',
         details: {'error': e.toString()},
       );
+      if (isCameraAccessDenied(e)) {
+        if (mounted) {
+          await showCameraPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+          );
+        }
+        return;
+      }
       if (mounted) {
         showVideoProcessingNotice(
           context,
@@ -5994,6 +6003,15 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_PICK_VIDEO_CAMERA_ERROR',
         details: {'error': e.toString()},
       );
+      if (isCameraAccessDenied(e)) {
+        if (mounted) {
+          await showCameraPermissionDeniedPrompt(
+            context,
+            gateway: widget.micPermissionGateway,
+          );
+        }
+        return;
+      }
     }
   }
 

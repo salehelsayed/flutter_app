@@ -254,11 +254,11 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
                     durationMs = current.durationMs,
                 )
             }
-            finishAndRemoveTask()
+            finishOwnTask()
             return
         }
         if (!registry.attach(current.session, current.attachment, this)) {
-            finishAndRemoveTask()
+            finishOwnTask()
             return
         }
         request = current
@@ -476,8 +476,14 @@ class ReceivedVideoPictureInPictureActivity : Activity() {
             observedPositionMs = lastKnownPositionMs,
             durationMs = discoveredDurationMs,
         )
-        finishAndRemoveTask()
+        finishOwnTask()
         return emitted
+    }
+
+    // Until Android pins it, this activity shares MainActivity's task, and
+    // removing that task kills the app.
+    private fun finishOwnTask() {
+        if (isTaskRoot) finishAndRemoveTask() else finish()
     }
 
     private fun onPlaybackCompleted(current: PictureInPictureSessionRequest) {
