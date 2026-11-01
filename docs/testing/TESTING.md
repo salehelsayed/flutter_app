@@ -3364,6 +3364,12 @@ pass with zero failures/skips; targeted analysis reports no issues. The first
 GREEN attempt exposed three helper-fixture failures because its hand-built
 schema omitted v121; that fixture now applies the existing migration. The first
 analysis warning and both initial test attempts remain in the evidence.
+The linked-device addressing foundation's historical v112 fixture also applies
+v121 when exercising current deletion helpers, alongside its existing v117
+call-history dependency. Foreground and headless production open the current
+schema before wiring those helpers. The five foundation cases plus the 557-case
+contact selection pass serially; evidence is retained in
+`.codex-test-logs/contact-decision-linked-fixture-20261101/`.
 Earlier seven Go crypto cases preserve nonce freshness, wrong-key/tamper
 rejection and binding of message ID/time in AES-GCM AAD. These host checks do not
 certify device delivery. The relay

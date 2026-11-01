@@ -16,6 +16,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/migrations/121_contact_repair.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
@@ -108,6 +109,9 @@ Future<Database> _openV112Database() async {
   );
   // SE-47: contact deletion also clears that contact's v117 call history.
   await runCallHistoryMigration(db);
+  // Current deletion preserves the v121 consent cutoff even in this
+  // historical v112 fixture; retain the production tables and triggers.
+  await runContactRepairMigration(db);
   return db;
 }
 
