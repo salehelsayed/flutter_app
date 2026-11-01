@@ -22,12 +22,13 @@ const bool kOrbitDepthEnabled = bool.fromEnvironment(
   defaultValue: true,
 );
 
-/// The You page, opened by tapping your own photo on Orbit. Off by default:
-/// `--dart-define=MKNOON_ENABLE_YOU_PAGE=true` turns it on. Off leaves the
+/// The You page, opened by tapping your own photo on Orbit. On by default
+/// (owner, 11-01); a long-press on the photo still enters Orbit edit mode.
+/// `--dart-define=MKNOON_ENABLE_YOU_PAGE=false` turns it off, which leaves the
 /// centre photo with no tap at all.
 const bool kYouPageEnabled = bool.fromEnvironment(
   'MKNOON_ENABLE_YOU_PAGE',
-  defaultValue: false,
+  defaultValue: true,
 );
 
 /// Tests run with both on (test/flutter_test_config.dart) and switch them off
@@ -46,4 +47,7 @@ bool get thoughtsEnabled => debugThoughtsEnabledOverride ?? kThoughtsEnabled;
 bool get orbitDepthEnabled =>
     debugOrbitDepthEnabledOverride ?? kOrbitDepthEnabled;
 
-bool get youPageEnabled => debugYouPageEnabledOverride ?? kYouPageEnabled;
+/// The You page shows your own thought, so the Thoughts kill switch hides it
+/// as well.
+bool get youPageEnabled =>
+    thoughtsEnabled && (debugYouPageEnabledOverride ?? kYouPageEnabled);
