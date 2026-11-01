@@ -232,7 +232,9 @@ const _relocations = <String, List<String>>{
       'introduction_repository_impl.dart': <String>[
     'lib/features/introduction/data/repositories/'
         'introduction_repository_impl.dart',
-    '0b7bdb817d0c3cfcf1b5ba796a603adbb709dabaca7063344706362bea226b53',
+    // IN-008 adds the settled-introduction card retirement hook to this same
+    // adapter; imports are unchanged.
+    '844351bb53bf73ee44ed20baed0423c03734277a98fd59a3b6c780fcbf0c2d2f',
   ],
   'lib/features/posts/domain/repositories/'
       'post_repository_impl.dart': <String>[
