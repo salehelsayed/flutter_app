@@ -5,25 +5,39 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('mknoon/gemma_preview');
-  const floor = 5 * (1 << 29); // Approved provisional 2.5 GiB headroom.
+  const androidFloor = 7 * (1 << 28); // Android cold-load 1.75 GiB.
+  const iosFloor = 5 * (1 << 29); // Unchanged iOS cold-load 2.5 GiB.
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-  for (final platform in [
-    TranslationPlatform.android,
-    TranslationPlatform.ios,
+  for (final example in [
+    (
+      platform: TranslationPlatform.android,
+      floor: androidFloor,
+      name: 'Android 1.75 GiB cold-load',
+    ),
+    (
+      platform: TranslationPlatform.ios,
+      floor: iosFloor,
+      name: 'iOS 2.5 GiB cold-load',
+    ),
   ]) {
-    for (final bytes in [floor - 1, floor, floor + 1]) {
-      test('$platform available-memory boundary $bytes', () async {
+    for (final boundary in [
+      (delta: -1, name: 'rejects one byte below', expected: false),
+      (delta: 0, name: 'accepts exactly', expected: true),
+      (delta: 1, name: 'accepts one byte above', expected: true),
+    ]) {
+      test('${example.name} ${boundary.name}', () async {
+        final bytes = example.floor + boundary.delta;
         messenger.setMockMethodCallHandler(channel, (call) async {
           expect(call.method, 'memory');
           expect(call.arguments, isNull);
           return {'availableBytes': bytes, 'lowMemory': false};
         });
         expect(
-          await readTranslationMemoryAvailability(platform: platform),
-          bytes >= floor,
+          await readTranslationMemoryAvailability(platform: example.platform),
+          boundary.expected,
         );
       });
     }
@@ -47,7 +61,7 @@ void main() {
     () async {
       messenger.setMockMethodCallHandler(
         channel,
-        (_) async => {'availableBytes': floor},
+        (_) async => {'availableBytes': iosFloor},
       );
       expect(
         await readTranslationMemoryAvailability(
@@ -65,24 +79,24 @@ void main() {
     (name: 'negative RAM', payload: {'availableBytes': -1, 'lowMemory': false}),
     (
       name: 'string RAM',
-      payload: {'availableBytes': '$floor', 'lowMemory': false},
+      payload: {'availableBytes': '$androidFloor', 'lowMemory': false},
     ),
     (
       name: 'double RAM',
-      payload: {'availableBytes': floor.toDouble(), 'lowMemory': false},
+      payload: {'availableBytes': androidFloor.toDouble(), 'lowMemory': false},
     ),
     (
       name: 'boolean RAM',
       payload: {'availableBytes': true, 'lowMemory': false},
     ),
-    (name: 'missing lowMemory', payload: {'availableBytes': floor}),
+    (name: 'missing lowMemory', payload: {'availableBytes': androidFloor}),
     (
       name: 'numeric lowMemory',
-      payload: {'availableBytes': floor, 'lowMemory': 0},
+      payload: {'availableBytes': androidFloor, 'lowMemory': 0},
     ),
     (
       name: 'string lowMemory',
-      payload: {'availableBytes': floor, 'lowMemory': 'false'},
+      payload: {'availableBytes': androidFloor, 'lowMemory': 'false'},
     ),
     (name: 'non-map', payload: 'unavailable'),
   ]) {
@@ -117,7 +131,7 @@ void main() {
     messenger.setMockMethodCallHandler(
       channel,
       (_) async => {
-        'availableBytes': ++calls == 1 ? floor - 1 : floor,
+        'availableBytes': ++calls == 1 ? androidFloor - 1 : androidFloor,
         'lowMemory': false,
       },
     );

@@ -1210,7 +1210,7 @@ void main() {
     }
 
     test(
-      'each queued operation preflights again, including a warm Transcribe',
+      'warm cached Transcribe skips headroom admission but marks and completes every queued run',
       () async {
         var available = true;
         var reads = 0;
@@ -1222,6 +1222,17 @@ void main() {
           },
         );
         addTearDown(h.dispose);
+        const channel = MethodChannel('mknoon/gemma_preview');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'decodePcm') {
+            return {'pcm': Uint8List(2), 'sampleRate': 16000, 'channels': 1};
+          }
+          expect(call.method, 'memory');
+          return <String, Object?>{};
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
         final reply = Completer<String>();
         final started = Completer<void>();
         var loads = 0;
@@ -1230,25 +1241,75 @@ void main() {
           loadModel: () async {
             loads++;
             return _MemoryModel(() {
-              started.complete();
-              return reply.future;
+              expect(h.storage.safety!.inferenceInProgress, isTrue);
+              if (!started.isCompleted) {
+                started.complete();
+                return reply.future;
+              }
+              return Future.value('Transcript');
             });
           },
         );
         final first = service.translate('مرحبا', languageName: 'English');
         await started.future;
         final second = service.transcribe('/voice.m4a');
-        final rejected = expectLater(
+        final completed = expectLater(second, completion('Transcript'));
+        available = false;
+        reply.complete('Hello');
+        expect(await first, 'Hello');
+        await completed;
+        expect(reads, 1);
+        expect(loads, 1);
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(
+          h.storage.safetyWrites.map((record) => record.inferenceInProgress),
+          [true, false, true, false],
+        );
+      },
+    );
+
+    test(
+      'a failed load makes the next queued request cold and rechecks available memory',
+      () async {
+        var available = true;
+        var reads = 0;
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          readAvailableMemory: () async {
+            reads++;
+            return available;
+          },
+        );
+        addTearDown(h.dispose);
+        final loadStarted = Completer<void>();
+        final failLoad = Completer<void>();
+        var loads = 0;
+        final failure = StateError('ordinary load failure');
+        final service = GemmaPreviewService.forTesting(
+          controller: h.controller,
+          loadModel: () async {
+            loads++;
+            loadStarted.complete();
+            await failLoad.future;
+            throw failure;
+          },
+        );
+        final first = service.translate('مرحبا', languageName: 'English');
+        final firstFailed = expectLater(first, throwsA(same(failure)));
+        await loadStarted.future;
+        final second = service.translate('مرحبا', languageName: 'English');
+        final secondRefused = expectLater(
           second,
           throwsA(isA<TranslatorMemoryTemporarilyUnavailable>()),
         );
         available = false;
-        reply.complete('Hello');
-        expect(await first, 'Hello');
-        await rejected;
-        expect(reads, 2);
+        failLoad.complete();
+        await firstFailed;
+        await secondRefused;
         expect(loads, 1);
-        expect(h.controller.state.value, isA<ModelReady>());
+        expect(reads, 2);
         expect(h.storage.safety!.inferenceInProgress, isFalse);
         expect(h.storage.safety!.blockedReason, isNull);
       },
@@ -1488,6 +1549,7 @@ class _Harness {
 class _Storage implements ModelDeliveryStorage {
   ModelDeliveryRecord? record;
   ModelSafetyRecord? safety;
+  final safetyWrites = <ModelSafetyRecord>[];
   bool failSafetySave = false;
   Completer<void>? safetySaveStarted;
   Completer<void>? safetySaveGate;
@@ -1519,6 +1581,7 @@ class _Storage implements ModelDeliveryStorage {
     if (started != null && !started.isCompleted) started.complete();
     await safetySaveGate?.future;
     safety = value;
+    safetyWrites.add(value);
   }
 
   @override

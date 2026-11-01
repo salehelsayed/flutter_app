@@ -11466,14 +11466,24 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   The pinned LiteRT-LM 1.19.0 runtime requires Android 30 despite the app/plugin
   build minimum 24 and does not ship x86_64. Unknown/malformed/missing/failed
   static reads remain unsupported; API/ABI rejection alone has no RAM notice.
-  Before each queued Translate/Transcribe operation allocates a model, session
-  or decoded audio, a fresh `mknoon/gemma_preview` `memory` snapshot must report
-  at least a provisional 2.5 GiB available headroom, and Android `lowMemory` must
-  be false. Android reports system availability; iOS already uses
-  `os_proc_available_memory()` for process headroom. This threshold is approved
-  but unmeasured, including for a warm cached model; snapshots cannot guarantee
-  subsequent allocation success. Missing, malformed or low snapshots cause a
-  temporary localized message, retaining manual links without a sticky block.
+  Cold Translate/Transcribe loads require a fresh `mknoon/gemma_preview` `memory`
+  snapshot: Android at least 1.75 GiB available with `lowMemory == false`; iOS
+  retains 2.5 GiB process headroom from `os_proc_available_memory()`. Approval
+  m-4c3460c7 follows Kayan's m-246d9ceb build-197 measurement on a 6 GB Android
+  AVD: kernel total 5.86 GiB, peak app PSS about 2.57 GB for Translate / 2.75 GB
+  for Transcribe, RSS about 2.73/2.91 GB, and system availability about 3.69 GB
+  before loading versus 2.5 GB loaded. Android's 1.75 GiB cold floor is a policy
+  inference with roughly 0.4–0.5 GiB reserve beyond the observed load/audio delta,
+  not a successful-allocation guarantee. Under six background apps the reported
+  run survived while Android swapped about 1.34 GB of Mknoon and killed other
+  apps; that observation does not establish physical-phone behavior. A physical
+  Pixel 6a reports about 0.4 GiB less total RAM than this AVD; its available RAM
+  and behavior remain uncertain. Android calibration does not lower iOS's floor.
+  A healthy cached model skips current-headroom admission on subsequent queued
+  operations; every operation still checks static eligibility/blocking and
+  persists its inference marker. Failed or removed loads become cold again.
+  Missing, malformed or low cold-load snapshots produce a temporary localized
+  message, retaining manual links without a sticky block.
   A separate backup-excluded `inference_safety.json` beside the model is written
   with a flushed temporary file and atomic rename before inference allocation.
   One recovered in-flight marker is cleared silently and records count one;
@@ -11500,6 +11510,12 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   `.codex-test-logs/android-ai-memory-floor-20261101/red-run-results.json`,
   `green-selected/` and `green-selected-after-fixes/`. The latter binds tested
   source `be54bfbabf300095f3eba11d518cb826315e5561ce5c5869c128329654c2a0d2`.
+  The cold-load calibration and warm-cache follow-up produced causal RED with
+  82 passes and four intended failures, then the affected lane passed all 360
+  cases with no failures/skips and targeted analysis passed. The redundant-import
+  analysis failure is retained. Evidence is in `calibration-causal-red.log`,
+  `calibration-analyze.log` and `calibration-final-selected/` in the same directory;
+  tested source is `21a404e86361ab2b84bd77751210e23db72cb69f99e8d1d6ade47e06e7947999`.
   `TRANSLATION_CAPABILITY` retains numeric RAM/OS, ABI and decision
   without identifiers. Host policy/mock-channel tests and native source checks
   do not establish device performance or signed-artifact behavior.

@@ -571,7 +571,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     );
   }
 
-  Future<void> beginInference() async {
+  Future<void> beginInference({bool modelAlreadyLoaded = false}) async {
     await initialize();
     await _safetyQueue(() async {
       if (_safety.blockedReason != null) {
@@ -584,13 +584,15 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         throw StateError('Translator model is not ready');
       }
       final generation = _generation;
-      bool available;
-      try {
-        available = await _readAvailableMemory();
-      } on Object {
-        available = false;
+      if (!modelAlreadyLoaded) {
+        bool available;
+        try {
+          available = await _readAvailableMemory();
+        } on Object {
+          available = false;
+        }
+        if (!available) throw const TranslatorMemoryTemporarilyUnavailable();
       }
-      if (!available) throw const TranslatorMemoryTemporarilyUnavailable();
       if (_disposed ||
           generation != _generation ||
           !_canRun ||

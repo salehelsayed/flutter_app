@@ -151,7 +151,7 @@ final class GemmaPreviewService implements OnDeviceAi {
           throw StateError('Translator delivery is not configured');
         }
         // The durable marker is flushed before model/session/audio allocation.
-        await controller.beginInference();
+        await controller.beginInference(modelAlreadyLoaded: _model != null);
         var succeeded = false;
         var resourceExhausted = false;
         try {

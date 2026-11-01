@@ -11,7 +11,9 @@ enum TranslationPlatform { ios, android, other }
 const _iosMinimumPhysicalMemoryBytes = 7 * (1 << 29); // 3.5 GiB.
 // Nominal 6 GB Android phones can report less than 5.5 GiB to the kernel.
 const _androidMinimumPhysicalMemoryBytes = 9 * (1 << 29); // 4.5 GiB.
-const _minimumAvailableMemoryBytes = 5 * (1 << 29); // Provisional 2.5 GiB.
+const _androidMinimumAvailableMemoryBytes =
+    7 * (1 << 28); // 1.75 GiB cold load.
+const _iosMinimumAvailableMemoryBytes = 5 * (1 << 29); // 2.5 GiB cold load.
 
 const _capabilityChannel = MethodChannel('mknoon/gemma_preview');
 
@@ -119,7 +121,7 @@ readTranslationCapabilityFacts({
   }
 }
 
-/// A fresh snapshot before each inference; temporary failures never alter
+/// A fresh snapshot before a cold load; temporary failures never alter
 /// static eligibility. iOS reports process headroom, Android system RAM.
 Future<bool> readTranslationMemoryAvailability({
   TranslationPlatform? platform,
@@ -137,7 +139,10 @@ Future<bool> readTranslationMemoryAvailability({
       'memory',
     );
     final available = facts?['availableBytes'];
-    if (available is! int || available < _minimumAvailableMemoryBytes) {
+    final minimum = actualPlatform == TranslationPlatform.android
+        ? _androidMinimumAvailableMemoryBytes
+        : _iosMinimumAvailableMemoryBytes;
+    if (available is! int || available < minimum) {
       return false;
     }
     return actualPlatform != TranslationPlatform.android ||
