@@ -242,7 +242,7 @@ const _relocations = <String, List<String>>{
     // adapter; imports are unchanged.
     // Local dismissal keeps per-account offer markers in the existing store;
     // repository placement and SQL introduction rows are unchanged.
-    '3944568ceb807eeb913a6ad124e9affbbecfbfece112ff91fec8190a0b963aac',
+    '8bcd7a27a04861a10a356b035616bfaf3887291495abd52b5f1430035a77eb2a',
   ],
   'lib/features/posts/domain/repositories/'
       'post_repository_impl.dart': <String>[

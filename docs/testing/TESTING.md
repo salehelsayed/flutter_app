@@ -3553,16 +3553,19 @@ Already-connected introduction cards use independent account/introduction
 markers in the existing `SecureKeyStore` for local dismissal. Keep the SQL row
 and its status: the existing-row SEND guard then prevents a repeated delivery
 from recreating the card. Active-list reads filter these markers only for
-already-connected rows. Folded predecessors are marked before the existing
-exact-ID notification retirement callback runs; failed persistence keeps the
-card, and a notification error cannot undo a stored dismissal. Other parties,
+already-connected rows. Each folded predecessor's marker is saved immediately
+before its existing exact-ID notification retirement callback runs. A later
+write failure leaves that row visible and retryable without losing retirement
+for earlier hidden rows. A notification error cannot undo a stored dismissal.
+Other parties,
 response statuses and outbound deliveries are unchanged. No schema migration
 or network message is involved. The close button uses `pinned_dismiss`.
 Its normal tap target narrows the attribution area, so the introduced-by label
-must flex and ellipsize rather than overflow. The 16 focused host cases cover
+must flex and ellipsize rather than overflow. The 17 focused host cases cover
 the close action, SQL reopen, same-ID replay, account isolation, folded rows,
 storage errors and the actual Orbit wiring. The combined preservation and
-architecture-contract run passes 313 tests.
+architecture-contract run passes 314 tests, including a partial-write failure
+followed by repository recreation and retry of only the remaining visible IDs.
 Retain the first resource-aborted
 RED run and the subsequent layout failure in
 `.codex-test-logs/intro-dismiss-connected-20261101/` in the matching worktree.

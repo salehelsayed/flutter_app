@@ -215,8 +215,6 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
 
     for (final id in eligibleIds) {
       await secureKeyStore.write(_dismissedIntroductionKey(ownPeerId, id), '1');
-    }
-    for (final id in eligibleIds) {
       try {
         await onResponseSaved?.call(id);
       } catch (error) {

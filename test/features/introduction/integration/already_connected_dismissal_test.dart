@@ -137,11 +137,17 @@ void main() {
   );
 
   test(
-    'IN-DISMISS folded predecessors persist before exact retirement',
+    'IN-DISMISS folded predecessors each persist before exact retirement',
     () async {
       final repo = repository(
         retire: (id) async {
-          expect(await store.readAll(), hasLength(2));
+          expect(
+            (await repository().getPendingIntroductionsForUser(
+              'peer-B',
+            )).map((row) => row.id),
+            isNot(contains(id)),
+          );
+          expect(await store.readAll(), hasLength(retired.length + 1));
           retired.add(id);
         },
       );
@@ -243,27 +249,29 @@ void main() {
     },
   );
 
-  test(
-    'IN-DISMISS partial folded write failure never retires the card',
-    () async {
-      final failing = _FailingStore(2);
-      final repo = repository(keyStore: failing);
-      await repo.saveIntroduction(intro('first'));
-      await repo.saveIntroduction(intro('second'));
+  test('IN-DISMISS partial folded failure retires only the saved ID', () async {
+    final failing = _FailingStore(2);
+    final repo = repository(keyStore: failing);
+    await repo.saveIntroduction(intro('first'));
+    await repo.saveIntroduction(intro('second'));
 
-      await expectLater(
-        repo.dismissAlreadyConnectedIntroductions(
-          introductionIds: ['first', 'second'],
-          ownPeerId: 'peer-B',
-        ),
-        throwsStateError,
-      );
-      expect(await repo.getPendingIntroductionsForUser('peer-B'), isNotEmpty);
-      expect(retired, isEmpty);
-      expect(await repo.getIntroduction('first'), isNotNull);
-      expect(await repo.getIntroduction('second'), isNotNull);
-    },
-  );
+    await expectLater(
+      repo.dismissAlreadyConnectedIntroductions(
+        introductionIds: ['first', 'second'],
+        ownPeerId: 'peer-B',
+      ),
+      throwsStateError,
+    );
+    expect(
+      (await repo.getPendingIntroductionsForUser(
+        'peer-B',
+      )).map((row) => row.id),
+      ['second'],
+    );
+    expect(retired, ['first']);
+    expect(await repo.getIntroduction('first'), isNotNull);
+    expect(await repo.getIntroduction('second'), isNotNull);
+  });
 
   test('IN-DISMISS partial folded retry retires all original IDs', () async {
     final failing = _FailingStore(2);
