@@ -99,10 +99,15 @@ const _controllerTestPaths = <String>[
 // `initialThoughtVoiceReply`. A voice reply recorded on a thought card is
 // sent once the chat is ready, through the chat's own voice path, quoting the
 // thought. No existing handoff changes.
-const _expectedDirectApiFingerprint = '18779f59';
+// Composer drafts (owner, 11-01): one optional `ConversationWired` field,
+// `composerDraftStore`, defaulting to the shared app store, so an unsent text,
+// photo or video and the private setting come back after leaving the chat.
+const _expectedDirectApiFingerprint = '2cf4b34f';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
-const _expectedGroupApiFingerprint = 'fe1ac6ec';
+// Composer drafts (owner, 11-01): the same optional `composerDraftStore`
+// field on `GroupConversationWired`.
+const _expectedGroupApiFingerprint = 'cfec919a';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).
