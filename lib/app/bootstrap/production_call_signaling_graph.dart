@@ -1569,6 +1569,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   CallScheduledTimerObserver? onCallTimerScheduled,
   bool Function()? isForeground,
   int Function()? nowMs,
+  CallEngine Function(CallId)? callEngineFactory,
   Stream<NetworkPathOutcome>? networkPathOutcomes,
 }) {
   final clock = nowMs ?? () => DateTime.now().toUtc().millisecondsSinceEpoch;
@@ -1924,30 +1925,32 @@ CallSignalingComposition createProductionCallSignalingComposition({
           }
           final CallAudioRoutePort routeAdapter =
               nativeLifecycleAdapter ?? CallAudioRouteAdapter.flutterWebRtc();
-          final engine = FlutterWebRtcCallEngine(
-            adapter: FlutterWebRtcPeerConnectionAdapter(
-              onDiagnosticSample: (sample, progress) => diagnosticGraph
-                  ?.recordMediaDiagnostics(callId, sample, progress),
-              onFailureStage: (stage) {
-                CallDiagnostics.instance.record(
-                  stage: 'media',
-                  action: 'check',
-                  outcome: 'failed',
-                  reason: 'negotiation_failed',
-                  values: <String, Object?>{'failureStage': stage.name},
-                  traceId: CallDiagnostics.instance.traceForCall(
-                    callId: callId.value,
-                  ),
-                );
-                emitFlowEvent(
-                  layer: 'FL',
-                  event: 'CALL_WEBRTC_FAILURE_STAGE',
-                  details: <String, Object?>{'stage': stage.name},
-                );
-              },
-            ),
-            audioRoutePort: routeAdapter,
-          );
+          final engine =
+              callEngineFactory?.call(callId) ??
+              FlutterWebRtcCallEngine(
+                adapter: FlutterWebRtcPeerConnectionAdapter(
+                  onDiagnosticSample: (sample, progress) => diagnosticGraph
+                      ?.recordMediaDiagnostics(callId, sample, progress),
+                  onFailureStage: (stage) {
+                    CallDiagnostics.instance.record(
+                      stage: 'media',
+                      action: 'check',
+                      outcome: 'failed',
+                      reason: 'negotiation_failed',
+                      values: <String, Object?>{'failureStage': stage.name},
+                      traceId: CallDiagnostics.instance.traceForCall(
+                        callId: callId.value,
+                      ),
+                    );
+                    emitFlowEvent(
+                      layer: 'FL',
+                      event: 'CALL_WEBRTC_FAILURE_STAGE',
+                      details: <String, Object?>{'stage': stage.name},
+                    );
+                  },
+                ),
+                audioRoutePort: routeAdapter,
+              );
           final CallForegroundAudioSession audioSession =
               nativeLifecycleAdapter ??
               await CallForegroundAudioSessionAdapter.create();

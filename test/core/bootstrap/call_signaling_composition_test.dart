@@ -15,6 +15,8 @@ import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
@@ -457,6 +459,296 @@ Future<void> _pumpCallLifecycle(
 }
 
 void main() {
+  for (final scenario in [
+    'ringing',
+    'connected',
+    'blocked contact',
+    'rekeyed contact',
+    'deleted and re-added contact',
+    'rekeyed identity',
+  ]) {
+    final connected = scenario == 'connected';
+    final shouldRecover = scenario == 'ringing' || connected;
+    test(
+      'VC-026 killed-side $scenario history after restart without a fresh invite',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'vc026-history-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final original = await _openKilledCallDatabase(
+          '${directory.path}/original.sqlite',
+        );
+        addTearDown(() async {
+          if (original.isOpen) await original.close();
+        });
+        await original.insert('identity', <String, Object?>{
+          'id': 1,
+          'peer_id': 'local-account',
+          'public_key': 'local-public-key',
+          'private_key': null,
+          'mnemonic12': null,
+          'username': 'Local',
+          'ml_kem_public_key': 'local-mlkem-public-key',
+          'ml_kem_secret_key': null,
+          'created_at': '2026-08-30T00:00:00.000Z',
+          'updated_at': '2026-08-30T00:00:00.000Z',
+        });
+        await original.insert('contacts', <String, Object?>{
+          'peer_id': 'remote-account',
+          'public_key': 'remote-public-key',
+          'ml_kem_public_key': 'remote-mlkem-public-key',
+          'rendezvous': 'fixture-rendezvous',
+          'username': 'Remote contact',
+          'signature': 'fixture-signature',
+          'scanned_at': '2026-08-30T00:00:00.000Z',
+          'is_blocked': 0,
+        });
+        final consent = await original.query(
+          'contact_relationship_consent',
+          where: 'peer_id = ?',
+          whereArgs: ['remote-account'],
+        );
+        expect(consent, hasLength(1));
+        final keys = FakeSecureKeyStore();
+        String? registeredHandle;
+        int? registeredExpiresAt;
+        var audioActive = false;
+        late final _ProductionIosFixture first;
+        first = await _createProductionIosFixture(
+          databaseOverride: original,
+          privacyStore: keys,
+          outgoingContactAccountPeerId: 'remote-account',
+          callEngineFactory: (_) => _ProcessLossEngine(),
+          lifecycleOverride: (method, arguments) async {
+            if (method == 'registerOutgoingAuthenticated') {
+              registeredHandle = arguments['callHandle']! as String;
+              registeredExpiresAt = arguments['expiresAtMs']! as int;
+              return true;
+            }
+            if (method == 'attach' && registeredHandle != null) {
+              return <String, Object?>{
+                'version': 1,
+                'descriptor': <String, Object?>{
+                  'callHandle': registeredHandle,
+                  'expiresAtMs': registeredExpiresAt,
+                  'presented': true,
+                  'phase': 'preStart',
+                  'direction': 'outgoing',
+                },
+                'nativeCallId': registeredHandle,
+                'highestSequence': 1,
+                'events': [
+                  <String, Object?>{
+                    'callHandle': registeredHandle,
+                    'sequence': 1,
+                    'eventId': '00000000-0000-4000-8000-000000000001',
+                    'type': 'presented',
+                    'occurredAtMs': 2_000_000,
+                  },
+                ],
+              };
+            }
+            if (method == 'activateAudio') audioActive = true;
+            if (method == 'deactivateAudio' ||
+                method == 'failClosed' ||
+                method == 'end')
+              audioActive = false;
+            if (method == 'readAudioState')
+              return <String, Object?>{
+                'version': 1,
+                'active': audioActive,
+                'muted': false,
+                'route': 'system_default',
+                'availableRoutes': ['system_default', 'speaker'],
+              };
+            return null;
+          },
+          microphonePermission: const _GrantedCallMicrophonePermission(),
+          ensureOutgoingCallWakeAuthority: (peer) async {
+            final issued = await first.issuedCallWakeHandleStore.readForContact(
+              peer,
+            );
+            return issued != null &&
+                await first.graphs.single.markCallWakeHandleDistributed(
+                  peer,
+                  issued.grant,
+                );
+          },
+        );
+        await first.composition.start();
+        await _configureCancellationEndpoint(first, 'remote-account');
+        final graph = first.graphs.single;
+        expect(
+          await graph.startOutgoingCall('remote-account'),
+          OutgoingCallStartResult.started,
+        );
+        final callId = graph.coordinator.activeSession!.callId!;
+        final startedAt = graph.coordinator.activeSession!.startedAt;
+        await graph.coordinator.dispatch(
+          CallEvent(
+            type: CallEventType.remoteRinging,
+            eventId: 'vc026-authenticated-remote-ringing',
+            occurredAt: graph.coordinator.clock(),
+            callId: callId,
+            contactPeerId: 'remote-account',
+          ),
+        );
+        expect(graph.coordinator.activeSession?.state, CallState.ringing);
+        if (connected) {
+          final turnNow = DateTime.now().millisecondsSinceEpoch;
+          final credentials = <String, Object?>{
+            'ok': true,
+            'schema': 'turn_credentials',
+            'version': 1,
+            'urls': ['turn:relay.invalid:3478?transport=udp'],
+            'username': 'fixture-user',
+            'password': 'fixture-password',
+            'ttlSeconds': 600,
+            'serverTimeMs': turnNow,
+            'expiresAtMs': turnNow + 600000,
+          };
+          first.bridge.responses['relay:turn_credentials_v1'] = credentials;
+          first.bridge.responses['turn_credentials_with_diagnostics_v1'] =
+              credentials;
+          Future<void> event(CallEventType type) async {
+            await graph.coordinator.dispatch(
+              CallEvent(
+                type: type,
+                eventId: 'vc026-${type.name}',
+                occurredAt: graph.coordinator.clock(),
+                callId: callId,
+                contactPeerId: 'remote-account',
+              ),
+            );
+          }
+
+          await event(CallEventType.remoteAccept);
+          if (graph.coordinator.activeSession?.state == CallState.accepted) {
+            await event(CallEventType.negotiationReady);
+          }
+          if (graph.coordinator.activeSession?.state == CallState.negotiating) {
+            await event(CallEventType.mediaConnected);
+          }
+          expect(graph.coordinator.activeSession?.state, CallState.connected);
+        }
+        final connectedAt = graph.coordinator.activeSession?.connectedAt;
+        expect(
+          await graph.coordinator.historyProjector.repository.getByCallId(
+            callId,
+          ),
+          isNull,
+        );
+
+        // Capture the durable bytes at process loss before graceful teardown can
+        // write a terminal row. VACUUM includes committed WAL data.
+        final captured = FakeSecureKeyStore();
+        for (final entry in (await keys.readAll()).entries) {
+          await captured.write(entry.key, entry.value);
+        }
+        final snapshotPath = '${directory.path}/at-kill.sqlite';
+        await original.execute('VACUUM INTO ?', [snapshotPath]);
+        await first.composition.shutdown();
+        final restoredDatabase = await _openKilledCallDatabase(snapshotPath);
+        addTearDown(() async {
+          if (restoredDatabase.isOpen) await restoredDatabase.close();
+        });
+        expect(await restoredDatabase.query('call_history'), isEmpty);
+        switch (scenario) {
+          case 'blocked contact':
+            await restoredDatabase.update(
+              'contacts',
+              {'is_blocked': 1},
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            );
+          case 'rekeyed contact':
+            await restoredDatabase.update(
+              'contacts',
+              {'public_key': 'different-remote-key'},
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            );
+          case 'deleted and re-added contact':
+            final contact = (await restoredDatabase.query(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            )).single;
+            await restoredDatabase.delete(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            );
+            await restoredDatabase.insert('contacts', contact);
+          case 'rekeyed identity':
+            await restoredDatabase.update('identity', {
+              'public_key': 'different-local-key',
+            }, where: 'id = 1');
+        }
+        var historyAtNativeAttach = false;
+        final restored = await _createProductionIosFixture(
+          databaseOverride: restoredDatabase,
+          privacyStore: captured,
+          clockMs: () => 2_120_000, // The original invite has expired.
+          lifecycleOverride: (method, _) async {
+            if (method == 'attach') {
+              historyAtNativeAttach =
+                  (await restoredDatabase.query(
+                    'call_history',
+                    where: 'call_id = ?',
+                    whereArgs: [callId.value],
+                  )).length ==
+                  1;
+            }
+            return null;
+          },
+        );
+        // No incoming message, fresh invite, or authenticated context is supplied.
+        await restored.composition.start();
+        final restarted = restored.graphs.single;
+        final row = await restarted.coordinator.historyProjector.repository
+            .getByCallId(callId);
+        if (!shouldRecover) {
+          expect(
+            row,
+            isNull,
+            reason: 'a revoked authority must not resurrect old call history',
+          );
+          expect(historyAtNativeAttach, isFalse);
+          return;
+        }
+        expect(
+          row,
+          isNotNull,
+          reason: 'the killed side must retain its authenticated call history',
+        );
+        expect(row!.contactAccountPeerId, 'remote-account');
+        expect(row.direction, CallDirection.outgoing);
+        expect(
+          row.status,
+          connected ? CallHistoryStatus.completed : CallHistoryStatus.failed,
+        );
+        expect(row.connectedAt, connectedAt);
+        expect(row.startedAt, startedAt);
+        expect(
+          historyAtNativeAttach,
+          isTrue,
+          reason:
+              'history must be durable before native orphan cleanup can acknowledge it',
+        );
+        expect(restarted.coordinator.activeSession, isNull);
+        await restored.composition.start();
+        await restored.composition.onResume();
+        expect(
+          await restarted.coordinator.historyProjector.repository
+              .listForContact('remote-account'),
+          hasLength(1),
+        );
+      },
+    );
+  }
+
   for (final platform in [
     CallEndpointPlatform.android,
     CallEndpointPlatform.ios,
@@ -6740,6 +7032,9 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   IssuedCallWakeHandleStore? issuedStore,
   Stream<Object?>? lifecycleEventStream,
   SecureKeyStore? privacyStore,
+  Database? databaseOverride,
+  int Function()? clockMs,
+  CallEngine Function(CallId)? callEngineFactory,
   Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
   Map<String, Object?>? tokenSetResponse,
@@ -6754,33 +7049,35 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   Future<Object?> Function(String, Map<String, Object?>)? lifecycleOverride,
 }) async {
   databaseFactory = databaseFactoryFfi;
-  final database = await openDatabase(
-    inMemoryDatabasePath,
-    version: 1,
-    onCreate: (db, _) async {
-      if (outgoingContactAccountPeerId == null) {
-        await db.execute(
-          'CREATE TABLE contacts('
-          'peer_id TEXT PRIMARY KEY, username TEXT, is_blocked INTEGER)',
-        );
-        return;
-      }
-      await db.execute(
-        'CREATE TABLE contacts('
-        'peer_id TEXT PRIMARY KEY, username TEXT, public_key TEXT, '
-        'ml_kem_public_key TEXT, is_blocked INTEGER)',
+  final database =
+      databaseOverride ??
+      await openDatabase(
+        inMemoryDatabasePath,
+        version: 1,
+        onCreate: (db, _) async {
+          if (outgoingContactAccountPeerId == null) {
+            await db.execute(
+              'CREATE TABLE contacts('
+              'peer_id TEXT PRIMARY KEY, username TEXT, is_blocked INTEGER)',
+            );
+            return;
+          }
+          await db.execute(
+            'CREATE TABLE contacts('
+            'peer_id TEXT PRIMARY KEY, username TEXT, public_key TEXT, '
+            'ml_kem_public_key TEXT, is_blocked INTEGER)',
+          );
+          await runDirectLinkedDeviceAddressingMigration(db);
+          await runCallHistoryMigration(db);
+          await db.insert('contacts', <String, Object?>{
+            'peer_id': outgoingContactAccountPeerId,
+            'username': 'Remote contact',
+            'public_key': 'remote-public-key',
+            'ml_kem_public_key': 'remote-mlkem-public-key',
+            'is_blocked': 0,
+          });
+        },
       );
-      await runDirectLinkedDeviceAddressingMigration(db);
-      await runCallHistoryMigration(db);
-      await db.insert('contacts', <String, Object?>{
-        'peer_id': outgoingContactAccountPeerId,
-        'username': 'Remote contact',
-        'public_key': 'remote-public-key',
-        'ml_kem_public_key': 'remote-mlkem-public-key',
-        'is_blocked': 0,
-      });
-    },
-  );
   final bridge = _Bridge();
   if (endpointSetResponse != null) {
     bridge.responses['call_endpoint_set_v1'] = endpointSetResponse;
@@ -6824,6 +7121,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     networkEffectsAllowed: networkEffectsAllowed ?? () => true,
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
+    callEngineFactory: callEngineFactory,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
@@ -6920,7 +7218,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
           publicationAllowed: publicationAllowed,
         ),
     isForeground: () => true,
-    nowMs: () => 2_000_000,
+    nowMs: clockMs ?? () => 2_000_000,
     onGraphBuilt: graphs.add,
   );
   addTearDown(() async {
@@ -6928,7 +7226,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     router.dispose();
     await p2p.messages.close();
     await tokenEvents.close();
-    await database.close();
+    if (databaseOverride == null) await database.close();
   });
   return _ProductionIosFixture(
     composition: composition,
@@ -7289,4 +7587,61 @@ final class _UnusedCallTrustedRosterProvider
 final class _UnusedCallAuthorityClient implements CallAuthorityClient {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Future<Database> _openKilledCallDatabase(String path) {
+  sqfliteFfiInit();
+  return databaseFactoryFfi.openDatabase(
+    path,
+    options: OpenDatabaseOptions(
+      version: currentIdentityDatabaseVersion,
+      singleInstance: false,
+      onCreate: runProductionOnCreate,
+      onUpgrade: runProductionOnUpgrade,
+    ),
+  );
+}
+
+final class _ProcessLossEngine extends _ProductionSpeakerRouteEngine {
+  final _events = StreamController<CallEngineEvent>.broadcast(sync: true);
+  @override
+  Stream<CallEngineEvent> get events => _events.stream;
+  @override
+  Future<void> close() async {
+    if (isClosed) return;
+    await super.close();
+    await _events.close();
+  }
+
+  _ProcessLossEngine()
+    : super(const [
+        CallAudioOutputRoute.earpiece,
+        CallAudioOutputRoute.speaker,
+      ]);
+  static const _fingerprint =
+      'sha-256 AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:'
+      'AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA:AA';
+  @override
+  Future<CallSessionDescription> createOffer() async =>
+      const CallSessionDescription(
+        type: CallSessionDescriptionType.offer,
+        value: 'fixture-local-offer',
+        fingerprint: _fingerprint,
+      );
+  @override
+  Future<CallSessionDescription> createAnswer() async =>
+      const CallSessionDescription(
+        type: CallSessionDescriptionType.answer,
+        value: 'fixture-local-answer',
+        fingerprint: _fingerprint,
+      );
+  @override
+  Future<void> setLocalDescription(CallSessionDescription description) async {}
+  @override
+  Future<void> setRemoteDescription(CallSessionDescription description) async {}
+  @override
+  Future<void> addIceCandidates(List<CallIceCandidate> candidates) async {}
+  @override
+  Future<int> restartIce({List<CallIceServer> iceServers = const []}) async =>
+      1;
 }
