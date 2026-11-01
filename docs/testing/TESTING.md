@@ -5269,6 +5269,22 @@ do not count `test(...)` strings as executions. Runner listings took about
   `.codex-test-logs/media-contact-intro-20261101/` in the
   `media-contact-intro-fixes-20261101` worktree. These host checks use native
   encoder substitutes and do not establish phone HEIC conversion or delivery.
+  The first admission patch's 83 passing core tests missed two regressions:
+  its catch-all rejected inaccessible native-port inputs before the encoder,
+  and its asynchronous signature read delayed Compressed non-JPEG staging in
+  composer tests that only pump microtasks. The admission signature probe is
+  now a synchronous read of at most two bytes, routes by content even for a
+  PNG named `.jpg`, and defers unknown/inaccessible sources to the existing
+  native encoder. Once JPEG is identified, marker/decode failures still refuse
+  the photo. Thirteen boundary cases produced 11 failures and two controls on
+  the old patch, then all passed; both core files passed 96 tests. First-attempt
+  and repair evidence is retained in the same ignored directory under
+  `regression-*.{json,log}`. Original's existing asynchronous stripping path
+  still requires real-I/O draining where the test exercises that path.
+  All seven affected conversation/group/Orbit/Posts files passed 682 tests with
+  their fixtures and assertions unchanged. They are now included in the
+  existing `affected-media` selection so a shared preparation change exercises
+  these consumers as well as the core processor tests.
   Bounded returned rasters do not certify native transient peak memory. Native
   HEIC decode, real camera/picker metadata and Android's existing lower-resolution
   OOM retries still need phone evidence. Host evidence and patch are under

@@ -65,7 +65,11 @@ void main() {
     );
 
     for (final quality in ImageQualityPreference.values) {
-      for (final sourceKind in ['missing.jpg', 'missing.png', 'unreadable.jpg']) {
+      for (final sourceKind in [
+        'missing.jpg',
+        'missing.png',
+        'unreadable.jpg',
+      ]) {
         test(
           '${quality.name} defers $sourceKind to the native encoder',
           () async {
@@ -153,7 +157,10 @@ void main() {
           final processor = ImageProcessor(compressFile: _noOpCompress);
 
           expect(
-            await processor.processImage(inputPath: input.path, quality: quality),
+            await processor.processImage(
+              inputPath: input.path,
+              quality: quality,
+            ),
             '${input.path}_compressed.jpg',
           );
           expect(await input.readAsBytes(), png);

@@ -511,23 +511,34 @@ Future<String> _squareCropAvatar(String compressedPath) async {
 }
 
 Future<void> _validateJpegForSend(String path) async {
+  final input = File(path);
+  var isJpeg = false;
+  try {
+    // Keep non-JPEG native preparation free of new asynchronous file-I/O turns.
+    // Only inspect two bytes before deciding whether this is a JPEG to validate.
+    final handle = input.openSync();
+    try {
+      final signature = handle.readSync(2);
+      isJpeg =
+          signature.length == 2 && signature[0] == 0xff && signature[1] == 0xd8;
+    } finally {
+      handle.closeSync();
+    }
+  } on FileSystemException {
+    if (isJpeg) throw StateError('Photo processing failed');
+    // Unknown bytes retain the native encoder's existing success/failure path.
+    return;
+  }
+  // Other formats, including HEIC/HEIF, retain their native conversion.
+  if (!isJpeg) {
+    return;
+  }
+
   ui.ImmutableBuffer? buffer;
   ui.ImageDescriptor? descriptor;
   ui.Codec? codec;
   ui.Image? image;
   try {
-    final input = File(path);
-    final handle = await input.open();
-    final Uint8List signature;
-    try {
-      signature = await handle.read(2);
-    } finally {
-      await handle.close();
-    }
-    // Other formats, including HEIC/HEIF, retain their native conversion.
-    if (signature.length != 2 || signature[0] != 0xff || signature[1] != 0xd8) {
-      return;
-    }
     // JPEG codecs can repair EOF with black pixels, so decoding alone does not
     // establish that the primary image reached its end marker.
     if (!_hasCompleteJpeg(await input.readAsBytes())) {
