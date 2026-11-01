@@ -3508,7 +3508,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
-            load: () => _loadYouPage(identity, _localThoughtWroteBack),
+            load: () => _loadYouPage(identity),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
@@ -3521,11 +3521,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  Future<YouPageData> _loadYouPage(
-    IdentityModel identity,
-    Future<List<({String peerId, bool hasUnread})>> Function(String postId)
-    loadWroteBack,
-  ) async {
+  Future<YouPageData> _loadYouPage(IdentityModel identity) async {
     final friends = [
       for (final contact in await widget.contactRepo.getAllContacts())
         if (!contact.isBlocked && !contact.isArchived) contact,
@@ -3549,10 +3545,15 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact.peerId: contact.username,
       };
       final messageRepo = widget.messageRepo;
-      final replies = messageRepo is ThoughtReactionMessageRepository
-          ? await (messageRepo as ThoughtReactionMessageRepository)
-                .loadThoughtReactionMessages(own.id)
-          : const <ConversationMessage>[];
+      final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
+          ? messageRepo as ThoughtReactionMessageRepository
+          : null;
+      final replies =
+          await thoughtReplies?.loadThoughtReactionMessages(own.id) ??
+          const <ConversationMessage>[];
+      final wroteBack =
+          await thoughtReplies?.loadThoughtWroteBack(own.id) ??
+          const <ThoughtWroteBack>[];
       final media = await repository.loadPostMediaAttachmentsForPosts([own.id]);
       thought = YouThought(
         post: own.copyWith(media: media[own.id] ?? const []),
@@ -3562,7 +3563,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           participantNames: names,
         ),
         wroteBack: [
-          for (final wrote in await loadWroteBack(own.id))
+          for (final wrote in wroteBack)
             if (names[wrote.peerId] case final name?)
               YouWroteBack(
                 peerId: wrote.peerId,
@@ -3578,28 +3579,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       friendCount: friends.length,
       thought: thought,
     );
-  }
-
-  // Replaced by loadThoughtWroteBack (codex-ui/thought-wrote-back).
-  Future<List<({String peerId, bool hasUnread})>> _localThoughtWroteBack(
-    String postId,
-  ) async {
-    final messageRepo = widget.messageRepo;
-    if (messageRepo is! ThoughtReactionMessageRepository) return const [];
-    final quoteId = thoughtQuoteId(postId);
-    final senders = <String>{};
-    return [
-      for (final reply
-          in await (messageRepo as ThoughtReactionMessageRepository)
-              .loadThoughtReactionMessages(postId))
-        if (reply.isIncoming &&
-            !reply.isDeleted &&
-            !reply.isHidden &&
-            reply.quotedMessageId == quoteId &&
-            ThoughtReaction.fromText(reply.text) == null &&
-            senders.add(reply.contactPeerId))
-          (peerId: reply.contactPeerId, hasUnread: false),
-    ];
   }
 
   Future<void> _openConversationForPeerId(String peerId) async {
