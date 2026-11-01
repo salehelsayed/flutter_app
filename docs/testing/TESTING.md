@@ -3423,6 +3423,10 @@ At source `d760434b8`, all four native matcher/retirement/group-invite selectors
 pass on Kayan's available simulator with signing disabled; evidence is
 `codexui-notif-green-20261101/xcodebuild_test.log`. That proves native compilation
 and synthetic center removal, not installed APNs delivery/decision behavior.
+The decision callbacks also change both DTR-18 bootstrap digest pins. Re-pin
+only after reconstructing their previous normalized identities and preserving
+the exact historical database callback; `dtr18-pin-proof.json` and the causal
+three-failure/four-pass contract runs are retained beside the Dart evidence.
 
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly

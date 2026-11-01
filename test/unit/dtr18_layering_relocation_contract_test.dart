@@ -333,6 +333,10 @@ const _applicationRootNormalizedSha256 =
 // Local preview persistence binds account database callbacks and clears that
 // binding on shutdown; no lifecycle owner, adapter or notification proof moves.
 // Avatar completion adds only its avatar-column database delegate at this owner.
+// CR-008/IN-008 composes exact decision-card retirement on the same app-owned
+// repositories and notification bridge; no lifecycle/adapter owner moves. The
+// historical database callback remains unique and byte-identical. Both pins
+// are reconstructed in media-contact-intro-20261101/dtr18-pin-proof.json.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -445,7 +449,7 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    '1ed2669408f6eaf2c52f50fabfe48ecd6c749a3ab4c6415d00b717a56606df92';
+    'c2806ae28a8613f023130014b3d2906b6f627c270041e57c151277003690decf';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -481,7 +485,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same retry composition leaves the historical notification callback exact.
 // The same additive Thoughts bindings leave the historical callback exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '269f9c01fb4ca60db983134049dbe0379a4fb8c8fcba57415d427c085cc8584f';
+    '70ee52df3e2a8c10f08c6af090f5011670bf28ec36cdaf08bdc6608764feb528';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
