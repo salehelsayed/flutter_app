@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -7,7 +8,10 @@ import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart'
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 
 class YouPageData {
@@ -72,9 +76,13 @@ class YouPageScreen extends StatefulWidget {
     required this.onOpenChat,
     required this.onCompose,
     required this.now,
+    this.changes = const [],
   });
 
   final Future<YouPageData> Function() load;
+
+  /// Any event reloads the page: a stored post or a reply changed.
+  final List<Stream<Object?>> changes;
   final VoidCallback onBack;
   final Future<void> Function(String peerId) onOpenChat;
 
@@ -86,24 +94,95 @@ class YouPageScreen extends StatefulWidget {
   State<YouPageScreen> createState() => _YouPageScreenState();
 }
 
-class _YouPageScreenState extends State<YouPageScreen> {
+class _YouPageScreenState extends State<YouPageScreen>
+    with WidgetsBindingObserver {
   YouPageData? _data;
   int _generation = 0;
+  final _subscriptions = <StreamSubscription<Object?>>[];
+  Timer? _expiryTimer;
+  Timer? _ageTimer;
+  Route<void>? _mediaRoute;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    for (final changes in widget.changes) {
+      _subscriptions.add(changes.listen((_) => _reload()));
+    }
+    // Keeps "gone in N h" current between reloads.
+    _ageTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
     _reload();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _reload();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    for (final subscription in _subscriptions) {
+      subscription.cancel();
+    }
+    _expiryTimer?.cancel();
+    _ageTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _reload() async {
     final generation = ++_generation;
     try {
       final data = await widget.load();
-      if (mounted && generation == _generation) setState(() => _data = data);
+      if (!mounted || generation != _generation) return;
+      if (data.thought?.post.id != _data?.thought?.post.id) _closeMediaViewer();
+      setState(() => _data = data);
+      _armExpiry(data.thought?.post);
     } catch (_) {
-      // The page keeps what it last showed; the next open or share reloads.
+      // The page keeps what it last showed; the next change or open reloads.
     }
+  }
+
+  /// Reloads the moment the Thought expires, so it never outlives its time.
+  void _armExpiry(PostModel? post) {
+    _expiryTimer?.cancel();
+    final expiry = post == null
+        ? null
+        : DateTime.tryParse(post.expiresAt)?.toUtc();
+    if (expiry == null) return;
+    final remaining = expiry.difference(widget.now().toUtc());
+    _expiryTimer = Timer(
+      remaining.isNegative ? Duration.zero : remaining,
+      _reload,
+    );
+  }
+
+  void _closeMediaViewer() {
+    final route = _mediaRoute;
+    _mediaRoute = null;
+    if (route != null && route.isActive) {
+      Navigator.of(context).removeRoute(route);
+    }
+  }
+
+  Future<void> _openMedia(
+    List<PostMediaAttachmentModel> visual,
+    int index,
+  ) async {
+    if (_mediaRoute != null || visual[index].localPath == null) return;
+    final route = MaterialPageRoute<void>(
+      builder: (_) => FullScreenTypedMediaViewer(
+        key: const ValueKey('you-media-viewer'),
+        items: visual.map(thoughtMediaViewerItem).toList(growable: false),
+        initialIndex: index,
+      ),
+    );
+    _mediaRoute = route;
+    await Navigator.of(context).push(route);
+    if (identical(_mediaRoute, route)) _mediaRoute = null;
   }
 
   Future<void> _compose() async {
@@ -150,6 +229,7 @@ class _YouPageScreenState extends State<YouPageScreen> {
                           thought: thought,
                           now: widget.now,
                           onOpenChat: _openChat,
+                          onOpenMedia: _openMedia,
                         ),
                       ],
                     ),
@@ -233,11 +313,14 @@ class _ThoughtCard extends StatelessWidget {
     required this.thought,
     required this.now,
     required this.onOpenChat,
+    required this.onOpenMedia,
   });
 
   final YouThought thought;
   final DateTime Function() now;
   final Future<void> Function(String peerId) onOpenChat;
+  final Future<void> Function(List<PostMediaAttachmentModel> visual, int index)
+  onOpenMedia;
 
   int _hoursLeft() {
     final expiry = DateTime.tryParse(thought.post.expiresAt)?.toUtc();
@@ -254,6 +337,10 @@ class _ThoughtCard extends StatelessWidget {
       for (final m in post.media)
         if (m.kind == 'image' || m.kind == 'video') m,
     ]..sort((a, b) => a.position.compareTo(b.position));
+    final voice = [
+      for (final m in post.media)
+        if (m.kind == 'voice') m,
+    ];
     final reacted = {
       for (final group in thought.reactions)
         for (final p in group.participants) p.peerId,
@@ -281,7 +368,17 @@ class _ThoughtCard extends StatelessWidget {
           ],
           if (visual.isNotEmpty) ...[
             const SizedBox(height: 8),
-            _MediaGrid(visual: visual),
+            _MediaGrid(
+              visual: visual,
+              onTap: (index) => onOpenMedia(visual, index),
+            ),
+          ],
+          for (final attachment in voice) ...[
+            const SizedBox(height: 8),
+            AudioPlayerWidget(
+              key: ValueKey('you-voice-${attachment.mediaId}'),
+              attachment: attachment.toSharedMediaAttachment(),
+            ),
           ],
           const SizedBox(height: 8),
           Row(
@@ -516,13 +613,19 @@ class _WroteFace extends StatelessWidget {
 
 /// The Thought's photos and videos, laid out as on the prototype feed.
 class _MediaGrid extends StatelessWidget {
-  const _MediaGrid({required this.visual});
+  const _MediaGrid({required this.visual, required this.onTap});
 
   final List<PostMediaAttachmentModel> visual;
+  final ValueChanged<int> onTap;
 
   @override
   Widget build(BuildContext context) {
-    Widget tile(int i) => _MediaTile(media: visual[i]);
+    Widget tile(int i) => GestureDetector(
+      key: ValueKey('you-media-${visual[i].mediaId}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onTap(i),
+      child: _MediaTile(media: visual[i]),
+    );
     return switch (visual.length) {
       1 => SizedBox(height: 170, child: tile(0)),
       2 => SizedBox(
@@ -553,18 +656,20 @@ class _MediaGrid extends StatelessWidget {
                       children: [
                         tile(2),
                         if (visual.length > 3)
-                          Container(
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: const Color(0x99000000),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '+${visual.length - 3}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
+                          IgnorePointer(
+                            child: Container(
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: const Color(0x99000000),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '+${visual.length - 3}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
                             ),
                           ),

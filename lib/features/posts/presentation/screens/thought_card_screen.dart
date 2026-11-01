@@ -32,6 +32,30 @@ import 'package:flutter_app/shared/widgets/conversation/conversation_voice_captu
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:uuid/uuid.dart';
 
+/// A Thought photo or video as the full-screen viewer shows it.
+MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
+    MediaViewerItem(
+      attachmentId: attachment.blobId,
+      messageId: attachment.postId,
+      kind: attachment.kind == 'video'
+          ? MediaViewerKind.video
+          : attachment.mime == 'image/gif'
+          ? MediaViewerKind.gif
+          : MediaViewerKind.image,
+      mime: attachment.mime,
+      localPath: attachment.localPath == null
+          ? null
+          : MediaFileManager.resolveStoredPathSync(attachment.localPath!),
+      sizeBytes: attachment.sizeBytes,
+      width: attachment.width,
+      height: attachment.height,
+      durationMs: attachment.durationMs,
+      showMetadataDetails: false,
+      protection: MediaViewerProtection(
+        isDownloaded: attachment.downloadStatus == 'done',
+      ),
+    );
+
 /// One author's current thought, full screen.
 ///
 /// The host decides whose thought this is: a friend's card offers reactions
@@ -525,29 +549,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
       return;
     }
     final items = visualMedia
-        .map(
-          (attachment) => MediaViewerItem(
-            attachmentId: attachment.blobId,
-            messageId: attachment.postId,
-            kind: attachment.kind == 'video'
-                ? MediaViewerKind.video
-                : attachment.mime == 'image/gif'
-                ? MediaViewerKind.gif
-                : MediaViewerKind.image,
-            mime: attachment.mime,
-            localPath: attachment.localPath == null
-                ? null
-                : MediaFileManager.resolveStoredPathSync(attachment.localPath!),
-            sizeBytes: attachment.sizeBytes,
-            width: attachment.width,
-            height: attachment.height,
-            durationMs: attachment.durationMs,
-            showMetadataDetails: false,
-            protection: MediaViewerProtection(
-              isDownloaded: attachment.downloadStatus == 'done',
-            ),
-          ),
-        )
+        .map(thoughtMediaViewerItem)
         .toList(growable: false);
     final route = MaterialPageRoute<void>(
       builder: (_) => FullScreenTypedMediaViewer(
