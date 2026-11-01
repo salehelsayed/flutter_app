@@ -16630,18 +16630,18 @@ gaps:
 - rank: 3
   journey_id: RG-001
   test_type: release
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 5a769d256/7354d2942; docs/testing/rg001-store-126-to-127-mcp.md; actual signed store-upgrade proof pending."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "BLOCKED: needs the published-to-store signed upgrade; waits for the store build to be distributed. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [RG-001]."
   must_verify: Bind actual previous published revision and exact candidate source/configuration/signed artifact;
     execute mandatory-plus-affected preservation and required available-target manual/device legs.
   why: Host/source or a later/debug artifact cannot certify the signed upgrade released to users.
 - rank: 4
   journey_id: VC-014
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; answered OS-state/audio observations pending; unanswered timing runs do not complete it."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "PARTIAL: iOS suspended, terminated, locked and Pixel background (answer from shade) and Pixel process-killed all ring and connect; missed-ring retest 3 of 3 rang; Pixel locked BLOCKED (no lock screen, screen-off key forbidden); audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-014]."
   must_verify: Correlate provider acceptance, actual OS wake/system presentation and answered audio in supported
     suspended/process-terminated/locked states on available platforms.
   why: Host admission/journal tests cannot prove platform courier/OS delivery and first-attempt missed ring remains
@@ -16649,18 +16649,18 @@ gaps:
 - rank: 5
   journey_id: VC-019
   test_type: e2e
-  status: preparing
-  status_date: "2026-10-26"
-  status_note: "Group B in preparation; test/features/call/integration/microphone_command_privacy_test.dart is host command proof, not received content."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "PARTIAL: no mic before answer, mute stops and restarts the mic; received audio BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-019]."
   must_verify: Use causal received audio/content oracle before answer, while either peer muted and after hangup,
     with positive unmuted controls and lifecycle changes.
   why: Command counters and continuing RTP do not prove microphone content is absent.
 - rank: 6
   journey_id: VC-025
   test_type: e2e
-  status: preparing
-  status_date: "2026-10-26"
-  status_note: "Group B in preparation; test/features/call/presentation/locked_call_projection_test.dart is rendering proof, not actual locked navigation."
+  status: covered
+  status_date: "2026-11-01"
+  status_note: "PASS: answering on a locked iPhone shows only system controls, app stays locked until passcode unlock. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-025]."
   must_verify: Answer through actual locked system surface, attempt allowed/forbidden navigation and inspect visual/touch/accessibility
     history exposure until real unlock.
   why: Semantics-only modal tests and locked no-dial callback prove different boundaries.
@@ -16685,9 +16685,9 @@ gaps:
 - rank: 9
   journey_id: TRANSFER-011
   test_type: e2e
-  status: not_started
-  status_date: "2026-10-26"
-  status_note: "Scoped 10-23 simulator PASS retained; audible voice and missing-original recovery remain open; .codex-test-logs/transfer011-20261023T0941Z/SUMMARY.md:10."
+  status: covered
+  status_date: "2026-11-01"
+  status_note: "PASS: pre-move photo opens full on the new phone (photo only). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [TRANSFER-011]. Coverage is photo-only; audible migrated voice and missing-original recovery remain open under the broader journey."
   must_verify: Preserve the scoped simulator receiver media-open/relaunch PASS; verify intelligible migrated voice
     content and missing-original recovery on available targets.
   why: Silent voice playback and exact-file preservation do not prove audibility or missing-original recovery. Physical-iPhone
@@ -16695,9 +16695,9 @@ gaps:
 - rank: 10
   journey_id: VC-026
   test_type: e2e
-  status: preparing
-  status_date: "2026-10-26"
-  status_note: "Group B in preparation; test/features/call/integration/process_loss_recovery_decisions_test.dart supplies observations, not actual process death."
+  status: ready
+  status_date: "2026-11-01"
+  status_note: "FAIL: minor: process loss ringing and active, remote deadline and fresh call PASS on iOS and Android; the killed side has no call history row for a call that was connected when killed (iOS and Android). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-026]. Fixed, recheck queued on main f8539a599 and 0c438261e; no post-fix device PASS claimed."
   must_verify: Kill actual ringing/active app; inspect owned native capture/call/card release or reconciliation,
     remote deadline and fresh call after restart.
   why: Graceful teardown and supplied native replay cannot stand for hard process loss.
@@ -16705,8 +16705,8 @@ gaps:
   journey_id: CONTACT-001
   test_type: e2e
   status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (CONTACT-001); native scanner/permission execution pending."
+  status_date: "2026-11-01"
+  status_note: "FAIL: camera denied: the QR scanner shows \"An unexpected error occurred.\" with no permission wording and no way to Settings. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [CONTACT-001]. Fixed, recheck queued on main fdd8354b4 and a6b79bed6; no post-fix device PASS claimed."
   must_verify: Cancel native scanner before code/result and deny/grant camera permission; assert zero contact/request/egress
     on refusal and one valid request after retry.
   why: Accepted paste/late callback tests do not exercise camera cancellation before result.
@@ -16714,8 +16714,8 @@ gaps:
   journey_id: MEDIA-010
   test_type: e2e
   status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-010); native permission/draft/retry execution pending."
+  status_date: "2026-11-01"
+  status_note: "FAIL: minor: camera denial shows only \"Media unavailable\", no permission sheet; recovery after grant fine. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-010]. Fixed, recheck queued on main fdd8354b4; no post-fix device PASS claimed."
   must_verify: Deny camera/photo access, grant via supported OS flow and retry without losing draft, duplicate sends
     or false success.
   why: Picker/permission callbacks in host tests bypass OS permission state.
@@ -16731,36 +16731,36 @@ gaps:
 - rank: 14
   journey_id: MEDIA-035
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-035); actual every-recipient full-image execution pending."
+  status: covered
+  status_date: "2026-11-01"
+  status_note: "PASS: camera photo with caption opens full on every member. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-035]."
   must_verify: Actual group camera image/caption opens as full correct image on every authorized available member;
     exclude removed member and retain partial failures honestly.
   why: Synthetic fanout and rows/status are not each-recipient decode evidence.
 - rank: 15
   journey_id: VC-015
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; 10-22 structural calls do not establish intelligible bidirectional audio."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "PARTIAL: both directions Pixel and iPhone connect and end cleanly; audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-015]."
   must_verify: Available iPhone/Android each initiate and answer, exchange intelligible audio and clean both native
     owners.
   why: Android-only RTP does not establish mixed-platform audible interoperability.
 - rank: 16
   journey_id: DC-011
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; historical media component evidence is not exact signed-candidate parity proof."
+  status: covered
+  status_date: "2026-11-01"
+  status_note: "PASS: text, image, video, voice both ways Pixel and iPhone, recovery after offline and restart. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [DC-011]."
   must_verify: Use actual available iOS/Android signed candidates for bidirectional text and full representative
     media with exact identity/caption/restart assertions.
   why: Shared host logic and single-platform campaigns do not certify parity.
 - rank: 17
   journey_id: CR-009
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; fresh native cross-platform scan/consent/key exchange pending."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "PARTIAL: Android scans iPhone PASS; iPhone scans Android BLOCKED (iPhone camera cannot see the emulator screen). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [CR-009]."
   must_verify: Scan/add each platform in both directions, accept/decline and complete reciprocal key exchange then
     first real chat.
   why: Host lookup encryption/bridge substitutes do not establish native cross-platform contact protocol.
@@ -16768,26 +16768,26 @@ gaps:
   journey_id: GX-002
   test_type: e2e
   status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed c3767b491:docs/testing/priority-e2e-mcp-execution.md; actual mixed-platform full-media/membership execution pending."
+  status_date: "2026-11-01"
+  status_note: "FAIL: after admin change, remove and re-add, a member's leave never reaches one iPhone (still listed as admin, 3 members); no content leak. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [GX-002]. Fixed, recheck queued on main bf4089530; no post-fix device PASS claimed."
   must_verify: With available mixed-platform group topology, exchange full text/media and apply add/remove/re-add
     with every entitled receiver checked.
   why: Small single-platform production cases and fake group policies leave full parity incomplete.
 - rank: 19
   journey_id: VC-023
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (VC-023); actual selected route/TURN outage/privacy execution pending."
+  status: blocked
+  status_date: "2026-11-01"
+  status_note: "PARTIAL: always-relay switch works and calls connect with it; relay-only route not provable from release logs, TURN stop and start not redone (no server access). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-023]."
   must_verify: Enable user always-relay preference, observe actual selected route, remove TURN and prove no direct
     fallback, restore TURN and call again.
   why: Forced-relay build, saved boolean and fake outage policy are separate assertions.
 - rank: 20
   journey_id: MEDIA-018
   test_type: e2e
-  status: ready
-  status_date: "2026-10-26"
-  status_note: "Reviewed 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md (MEDIA-018), including cut-actor binding; native partial-transfer recovery pending."
+  status: covered
+  status_date: "2026-11-01"
+  status_note: "PASS: sender killed mid-send and receiver closed before download, one full playable video each time. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-018]."
   must_verify: Kill sender/receiver at durable upload/download cuts and recover full native usable content once,
     preserving original failed attempt.
   why: Fake bridges/object reconstruction and thumbnail visibility are insufficient for native full-content recovery.
@@ -16812,12 +16812,11 @@ gaps:
 - rank: 23
   journey_id: NAV-006
   test_type: manual
-  status: blocked
-  status_date: "2026-10-26"
-  status_note: "Owner decision on supported Inner-Circle membership/order entry remains pending; docs/testing/journey-coverage-matrix.md (NAV-006)."
-  must_verify: Owner identifies concrete supported manual Inner-Circle membership/order entry, or confirms automatic
-    recency/sculpt-only policy.
-  why: Unknown reachability should be resolved before inventing a shipped missing editor or planned commitment.
+  status: ready
+  status_date: "2026-11-01"
+  status_note: "Owner oracle (2026-10-30): circle fills starting from the closer one in the order of receiving messages. Verify automatic ordering; no manual membership editor required."
+  must_verify: Verify the circle fills from the closer position in message-receipt order.
+  why: Owner supplied the automatic-order oracle on 2026-10-30; device verification remains to run.
 exclusions:
 - item: Video calling and custom app-password/biometric unlock flows
   reason: No supported implementation/entry discovered; do not invent planned product commitments. Voice calls and
