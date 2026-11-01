@@ -454,7 +454,7 @@ const _productionBootstrapNormalizedSha256 =
     // argument at the existing call site; no owner moves.
     // Push round 4 combines the CR-008/IN-008 retirement wiring with the
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
-    '047cce09a7a99e066a1f97dea6c3922f70fb82ef0425c387e916cabddadbdaac';
+    'd9e78b34285dbb35fd16d7c68dbdd5c3fa85268aca447296f2f27e0fdd28deb5';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -493,7 +493,7 @@ const _productionBootstrapNormalizedSha256 =
 // Local intro dismissal injects the existing settings store into the same
 // adapter; both reviewed notification callbacks remain exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'b92274dce072d88ea6ad11014fbec1fe1423f6d06e7d11d2792b42f334ad125f';
+    'e174e77ef40b5df8d70f2585fefa14bd57f107497d72ab833b3ea0573fd09bf8';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
