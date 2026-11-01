@@ -1,0 +1,115 @@
+{
+  "formatVersion": 1,
+  "producerSourceCommit": "03312f766f13f9e2ac52dbeec66b1e078d0fe63c",
+  "producerSqlHelperSha256": "506cf375c21f27bdf25c5d4f036f1b52f8fb6f943d55f0c0db5e4d5d3759c205",
+  "description": "Synthetic owned test rows exported by real pre-fix SQL; event hashes and payloads are copied unchanged.",
+  "groupId": "a5-legacy-reentry",
+  "selfPeerId": "self-peer",
+  "authorizationId": "a5-legacy-invite",
+  "signedMembershipWatermark": "2026-07-07T00:00:00.000Z",
+  "signedIssuedAt": "2026-07-08T00:00:00.000Z",
+  "keyGeneration": 9,
+  "tables": {
+    "groups": [
+      {
+        "id": "a5-legacy-reentry",
+        "name": "Accepted group",
+        "type": "chat",
+        "topic_name": "/mknoon/groups/a5-legacy-reentry",
+        "description": "accepted description",
+        "avatar_blob_id": null,
+        "avatar_mime": null,
+        "avatar_path": null,
+        "created_at": "2026-07-01T00:00:00.000Z",
+        "created_by": "admin-peer",
+        "my_role": "member",
+        "is_muted": 1,
+        "is_dissolved": 0,
+        "dissolved_at": null,
+        "dissolved_by": null,
+        "is_archived": 0,
+        "archived_at": null,
+        "last_metadata_event_at": "2026-07-05T01:00:00.000Z",
+        "last_backlog_expired_at": null,
+        "last_backlog_retained_at": "2026-07-05T02:00:00.000Z",
+        "last_membership_event_at": "2026-07-08T00:00:00.000Z",
+        "last_membership_event_id": null,
+        "self_removed_at": null
+      }
+    ],
+    "group_members": [
+      {
+        "group_id": "a5-legacy-reentry",
+        "peer_id": "self-peer",
+        "username": "self-peer",
+        "role": "reader",
+        "public_key": "public-self-peer",
+        "ml_kem_public_key": null,
+        "joined_at": "2026-07-05T04:00:00.000Z",
+        "permissions_json": "{}",
+        "devices_json": "[]"
+      },
+      {
+        "group_id": "a5-legacy-reentry",
+        "peer_id": "other-peer",
+        "username": "other-peer",
+        "role": "writer",
+        "public_key": "public-other-peer",
+        "ml_kem_public_key": null,
+        "joined_at": "2026-07-05T04:00:01.000Z",
+        "permissions_json": "{}",
+        "devices_json": "[]"
+      }
+    ],
+    "group_keys": [
+      {
+        "group_id": "a5-legacy-reentry",
+        "key_generation": 9,
+        "encrypted_key": "secure:accepted-key-9",
+        "created_at": "2026-07-05T03:00:00.000Z"
+      }
+    ],
+    "group_key_rotation_drafts": [],
+    "group_event_log": [
+      {
+        "id": "69e6c7895c09e3048b623b5b809ed9385f20893581c2ac1028c9d151370838b9",
+        "group_id": "a5-legacy-reentry",
+        "sequence": 1,
+        "event_type": "local_self_removed_freshness_floor",
+        "source_peer_id": "self-peer",
+        "source_event_id": "local_self_removed_freshness_floor:f7947458ba4dfd4c7671f748c1d6534e30a4d5823035a715b704dac737172fca",
+        "source_timestamp": "2026-07-04T00:00:00.000Z",
+        "canonical_payload": "{\"groupId\":\"a5-legacy-reentry\",\"lastMembershipEventAt\":\"2026-07-04T00:00:00.000Z\",\"lastMembershipEventId\":\"a5-legacy-removal\",\"schemaVersion\":1,\"selfPeerId\":\"self-peer\",\"selfRemovedAt\":\"2026-07-04T00:00:00.000Z\"}",
+        "previous_entry_hash": null,
+        "entry_hash": "5b14689527c43b9d60e043d6200d6f9a897af7fd935d51cfdacaf63086c13143",
+        "created_at": "2026-07-08T00:00:01.000Z"
+      },
+      {
+        "id": "de6a5802ca646ab0c1bd9fd1b0448f61eb85176f58a36ae959127eb9d00ffb7a",
+        "group_id": "a5-legacy-reentry",
+        "sequence": 2,
+        "event_type": "local_self_removed_accept_origin",
+        "source_peer_id": "self-peer",
+        "source_event_id": "local_self_removed_accept_origin:be205db828ba78a72c81ad16f74877000e316b04c436e6031bb7c9a54d289bbb",
+        "source_timestamp": "2026-07-04T00:00:00.000Z",
+        "canonical_payload": "{\"authorizationId\":\"a5-legacy-invite\",\"floorEntryId\":\"69e6c7895c09e3048b623b5b809ed9385f20893581c2ac1028c9d151370838b9\",\"floorSelfRemovedAt\":\"2026-07-04T00:00:00.000Z\",\"floorSourceEventId\":\"local_self_removed_freshness_floor:f7947458ba4dfd4c7671f748c1d6534e30a4d5823035a715b704dac737172fca\",\"groupId\":\"a5-legacy-reentry\",\"priorShape\":\"marked\",\"schemaVersion\":1,\"selfPeerId\":\"self-peer\"}",
+        "previous_entry_hash": "5b14689527c43b9d60e043d6200d6f9a897af7fd935d51cfdacaf63086c13143",
+        "entry_hash": "9cb45c9dadc7df18a05e98ced9c313d7ba74a5a2ecd802ca02ea188c26281ab2",
+        "created_at": "2026-07-08T00:00:01.000Z"
+      },
+      {
+        "id": "b906e5cca85892859237aabff071b999e6378f6165a629ffeb4a98cf8d99a31a",
+        "group_id": "a5-legacy-reentry",
+        "sequence": 3,
+        "event_type": "local_self_removed_accept_binding",
+        "source_peer_id": "self-peer",
+        "source_event_id": "local_self_removed_accept_binding:9f0aa9e36369e36922f88465fd4c87c22fe431f0524929ebf8dde67977e2458e",
+        "source_timestamp": "2026-07-08T00:00:00.000Z",
+        "canonical_payload": "{\"acceptedAt\":\"2026-07-08T00:00:00.000Z\",\"acceptedStateFingerprint\":\"bd093fb099997956ad9efffd30e9c8d7d2ae83b7e0ba1195d7d6cd02edfe5048\",\"authorizationId\":\"a5-legacy-invite\",\"bindingNonce\":\"a5-legacy-nonce\",\"draftHash\":\"99bcfca61a865fe7ac5bb675250de956e8e0fb175d59adac80bb2fb177154a2c\",\"floorEntryId\":\"69e6c7895c09e3048b623b5b809ed9385f20893581c2ac1028c9d151370838b9\",\"floorSourceEventId\":\"local_self_removed_freshness_floor:f7947458ba4dfd4c7671f748c1d6534e30a4d5823035a715b704dac737172fca\",\"groupHash\":\"9d2fa41964e6f9d936ddb71287930e14102b6776545e314f52ed212e9f437f28\",\"groupId\":\"a5-legacy-reentry\",\"keyCreatedAt\":\"2026-07-05T03:00:00.000Z\",\"keyGeneration\":9,\"keyHash\":\"92993c959c833e60bfdc71b0f572eda4554bb8360fc3f1a5a9136fc281055fb3\",\"keyReference\":\"secure:accepted-key-9\",\"lastMembershipEventId\":null,\"originEntryId\":\"de6a5802ca646ab0c1bd9fd1b0448f61eb85176f58a36ae959127eb9d00ffb7a\",\"originSourceEventId\":\"local_self_removed_accept_origin:be205db828ba78a72c81ad16f74877000e316b04c436e6031bb7c9a54d289bbb\",\"priorDraftRows\":[],\"priorKeyRows\":[],\"priorShape\":\"marked\",\"rosterHash\":\"41f7dce673c63b6f4b08b98f315458d1f1bbcb7814f6e905e3e6d9aabe958d59\",\"schemaVersion\":1,\"selfJoinedAt\":\"2026-07-05T04:00:00.000Z\",\"selfPeerId\":\"self-peer\",\"signedIssuedAt\":\"2026-07-08T00:00:00.000Z\",\"signedMembershipWatermark\":\"2026-07-07T00:00:00.000Z\"}",
+        "previous_entry_hash": "9cb45c9dadc7df18a05e98ced9c313d7ba74a5a2ecd802ca02ea188c26281ab2",
+        "entry_hash": "3f624b46ed4f94cc036ad814b3ff3da276923e22f010849cc466b9e767202ead",
+        "created_at": "2026-07-08T00:00:01.000Z"
+      }
+    ]
+  }
+}

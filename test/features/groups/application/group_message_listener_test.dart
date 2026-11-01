@@ -9486,7 +9486,7 @@ void main() {
         expect((await groupRepo.getGroup(groupId))?.selfRemovedAt, isNull);
         expect(
           (await groupRepo.getGroup(groupId))?.lastMembershipEventAt,
-          removalFirstAcceptedAt,
+          removalFirstAt,
         );
         expect(await groupRepo.getMember(groupId, selfPeerId), isNotNull);
         expect(
@@ -9561,7 +9561,7 @@ void main() {
         await delayedB3;
         final finalGroup = await groupRepo.getGroup(groupId);
         expect(finalGroup?.selfRemovedAt, isNull);
-        expect(finalGroup?.lastMembershipEventAt, acceptedFirstAt);
+        expect(finalGroup?.lastMembershipEventAt, priorRemovalAt);
         expect(await groupRepo.getMember(groupId, selfPeerId), isNotNull);
         expect(
           (await groupRepo.getLatestKey(groupId))?.encryptedKey,
