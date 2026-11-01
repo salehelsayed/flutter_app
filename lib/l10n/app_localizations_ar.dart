@@ -4048,7 +4048,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get call_ended => 'انتهت المكالمة';
 
   @override
-  String get call_status_connecting => 'جارٍ الاتصال';
+  String get call_status_calling => 'جارٍ الاتصال';
+
+  @override
+  String get call_status_connecting => 'جارٍ التوصيل…';
 
   @override
   String get call_status_ringing => 'جارٍ الرنين';

@@ -35,6 +35,7 @@ enum ConversationCallStatus {
   busy,
   cancelled,
   failed,
+  notConnected,
 }
 
 /// Privacy-safe display projection of one terminal call-history row.

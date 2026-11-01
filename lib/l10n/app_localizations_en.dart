@@ -3988,6 +3988,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_ended => 'Call ended';
 
   @override
+  String get call_status_calling => 'Calling';
+
+  @override
   String get call_status_connecting => 'Connecting';
 
   @override

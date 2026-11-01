@@ -82,6 +82,9 @@ ConversationCallTimelineEntry projectCallTimelineEntry(CallHistoryEntry row) =>
         CallHistoryStatus.failed =>
           row.terminalReason == CallEndReason.remotePermissionDenied
               ? ConversationCallStatus.microphoneOff
+              : row.direction == CallDirection.outgoing &&
+                    row.terminalReason == CallEndReason.noAnswer
+              ? ConversationCallStatus.notConnected
               : ConversationCallStatus.failed,
       },
       startedAt: row.startedAt,

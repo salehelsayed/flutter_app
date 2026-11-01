@@ -120,6 +120,7 @@ class OutgoingCallScreen extends StatelessWidget {
   }
 
   String _status(AppLocalizations l10n) => switch (state) {
+    CallState.preparing || CallState.inviting => l10n.call_status_calling,
     CallState.ringing => l10n.call_status_ringing,
     CallState.connected => l10n.call_status_connected,
     CallState.reconnecting => l10n.call_status_reconnecting,

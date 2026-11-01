@@ -41,7 +41,7 @@ const _calleeDevice = 'callee-device';
 
 void main() {
   testWidgets(
-    'a callee whose call surface refuses to ring leaves one missed call and the caller reads "No answer"',
+    'a callee whose call surface refuses to ring leaves one missed call and the caller reads "Call could not connect"',
     (tester) async {
       final trip = (await tester.runAsync(_refuseAndDeliver))!;
 
@@ -63,11 +63,14 @@ void main() {
       expect(trip.callerOutcome, IncomingCallSignalOutcome.accepted);
       expect(trip.callerEnded.state, CallState.ended);
       expect(trip.callerEnded.endReason, CallEndReason.noAnswer);
+      expect(trip.callerEnded.ringingAt, isNull);
+      expect(trip.callerEnded.acceptedAt, isNull);
 
-      // Caller UI: the English notice for that end reason.
+      // Caller UI: no alerting or acceptance was confirmed.
       await _pumpCallerOverlay(tester, trip.callerEnded);
 
-      expect(find.text('No answer.'), findsOneWidget);
+      expect(find.text('Call could not connect.'), findsOneWidget);
+      expect(find.text('No answer.'), findsNothing);
       expect(find.text('The contact is on another call.'), findsNothing);
     },
   );

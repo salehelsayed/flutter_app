@@ -9102,7 +9102,29 @@ visible and cannot become an ordinary first-attempt PASS.
   with the approved fix is retained separately from harness and device evidence.
   Provider wake acceptance establishes custody only. Caller **Ringing** and
   ringback require authenticated remote ringing; a recipient may answer while
-  the caller still shows Connecting. The earlier focused affected-calls receipt
+  the caller still shows Calling. Preparing/inviting use Calling; accepted and
+  negotiating use Connecting. An outgoing no-answer outcome without either a
+  ringing or acceptance milestone displays the existing "Call could not
+  connect" notice. New history projections persist that case as failed while
+  retaining the canonical no-answer reason; the shared timeline renders the
+  same notice. Existing missed history rows remain No answer because their
+  stored representation does not establish whether the peer rang.
+  The reducer, overlay, history, conversation-row, Calls and Orbit preservation
+  suites passed 168 host cases under
+  `.codex-test-logs/call-progress-wording-20261101/green-preservation/`; the
+  causal four-failure RED is retained in `red-tests/` in that directory's
+  parent. These are host state/rendering proofs, not native delivery, audible
+  ringback, device timing or signed-candidate evidence. The proposed distinct
+  Arabic Connecting copy remains subject to owner approval.
+  The full affected-calls selection subsequently passed 1,446 cases without
+  skips in `host-calls-corrected/`. Its first attempt in `host-subset/` retains
+  five obsolete expectation/fixture failures: missed-history controls now
+  explicitly include ringing, and refusal/locale checks use the new wording
+  while retaining protocol, notification, duration and action assertions.
+  Workflow, bootstrap, call-signaling, contacts, startup and the approved UI
+  recovery/readability selection passed in that first run. These separate
+  receipts do not claim the other conservatively selected or device checks ran.
+  The earlier focused affected-calls receipt
   (935 passing tests), initial failures and corrections remain under
   `.codex-test-logs/android-outgoing-ux-20260916/`; that snapshot does not certify
   subsequent source changes or device timing.

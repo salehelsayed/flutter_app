@@ -2054,6 +2054,7 @@
   "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
   "missed_call_notification_unknown_caller": "Someone",
   "call_ended": "Call ended",
+  "call_status_calling": "Calling",
   "call_status_connecting": "Connecting",
   "call_status_ringing": "Ringing",
   "call_status_connected": "Connected",

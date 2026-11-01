@@ -1856,6 +1856,7 @@
   "@call_row_with_duration": {"placeholders": {"label": {"type": "String"}, "duration": {"type": "String"}}},
   "missed_call_notification_unknown_caller": "Jemand",
   "call_ended": "Anruf beendet",
+  "call_status_calling": "Wird angerufen…",
   "call_status_connecting": "Verbindung wird hergestellt",
   "call_status_ringing": "Klingelt",
   "call_status_connected": "Verbunden",

@@ -89,6 +89,7 @@ void main() {
 
     for (final entry in const {
       'de': (
+        calling: 'Wird angerufen…',
         connecting: 'Verbindung wird hergestellt',
         ringing: 'Klingelt',
         connected: 'Verbunden',
@@ -99,7 +100,8 @@ void main() {
         duration: 'Anrufdauer 01:05',
       ),
       'ar': (
-        connecting: 'جارٍ الاتصال',
+        calling: 'جارٍ الاتصال',
+        connecting: 'جارٍ التوصيل…',
         ringing: 'جارٍ الرنين',
         connected: 'متصل',
         reconnecting: 'إعادة الاتصال',
@@ -118,7 +120,8 @@ void main() {
           final labels = entry.value;
           final now = DateTime.utc(2026, 8, 30, 12);
           for (final state in {
-            CallState.preparing: labels.connecting,
+            CallState.preparing: labels.calling,
+            CallState.inviting: labels.calling,
             CallState.ringing: labels.ringing,
           }.entries) {
             await tester.pumpWidget(
@@ -191,7 +194,7 @@ void main() {
       });
     }
 
-    testWidgets('outgoing call distinguishes Connecting from remote Ringing', (
+    testWidgets('outgoing call distinguishes Calling from remote Ringing', (
       tester,
     ) async {
       var cancelCount = 0;
@@ -208,7 +211,8 @@ void main() {
       );
 
       expect(find.text('Alice'), findsOneWidget);
-      expect(find.text('Connecting'), findsOneWidget);
+      expect(find.text('Calling'), findsOneWidget);
+      expect(find.text('Connecting'), findsNothing);
       expect(find.text('Ringing'), findsNothing);
       await tester.tap(find.byTooltip('Cancel call'));
       expect(cancelCount, 1);
@@ -226,6 +230,7 @@ void main() {
         ),
       );
 
+      expect(find.text('Calling'), findsNothing);
       expect(find.text('Connecting'), findsNothing);
       expect(find.text('Ringing'), findsOneWidget);
       await tester.tap(find.byTooltip('Cancel call'));

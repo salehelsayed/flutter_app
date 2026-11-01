@@ -725,7 +725,12 @@ String _terminalMessage(
   CallEndReason.unsupported => l10n.call_end_unsupported,
   CallEndReason.busy => l10n.call_end_busy,
   CallEndReason.declined => l10n.call_end_declined,
-  CallEndReason.noAnswer => l10n.call_end_no_answer,
+  CallEndReason.noAnswer =>
+    session.direction == CallDirection.outgoing &&
+            session.ringingAt == null &&
+            session.acceptedAt == null
+        ? l10n.call_end_signaling_failed
+        : l10n.call_end_no_answer,
   CallEndReason.signalingFailed => l10n.call_end_signaling_failed,
   CallEndReason.mediaFailed =>
     session.connectedAt == null

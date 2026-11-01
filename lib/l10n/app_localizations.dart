@@ -6614,6 +6614,12 @@ abstract class AppLocalizations {
   /// **'Call ended'**
   String get call_ended;
 
+  /// No description provided for @call_status_calling.
+  ///
+  /// In en, this message translates to:
+  /// **'Calling'**
+  String get call_status_calling;
+
   /// No description provided for @call_status_connecting.
   ///
   /// In en, this message translates to:

@@ -93,7 +93,11 @@ final class CallHistoryProjector {
       case CallEndReason.expired:
         return CallHistoryStatus.missed;
       case CallEndReason.noAnswer:
-        return CallHistoryStatus.missed;
+        return snapshot.direction == CallDirection.outgoing &&
+                snapshot.ringingAt == null &&
+                snapshot.acceptedAt == null
+            ? CallHistoryStatus.failed
+            : CallHistoryStatus.missed;
       case CallEndReason.declined:
         return CallHistoryStatus.declined;
       case CallEndReason.callerCancelled:

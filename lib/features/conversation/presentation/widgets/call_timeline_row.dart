@@ -42,6 +42,7 @@ String callTimelineStatusLabel(
     ConversationCallStatus.cancelled =>
       isIncoming ? l10n.call_row_missed : l10n.call_row_cancelled,
     ConversationCallStatus.failed => l10n.call_row_failed,
+    ConversationCallStatus.notConnected => l10n.call_end_signaling_failed,
     ConversationCallStatus.microphoneOff => l10n.call_row_microphone_off,
   };
 }
@@ -70,7 +71,8 @@ IconData _callTimelineIcon(ConversationCallTimelineEntry entry) {
     ConversationCallStatus.cancelled =>
       isIncoming ? Icons.call_missed : Icons.call_missed_outgoing,
     ConversationCallStatus.declined => Icons.call_end,
-    ConversationCallStatus.failed => Icons.error_outline,
+    ConversationCallStatus.failed ||
+    ConversationCallStatus.notConnected => Icons.error_outline,
     ConversationCallStatus.microphoneOff => Icons.mic_off_outlined,
   };
 }

@@ -129,6 +129,36 @@ void main() {
     });
   }
 
+  testWidgets('CALL-PROGRESS Arabic accepted and negotiating labels differ '
+      'from Calling', (tester) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    await tester.pumpWidget(
+      harness(capability: capability, locale: const Locale('ar')),
+    );
+    final events = <CallEventType>[
+      CallEventType.place,
+      CallEventType.outgoingInviteReady,
+      CallEventType.remoteAccept,
+    ];
+    for (final event in <CallEventType?>[
+      null,
+      CallEventType.negotiationReady,
+    ]) {
+      if (event != null) events.add(event);
+      capability.emit(
+        ForegroundCallProjection(
+          session: outgoingProgress(events),
+          audio: CallAudioControlState.idle,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('جارٍ التوصيل…'), findsOneWidget);
+      expect(find.text('جارٍ الاتصال'), findsNothing);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('CALL-PROGRESS confirmed alerting and accepted audio setup keep '
       'distinct labels and connected duration', (tester) async {
     final capability = _FakeForegroundCallCapability();

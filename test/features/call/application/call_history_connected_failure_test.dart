@@ -28,6 +28,7 @@ final class _Repository implements CallHistoryRepository {
 CallSessionSnapshot _ended({
   required CallEndReason reason,
   required DateTime? connectedAt,
+  DateTime? ringingAt,
   CallDirection direction = CallDirection.outgoing,
 }) {
   final startedAt = DateTime.utc(2026, 9, 24, 22, 57);
@@ -43,6 +44,7 @@ CallSessionSnapshot _ended({
         ? 'local-device'
         : 'contact-device',
     startedAt: startedAt,
+    ringingAt: ringingAt,
     connectedAt: connectedAt,
     endedAt: DateTime.utc(2026, 9, 24, 23, 0, 12),
     endReason: reason,
@@ -74,10 +76,15 @@ void main() {
         },
       );
 
-      test('VC-026 never-connected ${direction.name} call ended by '
+      test('VC-026 alerted but never-connected ${direction.name} call ended by '
           '${reason.wireName} remains missed without talk duration', () async {
         final entry = await CallHistoryProjector(_Repository()).projectTerminal(
-          _ended(reason: reason, connectedAt: null, direction: direction),
+          _ended(
+            reason: reason,
+            connectedAt: null,
+            ringingAt: DateTime.utc(2026, 9, 24, 22, 57, 2),
+            direction: direction,
+          ),
         );
 
         expect(entry.status, CallHistoryStatus.missed);

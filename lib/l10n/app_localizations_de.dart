@@ -4081,6 +4081,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_ended => 'Anruf beendet';
 
   @override
+  String get call_status_calling => 'Wird angerufen…';
+
+  @override
   String get call_status_connecting => 'Verbindung wird hergestellt';
 
   @override
