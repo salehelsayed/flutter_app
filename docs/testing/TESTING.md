@@ -7876,6 +7876,33 @@ visible and cannot become an ordinary first-attempt PASS.
   tests cover recovery only after acknowledgement of the exact old terminal,
   both cancellation/presentation orderings and both new-call admission orders.
   Missing receipts, live predecessors and adopted-call fences remain protected.
+  **VC-026 killed-side history, November 1:** the separate history gap after
+  losing the Dart process is covered by a bounded authenticated checkpoint in
+  the existing secure store, not by replaying a new invite. The production call
+  graph settles that checkpoint before native attach or signaling intake.
+  Current identity keys, contact/device keys and the original relationship
+  consent revision are rechecked in the same SQL write transaction as the
+  existing terminal projection. A block, rekey or same-key delete/re-add cannot
+  recreate the old row. Normal terminal projection clears only its own record;
+  a repeated recovery keeps the existing call-ID row and status. Recovered rows
+  announce through the existing projection listener after SQL commit, before
+  native attach; repeated start/resume does not announce another row. The native
+  orphan/receipt policy below is unchanged. Recovered duration ends at the last
+  persisted observation, rather than including unobserved time after process
+  loss; the call, microphone and signaling are not resumed.
+  `call_signaling_composition_test.dart` captures full production SQLite with
+  `VACUUM INTO` and copies persisted secure-store bytes before graceful test
+  cleanup, then constructs a fresh production graph with expired original
+  signaling and no new invite. At RED commit `1ae4a78c5`, ringing and connected
+  cases both fail with missing history while four revocation controls pass.
+  The fixed selection passes seven cases, including Android with no native
+  journal and history committed before iOS native attach. The eight-file
+  history/lifecycle/race preservation selection passes 340 cases; focused
+  analysis reports no issues. This is host durable-snapshot restart proof,
+  not an executed OS process-kill or audible-media campaign. First setup and
+  lint failures remain with the RED/GREEN receipts under
+  `.codex-test-logs/vc026-20261101/`. Existing native/device evidence below
+  proves its own recovery boundaries and does not certify this new history fix.
   **VC-026 process-loss candidate:** owner-approved task `m-ea6ea1ed`, based
   on RCA SHA256 `66974a7ebb2156d7466a46d4877b0acb12f382a6d6f06cbb3175cc368b35b4de`,
   adds fresh-native-controller reconciliation for a persisted ADOPTED journal.

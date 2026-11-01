@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/database/helpers/call_history_db_helpers.dart';
+import 'package:flutter_app/core/database/migrations/117_call_history.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../domain/call_id.dart';
@@ -6,9 +7,13 @@ import 'call_history_repository.dart';
 
 final class CallHistoryRepositoryImpl
     implements CallHistoryRepository, CallHistoryBrowser {
-  const CallHistoryRepositoryImpl(this.database);
+  const CallHistoryRepositoryImpl(
+    this.database, {
+    DatabaseExecutor? terminalExecutor,
+  }) : _terminalExecutor = terminalExecutor ?? database;
 
   final Database database;
+  final DatabaseExecutor _terminalExecutor;
 
   @override
   Future<CallHistoryPage> browse({
@@ -65,13 +70,23 @@ final class CallHistoryRepositoryImpl
   }
 
   @override
-  Future<void> upsertTerminal(CallHistoryEntry entry) =>
-      insertCallHistoryTerminal(database, entry.toMap());
+  Future<void> upsertTerminal(CallHistoryEntry entry) async {
+    await _terminalExecutor.insert(
+      kCallHistoryTable,
+      entry.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
 
   @override
   Future<CallHistoryEntry?> getByCallId(CallId callId) async {
-    final row = await loadCallHistoryById(database, callId.value);
-    return row == null ? null : CallHistoryEntry.fromMap(row);
+    final rows = await _terminalExecutor.query(
+      kCallHistoryTable,
+      where: 'call_id = ?',
+      whereArgs: <Object?>[callId.value],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : CallHistoryEntry.fromMap(rows.single);
   }
 
   /// 410: unread missed-call counts for a batch of contacts.

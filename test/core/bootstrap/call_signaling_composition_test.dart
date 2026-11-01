@@ -462,13 +462,15 @@ void main() {
   for (final scenario in [
     'ringing',
     'connected',
+    'Android ringing',
     'blocked contact',
     'rekeyed contact',
     'deleted and re-added contact',
     'rekeyed identity',
   ]) {
     final connected = scenario == 'connected';
-    final shouldRecover = scenario == 'ringing' || connected;
+    final android = scenario == 'Android ringing';
+    final shouldRecover = scenario == 'ringing' || connected || android;
     test(
       'VC-026 killed-side $scenario history after restart without a fresh invite',
       () async {
@@ -519,6 +521,12 @@ void main() {
           databaseOverride: original,
           privacyStore: keys,
           outgoingContactAccountPeerId: 'remote-account',
+          nativePlatform: android
+              ? CallEndpointPlatform.android
+              : CallEndpointPlatform.ios,
+          privacyFlags: {
+            if (android) 'voice_call_android_native_enabled': false,
+          },
           callEngineFactory: (_) => _ProcessLossEngine(),
           lifecycleOverride: (method, arguments) async {
             if (method == 'registerOutgoingAuthenticated') {
@@ -552,9 +560,10 @@ void main() {
             if (method == 'activateAudio') audioActive = true;
             if (method == 'deactivateAudio' ||
                 method == 'failClosed' ||
-                method == 'end')
+                method == 'end') {
               audioActive = false;
-            if (method == 'readAudioState')
+            }
+            if (method == 'readAudioState') {
               return <String, Object?>{
                 'version': 1,
                 'active': audioActive,
@@ -562,6 +571,7 @@ void main() {
                 'route': 'system_default',
                 'availableRoutes': ['system_default', 'speaker'],
               };
+            }
             return null;
           },
           microphonePermission: const _GrantedCallMicrophonePermission(),
@@ -687,9 +697,18 @@ void main() {
             }, where: 'id = 1');
         }
         var historyAtNativeAttach = false;
+        final announcedHistory = <(CallId, bool)>[];
         final restored = await _createProductionIosFixture(
           databaseOverride: restoredDatabase,
           privacyStore: captured,
+          onCallHistoryProjected: (entry, inserted) =>
+              announcedHistory.add((entry.callId, inserted)),
+          nativePlatform: android
+              ? CallEndpointPlatform.android
+              : CallEndpointPlatform.ios,
+          privacyFlags: {
+            if (android) 'voice_call_android_native_enabled': false,
+          },
           clockMs: () => 2_120_000, // The original invite has expired.
           lifecycleOverride: (method, _) async {
             if (method == 'attach') {
@@ -716,6 +735,7 @@ void main() {
             reason: 'a revoked authority must not resurrect old call history',
           );
           expect(historyAtNativeAttach, isFalse);
+          expect(announcedHistory, isEmpty);
           return;
         }
         expect(
@@ -732,14 +752,35 @@ void main() {
         expect(row.connectedAt, connectedAt);
         expect(row.startedAt, startedAt);
         expect(
-          historyAtNativeAttach,
-          isTrue,
+          announcedHistory,
+          [(callId, true)],
           reason:
-              'history must be durable before native orphan cleanup can acknowledge it',
+              'mounted history consumers must hear the existing durable-row notification',
         );
+        if (android) {
+          expect(
+            restored.lifecycleMethods,
+            isEmpty,
+            reason:
+                'Android recovery must work without a retained native journal',
+          );
+        } else {
+          expect(
+            historyAtNativeAttach,
+            isTrue,
+            reason:
+                'history must be durable before native orphan cleanup can acknowledge it',
+          );
+        }
         expect(restarted.coordinator.activeSession, isNull);
         await restored.composition.start();
         await restored.composition.onResume();
+        expect(
+          announcedHistory,
+          [(callId, true)],
+          reason:
+              'repeated start or resume must not announce another recovered row',
+        );
         expect(
           await restarted.coordinator.historyProjector.repository
               .listForContact('remote-account'),
@@ -7035,6 +7076,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   Database? databaseOverride,
   int Function()? clockMs,
   CallEngine Function(CallId)? callEngineFactory,
+  void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
   Map<String, bool> privacyFlags = const {},
   Map<String, Object?>? endpointSetResponse,
   Map<String, Object?>? tokenSetResponse,
@@ -7122,6 +7164,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     isVoiceNoteRecording: () => false,
     microphonePermission: microphonePermission,
     callEngineFactory: callEngineFactory,
+    onCallHistoryProjected: onCallHistoryProjected,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,

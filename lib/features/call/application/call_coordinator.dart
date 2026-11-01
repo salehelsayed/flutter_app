@@ -120,6 +120,8 @@ final class CallCoordinator {
     this.onInternalFailure,
     this.onAppliedStateTransition,
     this.onTimerScheduled,
+    this.persistActiveCall,
+    this.clearActiveCall,
   }) : _timerScheduler = timerScheduler ?? const DartCallTimerScheduler() {
     if (maxPendingEvents <= 0 ||
         terminalTombstoneCapacity <= 0 ||
@@ -162,6 +164,8 @@ final class CallCoordinator {
   onInternalFailure;
   final CallAppliedStateTransitionObserver? onAppliedStateTransition;
   final CallScheduledTimerObserver? onTimerScheduled;
+  final Future<void> Function(CallSessionSnapshot snapshot)? persistActiveCall;
+  final Future<void> Function(CallId callId)? clearActiveCall;
   final CallTimerScheduler _timerScheduler;
 
   final StreamController<CallSessionSnapshot> _snapshots =
@@ -428,6 +432,23 @@ final class CallCoordinator {
     final snapshot = reduction.snapshot;
     _active = snapshot;
     _last = snapshot;
+    final persist = persistActiveCall;
+    if (!snapshot.isTerminal && persist != null) {
+      try {
+        await persist(snapshot);
+      } catch (_) {
+        await _dispatchNow(
+          CallEvent(
+            type: CallEventType.negotiationFailed,
+            eventId: 'checkpoint-failed-${snapshot.callId!.value}',
+            occurredAt: clock(),
+            callId: snapshot.callId,
+            endReason: CallEndReason.mediaFailed,
+          ),
+        );
+        rethrow;
+      }
+    }
     final previousInterruption = _preparationInterruption;
     final interruption =
         reduction.effects.any(
@@ -524,7 +545,9 @@ final class CallCoordinator {
             var budgetExpired = false;
             await historyProjector
                 .projectTerminal(snapshot)
-                .then<void>((_) {})
+                .then<void>((_) async {
+                  await clearActiveCall?.call(snapshot.callId!);
+                })
                 .timeout(
                   terminalHistoryTimeout,
                   onTimeout: () => budgetExpired = true,

@@ -68,6 +68,7 @@ import '../../features/call/infrastructure/production_call_endpoint_resolution.d
 import '../../features/call/infrastructure/flutter_webrtc_call_engine.dart';
 import '../../features/call/application/call_ringback_coordinator.dart';
 import '../../features/call/infrastructure/android_call_token_coordinator.dart';
+import '../../features/call/infrastructure/active_call_history_checkpoint.dart';
 import '../../features/call/infrastructure/call_ringback_channel.dart';
 import '../../features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import '../../features/call/infrastructure/ios_voip_token_coordinator.dart';
@@ -1688,6 +1689,15 @@ CallSignalingComposition createProductionCallSignalingComposition({
       }
 
       final signalingContextStore = CallSignalingContextStore();
+      final historyCheckpoint = ActiveCallHistoryCheckpoint(
+        database: database,
+        secureKeyStore: secureKeyStore,
+        localIdentity: identity,
+        readContext: signalingContextStore.read,
+        clock: callClock,
+        onTerminalProjected: onCallHistoryProjected,
+      );
+      await historyCheckpoint.recover();
       final negotiationMaterialStore = CallNegotiationMaterialStore();
       final boundEffects = _BoundCallEffectExecutor();
       late final CallScopedMediaBundleOwner mediaOwner;
@@ -1733,6 +1743,8 @@ CallSignalingComposition createProductionCallSignalingComposition({
           CallHistoryRepositoryImpl(database),
           onTerminalProjected: onCallHistoryProjected,
         ),
+        persistActiveCall: historyCheckpoint.save,
+        clearActiveCall: historyCheckpoint.clear,
         effectExecutor: boundEffects,
         clock: callClock,
         idSource: _newCallId,
@@ -1871,6 +1883,10 @@ CallSignalingComposition createProductionCallSignalingComposition({
                   callHandle: callHandle,
                 ),
         registerOutgoingBeforeInvite: (callId) async {
+          final active = coordinator.activeSession;
+          if (active != null && active.callId == callId) {
+            await historyCheckpoint.save(active);
+          }
           if (nativeLifecycleAdapter == null) return true;
           return nativeLifecycleAdapter.registerOutgoing(
             callId,
