@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
 import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
@@ -31,6 +32,80 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  group('IN-008 unopened introduction presence adapter', () {
+    setUp(() {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    });
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('returns native true for the exact canonical event query', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call);
+            return true;
+          });
+
+      expect(
+        await MethodChannelIosNotificationRecoveryBridge()
+            .hasDeliveredIntroduction(
+              messageId: 'intro-unopened::send::introducer-peer',
+            ),
+        isTrue,
+      );
+      expect(calls.map((call) => call.method), ['hasDeliveredIntroduction']);
+      expect(calls.single.arguments, {
+        'messageId': 'intro-unopened::send::introducer-peer',
+      });
+    });
+
+    test('only a native boolean true establishes delivered presence', () async {
+      for (final reply in <Object?>[false, null, 1, 'true', {'ok': true}]) {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (_) async => reply);
+        expect(
+          await MethodChannelIosNotificationRecoveryBridge()
+              .hasDeliveredIntroduction(
+                messageId: 'intro-unopened::send::introducer-peer',
+              ),
+          isFalse,
+        );
+      }
+    });
+
+    for (final failure in ['platform', 'missing-plugin']) {
+      test('$failure failure leaves local notification available', () async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (_) async {
+              if (failure == 'platform') {
+                throw PlatformException(code: 'presence-read-failed');
+              }
+              throw MissingPluginException('presence reader unavailable');
+            });
+        expect(
+          await MethodChannelIosNotificationRecoveryBridge()
+              .hasDeliveredIntroduction(
+                messageId: 'intro-unopened::send::introducer-peer',
+              ),
+          isFalse,
+        );
+      });
+    }
+
+    test('Android never calls the iOS presence channel', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      expect(
+        await MethodChannelIosNotificationRecoveryBridge()
+            .hasDeliveredIntroduction(
+              messageId: 'intro-unopened::send::introducer-peer',
+            ),
+        isFalse,
+      );
+      expect(calls, isEmpty);
+    });
   });
 
   test(

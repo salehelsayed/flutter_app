@@ -224,6 +224,9 @@ final class MethodChannelIosNotificationRecoveryBridge
     _requireAcknowledgement(response, method: 'retireIntroduction');
   }
 
+  Future<bool> hasDeliveredIntroduction({required String messageId}) async =>
+      false;
+
   @override
   Future<void> clearAccount() async {
     final response = await _channel.invokeMethod<Object?>(

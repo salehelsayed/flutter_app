@@ -738,6 +738,13 @@ final class IosNotificationRecoveryCoordinator {
     )
   }
 
+  func hasDeliveredIntroduction(
+    messageId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    completion(false)
+  }
+
   func retireIntroduction(
     messageId: String,
     completion: @escaping (Bool) -> Void

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -20,6 +22,8 @@ import '../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late StreamController<ChatMessage> streamController;
   late InMemoryContactRepository contactRepo;
   late InMemoryIntroductionRepository introRepo;
@@ -97,6 +101,104 @@ void main() {
   }
 
   group('IntroductionListener', () {
+    for (final presence in ['matching', 'missing', 'unrelated', 'read-failure']) {
+      test(
+        'IN-008 unopened intro $presence remote presence preserves one card',
+        () async {
+          final directory = Directory.systemTemp.createTempSync(
+            'intro-unopened-',
+          );
+          final gate = RecentRemoteNotificationGate(
+            filePath: '${directory.path}/gate.json',
+          );
+          final previousGate = recentRemoteNotificationGate;
+          debugSetRecentRemoteNotificationGate(gate);
+          final previousPlatform = debugDefaultTargetPlatformOverride;
+          debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+          const channel = MethodChannel(iosNotificationRecoveryChannelName);
+          final nativeCalls = <MethodCall>[];
+          addTearDown(() async {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null);
+            debugDefaultTargetPlatformOverride = previousPlatform;
+            debugSetRecentRemoteNotificationGate(previousGate);
+            await gate.clear();
+            if (directory.existsSync()) directory.deleteSync(recursive: true);
+          });
+          const introId = 'intro-unopened';
+          final envelopeId = IntroductionPayload.buildEnvelopeMessageId(
+            introductionId: introId,
+            action: 'send',
+            senderPeerId: 'introducer-peer',
+          );
+          final deliveredEventId = presence == 'matching'
+              ? envelopeId
+              : presence == 'unrelated'
+              ? 'another-intro::send::introducer-peer'
+              : null;
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) async {
+                nativeCalls.add(call);
+                if (presence == 'read-failure') {
+                  throw PlatformException(code: 'presence-read-failed');
+                }
+                return (call.arguments as Map)['messageId'] == deliveredEventId;
+              });
+          // Normal app launch: no tap occurred and no recent announcement or
+          // NSE sidecar was recorded. Only the native delivered card exists.
+          expect(
+            await gate.hasRecentExactAnnouncement(
+              payload: NotificationRouteTarget.intros(
+                messageId: envelopeId,
+              ).toPayload(),
+              messageId: envelopeId,
+            ),
+            isFalse,
+          );
+          contactRepo.addTestContact(
+            makeContact(peerId: 'introducer-peer', username: 'Introducer'),
+          );
+          final payload = IntroductionPayload(
+            action: 'send',
+            introductionId: introId,
+            introducerId: 'introducer-peer',
+            introducerUsername: 'Introducer',
+            recipientId: 'own-peer',
+            recipientUsername: 'Me',
+            introducedId: 'introduced-peer',
+            introducedUsername: 'Introduced',
+            introducedPublicKey: 'introduced-key',
+            introducedMlKemPublicKey: 'introduced-mlkem',
+            recipientPublicKey: 'own-key',
+            recipientMlKemPublicKey: 'own-mlkem',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          );
+
+          final outcome = await listener.processIncomingMessage(
+            ChatMessage(
+              from: 'introducer-peer',
+              to: 'own-peer',
+              content: payload.toJson(),
+              timestamp: payload.timestamp,
+              isIncoming: true,
+            ),
+          );
+
+          expect(outcome.state, IntroductionMessageProcessState.stored);
+          expect(await introRepo.getIntroduction(introId), isNotNull);
+          if (presence == 'matching') {
+            expect(notificationService.shownGeneric, isEmpty);
+            expect(nativeCalls.map((call) => call.method), [
+              'hasDeliveredIntroduction',
+            ]);
+            expect(nativeCalls.single.arguments, {'messageId': envelopeId});
+          } else {
+            expect(notificationService.shownGeneric, hasLength(1));
+          }
+        },
+      );
+    }
+
     test(
       'IN-008 tapped intro does not post a second local card on inbox replay',
       () async {

@@ -119,6 +119,117 @@ final class IosNotificationRecoveryTests: XCTestCase {
     )
   }
 
+  func testIN008IntroductionPresenceUsesExactIdentityWithoutRetirement() throws {
+    let messageId = "intro-offer::send::introducer-peer"
+    let vectors: [(String, [[AnyHashable: Any]], Bool)] = [
+      ("provider-exact", [["type": "intros", "message_id": messageId]], true),
+      (
+        "local-exact",
+        [["NotificationId": 8011, "payload": "intros|message:\(messageId)"]],
+        true
+      ),
+      ("absent", [], false),
+      (
+        "unrelated",
+        [
+          ["type": "intros", "message_id": "other-offer::send::introducer-peer"],
+          ["type": "contact_request", "message_id": messageId],
+          ["NotificationId": 8012, "payload": "intros"],
+          ["NotificationId": true, "payload": "intros|message:\(messageId)"],
+          [
+            "NotificationId": 8013,
+            "payload": "intros",
+            "type": "intros",
+            "message_id": messageId,
+          ],
+        ],
+        false
+      ),
+    ]
+
+    for (name, userInfoRows, expected) in vectors {
+      let directory = try temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let center = MutableSnapshotRecoveryCenter(
+        snapshots: userInfoRows.enumerated().map { index, userInfo in
+          IosDeliveredNotificationSnapshot(
+            requestIdentifier: "\(name)-\(index)",
+            userInfo: userInfo
+          )
+        }
+      )
+      let identifiersBefore = center.currentIdentifiers
+      let store = IosNotificationRecoveryStore(directory: directory)
+      XCTAssertEqual(
+        store.claimPrepared(
+          requestIdentifier: "unrelated-direct",
+          identity: ordinaryIdentity(eventId: "presence-direct-event")
+        ),
+        .unique
+      )
+      let badgeBefore = try XCTUnwrap(store.desiredBadgeSnapshot())
+      let badge = RecordingBadgeWriter()
+      let coordinator = IosNotificationRecoveryCoordinator(
+        store: store,
+        center: center,
+        badgeWriter: badge
+      )
+      let queried = expectation(description: "\(name) presence queried")
+      coordinator.hasDeliveredIntroduction(messageId: messageId) { present in
+        XCTAssertEqual(present, expected, name)
+        queried.fulfill()
+      }
+      wait(for: [queried], timeout: 2)
+
+      XCTAssertEqual(center.currentIdentifiers, identifiersBefore, name)
+      XCTAssertTrue(center.removals.isEmpty, name)
+      XCTAssertTrue(store.containsRequestForTesting("unrelated-direct"), name)
+      XCTAssertEqual(store.desiredBadgeSnapshot(), badgeBefore, name)
+      XCTAssertEqual(badge.calls, 0, name)
+    }
+  }
+
+  func testIN008IntroductionPresenceRejectsMalformedOfferIdentity() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let invalidIds = [
+      "",
+      " intro-offer::send::introducer-peer",
+      "intro-offer::accept::recipient-peer",
+      "intro-offer",
+      "intro-offer::send::",
+      "bad\nintro::send::introducer-peer",
+    ]
+    let center = MutableSnapshotRecoveryCenter(
+      snapshots: invalidIds.enumerated().map { index, messageId in
+        IosDeliveredNotificationSnapshot(
+          requestIdentifier: "invalid-\(index)",
+          userInfo: ["type": "intros", "message_id": messageId]
+        )
+      }
+    )
+    let identifiersBefore = center.currentIdentifiers
+    let badge = RecordingBadgeWriter()
+    let coordinator = IosNotificationRecoveryCoordinator(
+      store: IosNotificationRecoveryStore(directory: directory),
+      center: center,
+      badgeWriter: badge
+    )
+    for messageId in invalidIds {
+      let queried = expectation(description: "invalid offer presence rejected")
+      coordinator.hasDeliveredIntroduction(messageId: messageId) { present in
+        XCTAssertFalse(present)
+        queried.fulfill()
+      }
+      wait(for: [queried], timeout: 2)
+    }
+
+    XCTAssertEqual(center.currentIdentifiers, identifiersBefore)
+    XCTAssertEqual(center.snapshotInventoryCount, 0)
+    XCTAssertTrue(center.removals.isEmpty)
+    XCTAssertEqual(badge.calls, 0)
+  }
+
   func testCR008IN008DecisionRetirementIsSurgicalAndIdempotent() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
