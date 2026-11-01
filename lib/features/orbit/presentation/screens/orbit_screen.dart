@@ -1748,6 +1748,11 @@ class _OrbitScreenView extends StatelessWidget {
           isProcessing: data.processingIntroductionIds.contains(intro.id),
           onAccept: showActions ? () => data.onAccept(intro.id) : null,
           onPass: showActions ? () => data.onPass(intro.id) : null,
+          onDismiss:
+              intro.status == IntroductionOverallStatus.alreadyConnected &&
+                  data.onDelete != null
+              ? () => data.onDelete!(intro.id)
+              : null,
           ownPartyStatus: ownPartyStatus,
           waitingForUsername: waitingForUsername,
           onSendMessage:
@@ -1792,6 +1797,11 @@ class _OrbitScreenView extends StatelessWidget {
               : null,
           onPass: showActions
               ? () => data.onPass(item.displaySourceIntroductionId)
+              : null,
+          onDismiss:
+              intro.status == IntroductionOverallStatus.alreadyConnected &&
+                  data.onDelete != null
+              ? () => data.onDelete!(item.displaySourceIntroductionId)
               : null,
           ownPartyStatus: ownPartyStatus,
           waitingForUsername: item.targetDisplayName,

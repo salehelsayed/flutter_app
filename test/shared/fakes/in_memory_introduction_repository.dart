@@ -8,12 +8,22 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   final Map<String, IntroductionModel> _store = {};
   final Map<String, PendingIntroductionResponse> _pendingResponses = {};
   final Map<String, IntroductionOutboxDelivery> _outboxDeliveries = {};
+  final Set<(String, String)> _dismissedIntroductions = {};
 
   @override
   Future<bool> dismissAlreadyConnectedIntroductions({
     required List<String> introductionIds,
     required String ownPeerId,
-  }) async => false;
+  }) async {
+    final eligible = introductionIds.toSet().where((id) {
+      final intro = _store[id];
+      return intro != null &&
+          intro.status == IntroductionOverallStatus.alreadyConnected &&
+          (intro.recipientId == ownPeerId || intro.introducedId == ownPeerId);
+    }).toList();
+    _dismissedIntroductions.addAll(eligible.map((id) => (ownPeerId, id)));
+    return eligible.isNotEmpty;
+  }
 
   @override
   Future<void> saveIntroduction(IntroductionModel intro) async {
@@ -223,7 +233,9 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
           (i) =>
               (i.recipientId == peerId || i.introducedId == peerId) &&
               (i.status == IntroductionOverallStatus.pending ||
-                  i.status == IntroductionOverallStatus.alreadyConnected),
+                  i.status == IntroductionOverallStatus.alreadyConnected) &&
+              (i.status != IntroductionOverallStatus.alreadyConnected ||
+                  !_dismissedIntroductions.contains((peerId, i.id))),
         )
         .toList();
   }

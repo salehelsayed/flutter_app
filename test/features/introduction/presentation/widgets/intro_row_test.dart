@@ -111,7 +111,9 @@ void main() {
           onDismiss: () => fail('Dismissal must not run twice.'),
         ),
       );
-      final button = tester.widget<IconButton>(find.byTooltip('Dismiss'));
+      final button = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.close),
+      );
       expect(button.onPressed, isNull);
     });
 

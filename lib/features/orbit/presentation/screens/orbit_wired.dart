@@ -2368,7 +2368,52 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   Future<void> _onDeleteIntro(String introductionId) async {
     final introRepo = widget.introductionRepository;
-    if (_identity == null || introRepo == null) return;
+    final identity = _identity;
+    if (identity == null || introRepo == null) return;
+
+    try {
+      final intro = await introRepo.getIntroduction(introductionId);
+      if (!mounted || intro == null) return;
+      if (intro.status == IntroductionOverallStatus.alreadyConnected) {
+        final ids = <String>{introductionId};
+        final folded = _foldedIntroForActionId(introductionId);
+        if (folded != null) {
+          ids.addAll(
+            folded.introductions
+                .where(
+                  (row) =>
+                      row.status == IntroductionOverallStatus.alreadyConnected,
+                )
+                .map((row) => row.id),
+          );
+        }
+        if (ids.any(_processingIntroductionIds.contains)) return;
+        _processingIntroductionIds.addAll(ids);
+        _publishListProjection();
+        try {
+          final dismissed = await introRepo
+              .dismissAlreadyConnectedIntroductions(
+                introductionIds: ids.toList(),
+                ownPeerId: identity.peerId,
+              );
+          if (!dismissed) return;
+          _openRowNotifier.value = null;
+          _refreshPendingIntroductionsOnPop = true;
+          await _loadIntroductions();
+        } finally {
+          _processingIntroductionIds.removeAll(ids);
+          if (mounted) _publishListProjection();
+        }
+        return;
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ORBIT_FL_DISMISS_INTRO_ERROR',
+        details: {'error': error.toString()},
+      );
+      return;
+    }
 
     final confirmed = await showConfirmationDialog(
       context: context,

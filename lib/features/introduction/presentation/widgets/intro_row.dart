@@ -95,7 +95,14 @@ class IntroRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Row(
                   children: [
-                    Text(l10n.introduced_by_label, style: attributionStyle),
+                    Flexible(
+                      child: Text(
+                        l10n.introduced_by_label,
+                        style: attributionStyle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
@@ -185,6 +192,17 @@ class IntroRow extends StatelessWidget {
             )
           else
             _StatusLabel(status: introduction.status),
+          if (introduction.status ==
+                  IntroductionOverallStatus.alreadyConnected &&
+              !showActions &&
+              onDismiss != null)
+            IconButton(
+              key: ValueKey('intro-dismiss-${introduction.id}'),
+              tooltip: l10n.pinned_dismiss,
+              icon: const Icon(Icons.close, size: 16),
+              color: readableColors.textMuted,
+              onPressed: isProcessing ? null : onDismiss,
+            ),
         ],
       ),
     );

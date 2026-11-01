@@ -240,7 +240,9 @@ const _relocations = <String, List<String>>{
         'introduction_repository_impl.dart',
     // IN-008 adds the settled-introduction card retirement hook to this same
     // adapter; imports are unchanged.
-    '844351bb53bf73ee44ed20baed0423c03734277a98fd59a3b6c780fcbf0c2d2f',
+    // Local dismissal keeps per-account offer markers in the existing store;
+    // repository placement and SQL introduction rows are unchanged.
+    '3944568ceb807eeb913a6ad124e9affbbecfbfece112ff91fec8190a0b963aac',
   ],
   'lib/features/posts/domain/repositories/'
       'post_repository_impl.dart': <String>[

@@ -490,6 +490,8 @@ const _productionBootstrapNormalizedSha256 =
 // The same retry composition leaves the historical notification callback exact.
 // The same additive Thoughts bindings leave the historical callback exact.
 // The same approved wrote-back delegate is present in this reviewed remainder.
+// Local intro dismissal injects the existing settings store into the same
+// adapter; both reviewed notification callbacks remain exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
     'b92274dce072d88ea6ad11014fbec1fe1423f6d06e7d11d2792b42f334ad125f';
 

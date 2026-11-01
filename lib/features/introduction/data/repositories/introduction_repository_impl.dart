@@ -200,7 +200,35 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   Future<bool> dismissAlreadyConnectedIntroductions({
     required List<String> introductionIds,
     required String ownPeerId,
-  }) async => false;
+  }) async {
+    if (ownPeerId.isEmpty) return false;
+    final eligibleIds = <String>[];
+    for (final id in introductionIds.toSet()) {
+      final intro = await getIntroduction(id);
+      if (intro != null &&
+          intro.status == IntroductionOverallStatus.alreadyConnected &&
+          (intro.recipientId == ownPeerId || intro.introducedId == ownPeerId)) {
+        eligibleIds.add(intro.id);
+      }
+    }
+    if (eligibleIds.isEmpty) return false;
+
+    for (final id in eligibleIds) {
+      await secureKeyStore.write(_dismissedIntroductionKey(ownPeerId, id), '1');
+    }
+    for (final id in eligibleIds) {
+      try {
+        await onResponseSaved?.call(id);
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'INTRO_NOTIFICATION_RETIRE_ERROR',
+          details: {'error': error.toString()},
+        );
+      }
+    }
+    return true;
+  }
 
   @override
   Future<void> deleteIntroduction(String id) async {
@@ -372,7 +400,19 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     String peerId,
   ) async {
     final rows = await dbLoadPendingIntroductionsForUser(peerId);
-    return rows.map((row) => IntroductionModel.fromMap(row)).toList();
+    final visible = <IntroductionModel>[];
+    for (final row in rows) {
+      final intro = IntroductionModel.fromMap(row);
+      if (intro.status == IntroductionOverallStatus.alreadyConnected &&
+          await secureKeyStore.read(
+                _dismissedIntroductionKey(peerId, intro.id),
+              ) ==
+              '1') {
+        continue;
+      }
+      visible.add(intro);
+    }
+    return visible;
   }
 
   @override
@@ -443,3 +483,6 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     await dbDeleteIntroductionOutboxDeliveriesForIntroduction(introductionId);
   }
 }
+
+String _dismissedIntroductionKey(String ownPeerId, String introductionId) =>
+    'intro_dismissed_v1:${Uri.encodeComponent(ownPeerId)}:${Uri.encodeComponent(introductionId)}';

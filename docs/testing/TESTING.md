@@ -3549,6 +3549,26 @@ by Kayan/flutter_app. Evidence is under
 `.codex-test-logs/in008-unopened-20261101/` in the matching worktree; the preserved
 native RED log is `codexui-in008-red-20261101/xcodebuild_test.log` in flutter_app.
 
+Already-connected introduction cards use independent account/introduction
+markers in the existing `SecureKeyStore` for local dismissal. Keep the SQL row
+and its status: the existing-row SEND guard then prevents a repeated delivery
+from recreating the card. Active-list reads filter these markers only for
+already-connected rows. Folded predecessors are marked before the existing
+exact-ID notification retirement callback runs; failed persistence keeps the
+card, and a notification error cannot undo a stored dismissal. Other parties,
+response statuses and outbound deliveries are unchanged. No schema migration
+or network message is involved. The close button uses `pinned_dismiss`.
+Its normal tap target narrows the attribution area, so the introduced-by label
+must flex and ellipsize rather than overflow. The 16 focused host cases cover
+the close action, SQL reopen, same-ID replay, account isolation, folded rows,
+storage errors and the actual Orbit wiring. The combined preservation and
+architecture-contract run passes 313 tests.
+Retain the first resource-aborted
+RED run and the subsequent layout failure in
+`.codex-test-logs/intro-dismiss-connected-20261101/` in the matching worktree.
+Host tests fake the secure-storage platform boundary; real persistence across
+an application restart and OS notification retirement remain device evidence.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally
