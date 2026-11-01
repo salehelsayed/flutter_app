@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
@@ -41,6 +42,40 @@ void main() {
     tearDown(() {
       debugDefaultTargetPlatformOverride = null;
     });
+
+    for (final latePresence in [true, false]) {
+      test('IN-008 presence deadline ignores late native $latePresence', () {
+        final nativeResult = Completer<bool>();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              calls.add(call);
+              return nativeResult.future;
+            });
+
+        fakeAsync((clock) {
+          final results = <bool>[];
+          MethodChannelIosNotificationRecoveryBridge()
+              .hasDeliveredIntroduction(
+                messageId: 'intro-stalled::send::introducer-peer',
+              )
+              .then(results.add);
+          clock.flushMicrotasks();
+          expect(calls.map((call) => call.method), [
+            'hasDeliveredIntroduction',
+          ]);
+          clock.elapse(const Duration(milliseconds: 1999));
+          expect(results, isEmpty);
+          clock.elapse(const Duration(milliseconds: 1));
+          try {
+            expect(results, [false]);
+          } finally {
+            nativeResult.complete(latePresence);
+            clock.flushMicrotasks();
+          }
+          expect(results, [false]);
+        });
+      });
+    }
 
     test('returns native true for the exact canonical event query', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

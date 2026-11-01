@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
@@ -101,6 +102,101 @@ void main() {
   }
 
   group('IntroductionListener', () {
+    for (final latePresence in [true, false]) {
+      test(
+        'IN-008 presence deadline publishes once despite late native $latePresence',
+        () {
+          final previousGate = recentRemoteNotificationGate;
+          debugSetRecentRemoteNotificationGate(_EmptyRecentAnnouncementGate());
+          final previousPlatform = debugDefaultTargetPlatformOverride;
+          debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+          const channel = MethodChannel(iosNotificationRecoveryChannelName);
+          final nativeResult = Completer<bool>();
+          final nativeCalls = <MethodCall>[];
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(channel, (call) async {
+                nativeCalls.add(call);
+                return nativeResult.future;
+              });
+          addTearDown(() {
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+                .setMockMethodCallHandler(channel, null);
+            debugDefaultTargetPlatformOverride = previousPlatform;
+            debugSetRecentRemoteNotificationGate(previousGate);
+          });
+          contactRepo.addTestContact(
+            makeContact(peerId: 'introducer-peer', username: 'Introducer'),
+          );
+          final payload = IntroductionPayload(
+            action: 'send',
+            introductionId: 'intro-stalled',
+            introducerId: 'introducer-peer',
+            introducerUsername: 'Introducer',
+            recipientId: 'own-peer',
+            recipientUsername: 'Me',
+            introducedId: 'introduced-peer',
+            introducedUsername: 'Introduced',
+            introducedPublicKey: 'introduced-key',
+            introducedMlKemPublicKey: 'introduced-mlkem',
+            recipientPublicKey: 'own-key',
+            recipientMlKemPublicKey: 'own-mlkem',
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+          );
+
+          fakeAsync((clock) {
+            IntroductionMessageProcessOutcome? outcome;
+            var completions = 0;
+            listener
+                .processIncomingMessage(
+                  ChatMessage(
+                    from: 'introducer-peer',
+                    to: 'own-peer',
+                    content: payload.toJson(),
+                    timestamp: payload.timestamp,
+                    isIncoming: true,
+                  ),
+                )
+                .then((value) {
+                  outcome = value;
+                  completions++;
+                });
+            clock.flushMicrotasks();
+            expect(nativeCalls.map((call) => call.method), [
+              'hasDeliveredIntroduction',
+            ]);
+            clock.elapse(const Duration(milliseconds: 1999));
+            expect(notificationService.shownGeneric, isEmpty);
+            expect(completions, 0);
+            clock.elapse(const Duration(milliseconds: 1));
+            try {
+              expect(notificationService.shownGeneric, hasLength(1));
+              expect(completions, 1);
+              expect(outcome?.state, IntroductionMessageProcessState.stored);
+              IntroductionModel? stored;
+              var systemMessageCount = 0;
+              introRepo.getIntroduction(payload.introductionId).then((value) {
+                stored = value;
+              });
+              messageRepo.getMessagesForContact('introducer-peer').then((
+                value,
+              ) {
+                systemMessageCount = value.length;
+              });
+              clock.flushMicrotasks();
+              expect(stored, isNotNull);
+              expect(systemMessageCount, 1);
+            } finally {
+              // Let the pending channel settle even on the unfixed RED path.
+              nativeResult.complete(latePresence);
+              clock.flushMicrotasks();
+            }
+            expect(notificationService.shownGeneric, hasLength(1));
+            expect(completions, 1);
+          });
+        },
+      );
+    }
+
     for (final presence in [
       'matching',
       'missing',
@@ -1247,4 +1343,14 @@ void main() {
       },
     );
   });
+}
+
+// The deadline regression isolates the native read; gate persistence has its
+// own real-file tests and must not introduce OS I/O into this fake clock.
+class _EmptyRecentAnnouncementGate extends RecentRemoteNotificationGate {
+  @override
+  Future<bool> consumeIfRecentAnnouncement({
+    required String payload,
+    String? messageId,
+  }) async => false;
 }
