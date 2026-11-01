@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/media/composer_draft_store.dart';
@@ -230,6 +231,34 @@ void main() {
       expect(filesUnder(Directory(draftsRoot())).map(p.basename).toList(), [
         'draft.json',
       ]);
+    },
+  );
+
+  test(
+    'composer draft store drops the photo when its saved private setting is not supported',
+    () async {
+      final key = ComposerDraftKey.direct('peer-alice');
+      await newStore().save(
+        key,
+        ComposerDraft(
+          text: 'Only for you',
+          attachments: [
+            PendingComposerMedia(file: pickedPhoto(), budgetBytes: 5),
+          ],
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        ),
+      );
+      final draftFile = File(
+        p.join(draftsRoot(), key.folderName, 'draft.json'),
+      );
+      final json = jsonDecode(draftFile.readAsStringSync()) as Map;
+      json['privateMediaPolicy'] = {'version': 2, 'mode': 'view_once'};
+      draftFile.writeAsStringSync(jsonEncode(json));
+
+      final loaded = await newStore().load(key);
+
+      expect(loaded!.text, 'Only for you');
+      expect(loaded.attachments, isEmpty);
     },
   );
 }
