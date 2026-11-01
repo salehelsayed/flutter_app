@@ -265,6 +265,37 @@ void main() {
     },
   );
 
+  test('IN-DISMISS partial folded retry retires all original IDs', () async {
+    final failing = _FailingStore(2);
+    final repo = repository(keyStore: failing);
+    await repo.saveIntroduction(intro('first'));
+    await repo.saveIntroduction(intro('second'));
+
+    await expectLater(
+      repo.dismissAlreadyConnectedIntroductions(
+        introductionIds: ['first', 'second'],
+        ownPeerId: 'peer-B',
+      ),
+      throwsStateError,
+    );
+
+    final restarted = repository(keyStore: failing);
+    final visibleIds = (await restarted.getPendingIntroductionsForUser(
+      'peer-B',
+    )).map((row) => row.id).toList();
+    expect(visibleIds, ['second']);
+    expect(
+      await restarted.dismissAlreadyConnectedIntroductions(
+        introductionIds: visibleIds,
+        ownPeerId: 'peer-B',
+      ),
+      isTrue,
+    );
+    expect(await restarted.getPendingIntroductionsForUser('peer-B'), isEmpty);
+    expect(retired.toSet(), {'first', 'second'});
+    expect(retired, hasLength(2));
+  });
+
   test('IN-DISMISS retirement error does not undo stored dismissal', () async {
     final repo = repository(
       retire: (_) async => throw StateError('native center unavailable'),
