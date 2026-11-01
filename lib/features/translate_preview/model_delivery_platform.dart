@@ -9,8 +9,8 @@ import 'package:clock/clock.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
+import 'package:flutter_app/core/storage/exclude_from_backup.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
@@ -89,25 +89,16 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
        _supportDirectory = supportDirectory ?? getApplicationSupportDirectory,
        _diskSpace = diskSpace ?? DiskSpaceChannel(),
        _preferences = preferences ?? SharedPreferences.getInstance,
-       _excludeFromBackup = excludeFromBackup ?? _nativeExcludeFromBackup,
+       _excludeFromBackup = excludeFromBackup ?? excludeDirectoryFromBackup,
        _hashFile = hashFile;
 
   static const recordKey = 'mknoon.translator.model_delivery.v1';
-  static const _channel = MethodChannel('mknoon/gemma_preview');
   final Future<void> Function(Future<void> Function()) _removeModel;
   final Future<Directory> Function() _supportDirectory;
   final DiskSpaceChannel _diskSpace;
   final Future<SharedPreferences> Function() _preferences;
   final Future<bool> Function(String) _excludeFromBackup;
   final Future<bool> Function(String, ModelDeliveryManifest)? _hashFile;
-
-  static Future<bool> _nativeExcludeFromBackup(String path) async {
-    if (!Platform.isIOS) return true;
-    return await _channel.invokeMethod<bool>('excludeFromBackup', {
-          'path': path,
-        }) ==
-        true;
-  }
 
   Future<Directory> _directory() async =>
       Directory('${(await _supportDirectory()).path}/$modelDeliveryDirectory');
