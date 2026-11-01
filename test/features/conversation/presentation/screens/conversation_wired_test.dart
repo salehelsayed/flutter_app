@@ -2512,6 +2512,50 @@ void main() {
     await capability.close();
   });
 
+  testWidgets(
+    'contact repair request loses ownership across lifecycle change',
+    (tester) async {
+      final messageRepo = FakeMessageRepository();
+      final release = Completer<bool>();
+      OutgoingCallStartRequest? repairRequest;
+      final capability = _RecordingOutgoingCallCapability(
+        isOutgoingCallAvailable: true,
+        contactOutgoingAvailable: false,
+        result: OutgoingCallStartResult.started,
+        onRecoverContact: (request) {
+          repairRequest = request;
+          return release.future;
+        },
+      );
+      addTearDown(capability.close);
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        outgoingCallCapability: capability,
+      );
+      await tester.tap(
+        find.byTooltip('Voice calling is unavailable right now'),
+      );
+      await tester.pump();
+      expect(repairRequest, isNotNull);
+      expect(repairRequest!.isCanceled, isFalse);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      expect(repairRequest!.isCanceled, isTrue);
+      release.complete(true);
+      await tester.pump();
+      expect(capability.peerIds, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   for (final completion in [
     'ready',
     'timeout',

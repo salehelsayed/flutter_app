@@ -99,6 +99,58 @@ final class CallEndpointResolver {
   static final RegExp _routingHandleGrammar = RegExp(r'^[0-9a-f]{32}$');
   static final RegExp _wakeHandleGrammar = RegExp(r'^[0-9a-f]{32}$');
 
+  /// Only absent or expired routing authority may solicit endpoint repair.
+  /// A current grant must still bind to one trusted device; an expired relay
+  /// record must authenticate against that same device before it is repairable.
+  Future<bool> canRepairEndpoint({
+    required String contactAccountPeerId,
+    required bool contactAccepted,
+    required bool contactBlocked,
+    required List<TrustedCallDeviceAuthority> trustedDevices,
+    required SignedCallEndpointRecord? relayEndpoint,
+    required CallWakeHandleGrant? wakeHandleGrant,
+  }) async {
+    final grant = wakeHandleGrant;
+    if (!contactAccepted ||
+        contactBlocked ||
+        grant == null ||
+        !grant.isValidAt(_nowMs())) {
+      return false;
+    }
+    final devices = trustedDevices
+        .where(
+          (device) =>
+              device.accountPeerId == contactAccountPeerId &&
+              device.linked &&
+              device.devicePeerId == grant.recipientDevicePeerId &&
+              device.deviceKeyEpoch == grant.deviceKeyEpoch &&
+              device.signingPublicKey.trim().isNotEmpty &&
+              device.mlKemPublicKey.trim().isNotEmpty,
+        )
+        .toList(growable: false);
+    if (devices.length != 1) return false;
+    if (relayEndpoint == null) return true;
+    final record = relayEndpoint.record;
+    final device = devices.single;
+    if (record.expiresAtMs > _nowMs() ||
+        record.accountPeerId != contactAccountPeerId ||
+        record.devicePeerId != device.devicePeerId ||
+        record.deviceKeyEpoch != device.deviceKeyEpoch ||
+        record.preferenceEpoch < 0 ||
+        !record.capabilities.contains(voiceCapability) ||
+        !_routingHandleGrammar.hasMatch(record.routingHandle)) {
+      return false;
+    }
+    try {
+      return await _verifyEndpointSignature(
+        relayEndpoint,
+        device.signingPublicKey,
+      );
+    } catch (_) {
+      return false;
+    }
+  }
+
   final int Function() _nowMs;
   final VerifyCallEndpointSignature _verifyEndpointSignature;
 

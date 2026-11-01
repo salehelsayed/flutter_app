@@ -10020,6 +10020,27 @@ visible and cannot become an ordinary first-attempt PASS.
   each retain their publication. Evidence and the five causal RED failures are
   under `.codex-test-logs/call-capability-reuse-20261026/`; these host counts do
   not establish device latency or provider delivery.
+  **Explicit contact endpoint repair:** an explicit call or redial can reuse
+  the authenticated contact exchange once when a trusted contact has a current
+  received grant but no endpoint or an authenticated expired endpoint. The
+  production graph coalesces the complete repair/recheck flight; only lookups
+  repeat, within the existing ten-second contact preflight. Tests preserve
+  blocked/unaccepted contact, grant/device/signature, network, cancellation and
+  lifecycle fences, plus the existing passive missing-grant backfill. Durable
+  and legacy replies await the existing advertisement reconciliation and then
+  recheck contact authority; legacy ACK ordering and committed retry bytes stay
+  intact. Existing call diagnostics export advertisement outcomes with FLOW
+  disabled and without fixture identifiers. Eleven complete host test files
+  pass 666 cases without skips across `green-tests` and
+  `green-composition-rerun` under
+  `.codex-test-logs/call-endpoint-repair-20261101/`. The first run's composition
+  fixture compile failure and original RED evidence remain there. The original
+  RED assertion suppressing passive missing-grant backfill was superseded by
+  requirement clarification; passive grant recovery must remain available.
+  These proofs cover a healthy running peer's repair path; they do not establish
+  the reported incident's cause, native/provider delivery, device recovery or
+  signed-build behavior. The broader wrapper-selected lanes remain unrun for
+  this bounded host verification.
   **SE-42 client controls and local history:** active-call minimization retains
   the canonical call/media owners and restores retained navigation, composer
   focus and accessibility. Expanded Android Back backgrounds the task;

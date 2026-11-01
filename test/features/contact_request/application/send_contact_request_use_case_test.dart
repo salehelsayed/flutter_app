@@ -386,13 +386,14 @@ void main() {
         final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedStore,
           nowMs: () => now.millisecondsSinceEpoch,
-          requestRecovery: ({required contactAccountPeerId}) async {
-            recoveryCalls++;
-            await sendEquivalent(
-              intent: ContactRequestSendIntent.keyExchangeRetry,
-              requireFresh: true,
-            );
-          },
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                recoveryCalls++;
+                await sendEquivalent(
+                  intent: ContactRequestSendIntent.keyExchangeRetry,
+                  requireFresh: true,
+                );
+              },
         );
         expect(
           await recovery.ensureCurrentGrantFor('targetPeer123456789'),
@@ -524,21 +525,22 @@ void main() {
       final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: receivedStore,
         nowMs: () => nowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          expect(
-            await sendEquivalent(
-              intent: ContactRequestSendIntent.keyExchangeRetry,
-              requireFresh: true,
-            ),
-            SendContactRequestResult.success,
-          );
-          expect(p2pService.sendWithReplyCalls, 2);
-          await receivedStore.storeIfStrictlyNewer(
-            issuerAccountPeerId: contactAccountPeerId,
-            grant: receivedGrant,
-            nowMs: nowMs,
-          );
-        },
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              expect(
+                await sendEquivalent(
+                  intent: ContactRequestSendIntent.keyExchangeRetry,
+                  requireFresh: true,
+                ),
+                SendContactRequestResult.success,
+              );
+              expect(p2pService.sendWithReplyCalls, 2);
+              await receivedStore.storeIfStrictlyNewer(
+                issuerAccountPeerId: contactAccountPeerId,
+                grant: receivedGrant,
+                nowMs: nowMs,
+              );
+            },
       );
       expect(
         await recovery.ensureCurrentGrantFor('targetPeer123456789'),

@@ -338,6 +338,8 @@ const _applicationRootNormalizedSha256 =
 // historical database callback remains unique and byte-identical. Both pins
 // are reconstructed in media-contact-intro-20261101/dtr18-pin-proof.json.
 // Wrote-back adds only the reviewed two-line database lookup at this app owner.
+// Endpoint repair adds callbacks at the existing call and contact-reply owners;
+// the historical notification callback and DTR-18 ownership stay unchanged.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -452,7 +454,7 @@ const _productionBootstrapNormalizedSha256 =
     // argument at the existing call site; no owner moves.
     // Push round 4 combines the CR-008/IN-008 retirement wiring with the
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
-    '2f129523666f867625da14248b22dd964c3c76077fc6817e87fcde8b9b0b1c80';
+    '047cce09a7a99e066a1f97dea6c3922f70fb82ef0425c387e916cabddadbdaac';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -489,7 +491,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same additive Thoughts bindings leave the historical callback exact.
 // The same approved wrote-back delegate is present in this reviewed remainder.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'd492ff46470cce28102420ec61d728537f4c5baf3cf861f370f97d90a902944e';
+    'b92274dce072d88ea6ad11014fbec1fe1423f6d06e7d11d2792b42f334ad125f';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

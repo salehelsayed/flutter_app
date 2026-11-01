@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,11 +8,14 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
+import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_endpoint_resolution.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fake_async/fake_async.dart';
 
 const _nowMs = 5_000_000;
 const _accountPeerId = 'private-contact-account';
@@ -28,15 +32,20 @@ TrustedCallDeviceAuthority _trustedDevice() => const TrustedCallDeviceAuthority(
   mlKemPublicKey: 'private-mlkem-public-key',
 );
 
-CallTrustedRosterSnapshot _roster({bool accepted = true}) =>
-    CallTrustedRosterSnapshot(
-      contactAccountPeerId: _accountPeerId,
-      contactAccepted: accepted,
-      contactBlocked: false,
-      devices: <TrustedCallDeviceAuthority>[_trustedDevice()],
-    );
+CallTrustedRosterSnapshot _roster({
+  bool accepted = true,
+  bool blocked = false,
+}) => CallTrustedRosterSnapshot(
+  contactAccountPeerId: _accountPeerId,
+  contactAccepted: accepted,
+  contactBlocked: blocked,
+  devices: <TrustedCallDeviceAuthority>[_trustedDevice()],
+);
 
-SignedCallEndpointRecord _endpoint({int expiresAtMs = _nowMs + 60_000}) {
+SignedCallEndpointRecord _endpoint({
+  int expiresAtMs = _nowMs + 60_000,
+  String signature = 'private-signature',
+}) {
   final record = CallEndpointRecord(
     accountPeerId: _accountPeerId,
     devicePeerId: _devicePeerId,
@@ -49,20 +58,23 @@ SignedCallEndpointRecord _endpoint({int expiresAtMs = _nowMs + 60_000}) {
   );
   return SignedCallEndpointRecord(
     record: record,
-    signature: 'private-signature',
+    signature: signature,
     canonicalRecordBase64: base64Encode(
       utf8.encode(record.canonicalRecordJson),
     ),
   );
 }
 
-CallWakeHandleGrant _grant() => CallWakeHandleGrant(
+CallWakeHandleGrant _grant({
+  String devicePeerId = _devicePeerId,
+  int expiresAtMs = _nowMs + 30_000,
+}) => CallWakeHandleGrant(
   handle: _wakeHandle,
-  recipientDevicePeerId: _devicePeerId,
+  recipientDevicePeerId: devicePeerId,
   deviceKeyEpoch: 7,
   generation: 2,
   issuedAtMs: _nowMs - 1_000,
-  expiresAtMs: _nowMs + 30_000,
+  expiresAtMs: expiresAtMs,
 );
 
 CallEndpointResolver _resolver() => CallEndpointResolver(
@@ -75,7 +87,7 @@ CallEndpointResolver _resolver() => CallEndpointResolver(
 final class _RosterProvider implements CallTrustedRosterProvider {
   _RosterProvider({required this.snapshot, this.error});
 
-  final CallTrustedRosterSnapshot snapshot;
+  CallTrustedRosterSnapshot snapshot;
   final Object? error;
 
   @override
@@ -111,9 +123,11 @@ final class _Authority implements CallAuthorityClient {
 
   SignedCallEndpointRecord? endpoint;
   final Object? error;
+  int reads = 0;
 
   @override
   Future<SignedCallEndpointRecord?> getEndpoint(String accountPeerId) async {
+    reads++;
     if (error case final error?) throw error;
     return endpoint;
   }
@@ -124,19 +138,20 @@ final class _Authority implements CallAuthorityClient {
 
 Future<({bool available, List<Map<String, dynamic>> results})> _probe({
   bool networkAllowed = true,
+  bool Function()? networkGate,
   CallTrustedRosterProvider? rosterProvider,
   ReceivedCallWakeHandleStore? receivedStore,
   CallAuthorityClient? authority,
   Future<bool> Function(String contactAccountPeerId)?
   ensureReceivedCallWakeHandle,
-  Future<bool> Function(String contactAccountPeerId)? repairMissingEndpoint,
+  RepairCallEndpoint? repairMissingEndpoint,
   OutgoingCallStartRequest? request,
 }) async {
   final events = <Map<String, dynamic>>[];
   debugSetFlowEventSink(events.add);
   try {
     final available = await probeProductionCallEndpointAvailability(
-      networkEffectsAllowed: () => networkAllowed,
+      networkEffectsAllowed: networkGate ?? () => networkAllowed,
       contactAccountPeerId: _accountPeerId,
       resolver: _resolver(),
       rosterProvider: rosterProvider ?? _RosterProvider(snapshot: _roster()),
@@ -310,11 +325,12 @@ void main() {
         final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedStore,
           nowMs: () => _nowMs,
-          requestRecovery: ({required contactAccountPeerId}) async {
-            expect(contactAccountPeerId, _accountPeerId);
-            repairSends++;
-            authority.endpoint = _endpoint();
-          },
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                expect(contactAccountPeerId, _accountPeerId);
+                repairSends++;
+                authority.endpoint = _endpoint();
+              },
         );
         final actual = await _probe(
           authority: authority,
@@ -330,26 +346,176 @@ void main() {
   }
 
   for (final hasGrant in [false, true]) {
-    test('passive endpoint probe sends nothing with grant=$hasGrant', () async {
-      final receivedStore = _ReceivedStore(grant: hasGrant ? _grant() : null);
-      var repairSends = 0;
-      final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
-        receivedCallWakeHandleStore: receivedStore,
-        nowMs: () => _nowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          repairSends++;
-        },
-      );
-      final actual = await _probe(
-        authority: _Authority(endpoint: null),
-        receivedStore: receivedStore,
-        ensureReceivedCallWakeHandle: recovery.ensureCurrentGrantFor,
-        repairMissingEndpoint: recovery.requestEndpointRepairFor,
-      );
-      expect(repairSends, 0);
-      expect(actual.available, isFalse);
+    test(
+      'passive endpoint probe preserves grant backfill with grant=$hasGrant',
+      () async {
+        final receivedStore = _ReceivedStore(grant: hasGrant ? _grant() : null);
+        var grantBackfillSends = 0;
+        var endpointRepairRequests = 0;
+        final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
+          receivedCallWakeHandleStore: receivedStore,
+          nowMs: () => _nowMs,
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                grantBackfillSends++;
+              },
+        );
+        final actual = await _probe(
+          authority: _Authority(endpoint: null),
+          receivedStore: receivedStore,
+          ensureReceivedCallWakeHandle: recovery.ensureCurrentGrantFor,
+          repairMissingEndpoint: (peerId, {beforeRequest}) async {
+            endpointRepairRequests++;
+            return recovery.requestEndpointRepairFor(
+              peerId,
+              beforeRequest: beforeRequest,
+            );
+          },
+        );
+        expect(grantBackfillSends, hasGrant ? 0 : 1);
+        expect(endpointRepairRequests, 0);
+        expect(actual.available, isFalse);
+      },
+    );
+  }
+
+  for (final rejection in [
+    'blocked',
+    'unaccepted',
+    'wrong-grant-device',
+    'expired-grant',
+    'invalid-stale-signature',
+    'network-denied',
+  ]) {
+    test(
+      'endpoint repair rejects $rejection authority without a send',
+      () async {
+        var repairCalls = 0;
+        final actual = await _probe(
+          networkAllowed: rejection != 'network-denied',
+          rosterProvider: _RosterProvider(
+            snapshot: _roster(
+              accepted: rejection != 'unaccepted',
+              blocked: rejection == 'blocked',
+            ),
+          ),
+          receivedStore: _ReceivedStore(
+            grant: _grant(
+              devicePeerId: rejection == 'wrong-grant-device'
+                  ? 'other-device'
+                  : _devicePeerId,
+              expiresAtMs: rejection == 'expired-grant'
+                  ? _nowMs
+                  : _nowMs + 30_000,
+            ),
+          ),
+          authority: _Authority(
+            endpoint: rejection == 'invalid-stale-signature'
+                ? _endpoint(expiresAtMs: _nowMs, signature: 'invalid')
+                : null,
+          ),
+          request: OutgoingCallStartRequest(),
+          repairMissingEndpoint: (_, {beforeRequest}) async {
+            repairCalls++;
+            return true;
+          },
+        );
+        expect(actual.available, isFalse);
+        expect(repairCalls, 0);
+      },
+    );
+  }
+
+  for (final completion in [
+    'published',
+    'timeout',
+    'canceled',
+    'blocked',
+    'network-denied',
+  ]) {
+    test('endpoint repair bounded rechecks finish on $completion', () {
+      fakeAsync((time) {
+        final authority = _Authority(endpoint: null);
+        final roster = _RosterProvider(snapshot: _roster());
+        final request = OutgoingCallStartRequest();
+        var networkAllowed = true;
+        var repairCalls = 0;
+        bool? available;
+        unawaited(
+          _probe(
+            authority: authority,
+            rosterProvider: roster,
+            networkGate: () => networkAllowed,
+            request: request,
+            repairMissingEndpoint: (_, {beforeRequest}) async {
+              await beforeRequest?.call();
+              repairCalls++;
+              return true;
+            },
+          ).then((result) => available = result.available),
+        );
+        time.flushMicrotasks();
+        expect(repairCalls, 1);
+        expect(available, isNull);
+        if (completion == 'published') authority.endpoint = _endpoint();
+        if (completion == 'canceled') request.cancel();
+        if (completion == 'blocked') roster.snapshot = _roster(blocked: true);
+        if (completion == 'network-denied') networkAllowed = false;
+        time.elapse(Duration(seconds: completion == 'timeout' ? 10 : 1));
+        time.flushMicrotasks();
+        expect(available, completion == 'published');
+        expect(repairCalls, 1);
+        final reads = authority.reads;
+        authority.endpoint = _endpoint();
+        time.elapse(const Duration(seconds: 20));
+        time.flushMicrotasks();
+        expect(authority.reads, reads);
+        expect(repairCalls, 1);
+      });
     });
   }
+
+  test(
+    'recovered endpoint does not finish the outgoing trace as failed',
+    () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final traceId = diagnostics.beginAttempt();
+      final authority = _Authority(endpoint: null);
+      final result = await diagnostics.runWithTrace(
+        traceId,
+        () => _probe(
+          authority: authority,
+          request: OutgoingCallStartRequest(),
+          repairMissingEndpoint: (_, {beforeRequest}) async {
+            await beforeRequest?.call();
+            authority.endpoint = _endpoint();
+            return true;
+          },
+        ),
+      );
+      expect(result.available, isTrue);
+      final events = await diagnostics.eventsForTesting();
+      expect(
+        events.where(
+          (event) =>
+              event['traceId'] == traceId && event['stage'] == 'terminal',
+        ),
+        isEmpty,
+      );
+      expect(
+        events.where(
+          (event) =>
+              event['traceId'] == traceId &&
+              event['outcome'] == 'preflight_failed',
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test('availability emits one identifier-free ready result', () async {
     final actual = await _probe();

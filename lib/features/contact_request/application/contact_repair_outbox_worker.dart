@@ -62,6 +62,7 @@ final class ContactRepairOutboxWorker {
   final Bridge _bridge;
   final ContactRepository _contactRepo;
   final ResolveCallWakeHandle? _resolveCallWakeHandle;
+  // Refresh existing call authority before either a new or committed reply.
   final Future<void> Function()? _prepareCallWakeReply;
   final OnCallWakeHandleDistributed? _onCallWakeHandleDistributed;
   final Future<String?> Function(String peerId)? _resolveWakeToken;
@@ -150,6 +151,15 @@ final class ContactRepairOutboxWorker {
       if (!await _fenceHolds(job)) {
         await _cancel(job, 'authority_changed');
         return;
+      }
+
+      final prepareCallWakeReply = _prepareCallWakeReply;
+      if (prepareCallWakeReply != null) {
+        await prepareCallWakeReply();
+        if (!await _fenceHolds(job)) {
+          await _cancel(job, 'authority_changed');
+          return;
+        }
       }
 
       BuiltContactRequestEnvelope envelope;

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../../../core/utils/flow_event_emitter.dart';
 import '../diagnostics/call_diagnostics.dart';
 import '../application/call_endpoint_resolver.dart';
@@ -11,6 +13,11 @@ import 'call_trusted_roster_provider.dart';
 /// [CallEndpointResolver.resolve], with identifier-free diagnostics.
 typedef EnsureReceivedCallWakeHandle =
     Future<bool> Function(String contactAccountPeerId);
+typedef RepairCallEndpoint =
+    Future<bool> Function(
+      String contactAccountPeerId, {
+      Future<void> Function()? beforeRequest,
+    });
 
 Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   required String contactAccountPeerId,
@@ -19,23 +26,56 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   required CallAuthorityClient authorityClient,
   required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
+  RepairCallEndpoint? repairMissingEndpoint,
+  Future<void> Function()? beforeOperation,
 }) async {
-  final roster = await loadCallEndpointDependency(
+  await beforeOperation?.call();
+  var roster = await loadCallEndpointDependency(
     stage: 'trusted_roster_load',
     load: () => rosterProvider.loadForContact(contactAccountPeerId),
   );
+  await beforeOperation?.call();
   try {
     await ensureReceivedCallWakeHandle?.call(contactAccountPeerId);
   } catch (_) {
     // Recovery is best effort. The durable store read below remains authority.
   }
-  final wakeHandleGrant = await loadCallEndpointDependency(
+  await beforeOperation?.call();
+  var wakeHandleGrant = await loadCallEndpointDependency(
     stage: 'received_wake_handle_load',
     load: () => receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
   );
-  final relayEndpoint = await loadCallEndpointDependency(
+  await beforeOperation?.call();
+  var relayEndpoint = await loadCallEndpointDependency(
     stage: 'relay_endpoint_load',
     load: () => authorityClient.getEndpoint(contactAccountPeerId),
+  );
+  Future<void> reload() async {
+    await beforeOperation?.call();
+    roster = await rosterProvider.loadForContact(contactAccountPeerId);
+    if (!roster.contactAccepted || roster.contactBlocked) {
+      throw CallEndpointResolutionException(
+        roster.contactBlocked
+            ? CallEndpointResolutionCode.blocked
+            : CallEndpointResolutionCode.notAccepted,
+      );
+    }
+    await beforeOperation?.call();
+    wakeHandleGrant = await receivedCallWakeHandleStore.readForIssuer(
+      contactAccountPeerId,
+    );
+    await beforeOperation?.call();
+    relayEndpoint = await authorityClient.getEndpoint(contactAccountPeerId);
+    await beforeOperation?.call();
+  }
+
+  Future<bool> canRepair() => resolver.canRepairEndpoint(
+    contactAccountPeerId: contactAccountPeerId,
+    contactAccepted: roster.contactAccepted,
+    contactBlocked: roster.contactBlocked,
+    trustedDevices: roster.devices,
+    relayEndpoint: relayEndpoint,
+    wakeHandleGrant: wakeHandleGrant,
   );
   emitFlowEvent(
     layer: 'FL',
@@ -49,22 +89,67 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
     },
   );
   try {
-    final endpoint = await resolver.resolve(
-      contactAccountPeerId: contactAccountPeerId,
-      contactAccepted: roster.contactAccepted,
-      contactBlocked: roster.contactBlocked,
-      trustedDevices: roster.devices,
-      relayCapabilities: relayEndpoint == null
-          ? const <SignedCallEndpointRecord>[]
-          : <SignedCallEndpointRecord>[relayEndpoint],
-      wakeHandleGrant: wakeHandleGrant,
-    );
-    emitCallEndpointResolutionResult(
-      stage: 'ready',
-      outcome: 'available',
-      reason: 'none',
-    );
-    return endpoint;
+    var repairRequested = false;
+    while (true) {
+      await beforeOperation?.call();
+      try {
+        final endpoint = await resolver.resolve(
+          contactAccountPeerId: contactAccountPeerId,
+          contactAccepted: roster.contactAccepted,
+          contactBlocked: roster.contactBlocked,
+          trustedDevices: roster.devices,
+          relayCapabilities: relayEndpoint == null
+              ? const <SignedCallEndpointRecord>[]
+              : <SignedCallEndpointRecord>[relayEndpoint!],
+          wakeHandleGrant: wakeHandleGrant,
+        );
+        await beforeOperation?.call();
+        emitCallEndpointResolutionResult(
+          stage: 'ready',
+          outcome: 'available',
+          reason: 'none',
+        );
+        return endpoint;
+      } on CallEndpointResolutionException {
+        if (repairMissingEndpoint == null || !await canRepair()) rethrow;
+        if (!repairRequested) {
+          // Re-read authority after the failed lookup before requesting any
+          // peer work. A concurrently published endpoint needs no repair.
+          await reload();
+          if (!await canRepair()) continue;
+          await beforeOperation?.call();
+          repairRequested = true;
+          if (!await repairMissingEndpoint(
+            contactAccountPeerId,
+            beforeRequest: () async {
+              await beforeOperation?.call();
+              roster = await rosterProvider.loadForContact(
+                contactAccountPeerId,
+              );
+              await beforeOperation?.call();
+              wakeHandleGrant = await receivedCallWakeHandleStore.readForIssuer(
+                contactAccountPeerId,
+              );
+              await beforeOperation?.call();
+              if (!await canRepair()) {
+                throw const CallEndpointResolutionException(
+                  CallEndpointResolutionCode.unavailable,
+                );
+              }
+              await beforeOperation?.call();
+            },
+          )) {
+            rethrow;
+          }
+        } else {
+          // The one authenticated request can complete before advertisement.
+          // Only rechecks follow, under the caller's original contact budget.
+          await beforeOperation?.call();
+          await Future<void>.delayed(const Duration(seconds: 1));
+        }
+        await reload();
+      }
+    }
   } on CallEndpointResolutionException catch (error) {
     final reason = switch (error.code) {
       CallEndpointResolutionCode.blocked => 'blocked',

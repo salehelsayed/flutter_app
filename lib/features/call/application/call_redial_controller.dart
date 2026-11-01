@@ -28,11 +28,21 @@ class CallRedialController {
   }) async {
     if (_busy) return OutgoingCallStartResult.canceled;
     _busy = true;
-    final request = OutgoingCallStartRequest(
-      isCurrent: () =>
-          (this.isCurrent?.call() ?? true) && (isCurrent?.call() ?? true),
-    );
+    OutgoingCallStartRequest? pending;
     try {
+      final owner = capability();
+      final request = OutgoingCallStartRequest(
+        isCurrent: () {
+          try {
+            return identical(owner, capability()) &&
+                (this.isCurrent?.call() ?? true) &&
+                (isCurrent?.call() ?? true);
+          } catch (_) {
+            return false;
+          }
+        },
+      );
+      pending = request;
       return await _start(peerId, request, isEligible).timeout(
         timeout,
         onTimeout: () {
@@ -45,11 +55,11 @@ class CallRedialController {
         },
       );
     } on OutgoingCallStartCanceled {
-      request.cancel();
+      pending?.cancel();
       return OutgoingCallStartResult.canceled;
     } catch (_) {
-      final canceled = request.isCanceled;
-      request.cancel();
+      final canceled = pending?.isCanceled ?? false;
+      pending?.cancel();
       return canceled
           ? OutgoingCallStartResult.canceled
           : OutgoingCallStartResult.failed;
@@ -80,7 +90,24 @@ class CallRedialController {
     if (!owner.isOutgoingCallAvailable) {
       return OutgoingCallStartResult.unavailable;
     }
-    final contactAvailable = await owner.isOutgoingCallAvailableFor(peerId);
+    var contactTimedOut = false;
+    final contactAvailable =
+        await (owner is OutgoingCallContactReadinessRecovery
+                ? (owner as OutgoingCallContactReadinessRecovery)
+                      .recoverOutgoingCallAvailabilityFor(
+                        peerId,
+                        request: request,
+                      )
+                : owner.isOutgoingCallAvailableFor(peerId))
+            .timeout(
+              const Duration(seconds: 10),
+              onTimeout: () {
+                contactTimedOut = !request.isCanceled;
+                request.cancel();
+                return false;
+              },
+            );
+    if (contactTimedOut) return OutgoingCallStartResult.failed;
     request.checkPending();
     if (!contactAvailable) return OutgoingCallStartResult.unavailable;
     if (!identical(owner, capability())) {

@@ -8383,6 +8383,7 @@ class _ConversationWiredState extends State<ConversationWired>
           mounted &&
           !_contact.isBlocked &&
           _contact.peerId == contactPeerId &&
+          _appLifecycleGeneration == lifecycleGeneration &&
           identical(capability, widget.outgoingCallCapability),
       onAdmitted: () {
         _outgoingCallPreflightTimer?.cancel();
@@ -8489,22 +8490,34 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
       final contactElapsed = Stopwatch()..start();
-      final contactAvailable = await capability
-          .isOutgoingCallAvailableFor(contactPeerId)
-          .timeout(
-            const Duration(seconds: 10),
-            onTimeout: () {
-              diagnostics.finishAttempt(
-                traceId: traceId,
-                outcome: 'preflight_failed',
-                reason: 'contact_check_timeout',
-                values: <String, Object?>{
-                  'durationMs': contactElapsed.elapsedMilliseconds,
+      final contactAvailable =
+          await (capability is OutgoingCallContactReadinessRecovery
+                  ? (capability as OutgoingCallContactReadinessRecovery)
+                        .recoverOutgoingCallAvailabilityFor(
+                          contactPeerId,
+                          request: request,
+                        )
+                  : capability.isOutgoingCallAvailableFor(contactPeerId))
+              .timeout(
+                const Duration(seconds: 10),
+                onTimeout: () {
+                  if (stillOwnsCallAction()) {
+                    _showOutgoingCallMessage(
+                      'Voice calling is unavailable right now',
+                    );
+                  }
+                  request.cancel();
+                  diagnostics.finishAttempt(
+                    traceId: traceId,
+                    outcome: 'preflight_failed',
+                    reason: 'contact_check_timeout',
+                    values: <String, Object?>{
+                      'durationMs': contactElapsed.elapsedMilliseconds,
+                    },
+                  );
+                  return false;
                 },
               );
-              return false;
-            },
-          );
       diagnostics.record(
         stage: 'preflight',
         action: 'check',

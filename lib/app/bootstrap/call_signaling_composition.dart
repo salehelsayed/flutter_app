@@ -139,6 +139,7 @@ final class CallSignalingComposition
     implements
         OutgoingCallCapability,
         OutgoingCallReadinessRecovery,
+        OutgoingCallContactReadinessRecovery,
         OutgoingCallStartDiagnostics,
         ForegroundCallCapability,
         ForegroundCallAudioPickerCapability,
@@ -331,6 +332,38 @@ final class CallSignalingComposition
       return available && identical(_graph, graph) && isOutgoingCallAvailable;
     } catch (_) {
       return false;
+    }
+  }
+
+  @override
+  Future<bool> recoverOutgoingCallAvailabilityFor(
+    String contactAccountPeerId, {
+    required OutgoingCallStartRequest request,
+  }) async {
+    final graph = _graph;
+    final generation = _outgoingReadinessLifecycleGeneration;
+    bool isCurrent() =>
+        !request.isCanceled &&
+        identical(_graph, graph) &&
+        generation == _outgoingReadinessLifecycleGeneration &&
+        _foregroundAllowed &&
+        _isForeground() &&
+        isOutgoingCallAvailable;
+    if (graph == null || !isCurrent()) return false;
+    final pending = OutgoingCallStartRequest(isCurrent: isCurrent);
+    try {
+      final available = graph is OutgoingCallContactReadinessRecovery
+          ? await (graph as OutgoingCallContactReadinessRecovery)
+                .recoverOutgoingCallAvailabilityFor(
+                  contactAccountPeerId,
+                  request: pending,
+                )
+          : await graph.isOutgoingCallAvailableFor(contactAccountPeerId);
+      return available && isCurrent();
+    } catch (_) {
+      return false;
+    } finally {
+      pending.cancel();
     }
   }
 

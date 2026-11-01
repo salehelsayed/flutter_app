@@ -12,7 +12,10 @@ typedef ResumeCallSignaling = Future<bool> Function();
 typedef CallWakeDistributionRetryDelay =
     Future<void> Function(Duration duration);
 typedef RequestReceivedCallWakeHandleRecovery =
-    Future<void> Function({required String contactAccountPeerId});
+    Future<void> Function({
+      required String contactAccountPeerId,
+      Future<void> Function()? beforeRequest,
+    });
 
 const callWakeContactKeyUpdatedTrigger = 'call_wake_contact_key_updated';
 const callWakeResumeReconcileTrigger = 'call_wake_resume_reconcile';
@@ -42,21 +45,34 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
   final Map<String, Future<bool>> _inFlightByContact = <String, Future<bool>>{};
 
   /// Explicit endpoint recovery can reuse the authenticated grant exchange.
-  Future<bool> requestEndpointRepairFor(String contactAccountPeerId) =>
-      ensureCurrentGrantFor(contactAccountPeerId);
+  Future<bool> requestEndpointRepairFor(
+    String contactAccountPeerId, {
+    Future<void> Function()? beforeRequest,
+  }) => _ensureFor(
+    contactAccountPeerId,
+    repairEndpoint: true,
+    beforeRequest: beforeRequest,
+  );
 
   /// Returns whether a current grant is available after any coalesced repair.
-  Future<bool> ensureCurrentGrantFor(String contactAccountPeerId) async {
+  Future<bool> ensureCurrentGrantFor(String contactAccountPeerId) =>
+      _ensureFor(contactAccountPeerId, repairEndpoint: false);
+
+  Future<bool> _ensureFor(
+    String contactAccountPeerId, {
+    required bool repairEndpoint,
+    Future<void> Function()? beforeRequest,
+  }) async {
     if (!CallWakeHandleGrant.hasValidPeerIdGrammar(contactAccountPeerId)) {
       return false;
     }
     try {
-      if (_isCurrentReceivedGrant(
+      final current = _isCurrentReceivedGrant(
         await _receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
         nowMs: _nowMs(),
-      )) {
-        return true;
-      }
+      );
+      if (repairEndpoint && !current) return false;
+      if (!repairEndpoint && current) return true;
     } catch (_) {
       return false;
     }
@@ -67,35 +83,50 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
     }
 
     late final Future<bool> flight;
-    flight = _requestAndRecheck(contactAccountPeerId).whenComplete(() {
-      if (identical(_inFlightByContact[contactAccountPeerId], flight)) {
-        _inFlightByContact.remove(contactAccountPeerId);
-      }
-    });
+    flight =
+        _requestAndRecheck(
+          contactAccountPeerId,
+          repairEndpoint: repairEndpoint,
+          beforeRequest: beforeRequest,
+        ).whenComplete(() {
+          if (identical(_inFlightByContact[contactAccountPeerId], flight)) {
+            _inFlightByContact.remove(contactAccountPeerId);
+          }
+        });
     _inFlightByContact[contactAccountPeerId] = flight;
     return flight;
   }
 
-  Future<bool> _requestAndRecheck(String contactAccountPeerId) async {
+  Future<bool> _requestAndRecheck(
+    String contactAccountPeerId, {
+    required bool repairEndpoint,
+    Future<void> Function()? beforeRequest,
+  }) async {
     final diagnostics = CallDiagnostics.instance;
     Stopwatch? requestElapsed;
     try {
-      if (_isCurrentReceivedGrant(
+      final current = _isCurrentReceivedGrant(
         await _receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
         nowMs: _nowMs(),
-      )) {
-        return true;
-      }
+      );
+      if (repairEndpoint && !current) return false;
+      if (!repairEndpoint && current) return true;
       // Inside an outgoing call attempt these events join its trace, so a
       // preflight timeout shows whether it was spent waiting on the contact.
       diagnostics.record(
         stage: 'authority',
         action: 'recover',
         outcome: 'started',
-        values: const <String, Object?>{'authorityKind': 'wake_grant'},
+        values: <String, Object?>{
+          'authorityKind': repairEndpoint ? 'endpoint' : 'wake_grant',
+        },
       );
       requestElapsed = Stopwatch()..start();
-      await _requestRecovery(contactAccountPeerId: contactAccountPeerId);
+      await beforeRequest?.call();
+      await _requestRecovery(
+        contactAccountPeerId: contactAccountPeerId,
+        beforeRequest: beforeRequest,
+      );
       final found = _isCurrentReceivedGrant(
         await _receivedCallWakeHandleStore.readForIssuer(contactAccountPeerId),
         nowMs: _nowMs(),
@@ -106,7 +137,7 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
         outcome: found ? 'ok' : 'not_found',
         reason: found ? 'none' : 'wake_authority_missing',
         values: <String, Object?>{
-          'authorityKind': 'wake_grant',
+          'authorityKind': repairEndpoint ? 'endpoint' : 'wake_grant',
           'found': found,
           'durationMs': requestElapsed.elapsedMilliseconds,
         },
@@ -120,7 +151,7 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
           outcome: 'failed',
           reason: 'authority_unreachable',
           values: <String, Object?>{
-            'authorityKind': 'wake_grant',
+            'authorityKind': repairEndpoint ? 'endpoint' : 'wake_grant',
             'found': false,
             'durationMs': requestElapsed.elapsedMilliseconds,
           },

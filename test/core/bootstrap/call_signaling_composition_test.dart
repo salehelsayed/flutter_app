@@ -62,6 +62,7 @@ import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adap
 import 'package:flutter_app/features/call/infrastructure/ios_voip_token_coordinator.dart';
 import 'package:flutter_app/features/call/infrastructure/issued_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/p2p_call_transport.dart';
+import 'package:flutter_app/features/call/infrastructure/production_call_endpoint_resolution.dart';
 import 'package:flutter_app/features/call/infrastructure/received_call_wake_handle_store_impl.dart';
 import 'package:flutter_app/features/call/infrastructure/secure_call_envelope_codec.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -501,6 +502,43 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  test('endpoint repair coalesces through delayed publication', () async {
+    const contact = 'remote-account';
+    var repairs = 0;
+    final fixture = await _createProductionIosFixture(
+      outgoingContactAccountPeerId: contact,
+      repairMissingEndpoint: (_, {beforeRequest}) async {
+        await beforeRequest?.call();
+        repairs++;
+        return true;
+      },
+    );
+    await fixture.composition.start();
+    await _configureCancellationEndpoint(fixture, contact);
+    final published = fixture.bridge.responses['call_endpoint_get_v1']!;
+    fixture.bridge.responses['call_endpoint_get_v1'] = <String, Object?>{
+      'ok': true,
+      'found': false,
+    };
+    final first = fixture.composition.recoverOutgoingCallAvailabilityFor(
+      contact,
+      request: OutgoingCallStartRequest(),
+    );
+    await _untilComposition(() => repairs == 1);
+    // Join after the authenticated request finished but before publication.
+    await Future<void>.delayed(Duration.zero);
+    final second = fixture.composition.recoverOutgoingCallAvailabilityFor(
+      contact,
+      request: OutgoingCallStartRequest(),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    expect(repairs, 1);
+    fixture.bridge.responses['call_endpoint_get_v1'] = published;
+    expect(await first, isTrue);
+    expect(await second, isTrue);
+    expect(repairs, 1);
+  });
+
   for (final publicationAccepted in [true, false]) {
     test('endpoint repair advertisement exports outcome with FLOW off '
         'accepted=$publicationAccepted', () async {
@@ -7496,6 +7534,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
   String? outgoingContactAccountPeerId,
   CallMicrophonePermission? microphonePermission,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
+  RepairCallEndpoint? repairMissingEndpoint,
   String? nativeHandleOverride,
   Future<Object?> Function(String, Map<String, Object?>)? lifecycleOverride,
 }) async {
@@ -7575,6 +7614,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     callEngineFactory: callEngineFactory,
     onCallHistoryProjected: onCallHistoryProjected,
     ensureOutgoingCallWakeAuthority: ensureOutgoingCallWakeAuthority,
+    repairMissingEndpoint: repairMissingEndpoint,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
     androidCallLifecycleAdapterFactory:

@@ -89,6 +89,8 @@ class _RecoveringContactCapability extends _Capability
     implements OutgoingCallContactReadinessRecovery {
   int contactRecoveries = 0;
   OutgoingCallStartRequest? recoveryRequest;
+  Completer<void>? holdRecovery;
+  final recoveryEntered = Completer<void>();
 
   @override
   Future<bool> recoverOutgoingCallAvailabilityFor(
@@ -97,6 +99,8 @@ class _RecoveringContactCapability extends _Capability
   }) async {
     contactRecoveries++;
     recoveryRequest = request;
+    if (!recoveryEntered.isCompleted) recoveryEntered.complete();
+    await holdRecovery?.future;
     request.checkPending();
     contactAvailable = true;
     return true;
@@ -223,6 +227,80 @@ void main() {
     expect(owner.starts, ['synthetic-contact']);
     expect(results, [OutgoingCallStartResult.started]);
   });
+
+  test(
+    'redial contact repair retains ten second cap and fences late completion',
+    () {
+      fakeAsync((time) {
+        final release = Completer<void>();
+        final recovering = _RecoveringContactCapability()
+          ..contactAvailable = false
+          ..holdRecovery = release;
+        owner = recovering;
+        unawaited(actions.submit(_id));
+        time.flushMicrotasks();
+        expect(recovering.contactRecoveries, 1);
+        time.elapse(const Duration(seconds: 10));
+        time.flushMicrotasks();
+        expect(results, [OutgoingCallStartResult.failed]);
+        expect(recovering.recoveryRequest!.isCanceled, isTrue);
+        release.complete();
+        time.flushMicrotasks();
+        expect(recovering.starts, isEmpty);
+        expect(recovering.contactRecoveries, 1);
+      });
+    },
+  );
+
+  test(
+    'redial repair request loses ownership when capability is replaced',
+    () async {
+      final release = Completer<void>();
+      final recovering = _RecoveringContactCapability()
+        ..contactAvailable = false
+        ..holdRecovery = release;
+      owner = recovering;
+      final result = actions.submit(_id);
+      await recovering.recoveryEntered.future;
+      owner = _Capability();
+      expect(recovering.recoveryRequest!.isCanceled, isTrue);
+      release.complete();
+      await result;
+      expect(recovering.starts, isEmpty);
+      expect(owner.starts, isEmpty);
+      expect(results, [OutgoingCallStartResult.canceled]);
+    },
+  );
+
+  for (final failure in ['initial lookup', 'ownership check']) {
+    test('redial contains $failure errors and releases busy state', () async {
+      var failLookup = true;
+      var reads = 0;
+      final controller = CallRedialController(
+        capability: () {
+          reads++;
+          if (failLookup && (failure == 'initial lookup' || reads > 1)) {
+            throw StateError('capability lookup failed');
+          }
+          return owner;
+        },
+        contactAllowed: (_) async => true,
+      );
+      expect(
+        await controller.start('synthetic-contact'),
+        failure == 'initial lookup'
+            ? OutgoingCallStartResult.failed
+            : OutgoingCallStartResult.canceled,
+      );
+      expect(owner.starts, isEmpty);
+      failLookup = false;
+      expect(
+        await controller.start('synthetic-contact'),
+        OutgoingCallStartResult.started,
+      );
+      expect(owner.starts, ['synthetic-contact']);
+    });
+  }
 
   for (final policy in ['deleted', 'blocked']) {
     test(

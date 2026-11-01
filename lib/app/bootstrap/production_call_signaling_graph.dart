@@ -129,6 +129,7 @@ final class ProductionCallSignalingGraph
         CallSignalingDiagnosticInvalidations,
         CallSignalingDeferredAdvertisementRetries,
         CallSignalingWakeDrain,
+        OutgoingCallContactReadinessRecovery,
         CallWakeHandleDistributionLifecycle {
   ProductionCallSignalingGraph({
     required this.runtime,
@@ -142,6 +143,7 @@ final class ProductionCallSignalingGraph
     required this.receivedCallWakeHandleStore,
     required this.loadWakeEligibleContacts,
     this.ensureReceivedCallWakeHandle,
+    this.repairMissingEndpoint,
     required this.localDeviceKeyEpoch,
     required this.localIdentity,
     required this.platform,
@@ -210,6 +212,8 @@ final class ProductionCallSignalingGraph
   final ReceivedCallWakeHandleStore receivedCallWakeHandleStore;
   final LoadCallWakeEligibleContacts loadWakeEligibleContacts;
   final EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle;
+  final RepairCallEndpoint? repairMissingEndpoint;
+  final Map<String, Future<bool>> _endpointRecoveryByContact = {};
   final int localDeviceKeyEpoch;
   final IdentityModel localIdentity;
   final CallEndpointPlatform platform;
@@ -476,6 +480,40 @@ final class ProductionCallSignalingGraph
         receivedCallWakeHandleStore: receivedCallWakeHandleStore,
         ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
       );
+
+  @override
+  Future<bool> recoverOutgoingCallAvailabilityFor(
+    String contactAccountPeerId, {
+    required OutgoingCallStartRequest request,
+  }) async {
+    bool isCurrent() =>
+        !request.isCanceled && !_shuttingDown && !_callabilityInvalidated;
+    if (!isCurrent()) return false;
+    final existing = _endpointRecoveryByContact[contactAccountPeerId];
+    if (existing != null) return await existing && isCurrent();
+    late final Future<bool> flight;
+    flight =
+        probeProductionCallEndpointAvailability(
+          networkEffectsAllowed: _networkEffectsAllowed,
+          contactAccountPeerId: contactAccountPeerId,
+          resolver: endpointResolver,
+          rosterProvider: trustedRosterProvider,
+          authorityClient: authorityClient,
+          receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+          ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
+          repairMissingEndpoint: repairMissingEndpoint,
+          request: OutgoingCallStartRequest(isCurrent: isCurrent),
+        ).whenComplete(() {
+          if (identical(
+            _endpointRecoveryByContact[contactAccountPeerId],
+            flight,
+          )) {
+            _endpointRecoveryByContact.remove(contactAccountPeerId);
+          }
+        });
+    _endpointRecoveryByContact[contactAccountPeerId] = flight;
+    return await flight && isCurrent();
+  }
 
   Future<ResolvedCallEndpoint> _resolveEndpoint(String contactAccountPeerId) =>
       resolveProductionCallEndpoint(
@@ -1245,6 +1283,18 @@ final class ProductionCallSignalingGraph
     required String outcome,
   }) {
     try {
+      final available = outcome == 'ready';
+      CallDiagnostics.instance.record(
+        stage: 'authority',
+        action: 'publish',
+        outcome: available
+            ? 'ok'
+            : outcome == 'deferred_live_call'
+            ? 'pending'
+            : 'failed',
+        reason: available ? 'none' : 'capability_publish_failed',
+        values: const <String, Object?>{'authorityKind': 'endpoint'},
+      );
       emitFlowEvent(
         layer: 'FL',
         event: 'CALL_CAPABILITY_ADVERTISEMENT_RESULT',
@@ -1557,6 +1607,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
   // is already on screen can re-read its call history.
   void Function(CallHistoryEntry entry, bool inserted)? onCallHistoryProjected,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
+  RepairCallEndpoint? repairMissingEndpoint,
   MicrophoneCaptureLeaseCoordinator? microphoneCaptureLeases,
   CallMicrophonePermission? microphonePermission,
   EnsureOutgoingCallWakeAuthority? ensureOutgoingCallWakeAuthority,
@@ -2214,6 +2265,7 @@ CallSignalingComposition createProductionCallSignalingComposition({
         receivedCallWakeHandleStore: receivedCallWakeHandleStore,
         loadWakeEligibleContacts: loadWakeEligibleContacts,
         ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
+        repairMissingEndpoint: repairMissingEndpoint,
         localDeviceKeyEpoch: localDeviceKeyEpoch,
         localIdentity: identity,
         platform: endpointPlatform,
@@ -2468,35 +2520,68 @@ Future<bool> probeProductionCallEndpointAvailability({
   required CallAuthorityClient authorityClient,
   required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
-  EnsureReceivedCallWakeHandle? repairMissingEndpoint,
+  RepairCallEndpoint? repairMissingEndpoint,
   OutgoingCallStartRequest? request,
 }) async {
-  var resolutionStarted = false;
-  try {
-    return await runCallNetworkActionIfAllowed(
+  final pending = request == null
+      ? null
+      : OutgoingCallStartRequest(isCurrent: () => !request.isCanceled);
+  Future<void> checkPending() async {
+    pending?.checkPending();
+    await runCallNetworkActionIfAllowed(
       gate: networkEffectsAllowed,
       action: () async {
-        resolutionStarted = true;
-        await resolveProductionCallEndpoint(
-          contactAccountPeerId: contactAccountPeerId,
-          resolver: resolver,
-          rosterProvider: rosterProvider,
-          authorityClient: authorityClient,
-          receivedCallWakeHandleStore: receivedCallWakeHandleStore,
-          ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
-        );
-        return true;
+        pending?.checkPending();
       },
     );
-  } catch (_) {
-    if (!resolutionStarted) {
-      emitCallEndpointResolutionResult(
-        stage: 'network_gate',
-        outcome: 'blocked',
-        reason: 'network_effects_blocked',
+    pending?.checkPending();
+  }
+
+  Future<bool> probe() async {
+    var resolutionStarted = false;
+    try {
+      return await runCallNetworkActionIfAllowed(
+        gate: networkEffectsAllowed,
+        action: () async {
+          resolutionStarted = true;
+          await resolveProductionCallEndpoint(
+            contactAccountPeerId: contactAccountPeerId,
+            resolver: resolver,
+            rosterProvider: rosterProvider,
+            authorityClient: authorityClient,
+            receivedCallWakeHandleStore: receivedCallWakeHandleStore,
+            ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
+            repairMissingEndpoint: pending == null
+                ? null
+                : repairMissingEndpoint,
+            beforeOperation: pending == null ? null : checkPending,
+          );
+          return true;
+        },
       );
+    } catch (_) {
+      if (!resolutionStarted) {
+        emitCallEndpointResolutionResult(
+          stage: 'network_gate',
+          outcome: 'blocked',
+          reason: 'network_effects_blocked',
+        );
+      }
+      return false;
     }
-    return false;
+  }
+
+  if (pending == null) return probe();
+  try {
+    return await probe().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        pending.cancel();
+        return false;
+      },
+    );
+  } finally {
+    pending.cancel();
   }
 }
 

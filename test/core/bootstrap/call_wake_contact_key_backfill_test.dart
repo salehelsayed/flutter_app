@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/diagnostics/call_diagnostics.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/issued_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
@@ -605,9 +606,10 @@ void main() {
       final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: store,
         nowMs: () => _validNowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          recoveryCount++;
-        },
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              recoveryCount++;
+            },
       );
 
       final ready = await coordinator.ensureCurrentGrantFor(
@@ -633,10 +635,11 @@ void main() {
       final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: store,
         nowMs: () => _validNowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          recoveryCount++;
-          await release.future;
-        },
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              recoveryCount++;
+              await release.future;
+            },
       );
       final first = coordinator.requestEndpointRepairFor(_contactAccountPeerId);
       final second = coordinator.requestEndpointRepairFor(
@@ -655,6 +658,41 @@ void main() {
         isTrue,
       );
       expect(recoveryCount, 1);
+    },
+  );
+
+  test(
+    'endpoint repair canceled during store read never sends later',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final request = OutgoingCallStartRequest();
+      final store =
+          _MemoryReceivedCallWakeHandleStore(
+              grants: {_contactAccountPeerId: _receivedGrant()},
+            )
+            ..beforeRead = () async {
+              if (!entered.isCompleted) entered.complete();
+              await release.future;
+            };
+      var sends = 0;
+      final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
+        receivedCallWakeHandleStore: store,
+        nowMs: () => _validNowMs,
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              sends++;
+            },
+      );
+      final result = coordinator.requestEndpointRepairFor(
+        _contactAccountPeerId,
+        beforeRequest: () async => request.checkPending(),
+      );
+      await entered.future;
+      request.cancel();
+      release.complete();
+      expect(await result, isFalse);
+      expect(sends, 0);
     },
   );
 
@@ -680,10 +718,11 @@ void main() {
         final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: store,
           nowMs: () => _validNowMs,
-          requestRecovery: ({required contactAccountPeerId}) async {
-            expect(contactAccountPeerId, _contactAccountPeerId);
-            recoveryCount++;
-          },
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                expect(contactAccountPeerId, _contactAccountPeerId);
+                recoveryCount++;
+              },
         );
 
         expect(
@@ -726,12 +765,13 @@ void main() {
         final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: store,
           nowMs: () => _validNowMs,
-          requestRecovery: ({required contactAccountPeerId}) async {
-            if (testCase.throws) throw StateError('offline');
-            if (testCase.grantArrives) {
-              store.grants[contactAccountPeerId] = _receivedGrant();
-            }
-          },
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                if (testCase.throws) throw StateError('offline');
+                if (testCase.grantArrives) {
+                  store.grants[contactAccountPeerId] = _receivedGrant();
+                }
+              },
         );
         final traceId = diagnostics.beginAttempt();
         final ready = await diagnostics.runWithTrace(
@@ -768,7 +808,8 @@ void main() {
       final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: store,
         nowMs: () => _validNowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {},
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {},
       );
       final traceId = diagnostics.beginAttempt();
       await diagnostics.runWithTrace(
@@ -789,12 +830,13 @@ void main() {
       final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: store,
         nowMs: () => _validNowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          recoveryCount++;
-          recoveryStarted.complete();
-          await releaseRecovery.future;
-          store.grants[contactAccountPeerId] = _receivedGrant();
-        },
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              recoveryCount++;
+              recoveryStarted.complete();
+              await releaseRecovery.future;
+              store.grants[contactAccountPeerId] = _receivedGrant();
+            },
       );
 
       final first = coordinator.ensureCurrentGrantFor(_contactAccountPeerId);
@@ -818,7 +860,7 @@ void main() {
     final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
       receivedCallWakeHandleStore: store,
       nowMs: () => _validNowMs,
-      requestRecovery: ({required contactAccountPeerId}) async {
+      requestRecovery: ({required contactAccountPeerId, beforeRequest}) async {
         requestedContacts.add(contactAccountPeerId);
         await releaseRecovery.future;
       },
@@ -849,13 +891,14 @@ void main() {
       final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
         receivedCallWakeHandleStore: store,
         nowMs: () => _validNowMs,
-        requestRecovery: ({required contactAccountPeerId}) async {
-          recoveryCount++;
-          if (recoveryCount == 1) {
-            throw StateError('offline');
-          }
-          store.grants[contactAccountPeerId] = _receivedGrant();
-        },
+        requestRecovery:
+            ({required contactAccountPeerId, beforeRequest}) async {
+              recoveryCount++;
+              if (recoveryCount == 1) {
+                throw StateError('offline');
+              }
+              store.grants[contactAccountPeerId] = _receivedGrant();
+            },
       );
 
       expect(
@@ -1066,6 +1109,7 @@ final class _MemoryReceivedCallWakeHandleStore
     : grants = grants ?? <String, CallWakeHandleGrant>{};
 
   final Map<String, CallWakeHandleGrant> grants;
+  Future<void> Function()? beforeRead;
   final Map<String, int> _readCounts = <String, int>{};
 
   int readCountFor(String issuerAccountPeerId) =>
@@ -1076,6 +1120,7 @@ final class _MemoryReceivedCallWakeHandleStore
 
   @override
   Future<CallWakeHandleGrant?> readForIssuer(String issuerAccountPeerId) async {
+    await beforeRead?.call();
     _readCounts.update(
       issuerAccountPeerId,
       (count) => count + 1,

@@ -6486,31 +6486,34 @@ final class ProductionApplicationBootstrap
         ReceivedCallWakeHandleRecoveryCoordinator(
           receivedCallWakeHandleStore: receivedCallWakeHandleStore,
           nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
-          requestRecovery: ({required contactAccountPeerId}) async {
-            final contact = await contactRepository.getContact(
-              contactAccountPeerId,
-            );
-            if (contact == null || contact.isBlocked) return;
-            final result = await sendContactRequest(
-              p2pService: p2pService,
-              identityRepo: repository,
-              bridge: bridge,
-              targetPeerId: contactAccountPeerId,
-              recipientPublicKey: contact.publicKey,
-              intent: ContactRequestSendIntent.keyExchangeRetry,
-              requireFresh: true,
-              resolveCallWakeHandle:
-                  callSignalingComposition.resolveCallWakeHandle,
-              onCallWakeHandleDistributed:
-                  callSignalingComposition.onCallWakeHandleDistributed,
-              markAsNewRequest: await contactRepairEligible(
-                contactAccountPeerId,
-              ),
-            );
-            if (result != SendContactRequestResult.success) {
-              throw StateError('call wake recovery request unavailable');
-            }
-          },
+          requestRecovery:
+              ({required contactAccountPeerId, beforeRequest}) async {
+                final contact = await contactRepository.getContact(
+                  contactAccountPeerId,
+                );
+                if (contact == null || contact.isBlocked) return;
+                final markAsNewRequest = await contactRepairEligible(
+                  contactAccountPeerId,
+                );
+                if (beforeRequest != null) await beforeRequest();
+                final result = await sendContactRequest(
+                  p2pService: p2pService,
+                  identityRepo: repository,
+                  bridge: bridge,
+                  targetPeerId: contactAccountPeerId,
+                  recipientPublicKey: contact.publicKey,
+                  intent: ContactRequestSendIntent.keyExchangeRetry,
+                  requireFresh: true,
+                  resolveCallWakeHandle:
+                      callSignalingComposition.resolveCallWakeHandle,
+                  onCallWakeHandleDistributed:
+                      callSignalingComposition.onCallWakeHandleDistributed,
+                  markAsNewRequest: markAsNewRequest,
+                );
+                if (result != SendContactRequestResult.success) {
+                  throw StateError('call wake recovery request unavailable');
+                }
+              },
         );
     // A previously registered FCM token can remain cached locally after FCM
     // reports UNREGISTERED to the relay. Share one first-read replacement so
@@ -6555,6 +6558,8 @@ final class ProductionApplicationBootstrap
       receivedCallWakeHandleStore: receivedCallWakeHandleStore,
       ensureReceivedCallWakeHandle:
           receivedCallWakeHandleRecovery.ensureCurrentGrantFor,
+      repairMissingEndpoint:
+          receivedCallWakeHandleRecovery.requestEndpointRepairFor,
       ensureOutgoingCallWakeAuthority: (contactAccountPeerId) =>
           ensureOutgoingCallWakeAuthorityReady(
             contactAccountPeerId: contactAccountPeerId,
@@ -6674,6 +6679,8 @@ final class ProductionApplicationBootstrap
     // The getOwnPeerId function gets the peerId from the P2P service's current state.
     // This is populated when the node starts, so it will be empty before that.
     final contactRepairOutboxWorker = ContactRepairOutboxWorker(
+      prepareCallWakeReply:
+          callSignalingComposition.onContactEligibilityChanged,
       repository: contactRepairRepository,
       p2pService: p2pService,
       identityRepo: repository,
@@ -6712,6 +6719,8 @@ final class ProductionApplicationBootstrap
       // unsigned-intent reciprocal path is gone.
       // Owner decision A: legacy unmarked key-exchange retries keep their
       // reciprocal grant reply; it is never marked.
+      prepareCallWakeReply:
+          callSignalingComposition.onContactEligibilityChanged,
       requestReciprocalCallWakeRecovery: (contactAccountPeerId) async {
         final contact = await contactRepository.getContact(
           contactAccountPeerId,

@@ -100,6 +100,8 @@ class ContactRequestListener {
   /// Best-effort presentation refresh after a verified call wake handle is
   /// durably accepted as strictly newer.
   final Future<void> Function()? onCallWakeHandleStored;
+
+  /// Refresh the existing call advertisement before an eligible legacy reply.
   final Future<void> Function()? prepareCallWakeReply;
 
   /// Legacy (unmarked) explicit key-exchange retry: after the sender's exact
@@ -552,6 +554,18 @@ class ContactRequestListener {
             event: 'CALL_WAKE_RECIPROCAL_RECOVERY_REQUESTED',
             details: {},
           );
+          final prepareReply = prepareCallWakeReply;
+          if (prepareReply != null) {
+            await prepareReply();
+            final currentContact = await contactRepo.getContact(
+              reciprocalCallWakeRecoveryPeerId,
+            );
+            if (currentContact == null ||
+                currentContact.isBlocked ||
+                currentContact.publicKey != facts!.authenticatedPublicKey) {
+              return result;
+            }
+          }
           await requestReciprocalCallWakeRecovery!(
             reciprocalCallWakeRecoveryPeerId,
           );
