@@ -3419,8 +3419,10 @@ cards and the canonical badge ledger. Legacy bare `intros` cards have no offer
 identity and remain untouched. The first native matcher run reproduced five
 expected positive-assertion failures while the existing group-invite sentinel
 passed; retain Kayan's `codexui-notif-red-20261101/xcodebuild_test.log`.
-Native GREEN and installed APNs delivery/decision proof remain separate from
-the Dart callbacks and synthetic delivered-card fixtures.
+At source `d760434b8`, all four native matcher/retirement/group-invite selectors
+pass on Kayan's available simulator with signing disabled; evidence is
+`codexui-notif-green-20261101/xcodebuild_test.log`. That proves native compilation
+and synthetic center removal, not installed APNs delivery/decision behavior.
 
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
