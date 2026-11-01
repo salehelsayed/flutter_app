@@ -477,6 +477,20 @@ preserve deliberate re-adds and capability follow-ups. Evidence:
 host assertions do not certify a device run or promise one packet when new
 capability material genuinely needs distribution.
 
+Legacy active-contact key recovery must not require a call-wake grant that
+cannot be issued until the missing ML-KEM key is known. The authenticated
+no-grant direct retry may receive the existing quiet key-exchange reply;
+its reciprocal marker prevents a reply loop. Grant presence must come from
+authenticated receive facts, not the receipt-challenge flag: a request may
+carry a grant without a challenge and must retain the exact-receipt gate.
+The two-party regression uses the production empty-roster condition and
+unmarked rollout path; the grant-without-challenge sentinel preserves ACK and
+storage while forbidding reciprocity. Blocked/withdrawn policy and marked
+repair remain unchanged. This proof covers direct authenticated retries, not
+inbox-only recovery or the affected store device's unknown consent state.
+First failures and preservation evidence are retained in
+`.codex-test-logs/delivery-recovery-20261101/`.
+
 On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
 dispatched correctly but returned to that screen before confirmation. Both the
 first-time and Orbit handlers synchronously replace the scanner with the
@@ -10845,6 +10859,20 @@ privacy tests reject free text and private fields. Evidence, including initial
 RED and the no-contact deletion classification correction, is retained in
 `.codex-test-logs/diagnostics-incidents-20261101/`. Host evidence does not establish
 native cancellation, full application/device behavior, or signed-build release.
+
+A send attempt's pending diagnostic final is immutable and does not establish
+that the current message row is still pending. A later applied receipt appends
+an outgoing receipt observation using only the retained private HMAC binding;
+missing/expired bindings do not create correlation or borrow another attempt.
+Ordinary changed settlement and explicit private committed outcomes qualify;
+duplicate/preserved-user-intent outcomes do not. Private tombstone settlement's
+boolean result cannot distinguish a new commit, so it emits no new checkpoint.
+Receipt transmission records live ACK, relay custody, and failure separately.
+Completion of a `Future<void>` receipt hook cannot prove acknowledgement.
+The regressions preserve the original final, guarded SQL settlement, and the
+existing sender-custody/duplicate-receive retry contract. This observation
+change does not fix or establish a delivery failure on an exported trace.
+Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
 - **Go final-only diagnostic records:** `app_diagnostics_store.go` leaves the
   ordinary-event slice nil when only finals have been stored, so JSON contains

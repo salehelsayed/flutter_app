@@ -374,44 +374,34 @@ _handleIncomingChatMessageDiagnosed({
       outcome: 'started',
       traceId: diagnosticTraceId,
     );
+    // The transport sender records its actual ACK/store/failure result. A
+    // Future<void> hook completing does not establish receipt delivery.
     unawaited(
       Future.sync(
-            () => mutationEventId != null && sendMutationDeliveryReceipt != null
-                ? sendMutationDeliveryReceipt(
-                    messageId,
-                    mutationEventId: mutationEventId,
-                  )
-                : sendDeliveryReceipt?.call(messageId) ?? Future<void>.value(),
-          )
-          .then<void>((_) {
-            AppDiagnostics.instance.record(
-              feature: 'message',
-              stage: 'receipt',
-              outcome: 'ok',
-              traceId: diagnosticTraceId,
-              values: {'acknowledged': true, 'direction': 'incoming'},
-            );
-          })
-          .catchError((Object e) {
-            AppDiagnostics.instance.record(
-              feature: 'message',
-              stage: 'receipt',
-              outcome: 'failed',
-              reason: 'send_failed',
-              traceId: diagnosticTraceId,
-            );
+        () => mutationEventId != null && sendMutationDeliveryReceipt != null
+            ? sendMutationDeliveryReceipt(
+                messageId,
+                mutationEventId: mutationEventId,
+              )
+            : sendDeliveryReceipt?.call(messageId) ?? Future<void>.value(),
+      ).catchError((Object e) {
+        AppDiagnostics.instance.record(
+          feature: 'message',
+          stage: 'receipt',
+          outcome: 'failed',
+          reason: 'send_failed',
+          traceId: diagnosticTraceId,
+        );
 
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'DELIVERY_RECEIPT_HOOK_ERROR',
-              details: {
-                'id': messageId.length > 8
-                    ? messageId.substring(0, 8)
-                    : messageId,
-                'error': e.toString(),
-              },
-            );
-          }),
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DELIVERY_RECEIPT_HOOK_ERROR',
+          details: {
+            'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+            'error': e.toString(),
+          },
+        );
+      }),
     );
   }
 

@@ -285,6 +285,7 @@ void main() {
       a.listener.stop();
       b.listener.stop();
       var reciprocalReplies = 0;
+      var repliesToReply = 0;
       final receiver = ContactRequestListener(
         contactRequestStream: const Stream<ChatMessage>.empty(),
         requestRepo: buildWidgetRequestRepository(a.db),
@@ -298,8 +299,8 @@ void main() {
         downloadProfilePictureFn: _noAvatar,
         requestReciprocalCallWakeRecovery: (target) async {
           reciprocalReplies++;
-          // Current15715 composition uses newRequest here. Integration with the
-          // separately approved quiet-reply patch must retain its suppression.
+          // Match the approved production reply: existing retry wire intent
+          // plus reciprocalReply suppresses an otherwise eligible response.
           expect(
             await sendContactRequest(
               p2pService: a.p2p,
@@ -307,7 +308,7 @@ void main() {
               bridge: a.bridge,
               targetPeerId: target,
               recipientPublicKey: _bId.publicKey,
-              intent: ContactRequestSendIntent.newRequest,
+              intent: ContactRequestSendIntent.keyExchangeReply,
             ),
             SendContactRequestResult.success,
           );
@@ -323,6 +324,9 @@ void main() {
         getOwnPublicKey: () async => _bId.publicKey,
         repairRepository: b.repair,
         downloadProfilePictureFn: _noAvatar,
+        requestReciprocalCallWakeRecovery: (_) async {
+          repliesToReply++;
+        },
       );
       final replies = <ChatMessage>[];
       final replySubscription = b.p2p.messageStream.listen(replies.add);
@@ -365,9 +369,23 @@ void main() {
             confirmNonce: 'fixture-direct-key-repair',
           ),
         );
-        for (final reply in replies) {
-          await scanner.processIncomingMessage(reply);
-        }
+        expect(replies, hasLength(1));
+        final reply = replies.single;
+        final replyEnvelope = jsonDecode(reply.content) as Map;
+        expect(replyEnvelope['intent'], 'key_exchange_retry');
+        expect(replyEnvelope['reciprocalReply'], isTrue);
+        // Direct nonce + active contact + valid signed key make B eligible to
+        // reciprocate too. The existing quiet hint must be what stops it.
+        await scanner.processIncomingMessage(
+          ChatMessage(
+            from: reply.from,
+            to: reply.to,
+            content: reply.content,
+            timestamp: reply.timestamp,
+            isIncoming: true,
+            confirmNonce: 'fixture-direct-key-repair-reply',
+          ),
+        );
         expect(
           await b.mlKemOfPeer(),
           'mlkem-${_aId.peerId}',
@@ -375,6 +393,14 @@ void main() {
               'authenticated active-contact key repair must not depend on already possessing the missing key to mint a call-wake grant',
         );
         expect(reciprocalReplies, 1);
+        expect(
+          repliesToReply,
+          0,
+          reason:
+              'automatic key repair must not solicit another reciprocal reply',
+        );
+        expect(a.bridge.encrypts, hasLength(1));
+        expect(b.bridge.encrypts, hasLength(1));
         expect(await b.db.query('contact_requests'), isEmpty);
       } finally {
         await replySubscription.cancel();

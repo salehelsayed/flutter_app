@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
@@ -146,6 +148,7 @@ Future<void> handleDeliveryReceipt({
     if (_isOutgoingOneMoreLookPrivate(row)) {
       final expectedEnvelope = row.wireEnvelope;
       var accepted = false;
+      var receiptCommitted = false;
       if (expectedEnvelope != null && expectedEnvelope.isNotEmpty) {
         if (row.isDeleted) {
           if (messageRepo is DirectPrivateDeleteForEveryoneRepository) {
@@ -182,6 +185,9 @@ Future<void> handleDeliveryReceipt({
                 relayExpiresAt: null,
               );
           accepted = outcome.accepted;
+          receiptCommitted =
+              outcome ==
+              OutgoingDirectPrivateTransportSettlementOutcome.committed;
         }
       }
       if (!accepted) {
@@ -192,6 +198,9 @@ Future<void> handleDeliveryReceipt({
         );
         continue;
       }
+      // Tombstone acceptance does not distinguish an idempotent result;
+      // only an explicit committed outcome proves a new receipt transition.
+      if (receiptCommitted) _recordAppliedReceipt(messageId);
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_APPLIED',
@@ -275,6 +284,7 @@ Future<void> handleDeliveryReceipt({
       );
       continue;
     }
+    _recordAppliedReceipt(messageId);
     emitFlowEvent(
       layer: 'FL',
       event: 'DELIVERY_RECEIPT_APPLIED',
@@ -288,3 +298,25 @@ bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
     message.privateMediaPolicy.version == 1 &&
     (message.privateMediaMode == PrivateMediaMode.protected ||
         message.privateMediaMode == PrivateMediaMode.viewOnce);
+
+void _recordAppliedReceipt(String messageId) {
+  try {
+    final diagnostics = AppDiagnostics.instance;
+    final trace = diagnostics.existingTraceForOperation('message:$messageId');
+    if (trace == null) return;
+    // The retained finish is immutable; this records the later committed fact.
+    diagnostics.record(
+      feature: 'message',
+      stage: 'receipt',
+      outcome: 'ok',
+      traceId: trace,
+      values: {
+        'direction': 'outgoing',
+        'committed': true,
+        'acknowledged': true,
+      },
+    );
+  } catch (_) {
+    // Diagnostics must never turn a durable receipt into an application error.
+  }
+}

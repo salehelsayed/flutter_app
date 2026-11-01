@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
@@ -93,6 +94,31 @@ Future<bool> sendDeliveryReceipt({
   required List<String> messageIds,
   Map<String, String>? mutationEventIds,
 }) async {
+  AppDiagnostics? diagnostics;
+  String? trace;
+  try {
+    final current = AppDiagnostics.instance;
+    diagnostics = current;
+    trace = current.currentTraceForFeature('message');
+  } catch (_) {
+    // Receipt transport remains independent of optional diagnostic state.
+  }
+  void recordOutcome(String outcome, {bool acknowledged = false}) {
+    if (trace == null) return;
+    try {
+      diagnostics?.record(
+        feature: 'message',
+        stage: 'receipt',
+        outcome: outcome,
+        reason: outcome == 'failed' ? 'send_failed' : 'none',
+        traceId: trace,
+        values: {'direction': 'incoming', 'acknowledged': acknowledged},
+      );
+    } catch (_) {
+      // Recording cannot change ACK handling, inbox fallback, or the result.
+    }
+  }
+
   final messageIdSet = messageIds.toSet();
   final filteredMutationEventIds = <String, String>{};
   if (mutationEventIds != null) {
@@ -129,6 +155,7 @@ Future<bool> sendDeliveryReceipt({
     );
     final acked = result.acked ?? (result.reply?.isNotEmpty ?? false);
     if (result.sent && acked) {
+      recordOutcome('ok', acknowledged: true);
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_SENT',
@@ -147,6 +174,7 @@ Future<bool> sendDeliveryReceipt({
   try {
     final stored = await p2pService.storeInInbox(targetPeerId, envelope);
     if (stored) {
+      recordOutcome('pending');
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_SENT',
@@ -164,6 +192,7 @@ Future<bool> sendDeliveryReceipt({
         'error': e.toString(),
       },
     );
+    recordOutcome('failed');
     return false;
   }
 
@@ -176,5 +205,6 @@ Future<bool> sendDeliveryReceipt({
       'reason': 'store_returned_false',
     },
   );
+  recordOutcome('failed');
   return false;
 }

@@ -415,6 +415,23 @@ final class AppDiagnostics with WidgetsBindingObserver {
     return instance;
   }
 
+  /// Looks up retained local correlation without creating or refreshing it.
+  /// Late observations must not borrow an unrelated current attempt.
+  String? existingTraceForOperation(String privateKey) {
+    if (!enabled || !_ready || privateKey.isEmpty) return null;
+    try {
+      final key = Hmac(
+        sha256,
+        utf8.encode(_bindingSalt),
+      ).convert(utf8.encode(privateKey)).toString();
+      final updatedAt = _bindingTimes[key];
+      if (updatedAt == null || updatedAt < _nowMs - _retentionMs) return null;
+      return _bindings[key];
+    } catch (_) {
+      return null;
+    }
+  }
+
   String? traceForOperation(String privateKey, {String? propagatedTraceId}) {
     if (!enabled || !_ready || privateKey.isEmpty) return null;
     // This keyed local lookup is never included in exports or relay payloads.

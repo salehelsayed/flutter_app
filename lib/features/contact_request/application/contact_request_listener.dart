@@ -522,15 +522,17 @@ class ContactRequestListener {
       // confirmNonce (e.g. an inbox-replayed entry) is a no-op.
       // Owner decision A: the legacy reciprocal grant reply, only for an
       // authenticated, genuinely unmarked (no `cr`) explicit key-exchange
-      // retry whose exact grant is durably current. Marked traffic never
-      // reaches it; a malformed marker was already rejected as invalid.
+      // retry. A carried grant still requires its exact durable receipt; a
+      // missing-key requester cannot mint a grant until our key arrives, so
+      // no-grant key recovery must not depend on that receipt. Marked traffic
+      // never reaches it; a malformed marker was already rejected as invalid.
       String? reciprocalCallWakeRecoveryPeerId;
       if (requestReciprocalCallWakeRecovery != null &&
           facts != null &&
           facts!.control == null &&
           _hasKeyExchangeRetryIntent(message) &&
           message.confirmNonce?.isNotEmpty == true &&
-          callWakeReceipt != null &&
+          (!facts!.hasCallWakeHandle || callWakeReceipt != null) &&
           verifiedPeerId != null &&
           (result == HandleMessageResult.alreadyContact ||
               result == HandleMessageResult.contactKeyUpdated)) {

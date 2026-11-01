@@ -62,6 +62,7 @@ final class ContactRequestReceiveFacts {
     required this.authenticatedPublicKey,
     required this.control,
     required this.repairDecision,
+    required this.hasCallWakeHandle,
     this.repairClaim,
   });
 
@@ -74,6 +75,10 @@ final class ContactRequestReceiveFacts {
   /// The signed `cr` marker, when present.
   final ContactRequestControl? control;
   final ExistingContactRepairDecision repairDecision;
+
+  /// Authenticated parsed grant presence, independent of an optional receipt
+  /// challenge. A grant without a challenge is not a grant-free key retry.
+  final bool hasCallWakeHandle;
 
   /// Outcome of the durable reply reservation, when one was attempted.
   final ContactRepairClaimOutcome? repairClaim;
@@ -665,6 +670,7 @@ handleIncomingMessage({
         authenticatedPublicKey: verificationKey,
         control: control,
         repairDecision: repairDecision,
+        hasCallWakeHandle: callWakeHandleGrant != null,
         repairClaim: claim,
       ),
     );

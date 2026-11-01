@@ -832,7 +832,7 @@ void main() {
   }
 
   test(
-    'diagnostics joins incoming decrypt commit and actual receipt completion',
+    'diagnostics joins incoming commit without inferring ACK from void hook completion',
     () async {
       final diagnosticDirectory = await Directory.systemTemp.createTemp(
         'incoming-diagnostics-',
@@ -901,12 +901,9 @@ void main() {
           .where((event) => event['traceId'] == trace)
           .toList();
       expect(
-        events,
-        contains(
-          predicate<Map<String, Object?>>(
-            (e) => e['stage'] == 'receipt' && e['outcome'] == 'ok',
-          ),
-        ),
+        events.where((e) => e['stage'] == 'receipt' && e['outcome'] == 'ok'),
+        isEmpty,
+        reason: 'void callback completion supplies no transport ACK evidence',
       );
       expect(
         events,
