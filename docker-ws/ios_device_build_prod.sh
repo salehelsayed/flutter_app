@@ -14,7 +14,7 @@ VERSION=$(grep -E '^version:' pubspec.yaml | awk '{print $2}')
   echo "start $(date -u +%T) head=$(git rev-parse HEAD) dirty=$(git status --porcelain --untracked-files=no | wc -l | tr -d ' ') version=$VERSION build_number=$BN"
   bash scripts/ensure_go_ios_bindings.sh; echo "bindings exit=$?"
   flutter build ios --release --config-only --no-pub --target=lib/main.dart --dart-define=PRODUCTION_APNS=true \
-    --dart-define-from-file=tool/build/voice_call_release_defines.json --dart-define=TRANSLATE_PREVIEW=true \
+    --dart-define-from-file=tool/build/voice_call_release_defines.json --dart-define=TRANSLATE_PREVIEW=true ${PROD_EXTRA_DEFINES:-} \
     --build-name="${VERSION%%+*}" --build-number="$BN"; echo "config exit=$?"
   git checkout -- "$RES1" "$RES2"
   xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release -sdk iphoneos \

@@ -13,12 +13,14 @@ cd "$W" || exit 2
 before=$(git status --porcelain --untracked-files=no | wc -l | tr -d ' ')
 xcrun simctl boot "$SIM" 2>/dev/null; xcrun simctl bootstatus "$SIM" -b > /dev/null 2>&1
 T=RunnerTests/IosNotificationRecoveryTests
+# One DerivedData folder per worktree (the first run used tmp-dd-codexui-notif).
+DD="$HOME/tmp-dd-codexui-$(basename "$W")"; [ "$(basename "$W")" = media-contact-intro-fixes-20261101 ] && DD="$HOME/tmp-dd-codexui-notif"
 shift 3
 [ $# -gt 0 ] || set -- testCR008DeliveredContactRequestMatchesOnlyItsPeer testIN008DeliveredIntroductionMatchesOnlyItsCanonicalOffer testTC395ExactGroupInviteRetirementIsSurgicalAndIdempotent
 SEL=(); for m in "$@"; do SEL+=("-only-testing:$T/$m"); done
 echo "head=$(git rev-parse --short HEAD) tests=$#"
 xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner -destination "platform=iOS Simulator,id=$SIM" \
-  -derivedDataPath "$HOME/tmp-dd-codexui-notif" CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
+  -derivedDataPath "$DD" CODE_SIGNING_ALLOWED=NO -parallel-testing-enabled NO \
   "${SEL[@]}" > "$L" 2>&1
 rc=$?; echo "xcodebuild_exit=$rc" >> "$L"
 grep -E "Test Case .*(passed|failed)|error: .*IosNotificationRecoveryTests|Executed [0-9]+ test|\*\* TEST (SUCCEEDED|FAILED)|\*\* BUILD FAILED|error: " "$L" | grep -v "^ld: warning" | head -30

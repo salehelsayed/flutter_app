@@ -14,6 +14,7 @@ Usage: apa.py <serial> <command> [args]
   hold_swipe <x1> <y1> <x2> <y2> <move-ms> <hold-ms>   press, move, keep holding, release
   pinch <cx> <cy> <from-gap> <to-gap> [ms]             two-finger vertical pinch (to<from) or spread (to>from)
   back
+  type <text>                  type <text> into the focused field (unicode ok; tap the field first)
 """
 import base64
 import json
@@ -148,6 +149,9 @@ def main():
         actions(s, [f(-1), f(1)]); print("pinched", a, "->", b)
     elif cmd == "back":
         req("POST", f"/session/{s}/back", {}); print("back")
+    elif cmd == "type":
+        # Flutter ignores ACTION_SET_TEXT; "mobile: type" goes through the IME into the focused field (tap it first).
+        req("POST", f"/session/{s}/execute/sync", {"script": "mobile: type", "args": [{"text": args[0]}]}); print("typed", len(args[0]), "chars")
     else:
         raise SystemExit("unknown command")
 
