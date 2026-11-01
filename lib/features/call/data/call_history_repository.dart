@@ -79,7 +79,7 @@ final class CallHistoryEntry {
         callId: CallId.parse(map['call_id']! as String),
         contactAccountPeerId: map['contact_account_peer_id']! as String,
         direction: CallDirection.values.byName(map['direction']! as String),
-        terminalReason: CallEndReason.parseWire(
+        terminalReason: CallEndReason.parseStored(
           map['terminal_reason']! as String,
         ),
         status: CallHistoryStatusWire.parse(map['status']! as String),

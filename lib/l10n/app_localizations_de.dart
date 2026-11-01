@@ -4060,6 +4060,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get call_row_failed => 'Anruf fehlgeschlagen';
 
   @override
+  String get call_row_microphone_off => 'Keine Verbindung: Mikrofon aus';
+
+  @override
   String call_row_with_duration(String label, String duration) {
     return '$label · $duration';
   }
@@ -4435,6 +4438,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get call_end_no_answer => 'Keine Antwort.';
+
+  @override
+  String call_end_remote_microphone_off(String name) {
+    return '$name kann gerade keine Anrufe annehmen. Das Mikrofon ist aus.';
+  }
 
   @override
   String get call_end_signaling_failed =>

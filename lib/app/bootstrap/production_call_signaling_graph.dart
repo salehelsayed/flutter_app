@@ -884,7 +884,9 @@ final class ProductionCallSignalingGraph
               CallEndReason.remoteHangup => 'canceled',
               CallEndReason.declined => 'declined',
               CallEndReason.busy => 'busy',
-              CallEndReason.noAnswer || CallEndReason.expired => 'no_answer',
+              CallEndReason.noAnswer ||
+              CallEndReason.expired ||
+              CallEndReason.remotePermissionDenied => 'no_answer',
               CallEndReason.appShutdown => 'interrupted_unknown',
               _ => 'signaling_failed',
             };
@@ -970,7 +972,8 @@ final class ProductionCallSignalingGraph
     CallEndReason.callerCancelled => 'canceled',
     CallEndReason.declined => 'declined',
     CallEndReason.busy => 'busy',
-    CallEndReason.noAnswer => 'no_answer',
+    CallEndReason.noAnswer ||
+    CallEndReason.remotePermissionDenied => 'no_answer',
     CallEndReason.expired => 'expired',
     CallEndReason.permissionDenied => 'permission_denied',
     CallEndReason.unsupported => 'platform_unsupported',

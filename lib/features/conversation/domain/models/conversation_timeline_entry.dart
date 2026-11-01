@@ -29,6 +29,7 @@ enum ConversationCallDirection { incoming, outgoing }
 
 enum ConversationCallStatus {
   completed,
+  microphoneOff,
   missed,
   declined,
   busy,

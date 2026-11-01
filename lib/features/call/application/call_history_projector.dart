@@ -118,6 +118,7 @@ final class CallHistoryProjector {
             ? CallHistoryStatus.failed
             : CallHistoryStatus.completed;
       case CallEndReason.permissionDenied:
+      case CallEndReason.remotePermissionDenied:
       case CallEndReason.unsupported:
       case CallEndReason.signalingFailed:
       case CallEndReason.mediaFailed:

@@ -1098,19 +1098,19 @@ final class CallReducer {
   /// - Every other reason already means the same thing on both sides and is
   ///   kept: `caller_cancelled`, `no_answer`, `expired`, `declined`, `busy`,
   ///   `app_shutdown` (the peer's app stopped), and the failures
-  ///   (`permission_denied`, `unsupported`, `signaling_failed`,
-  ///   `media_failed`, `reconnect_failed`, `policy_rejected`), which history
-  ///   shows as a failed call before connect and a completed call after.
+  ///   (`unsupported`, `signaling_failed`, `media_failed`,
+  ///   `reconnect_failed`, `policy_rejected`), which history shows as a
+  ///   failed call before connect and a completed call after.
+  /// - `permission_denied` means the peer's microphone is off, so it becomes
+  ///   [CallEndReason.remotePermissionDenied]: not busy, not no answer, and not
+  ///   a permission problem on this side.
   ///
   /// The wire format does not change, so an older peer that still sends
   /// `local_hangup` is read correctly.
   static CallEndReason _receivedTerminateReason(CallEndReason? wireReason) =>
       switch (wireReason) {
         null || CallEndReason.localHangup => CallEndReason.remoteHangup,
-        // The peer could not use its microphone. For this side the contact
-        // did not take the call: not busy (they are on no other call) and not
-        // a local permission problem.
-        CallEndReason.permissionDenied => CallEndReason.noAnswer,
+        CallEndReason.permissionDenied => CallEndReason.remotePermissionDenied,
         final CallEndReason reason => reason,
       };
 

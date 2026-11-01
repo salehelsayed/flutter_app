@@ -3967,6 +3967,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get call_row_failed => 'Call failed';
 
   @override
+  String get call_row_microphone_off => 'Couldn\'t connect: microphone off';
+
+  @override
   String call_row_with_duration(String label, String duration) {
     return '$label · $duration';
   }
@@ -4336,6 +4339,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get call_end_no_answer => 'No answer.';
+
+  @override
+  String call_end_remote_microphone_off(String name) {
+    return '$name can\'t take calls right now. Their microphone is off.';
+  }
 
   @override
   String get call_end_signaling_failed => 'Call could not connect.';

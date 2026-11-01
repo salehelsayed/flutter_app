@@ -1,6 +1,7 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_call_timeline_source.dart';
 
+import '../domain/call_end_reason.dart';
 import '../domain/call_session_snapshot.dart';
 import '../domain/call_id.dart';
 import '../application/call_history_access.dart';
@@ -78,7 +79,10 @@ ConversationCallTimelineEntry projectCallTimelineEntry(CallHistoryEntry row) =>
         CallHistoryStatus.declined => ConversationCallStatus.declined,
         CallHistoryStatus.busy => ConversationCallStatus.busy,
         CallHistoryStatus.cancelled => ConversationCallStatus.cancelled,
-        CallHistoryStatus.failed => ConversationCallStatus.failed,
+        CallHistoryStatus.failed =>
+          row.terminalReason == CallEndReason.remotePermissionDenied
+              ? ConversationCallStatus.microphoneOff
+              : ConversationCallStatus.failed,
       },
       startedAt: row.startedAt,
       endedAt: row.endedAt,

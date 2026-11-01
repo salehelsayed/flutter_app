@@ -1,7 +1,7 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 
-import '../domain/call_session_snapshot.dart';
+import 'call_history_conversation_timeline_source.dart';
 import 'call_history_repository.dart';
 
 /// 409: adapts local terminal call history to the Orbit rows.
@@ -48,25 +48,7 @@ final class CallHistoryOrbitActivitySource implements OrbitCallActivitySource {
       // Rows arrive newest-first per contact, so the first one wins.
       latest.putIfAbsent(
         row.contactAccountPeerId,
-        () => ConversationCallTimelineEntry(
-          callId: row.callId.value,
-          contactPeerId: row.contactAccountPeerId,
-          direction: switch (row.direction) {
-            CallDirection.incoming => ConversationCallDirection.incoming,
-            CallDirection.outgoing => ConversationCallDirection.outgoing,
-          },
-          status: switch (row.status) {
-            CallHistoryStatus.completed => ConversationCallStatus.completed,
-            CallHistoryStatus.missed => ConversationCallStatus.missed,
-            CallHistoryStatus.declined => ConversationCallStatus.declined,
-            CallHistoryStatus.busy => ConversationCallStatus.busy,
-            CallHistoryStatus.cancelled => ConversationCallStatus.cancelled,
-            CallHistoryStatus.failed => ConversationCallStatus.failed,
-          },
-          startedAt: row.startedAt,
-          endedAt: row.endedAt,
-          duration: row.duration,
-        ),
+        () => projectCallTimelineEntry(row),
       );
     }
     return Map<String, ConversationCallTimelineEntry>.unmodifiable(latest);

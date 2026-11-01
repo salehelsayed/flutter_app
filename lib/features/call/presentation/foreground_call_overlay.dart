@@ -247,6 +247,12 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
         }
       }
 
+      // The end notice of the call that was just on screen keeps its name.
+      if (surfaceKind == _ForegroundCallSurface.terminal &&
+          _nameCallId != null &&
+          _nameCallId == session?.callId) {
+        return;
+      }
       if (surfaceKind == _ForegroundCallSurface.hidden ||
           surfaceKind == _ForegroundCallSurface.terminal) {
         _nameGeneration += 1;
@@ -381,6 +387,11 @@ class ForegroundCallOverlayState extends State<ForegroundCallOverlay> {
                       : _terminalMessage(
                           session,
                           AppLocalizations.of(context)!,
+                          _contactDisplayName == _unknownContactName
+                              ? AppLocalizations.of(
+                                  context,
+                                )!.call_unknown_contact
+                              : _contactDisplayName,
                         ),
                   onDismiss: _dismissTerminalNotice,
                   onOpenSettings: _micBlockedCallId == session.callId
@@ -702,27 +713,33 @@ _ForegroundCallSurface _surfaceKind(CallSessionSnapshot? session) {
   };
 }
 
-String _terminalMessage(CallSessionSnapshot session, AppLocalizations l10n) =>
-    switch (session.endReason) {
-      CallEndReason.permissionDenied => l10n.call_end_permission,
-      CallEndReason.unsupported => l10n.call_end_unsupported,
-      CallEndReason.busy => l10n.call_end_busy,
-      CallEndReason.declined => l10n.call_end_declined,
-      CallEndReason.noAnswer => l10n.call_end_no_answer,
-      CallEndReason.signalingFailed => l10n.call_end_signaling_failed,
-      CallEndReason.mediaFailed =>
-        session.connectedAt == null
-            ? l10n.call_end_audio_start_failed
-            : l10n.call_end_audio_interrupted,
-      CallEndReason.reconnectFailed => l10n.call_end_reconnect_failed,
-      CallEndReason.expired => l10n.call_end_expired,
-      CallEndReason.policyRejected => l10n.call_end_unavailable,
-      CallEndReason.callerCancelled ||
-      CallEndReason.remoteHangup ||
-      CallEndReason.localHangup ||
-      CallEndReason.appShutdown ||
-      null => l10n.call_end_ended,
-    };
+String _terminalMessage(
+  CallSessionSnapshot session,
+  AppLocalizations l10n,
+  String contactName,
+) => switch (session.endReason) {
+  CallEndReason.permissionDenied => l10n.call_end_permission,
+  CallEndReason.remotePermissionDenied => l10n.call_end_remote_microphone_off(
+    contactName,
+  ),
+  CallEndReason.unsupported => l10n.call_end_unsupported,
+  CallEndReason.busy => l10n.call_end_busy,
+  CallEndReason.declined => l10n.call_end_declined,
+  CallEndReason.noAnswer => l10n.call_end_no_answer,
+  CallEndReason.signalingFailed => l10n.call_end_signaling_failed,
+  CallEndReason.mediaFailed =>
+    session.connectedAt == null
+        ? l10n.call_end_audio_start_failed
+        : l10n.call_end_audio_interrupted,
+  CallEndReason.reconnectFailed => l10n.call_end_reconnect_failed,
+  CallEndReason.expired => l10n.call_end_expired,
+  CallEndReason.policyRejected => l10n.call_end_unavailable,
+  CallEndReason.callerCancelled ||
+  CallEndReason.remoteHangup ||
+  CallEndReason.localHangup ||
+  CallEndReason.appShutdown ||
+  null => l10n.call_end_ended,
+};
 
 String? _audioStatusMessage(CallAudioFailure failure, AppLocalizations l10n) =>
     switch (failure) {

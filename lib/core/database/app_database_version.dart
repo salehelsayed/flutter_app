@@ -90,4 +90,6 @@
 // v125 stores local AI previews; the Thoughts metrics switch moves to v126.
 // v126 adds posts.metrics_opt_out (0/1, default 0) for the Thoughts metrics
 // switch (build 129). Existing rows keep 0; the mark is one-way.
-const int currentIdentityDatabaseVersion = 126;
+// v127 lets call_history.terminal_reason hold remote_permission_denied (the
+// callee's microphone is off) by rebuilding the table; every row is kept.
+const int currentIdentityDatabaseVersion = 127;

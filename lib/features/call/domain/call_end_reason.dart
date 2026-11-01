@@ -7,6 +7,10 @@ enum CallEndReason {
   remoteHangup('remote_hangup'),
   localHangup('local_hangup'),
   permissionDenied('permission_denied'),
+
+  /// The callee's microphone is off. Only the caller records it, from a
+  /// received `permission_denied`; it is never sent.
+  remotePermissionDenied('remote_permission_denied'),
   unsupported('unsupported'),
   signalingFailed('signaling_failed'),
   mediaFailed('media_failed'),
@@ -19,7 +23,17 @@ enum CallEndReason {
 
   final String wireName;
 
+  /// A reason a peer sent. [remotePermissionDenied] is local-only.
   static CallEndReason parseWire(String value) {
+    final reason = parseStored(value);
+    if (reason == remotePermissionDenied) {
+      throw const FormatException('unsupported call terminal reason');
+    }
+    return reason;
+  }
+
+  /// A reason this device recorded, such as a call history row.
+  static CallEndReason parseStored(String value) {
     for (final reason in values) {
       if (reason.wireName == value) return reason;
     }

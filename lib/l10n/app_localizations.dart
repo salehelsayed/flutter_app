@@ -6578,6 +6578,12 @@ abstract class AppLocalizations {
   /// **'Call failed'**
   String get call_row_failed;
 
+  /// No description provided for @call_row_microphone_off.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t connect: microphone off'**
+  String get call_row_microphone_off;
+
   /// No description provided for @call_row_with_duration.
   ///
   /// In en, this message translates to:
@@ -7201,6 +7207,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No answer.'**
   String get call_end_no_answer;
+
+  /// No description provided for @call_end_remote_microphone_off.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} can\'t take calls right now. Their microphone is off.'**
+  String call_end_remote_microphone_off(String name);
 
   /// No description provided for @call_end_signaling_failed.
   ///
