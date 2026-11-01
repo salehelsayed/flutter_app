@@ -168,7 +168,6 @@ class ImageProcessor {
     bool useStoredPreference = true,
   }) async {
     if (!isProcessableImage(inputPath)) return inputPath;
-    await _validateJpegForSend(inputPath);
 
     if (useStoredPreference && _loadImageQualityPreference != null) {
       try {
@@ -508,75 +507,6 @@ Future<String> _squareCropAvatar(String compressedPath) async {
   } catch (_) {
     return compressedPath;
   }
-}
-
-Future<void> _validateJpegForSend(String path) async {
-  ui.ImmutableBuffer? buffer;
-  ui.ImageDescriptor? descriptor;
-  ui.Codec? codec;
-  ui.Image? image;
-  try {
-    final input = File(path);
-    final handle = await input.open();
-    final Uint8List signature;
-    try {
-      signature = await handle.read(2);
-    } finally {
-      await handle.close();
-    }
-    // Other formats, including HEIC/HEIF, retain their native conversion.
-    if (signature.length != 2 || signature[0] != 0xff || signature[1] != 0xd8) {
-      return;
-    }
-    // JPEG codecs can repair EOF with black pixels, so decoding alone does not
-    // establish that the primary image reached its end marker.
-    if (!_hasCompleteJpeg(await input.readAsBytes())) {
-      throw StateError('Photo processing failed');
-    }
-    buffer = await ui.ImmutableBuffer.fromFilePath(path);
-    descriptor = await ui.ImageDescriptor.encoded(buffer);
-    codec = await descriptor.instantiateCodec(targetWidth: 1, targetHeight: 1);
-    image = (await codec.getNextFrame()).image;
-  } catch (_) {
-    throw StateError('Photo processing failed');
-  } finally {
-    image?.dispose();
-    codec?.dispose();
-    descriptor?.dispose();
-    buffer?.dispose();
-  }
-}
-
-bool _hasCompleteJpeg(Uint8List bytes) {
-  var offset = 2;
-  var inScan = false;
-  var sawScan = false;
-  while (offset < bytes.length) {
-    if (bytes[offset++] != 0xff) {
-      if (inScan) continue;
-      return false;
-    }
-    while (offset < bytes.length && bytes[offset] == 0xff) {
-      offset++;
-    }
-    if (offset == bytes.length) return false;
-    final marker = bytes[offset++];
-    if (inScan && (marker == 0 || (marker >= 0xd0 && marker <= 0xd7))) {
-      continue;
-    }
-    if (marker == 0x01) continue;
-    if (marker == 0xd9) return sawScan;
-    if (marker == 0 || marker == 0xd8 || (marker >= 0xd0 && marker <= 0xd7)) {
-      return false;
-    }
-    if (offset + 2 > bytes.length) return false;
-    final length = (bytes[offset] << 8) | bytes[offset + 1];
-    if (length < 2 || length > bytes.length - offset) return false;
-    offset += length;
-    inScan = marker == 0xda || (inScan && marker == 0xdc);
-    sawScan = sawScan || inScan;
-  }
-  return false;
 }
 
 Future<String?> _tryStripOriginalJpeg(String path) async {
