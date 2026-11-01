@@ -5608,9 +5608,9 @@ journeys:
     No actual device, signed-candidate or whole affected-lane verdict.'
 - id: MEDIA-027
   feature: MEDIA
-  title: Voice hold-record/release-send and record-lock review/send preserve playable recipient audio
+  title: Voice tap-to-start/tap-to-stop then send preserves playable recipient audio
   steps:
-  - Hold/release or lock recording and review it.
+  - Tap to start recording, then tap to stop.
   - Explicitly Send the intended recording.
   - Recipient downloads the exact recording and plays it completely.
   conditions:
@@ -5618,9 +5618,9 @@ journeys:
     connectivity: n/a
     offline: n/a
     app_state: foreground
-    input: hold/release, locked recording/review
+    input: tap-to-start, tap-to-stop, explicit send
     recovery: n/a
-  expected: Recording UI consent preserves playable exact recipient audio without auto-sending review.
+  expected: Recording starts and stops by tap, then explicit Send preserves playable exact recipient audio.
   rating: partial
   tests:
   - path: test/features/conversation/presentation/screens/conversation_wired_test.dart
@@ -5661,7 +5661,8 @@ journeys:
       playback. Registered full two-peer campaign; not run here. Registered: see cited native runner/manifest.'
   execution: not_run
   gaps:
-  - Full native Android record/send/play campaign exists, but it bypasses hold/lock/review gestures; host review
+  - "hold-to-record + lock/review: backlog (owner 10-31)"
+  - Full native Android record/send/play campaign exists, but it bypasses tap-to-start/tap-to-stop UI gestures; host review
     uses a fake recorder/send callback. No single UI-to-recipient native audio journey.
   catalog_ids:
   - DC-009
@@ -5725,9 +5726,9 @@ journeys:
   open_questions: []
 - id: MEDIA-029
   feature: MEDIA
-  title: Voice playback seek/speed/interruption and competing audio ownership are truthful
+  title: Voice playback seek/pause/resume/interruption and competing audio ownership are truthful
   steps:
-  - Play a voice note and seek/change speed.
+  - Play a voice note, seek, then pause and resume.
   - Pause/duck/interrupt or start competing call/media.
   - Resume only under current ownership and user intent.
   conditions:
@@ -5735,7 +5736,7 @@ journeys:
     connectivity: n/a
     offline: n/a
     app_state: foreground
-    input: voice playback, seek/speed and audio interruptions
+    input: voice playback, seek, pause/resume and audio interruptions
     recovery: one authorized resume
   expected: Playback state and interruption resume ownership stay truthful without duplicate audio.
   rating: partial
@@ -5777,7 +5778,8 @@ journeys:
       playback. Registered full two-peer campaign; not run here. Registered: see cited native runner/manifest.'
   execution: not_run
   gaps:
-  - Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/speed
+  - "playback speed: backlog (owner 10-31)"
+  - Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/pause/resume
     and actual OS competing call/audio route are not joined with that campaign.
   catalog_ids:
   - DC-009

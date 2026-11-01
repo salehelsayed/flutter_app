@@ -3168,19 +3168,21 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Scoped host proof only. Device handoff and exact remaining boundaries: docs/testing/astra-lever1-host-quickwins.md. No actual device, signed-candidate or whole affected-lane verdict.
 
-#### MEDIA-027 — Voice hold-record/release-send and record-lock review/send preserve playable recipient audio
+#### MEDIA-027 — Voice tap-to-start/tap-to-stop then send preserves playable recipient audio
 
 **Coverage:** partial. **Execution:** not_run. **Catalog:** DC-009.
 
+**Backlog:** hold-to-record + lock/review: backlog (owner 10-31)
+
 **Steps**
 
-1. Hold/release or lock recording and review it.
+1. Tap to start recording, then tap to stop.
 2. Explicitly Send the intended recording.
 3. Recipient downloads the exact recording and plays it completely.
 
-**Conditions:** platform: Android/iOS UI; native two-peer campaign Android; connectivity: n/a; offline: n/a; app state: foreground; input: hold/release, locked recording/review; recovery: n/a.
+**Conditions:** platform: Android/iOS UI; native two-peer campaign Android; connectivity: n/a; offline: n/a; app state: foreground; input: tap-to-start, tap-to-stop, explicit send; recovery: n/a.
 
-**Expected:** Recording UI consent preserves playable exact recipient audio without auto-sending review.
+**Expected:** Recording starts and stops by tap, then explicit Send preserves playable exact recipient audio.
 
 **Inspected test evidence**
 
@@ -3199,7 +3201,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Full native Android record/send/play campaign exists, but it bypasses hold/lock/review gestures; host review uses a fake recorder/send callback. No single UI-to-recipient native audio journey.
+- Full native Android record/send/play campaign exists, but it bypasses tap-to-start/tap-to-stop UI gestures; host review uses a fake recorder/send callback. No single UI-to-recipient native audio journey.
 
 #### MEDIA-028 — Cancel/discard voice recording, deny mic permission or interrupt it with a call
 
@@ -3234,17 +3236,19 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Actual UI/lease decisions and file deletion are causal; native microphone permission/call takeover and audio-session release use doubles.
 
-#### MEDIA-029 — Voice playback seek/speed/interruption and competing audio ownership are truthful
+#### MEDIA-029 — Voice playback seek/pause/resume/interruption and competing audio ownership are truthful
 
 **Coverage:** partial. **Execution:** not_run. **Catalog:** DC-009.
 
+**Backlog:** playback speed: backlog (owner 10-31)
+
 **Steps**
 
-1. Play a voice note and seek/change speed.
+1. Play a voice note, seek, then pause and resume.
 2. Pause/duck/interrupt or start competing call/media.
 3. Resume only under current ownership and user intent.
 
-**Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: voice playback, seek/speed and audio interruptions; recovery: one authorized resume.
+**Conditions:** platform: shared Android/iOS logic; host evidence only; connectivity: n/a; offline: n/a; app state: foreground; input: voice playback, seek, pause/resume and audio interruptions; recovery: one authorized resume.
 
 **Expected:** Playback state and interruption resume ownership stay truthful without duplicate audio.
 
@@ -3265,7 +3269,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Remaining gaps**
 
-- Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/speed and actual OS competing call/audio route are not joined with that campaign.
+- Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/pause/resume and actual OS competing call/audio route are not joined with that campaign.
 
 #### MEDIA-030 — Protected media delivery: authorized recipient opens while save/share/forward is refused
 
