@@ -15,6 +15,153 @@ import 'package:flutter_app/features/settings/domain/models/image_quality_prefer
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('MEDIA-005 JPEG admission boundary', () {
+    testWidgets(
+      'compressed PNG reaches the native encoder during a composer pump',
+      (tester) async {
+        final directory = Directory.systemTemp.createTempSync(
+          'jpeg-admission-composer-',
+        );
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final input = File('${directory.path}/photo.jpg')
+          ..writeAsBytesSync(img.encodePng(img.Image(width: 2, height: 2)));
+        var nativeCalls = 0;
+        var completed = false;
+        final processor = ImageProcessor(
+          compressFile:
+              ({
+                required path,
+                required quality,
+                required keepExif,
+                minWidth = 1920,
+                minHeight = 1080,
+              }) async {
+                nativeCalls++;
+                return XFile('${path}_compressed.jpg');
+              },
+        );
+        final processing = processor.processImage(
+          inputPath: input.path,
+          quality: ImageQualityPreference.compressed,
+        );
+        processing.then((_) => completed = true);
+
+        try {
+          // Composer widget tests flush microtasks with pump; PNG preparation
+          // must not add real file-I/O turns ahead of the injected encoder.
+          await tester.pump();
+          expect(nativeCalls, 1);
+        } finally {
+          // Drain the real-I/O route on RED before removing its source file.
+          for (var i = 0; i < 100 && !completed; i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 1)),
+            );
+            await tester.pump();
+          }
+          await processing;
+        }
+      },
+    );
+
+    for (final quality in ImageQualityPreference.values) {
+      for (final sourceKind in ['missing.jpg', 'missing.png', 'unreadable.jpg']) {
+        test(
+          '${quality.name} defers $sourceKind to the native encoder',
+          () async {
+            final directory = await Directory.systemTemp.createTemp(
+              'jpeg-admission-',
+            );
+            addTearDown(() => directory.delete(recursive: true));
+            final inputPath = '${directory.path}/$sourceKind';
+            if (sourceKind == 'unreadable.jpg') {
+              // A directory gives a deterministic file-read error without
+              // relying on process privileges or platform permission modes.
+              await Directory(inputPath).create();
+            }
+            await expectLater(
+              File(inputPath).readAsBytes(),
+              throwsA(isA<FileSystemException>()),
+            );
+            final processor = ImageProcessor(compressFile: _noOpCompress);
+
+            expect(
+              await processor.processImage(
+                inputPath: inputPath,
+                quality: quality,
+              ),
+              '${inputPath}_compressed.jpg',
+            );
+          },
+        );
+      }
+
+      for (final failureKind in ['null', 'exception']) {
+        test(
+          '${quality.name} preserves native $failureKind for an inaccessible source',
+          () async {
+            final directory = await Directory.systemTemp.createTemp(
+              'jpeg-admission-failure-',
+            );
+            addTearDown(() => directory.delete(recursive: true));
+            final inputPath = '${directory.path}/missing.jpg';
+            final nativeError = FileSystemException('native source unreadable');
+            var nativeCalls = 0;
+            final processor = ImageProcessor(
+              compressFile:
+                  ({
+                    required path,
+                    required quality,
+                    required keepExif,
+                    minWidth = 1920,
+                    minHeight = 1080,
+                  }) async {
+                    nativeCalls++;
+                    expect(path, inputPath);
+                    if (failureKind == 'exception') throw nativeError;
+                    return null;
+                  },
+            );
+
+            await expectLater(
+              processor.processImage(inputPath: inputPath, quality: quality),
+              failureKind == 'exception'
+                  ? throwsA(same(nativeError))
+                  : throwsA(
+                      isA<StateError>().having(
+                        (error) => error.message,
+                        'message',
+                        'Photo processing failed',
+                      ),
+                    ),
+            );
+            expect(nativeCalls, 1);
+          },
+        );
+      }
+
+      test(
+        '${quality.name} routes real PNG bytes named jpg to the native encoder',
+        () async {
+          final directory = await Directory.systemTemp.createTemp(
+            'jpeg-admission-non-jpeg-',
+          );
+          addTearDown(() => directory.delete(recursive: true));
+          final input = File('${directory.path}/photo.jpg');
+          final png = img.encodePng(img.Image(width: 2, height: 2));
+          await input.writeAsBytes(png);
+          final processor = ImageProcessor(compressFile: _noOpCompress);
+
+          expect(
+            await processor.processImage(inputPath: input.path, quality: quality),
+            '${input.path}_compressed.jpg',
+          );
+          expect(await input.readAsBytes(), png);
+        },
+      );
+    }
+  });
+
   group('MEDIA-005 invalid photo input', () {
     for (final quality in ImageQualityPreference.values) {
       for (final invalidKind in ['truncated', 'malformed']) {
