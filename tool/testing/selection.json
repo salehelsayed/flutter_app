@@ -294,7 +294,8 @@
     "bridge": {
       "kind": "flutter",
       "paths": [
-        "test/core/bridge/go_bridge_client_test.dart"
+        "test/core/bridge/go_bridge_client_test.dart",
+        "test/core/bridge/go_bridge_diagnostic_labels_test.dart"
       ],
       "boundary": "Dart command/method channel mapping and event dispatch/error boundaries",
       "limitations": "Mock native method/event channel; no native Go binding or legacy JS execution",

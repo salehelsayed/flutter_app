@@ -49,6 +49,30 @@ class AppDiagnosticsTests(unittest.TestCase):
         self.assertEqual([row['event'] for row in rows], [final], health)
         self.assertEqual(health.get('invalidRecords', 0), 0)
 
+    def test_bridge_labels_retain_closed_values_and_old_records(self):
+        old = self.event(feature='runtime', stage='bridge', outcome='failed',
+                         reason='bridge_rejected', values={'operation': 'other'})
+        labeled = self.event(feature='runtime', stage='bridge', outcome='failed',
+                             reason='bridge_rejected', values={
+                                 'operation': 'other',
+                                 'bridgeCommandFamily': 'messaging',
+                                 'bridgeRejectionKind': 'not_ready'})
+        self.record([old, labeled])
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual({row['event']['eventId'] for row in rows},
+                         {old['eventId'], labeled['eventId']}, health)
+        self.assertEqual(next(row['event']['values'] for row in rows
+                              if row['event']['eventId'] == labeled['eventId']),
+                         labeled['values'])
+        for field in ['bridgeCommandFamily', 'bridgeRejectionKind']:
+            invalid = self.event(feature='runtime', stage='bridge',
+                                 outcome='failed', reason='bridge_rejected',
+                                 values={**labeled['values'], field: 'private text'})
+            self.record([invalid])
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual({row['event']['eventId'] for row in rows},
+                         {old['eventId'], labeled['eventId']}, health)
+
     def test_final_only_representations_preserve_report_and_streaming_observations(self):
         for stage, outcome, reason in [('finish', 'success', 'none'),
                                        ('crash', 'failed', 'os_crash'),
