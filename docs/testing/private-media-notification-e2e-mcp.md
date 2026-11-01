@@ -1,10 +1,14 @@
 # Private media and direct notifications: MCP packet
 
-Prepared against `60e97ee0ca08b1936a0a95666cd0b7bf1e884638` for DC-021,
-DC-023 and GC-010. Execution belongs to flutter_app. Astra ran no device case.
+Prepared against `60e97ee0ca08b1936a0a95666cd0b7bf1e884638` for DC-021 and
+DC-023. Execution belongs to flutter_app. Astra ran no device case.
 This packet reuses typed host/native oracles and adds execution instructions;
 it adds no app hook, generic driver or manual-boolean verdict. The priority
-Python receipt checker does not implement these three journeys.
+Python receipt checker does not implement these two journeys.
+
+Owner scope update (2026-10-28, Kayan `m-77904fa9`): group private media is
+not part of the supported app surface. GC-010 is removed from the catalog and
+set 2, with no outstanding execution leg. This runbook covers DC-021/DC-023 only.
 
 ## Shared setup and evidence
 
@@ -12,9 +16,9 @@ Follow `docs/testing/TESTING.md` setup/recovery guidance and the existing
 `tool/testing/selection.json` mappings. The execution owner discovers and pins
 available targets, checks leases and provider readiness, and records exact
 source, installed artifact/package/configuration and private actor bindings.
-Use an available USB Android plus emulator for shared paired behavior. GC-010's
-independence leg needs a sender and two distinct entitled receiving profiles on
-actually available targets. Separate iOS-specific native protection/APNs legs.
+Use an available USB Android plus emulator for shared paired behavior.
+Keep iOS-specific native protection/APNs legs separate; their proof requires
+an actually available suitable target.
 Unavailable hardware makes only that leg N/A by project policy; missing access,
 elapsed expiry time or observations on available targets remain incomplete.
 
@@ -225,76 +229,3 @@ only for independent rows and exact logical replay for duplicates.
    subsequent ordinary alerts and per-peer unread remain correct. Missing first
    card, exact route/read, provider or native privacy evidence leaves the
    corresponding assertion incomplete; host PASS does not supply it.
-
-## GC-010: encrypted fanout and each receiver's private lifecycle
-
-Group policy is not the direct wire schema or action allowlist:
-
-- `lib/features/groups/domain/models/group_private_media_policy.dart:57-66`
-  permits one image/video with no caption/text, quote, edit or forward.
-  Protected-only is lifecycle `standard` plus protection, view-once is wire
-  `viewOnce`, and disappearing uses the same one-hour/day/week durations.
-  All four wire fields at `:141-146` must survive: `mediaPolicyVersion`,
-  `mediaLifecycle`, `mediaDurationSeconds`, `mediaProtected`. The duration is
-  explicitly null for protected-only/view-once. Do not substitute direct
-  `privateMedia`/`view_once` encoding or infer policy from a local menu badge.
-- `lib/features/groups/application/group_private_media_lifecycle.dart:178-234`
-  consumes group view-once at the actual first frame, revalidates the exact
-  grant, and cleans terminal content on settlement. This differs from direct's
-  durable viewing-then-settlement transition; observations must use the actual
-  lane. Consumption/expiry is recipient-local, not one global fanout budget.
-- `lib/features/groups/application/group_received_media_action_policy.dart:32-45`
-  returns no received-media actions for private/unsupported policies.
-  `lib/features/groups/presentation/screens/group_conversation_wired.dart:6582-6625`
-  applies it to viewer actions, alongside `group_media_forward_policy.dart`.
-  Verify denied Save/Share/Info/Delete/Reply/Forward on that **media-action
-  surface**; do not copy direct's safe Info/Reply/Delete allowlist or infer that
-  every outer message deletion feature is prohibited. Ordinary received-media
-  controls retain the actual group-type/write/integrity restrictions.
-- Reuse `device-group-media` / `groups.media_send_reliability` for its ordinary
-  encrypted custody/recovery observations. Its typed receiver cut is not the
-  whole private matrix. `integration_test/group_private_media_platform_proof_test.dart`
-  uses local/in-memory fixtures; its native observations do not prove fanout.
-  `integration_test/group_private_media_lifecycle_db_proof_test.dart`,
-  `test/features/groups/application/group_private_media_lifecycle_test.dart`,
-  `test/features/groups/integration/group_private_media_payload_roundtrip_test.dart`,
-  `group_private_media_crash_recovery_test.dart`,
-  `group_private_media_cleanup_replay_test.dart` in that directory and
-  `test/features/groups/presentation/group_private_media_capabilities_test.dart`
-  retain their existing database, recovery, policy and fake-platform scope.
-
-Use a stable owned authorized group with sender S and distinct entitled receivers
-B/C. Confirm real membership and each receiver's actual encrypted delivery and
-download independently. Keep ordinary image/video and protected siblings as
-controls. New-member entitlement/removal is a separate journey; do not mutate
-the roster to simulate recipient-local consumption.
-
-1. Send fresh protected-only, view-once and disappearing media through the real
-   group composer/fanout path. Include real image and short playable video across
-   the matrix, with full cross-product execution only if that coverage is claimed.
-   At B and C, bind the accepted sender rendition, group/message/attachment,
-   actual decrypted content and exact group policy. Neither receiver may rely
-   on a preinstalled private row or sender-local file. Verify current authorized
-   opening and native route protection using existing owned observers.
-2. Leave C's actual received view-once unopened. Cold-restart C and confirm it
-   remains eligible. At B observe the exact first decoded frame, B's durable
-   consumption and close/cleanup. Restart B, replay the original authenticated
-   group message, and show it cannot reopen or re-download into availability.
-   C's independent copy remains unopened/eligible and can then be consumed by
-   C's own first frame/settlement. B stays terminal. Retain separate per-recipient
-   receipts; one receiver's result or sender status cannot stand in for another.
-3. For protected-only, close/restart/reopen at each receiver without consumption.
-   Apply actual group media-action and PiP restrictions while keeping ordinary
-   controls functional. Use the current native protection semantics per platform;
-   do not disable protection for screenshots or claim another OS from this proof.
-4. For disappearing, record each receiver's real persisted deadline; do not
-   assume simultaneous local expiry or refresh lifetime on fanout retry/replay.
-   Use the actual supported one-hour minimum, or a properly provenance-bound aged
-   wire send as in DC-021. Observe before/after expiry and natural cold recovery
-   independently at B/C, including owned byte/thumbnail cleanup and no reopening.
-   Host fake-clock expiry is supporting causal coverage, not elapsed native time.
-5. Preserve unrelated rows/files and protected/ordinary siblings, including any
-   legitimate shared ownership. Prove a later fresh ordinary/private fanout still
-   works. Keep each available receiver/platform result separate; absent full
-   content, expiry, action, native protection or cleanup observations remain
-   incomplete. No remote revocation or account-wide consumption is claimed.

@@ -3620,15 +3620,16 @@ media-path causality, independent microphone/notification permission evidence,
 same-fixture invalid-then-valid controls and separate real iOS background/name
 observations. Existing host fixtures remain scoped; native injection or artifact
 gaps are explicit and no extra device execution is claimed by preparation.
-`private-media-notification-e2e-mcp.md` prepares DC-021/DC-023/GC-010 with actual
-encrypted receive/download, lane-specific policy/action rules, exact first-frame
-and settlement transitions, recipient-local group consumption, native card/read
-and OS channel/privacy observations. Direct first frame records viewing before
-terminal settlement; group first frame consumes locally. Native disappearing
+`private-media-notification-e2e-mcp.md` prepares DC-021/DC-023 with actual
+encrypted receive/download, direct private-policy/action rules, exact first-frame
+and settlement transitions, native card/read and OS channel/privacy observations.
+Direct first frame records viewing before terminal settlement. Native disappearing
 expiry uses a supported duration of at least one hour, with real persisted
 deadlines; local fixture/fake-clock results cannot replace elapsed wire evidence.
-Existing typed campaign/host oracles retain their scope. All three native
-journeys remain unrun by Astra; this packet adds no app hook or boolean checker.
+Existing typed campaign/host oracles retain their scope. Both native journeys
+remain unrun by Astra; this packet adds no app hook or boolean checker. The owner
+excluded group private media on 2026-10-28 (Kayan `m-77904fa9`): GC-010 is removed
+from the catalog and set 2, with no outstanding execution leg.
 
 Fresh isolated checkouts must provision the pinned Flutter SDK's missing Gradle
 wrapper files before build fingerprints are calculated. C8's first APK build
