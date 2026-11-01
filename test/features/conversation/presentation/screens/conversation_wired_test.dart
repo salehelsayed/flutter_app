@@ -34,6 +34,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
@@ -118,6 +119,7 @@ import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
+import '../../../../shared/fakes/in_memory_composer_draft_store.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
@@ -2097,6 +2099,7 @@ void main() {
     ActiveConversationTracker? conversationTracker,
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
+    ComposerDraftStore? composerDraftStore,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2157,6 +2160,7 @@ void main() {
           initialMessages: initialMessages,
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
+          composerDraftStore: composerDraftStore,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           conversationTracker: conversationTracker,
           autoDownloadDecider: autoDownloadDecider,
@@ -18570,6 +18574,226 @@ void main() {
       expect(find.text('Media Library'), findsOneWidget);
     },
   );
+
+  group('composer draft survives leaving the chat', () {
+    late Directory pickedDir;
+    late InMemoryComposerDraftStore drafts;
+    late FakeMessageRepository repo;
+    late FakeMediaPicker picker;
+    late int sends;
+
+    setUp(() {
+      pickedDir = Directory.systemTemp.createTempSync('composer_draft_1to1_');
+      drafts = InMemoryComposerDraftStore();
+      repo = FakeMessageRepository();
+      picker = FakeMediaPicker();
+      sends = 0;
+    });
+
+    tearDown(() {
+      if (pickedDir.existsSync()) pickedDir.deleteSync(recursive: true);
+    });
+
+    File pickedPhoto() =>
+        File('${pickedDir.path}/beach.png')..writeAsBytesSync(_tinyPngBytes);
+
+    Future<void> openChat(WidgetTester tester) => pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: repo,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: repo,
+        contactRepo: FakeContactRepository(),
+      ),
+      mediaPicker: picker,
+      bridge: FakeBridge(),
+      directMediaBlobCustodyClientEnabled: false,
+      composerDraftStore: drafts,
+      uploadMediaFn:
+          ({
+            required bridge,
+            required localFilePath,
+            required mime,
+            required recipientPeerId,
+            mediaFileManager,
+            width,
+            height,
+            durationMs,
+            waveform,
+            allowedPeers,
+            blobId,
+            deleteSourceWhenDone = false,
+            preparedArtifact,
+          }) async => MediaAttachment(
+            id: 'draft-upload',
+            messageId: '',
+            mime: mime,
+            size: File(localFilePath).lengthSync(),
+            mediaType: 'image',
+            localPath: localFilePath,
+            downloadStatus: 'done',
+            createdAt: '2026-11-01T12:00:00Z',
+          ),
+      sendFn:
+          ({
+            required p2pService,
+            required messageRepo,
+            required targetPeerId,
+            required text,
+            required senderPeerId,
+            required senderUsername,
+            messageId,
+            required preassignedMessageIdIsFresh,
+            String? authoredTextIntentToken,
+            timestamp,
+            bridge,
+            recipientMlKemPublicKey,
+            quotedMessageId,
+            mediaAttachments,
+            privateMediaPolicy,
+            mediaAttachmentRepo,
+            transportMetrics,
+            directEventFanout,
+          }) async {
+            sends++;
+            return _instantSuccessSendFn(
+              p2pService: p2pService,
+              messageRepo: messageRepo,
+              targetPeerId: targetPeerId,
+              text: text,
+              senderPeerId: senderPeerId,
+              senderUsername: senderUsername,
+              messageId: messageId,
+              preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+              timestamp: timestamp,
+            );
+          },
+    );
+
+    Future<void> leaveChat(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    Future<void> attachFromLibrary(WidgetTester tester, File file) async {
+      picker.multipleMediaResult = [XFile(file.path)];
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+          .onTap!();
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+
+    String composerText(WidgetTester tester) =>
+        tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+    List<String> stagedPaths(WidgetTester tester) => tester
+        .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+        .attachments
+        .map((file) => file.path)
+        .toList();
+
+    testWidgets(
+      '1:1 draft photo and caption come back after leaving the chat',
+      (tester) async {
+        final photo = pickedPhoto();
+        await openChat(tester);
+        await attachFromLibrary(tester, photo);
+        await tester.enterText(find.byType(TextField), 'Look at this');
+        await tester.pump();
+        expect(stagedPaths(tester), [photo.path]);
+
+        await leaveChat(tester);
+        await openChat(tester);
+
+        expect(composerText(tester), 'Look at this');
+        expect(stagedPaths(tester), [photo.path]);
+        expect(tester.takeException(), isNull);
+        await leaveChat(tester);
+      },
+    );
+
+    testWidgets('1:1 draft text alone comes back after leaving the chat', (
+      tester,
+    ) async {
+      await openChat(tester);
+      await tester.enterText(find.byType(TextField), 'See you at 8');
+      await tester.pump();
+
+      await leaveChat(tester);
+      await openChat(tester);
+
+      expect(composerText(tester), 'See you at 8');
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+      await leaveChat(tester);
+    });
+
+    testWidgets('1:1 draft private photo comes back still private', (
+      tester,
+    ) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
+      final photo = pickedPhoto();
+      await openChat(tester);
+      await attachFromLibrary(tester, photo);
+      tester
+          .widget<ComposeArea>(find.byType(ComposeArea))
+          .onPrivateMediaPolicyChanged!(const PrivateMediaPolicy.protected());
+      await tester.pump();
+      expect(
+        tester.widget<ComposeArea>(find.byType(ComposeArea)).privateMediaPolicy,
+        const PrivateMediaPolicy.protected(),
+      );
+
+      await leaveChat(tester);
+      await openChat(tester);
+
+      final compose = tester.widget<ComposeArea>(find.byType(ComposeArea));
+      expect(compose.privateMediaPolicy, const PrivateMediaPolicy.protected());
+      expect(
+        isPrivateMediaComposerPolicyEligible(
+          selectedPolicy: compose.privateMediaPolicy,
+          eligibility: compose.privateMediaEligibility,
+        ),
+        isTrue,
+      );
+      expect(stagedPaths(tester), [photo.path]);
+      await leaveChat(tester);
+    });
+
+    testWidgets('1:1 draft is gone after it is sent', (tester) async {
+      final photo = pickedPhoto();
+      await openChat(tester);
+      await attachFromLibrary(tester, photo);
+      await tester.enterText(find.byType(TextField), 'Sending this one');
+      await tester.pump();
+      await leaveChat(tester);
+      await openChat(tester);
+      expect(composerText(tester), 'Sending this one');
+      expect(stagedPaths(tester), [photo.path]);
+
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      for (var attempt = 0; attempt < 100 && sends == 0; attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(sends, 1);
+      await tester.pump(const Duration(milliseconds: 500));
+      await leaveChat(tester);
+      await openChat(tester);
+
+      expect(composerText(tester), '');
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+      expect(drafts.drafts, isEmpty);
+      await leaveChat(tester);
+    });
+  });
 }
 
 /// 248 — a contact repo that reports one other active friend so the overflow

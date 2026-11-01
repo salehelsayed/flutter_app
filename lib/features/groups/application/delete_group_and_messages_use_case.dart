@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -22,6 +25,7 @@ Future<void> deleteGroupAndMessages({
   required GroupRepository groupRepo,
   required GroupMessageRepository groupMessageRepo,
   required String groupId,
+  ComposerDraftStore? composerDraftStore,
 }) async {
   emitFlowEvent(
     layer: 'UC',
@@ -69,6 +73,11 @@ Future<void> deleteGroupAndMessages({
       }
       Error.throwWithStackTrace(error, stackTrace);
     }
+    unawaited(
+      (composerDraftStore ?? ComposerDraftStore.shared)
+          .clear(ComposerDraftKey.group(groupId))
+          .catchError((_) {}),
+    );
 
     emitFlowEvent(
       layer: 'UC',

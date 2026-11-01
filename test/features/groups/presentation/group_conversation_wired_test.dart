@@ -23,6 +23,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
@@ -107,6 +108,7 @@ import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart'
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../shared/fakes/fake_media_picker.dart';
+import '../../../shared/fakes/in_memory_composer_draft_store.dart';
 import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -1963,6 +1965,7 @@ void main() {
           productionGroupPrivateMediaAvailability,
       AppVisibilityRouteObserver? visibilityRouteObserver,
       AppVisibilityRouteRegistry? visibilityRouteRegistry,
+      ComposerDraftStore? composerDraftStore,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -2009,6 +2012,7 @@ void main() {
           initialAttachments: initialAttachments,
           initialPendingMedia: initialPendingMedia,
           initialText: initialText,
+          composerDraftStore: composerDraftStore,
           initialHighlightedMessageId: initialHighlightedMessageId,
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           reactionRepo: reactionRepo,
@@ -23231,6 +23235,149 @@ void main() {
           expect(openerCalls, 0);
         },
       );
+    });
+
+    group('composer draft survives leaving the group chat', () {
+      late Directory pickedDir;
+      late InMemoryComposerDraftStore drafts;
+      late FakeMediaPicker picker;
+
+      setUp(() {
+        pickedDir = Directory.systemTemp.createTempSync(
+          'composer_draft_group_',
+        );
+        drafts = InMemoryComposerDraftStore();
+        picker = FakeMediaPicker();
+      });
+
+      tearDown(() {
+        if (pickedDir.existsSync()) pickedDir.deleteSync(recursive: true);
+      });
+
+      Future<GroupModel> seedGroup() async {
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        return group;
+      }
+
+      Future<void> openChat(WidgetTester tester, GroupModel group) async {
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            mediaPicker: picker,
+            composerDraftStore: drafts,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async => successfulGroupUploadFixture(
+                  blobId: blobId!,
+                  mime: mime,
+                  localFilePath: localFilePath,
+                ),
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+      }
+
+      Future<void> leaveChat(WidgetTester tester) async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      }
+
+      Future<void> attachFromLibrary(WidgetTester tester, File file) async {
+        picker.multipleMediaResult = [XFile(file.path)];
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(find.widgetWithText(ListTile, 'Media Library'))
+            .onTap!();
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 100)),
+        );
+        await pumpFrames(tester, count: 10);
+      }
+
+      String composerText(WidgetTester tester) =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+      List<String> stagedPaths(WidgetTester tester) => tester
+          .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+          .attachments
+          .map((file) => file.path)
+          .toList();
+
+      File pickedPhoto() =>
+          File(p.join(pickedDir.path, 'party.jpg'))
+            ..writeAsBytesSync(validJpegFixtureBytes);
+
+      testWidgets(
+        'group draft photo and caption come back after leaving the chat',
+        (tester) async {
+          final group = await seedGroup();
+          final photo = pickedPhoto();
+          await openChat(tester, group);
+          await attachFromLibrary(tester, photo);
+          await tester.enterText(find.byType(TextField), 'Group caption');
+          await tester.pump();
+          expect(stagedPaths(tester), [photo.path]);
+
+          await leaveChat(tester);
+          await openChat(tester, group);
+
+          expect(composerText(tester), 'Group caption');
+          expect(stagedPaths(tester), [photo.path]);
+          expect(tester.takeException(), isNull);
+          await leaveChat(tester);
+        },
+      );
+
+      testWidgets('group draft is gone after it is sent', (tester) async {
+        final group = await seedGroup();
+        final photo = pickedPhoto();
+        await openChat(tester, group);
+        await attachFromLibrary(tester, photo);
+        await tester.enterText(find.byType(TextField), 'Group caption');
+        await tester.pump();
+        await leaveChat(tester);
+        await openChat(tester, group);
+        expect(composerText(tester), 'Group caption');
+        expect(stagedPaths(tester), [photo.path]);
+
+        final send =
+            tester
+                    .widget<GroupConversationScreen>(
+                      find.byType(GroupConversationScreen),
+                    )
+                    .onSend
+                as Future<void> Function(String);
+        await tester.runAsync(() => send('Group caption'));
+        await pumpFrames(tester, count: 20);
+        final sent = (await msgRepo.getMessagesPage(group.id)).single;
+        expect((sent.text, sent.status), ('Group caption', 'sent'));
+
+        await leaveChat(tester);
+        await openChat(tester, group);
+
+        expect(composerText(tester), '');
+        expect(find.byType(AttachmentPreviewStrip), findsNothing);
+        expect(drafts.drafts, isEmpty);
+        await leaveChat(tester);
+      });
     });
   });
 }

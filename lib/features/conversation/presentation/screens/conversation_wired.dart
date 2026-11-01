@@ -12,6 +12,7 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -138,6 +139,7 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/presentation/navigation/direct_media_batch_forward_picker_route.dart';
+import 'package:flutter_app/shared/widgets/conversation/composer_draft_autosave.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_composer_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_reaction_projection_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_upload_activity_controller.dart';
@@ -465,6 +467,10 @@ class ConversationWired extends StatefulWidget {
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
 
+  /// Keeps the unsent draft across leaving the chat. Null uses
+  /// [ComposerDraftStore.shared].
+  final ComposerDraftStore? composerDraftStore;
+
   /// A reply typed on a thought card, sent once this chat is ready.
   final ThoughtReply? initialThoughtReply;
 
@@ -621,6 +627,7 @@ class ConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
+    this.composerDraftStore,
     this.initialThoughtReply,
     this.initialThoughtVoiceReply,
     this.onOpenThought,
@@ -760,6 +767,17 @@ class _ConversationWiredState extends State<ConversationWired>
   String? _editingMessageId;
   String? _editingOriginalText;
   String _draftText = '';
+  late final _composerDraft = ComposerDraftAutosave(
+    store: widget.composerDraftStore ?? ComposerDraftStore.shared,
+    key: ComposerDraftKey.direct(widget.contact.peerId),
+    read: () => _editingMessageId != null
+        ? null
+        : ComposerDraft(
+            text: _draftText,
+            attachments: _composerController.pendingAttachments,
+            privateMediaPolicy: _privateMediaPolicy,
+          ),
+  );
   String? _restoredFailedMessageId;
   String? _restoredFailedDraftText;
   String? _restoredFailedQuotedMessageId;
@@ -1523,6 +1541,15 @@ class _ConversationWiredState extends State<ConversationWired>
       _privateMediaPolicy = debugInitialPrivateMediaPolicy!;
       _updateComposerState(privateMediaPolicy: debugInitialPrivateMediaPolicy);
     }
+    if ((widget.initialText?.isNotEmpty ?? false) ||
+        (widget.initialAttachments?.isNotEmpty ?? false) ||
+        (widget.initialPendingMedia?.isNotEmpty ?? false) ||
+        widget.initialThoughtReply != null ||
+        widget.initialThoughtVoiceReply != null) {
+      _composerDraft.startWithoutRestore();
+    } else {
+      unawaited(_composerDraft.restore(_applyComposerDraft));
+    }
     emitFlowEvent(layer: 'FL', event: 'CONV_FL_SCREEN_INIT', details: {});
     _scrollController.addListener(_onScroll);
     _loadIdentity();
@@ -1781,6 +1808,16 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _updateComposerState(pendingAttachments: initialPendingMedia);
     return true;
+  }
+
+  void _applyComposerDraft(ComposerDraft draft) {
+    if (!mounted) return;
+    setState(() => _draftText = draft.text);
+    if (draft.attachments.isNotEmpty &&
+        !_seedInitialPendingMediaIfWithinBudget(draft.attachments)) {
+      unawaited(_hydrateInitialPendingMedia(draft.attachments));
+    }
+    _setPrivateMediaPolicy(draft.privateMediaPolicy);
   }
 
   List<PendingComposerMedia> _prepareLegacyInitialAttachmentsSync(
@@ -7027,6 +7064,7 @@ class _ConversationWiredState extends State<ConversationWired>
         pendingAttachments: pendingAttachments,
       );
     }
+    _composerDraft.changed();
   }
 
   void _upsertMessageById(ConversationMessage message) {
@@ -8177,6 +8215,7 @@ class _ConversationWiredState extends State<ConversationWired>
         if (file.existsSync()) file.deleteSync();
       } catch (_) {}
     }
+    _composerDraft.close();
     _composerController.dispose();
     _scrollController.dispose();
     _highlightClearTimer?.cancel();

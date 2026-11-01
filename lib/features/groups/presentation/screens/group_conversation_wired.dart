@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/document_attachments_flag.dart';
 import 'package:flutter_app/core/media/attachment_file_name.dart';
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/media/document_file_check.dart';
 import 'package:flutter_app/core/media/media_mime.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -120,6 +121,7 @@ import 'package:flutter_app/features/settings/domain/models/background_preferenc
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/conversation/composer_draft_autosave.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_composer_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_reaction_projection_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_upload_activity_controller.dart';
@@ -362,6 +364,10 @@ class GroupConversationWired extends StatefulWidget {
   final List<File>? initialAttachments;
   final List<PendingComposerMedia>? initialPendingMedia;
   final String? initialText;
+
+  /// Keeps the unsent draft across leaving the chat. Null uses
+  /// [ComposerDraftStore.shared].
+  final ComposerDraftStore? composerDraftStore;
   final ReactionRepository? reactionRepo;
   final GroupReactionReplayOutboxRepository?
   groupReactionReplayOutboxRepository;
@@ -459,6 +465,7 @@ class GroupConversationWired extends StatefulWidget {
     this.initialAttachments,
     this.initialPendingMedia,
     this.initialText,
+    this.composerDraftStore,
     this.reactionRepo,
     this.groupReactionReplayOutboxRepository,
     this.historyGapRepairRepo,
@@ -566,6 +573,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Set<String> _retryingFailedMessageIds = const {};
   String? _activeQuoteMessageId;
   String _draftText = '';
+  late final _composerDraft = ComposerDraftAutosave(
+    store: widget.composerDraftStore ?? ComposerDraftStore.shared,
+    key: ComposerDraftKey.group(widget.group.id),
+    read: () => ComposerDraft(
+      text: _draftText,
+      attachments: _composerController.pendingAttachments,
+    ),
+  );
   String? _messageLoadErrorText;
   GroupSecurityStatusViewState? _securityStatus;
   GroupHistoryGapRepair? _historyGapRepair;
@@ -959,6 +974,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         });
       }
     }
+    _startComposerDraft();
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_CONV_FL_SCREEN_INIT',
@@ -1179,6 +1195,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _resetForGroupChange(GroupConversationWired oldWidget) {
+    _composerDraft.switchTo(ComposerDraftKey.group(widget.group.id));
     _sendLaneBindingGeneration++;
     _discardCallInterruptedReviewFile();
     _uploadActivityController.detachView();
@@ -1241,6 +1258,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       recordingDuration: Duration.zero,
       amplitudeValues: const [],
     );
+    _startComposerDraft();
     if (mounted) {
       setState(() {});
     }
@@ -1251,6 +1269,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _startListening();
     _startListeningForOutgoingLocalMessageChanges();
     _startListeningForReactions();
+  }
+
+  void _startComposerDraft() {
+    if ((widget.initialText?.isNotEmpty ?? false) ||
+        (widget.initialAttachments?.isNotEmpty ?? false) ||
+        (widget.initialPendingMedia?.isNotEmpty ?? false)) {
+      _composerDraft.startWithoutRestore();
+    } else {
+      unawaited(_composerDraft.restore(_applyComposerDraft));
+    }
+  }
+
+  void _applyComposerDraft(ComposerDraft draft) {
+    if (!mounted) return;
+    setState(() => _draftText = draft.text);
+    if (draft.attachments.isNotEmpty &&
+        !_seedInitialPendingMediaIfWithinBudget(draft.attachments)) {
+      unawaited(_hydrateInitialPendingMedia(draft.attachments));
+    }
   }
 
   Future<void> _hydrateInitialPendingMedia(
@@ -3502,6 +3539,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_canWrite) return;
     if (_draftText == text) return;
     setState(() => _draftText = text);
+    _composerDraft.changed();
     final restored = _restoredMediaContinuation;
     if (restored != null && text != restored.draftText) {
       _clearRestoredMediaContinuationTracking();
@@ -5198,6 +5236,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       state: next,
       pendingAttachments: pendingAttachments,
     );
+    _composerDraft.changed();
   }
 
   bool _shouldPreserveScrollOffset() {
@@ -8215,6 +8254,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     _reactionProjectionController.dispose();
     _voiceCaptureController.dispose();
     _discardCallInterruptedReviewFile();
+    _composerDraft.close();
     _composerController.dispose();
     super.dispose();
   }

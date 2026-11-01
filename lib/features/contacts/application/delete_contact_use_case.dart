@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter_app/core/media/composer_draft_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -26,6 +29,7 @@ Future<void> deleteContactAndMessages({
   MediaFileManager? mediaFileManager,
   ContactRequestRepository? contactRequestRepo,
   IntroductionRepository? introductionRepo,
+  ComposerDraftStore? composerDraftStore,
 }) async {
   final peerIdPreview = peerId.length > 10 ? peerId.substring(0, 10) : peerId;
 
@@ -251,6 +255,11 @@ Future<void> deleteContactAndMessages({
       );
       await deleteInventoriedState(candidateMessages);
     }
+    unawaited(
+      (composerDraftStore ?? ComposerDraftStore.shared)
+          .clear(ComposerDraftKey.direct(peerId))
+          .catchError((_) {}),
+    );
 
     emitFlowEvent(
       layer: 'UC',

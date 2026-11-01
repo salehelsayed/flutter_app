@@ -40,6 +40,7 @@ Future<void> eraseAccountMedia({
     kDirectMediaBlobArtifactRootDirectory,
     kGroupMediaBlobArtifactRootDirectory,
     'account_migration',
+    'composer_drafts',
   ]) {
     await _eraseDirectory(Directory(p.join(documents.path, name)));
   }
