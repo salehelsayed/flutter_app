@@ -102,6 +102,19 @@ class ContactRequestRepositoryImpl implements ContactRequestRepository {
         result == ContactRequestDecisionResult.alreadyAccepted) {
       await onContactAccepted?.call(expectedRequest.peerId);
     }
+    if (result == ContactRequestDecisionResult.accepted ||
+        result == ContactRequestDecisionResult.alreadyAccepted ||
+        result == ContactRequestDecisionResult.declined) {
+      try {
+        await onRequestDecided?.call(expectedRequest);
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONTACT_REQUEST_NOTIFICATION_RETIRE_ERROR',
+          details: {'error': error.toString()},
+        );
+      }
+    }
     return result;
   }
 

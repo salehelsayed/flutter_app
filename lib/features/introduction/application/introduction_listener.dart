@@ -13,6 +13,7 @@ import 'package:flutter_app/features/introduction/application/introduction_copy.
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 enum IntroductionMessageProcessState {
@@ -379,15 +380,30 @@ class IntroductionListener {
 
           // Show local notification for new introduction
           if (notificationService != null) {
+            final messageId = IntroductionPayload.buildEnvelopeMessageId(
+              introductionId: model.id,
+              action: 'send',
+              senderPeerId: model.introducerId,
+            );
+            final notificationPayload = NotificationRouteTarget.intros(
+              messageId: messageId,
+            ).toPayload();
             final body = formatIncomingIntroductionMessage(
               introduction: model,
               ownPeerId: ownPeerId,
             );
-            await notificationService!.showNotification(
-              title: 'New Introduction',
-              body: body,
-              payload: 'intros',
-            );
+            final alreadyAnnounced = await recentRemoteNotificationGate
+                .consumeIfRecentAnnouncement(
+                  payload: notificationPayload,
+                  messageId: messageId,
+                );
+            if (!alreadyAnnounced) {
+              await notificationService!.showNotification(
+                title: 'New Introduction',
+                body: body,
+                payload: notificationPayload,
+              );
+            }
           }
 
           emitFlowEvent(

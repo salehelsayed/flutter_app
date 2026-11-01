@@ -40,6 +40,7 @@ bool routeTargetSupportsMessageAwareRemoteDedupe(
     NotificationRouteTargetKind.conversation => true,
     NotificationRouteTargetKind.group => true,
     NotificationRouteTargetKind.post => true,
+    NotificationRouteTargetKind.intros => true,
     NotificationRouteTargetKind.groupInvite => false,
     _ => false,
   };
@@ -51,7 +52,9 @@ Future<bool> markRemoteNotificationOpenAsRecentAnnouncement({
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
   if (routeTarget == null ||
-      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)) {
+      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind) ||
+      (routeTarget.kind == NotificationRouteTargetKind.intros &&
+          routeTarget.messageId == null)) {
     return false;
   }
 
@@ -77,7 +80,9 @@ Future<bool> discardSuppressedForegroundRemoteSidecar({
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
   if (routeTarget == null ||
-      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind)) {
+      !routeTargetSupportsMessageAwareRemoteDedupe(routeTarget.kind) ||
+      (routeTarget.kind == NotificationRouteTargetKind.intros &&
+          routeTarget.messageId == null)) {
     return false;
   }
   final messageId =

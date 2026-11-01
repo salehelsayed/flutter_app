@@ -201,6 +201,29 @@ final class MethodChannelIosNotificationRecoveryBridge
     _requireAcknowledgement(response, method: 'retireGroupInvite');
   }
 
+  Future<void> retireContactRequest({required String peerId}) async {
+    final response = await _channel.invokeMethod<Object?>(
+      'retireContactRequest',
+      <String, Object?>{
+        'peerId': _requiredRetirementId(peerId, argumentName: 'peerId'),
+      },
+    );
+    _requireAcknowledgement(response, method: 'retireContactRequest');
+  }
+
+  Future<void> retireIntroduction({required String messageId}) async {
+    final response = await _channel.invokeMethod<Object?>(
+      'retireIntroduction',
+      <String, Object?>{
+        'messageId': _requiredRetirementId(
+          messageId,
+          argumentName: 'messageId',
+        ),
+      },
+    );
+    _requireAcknowledgement(response, method: 'retireIntroduction');
+  }
+
   @override
   Future<void> clearAccount() async {
     final response = await _channel.invokeMethod<Object?>(

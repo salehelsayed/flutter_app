@@ -34,6 +34,37 @@ void main() {
   });
 
   test(
+    'CR-008 IN-008 retirement channel preserves exact decision identities',
+    () async {
+      final bridge = MethodChannelIosNotificationRecoveryBridge(
+        channel: channel,
+      );
+      await bridge.retireContactRequest(peerId: 'request-peer');
+      await bridge.retireIntroduction(
+        messageId: 'intro-1::send::introducer-peer',
+      );
+      expect(calls.map((call) => call.method), [
+        'retireContactRequest',
+        'retireIntroduction',
+      ]);
+      expect(calls[0].arguments, {'peerId': 'request-peer'});
+      expect(calls[1].arguments, {
+        'messageId': 'intro-1::send::introducer-peer',
+      });
+
+      await expectLater(
+        bridge.retireContactRequest(peerId: 'bad\u0000peer'),
+        throwsArgumentError,
+      );
+      await expectLater(
+        bridge.retireIntroduction(messageId: ''),
+        throwsArgumentError,
+      );
+      expect(calls, hasLength(2));
+    },
+  );
+
+  test(
     'channel sends raw identities and validates every native response',
     () async {
       final bridge = MethodChannelIosNotificationRecoveryBridge(
@@ -217,11 +248,10 @@ void main() {
 
     expect(bridge.beginCount, 2);
     expect(loads, 2);
-    expect(
-      bridge.completeness,
-      <bool>[false, false],
-      reason: 'a non-exhaustive callback cannot clear sticky incompleteness',
-    );
+    expect(bridge.completeness, <bool>[
+      false,
+      false,
+    ], reason: 'a non-exhaustive callback cannot clear sticky incompleteness');
   });
 
   test(
@@ -257,11 +287,10 @@ void main() {
       expect(bridge.completeness, <bool>[false]);
 
       await coordinator.reconcile();
-      expect(
-        bridge.completeness,
-        <bool>[false, false],
-        reason: 'an ordinary settlement cannot clear sticky incompleteness',
-      );
+      expect(bridge.completeness, <bool>[
+        false,
+        false,
+      ], reason: 'an ordinary settlement cannot clear sticky incompleteness');
 
       final exhaustive = await coordinator.beginCanonicalMutation(
         globallyExhaustive: true,
@@ -337,11 +366,10 @@ void main() {
 
     expect(loads, 2);
     expect(bridge.beginCount, 2);
-    expect(
-      bridge.completeness,
-      <bool>[false, true],
-      reason: 'the failed SQL pass consumes its token without completeness',
-    );
+    expect(bridge.completeness, <bool>[
+      false,
+      true,
+    ], reason: 'the failed SQL pass consumes its token without completeness');
   });
 
   test(

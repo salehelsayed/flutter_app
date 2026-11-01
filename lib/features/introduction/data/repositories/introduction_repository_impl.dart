@@ -162,7 +162,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     required String respondedAt,
     required List<IntroductionOutboxDelivery> deliveries,
   }) async {
-    return dbSaveIntroductionResponseWithOutboxDeliveries(
+    final saved = await dbSaveIntroductionResponseWithOutboxDeliveries(
       introductionId: introductionId,
       isRecipient: isRecipient,
       responseStatus: responseStatus.toDbString(),
@@ -172,6 +172,18 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
           .map((delivery) => delivery.toMap())
           .toList(growable: false),
     );
+    if (saved) {
+      try {
+        await onResponseSaved?.call(introductionId);
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'INTRO_NOTIFICATION_RETIRE_ERROR',
+          details: {'error': error.toString()},
+        );
+      }
+    }
+    return saved;
   }
 
   @override

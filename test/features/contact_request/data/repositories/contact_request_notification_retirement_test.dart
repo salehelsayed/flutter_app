@@ -54,6 +54,30 @@ void main() {
     );
   }
 
+  test('CR-008 retirement failure preserves the committed decision', () async {
+    var retirementAttempted = false;
+    final repository = ContactRequestRepositoryImpl(
+      dbLoadPendingRequests: () async => [],
+      dbLoadRequest: (_) async => request.toMap(),
+      dbUpsertRequest: (_) async {},
+      dbUpdateRequestStatus: (_, _) async {},
+      dbDeleteRequest: (_) async {},
+      dbRequestExists: (_) async => true,
+      dbDecideRequest: (_, _, _, _) async =>
+          ContactRequestDecisionResult.declined,
+      onRequestDecided: (_) async {
+        retirementAttempted = true;
+        throw StateError('notification center unavailable');
+      },
+    );
+
+    expect(
+      await repository.decideRequest(expectedRequest: request, accept: false),
+      ContactRequestDecisionResult.declined,
+    );
+    expect(retirementAttempted, isTrue);
+  });
+
   for (final decision in [
     ContactRequestDecisionResult.notPending,
     ContactRequestDecisionResult.blocked,

@@ -136,6 +136,8 @@ import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dar
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/thought_views_db_helpers.dart';
 import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
 import 'package:flutter_app/features/introduction/data/repositories/intro_review_seen_repository_impl.dart';
 import 'package:flutter_app/features/introduction/application/introduction_outbound_delivery.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -147,6 +149,7 @@ import 'package:flutter_app/features/identity/data/repositories/identity_reposit
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
+import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_presentation_gate.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/contact_repair_outbox_worker.dart';
@@ -357,6 +360,7 @@ import 'package:flutter_app/core/notifications/friend_thought_card_registry.dart
 import 'package:flutter_app/core/notifications/local_notification_ledger.dart';
 import 'package:flutter_app/core/notifications/local_notification_ledger_store.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/diagnostics/app_build_info.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -1118,6 +1122,8 @@ final class ProductionApplicationBootstrap
       },
     );
 
+    Future<void> Function(ContactRequestModel request)?
+    retireContactRequestNotification;
     // Create contact request repository
     final contactRequestRepository = ContactRequestRepositoryImpl(
       dbLoadPendingRequests: () => dbLoadPendingRequests(db),
@@ -1143,6 +1149,9 @@ final class ProductionApplicationBootstrap
           ),
       dbRequestExists: (peerId) => dbRequestExists(db, peerId),
       onContactAccepted: contactRepository.publishCommittedContact,
+      onRequestDecided: (request) async {
+        await retireContactRequestNotification?.call(request);
+      },
     );
 
     // v107 direct notification durability is production-owned from the first
@@ -4560,10 +4569,12 @@ final class ProductionApplicationBootstrap
     // read commit therefore cannot race a foreground final-show call.
     final iosNotificationRecoveryEnabled =
         !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile;
+    final iosNotificationRecoveryBridge =
+        MethodChannelIosNotificationRecoveryBridge();
     final iosNotificationRecoveryCoordinator = iosNotificationRecoveryEnabled
         ? IosNotificationRecoveryCoordinator(
             platformEnabled: true,
-            bridge: MethodChannelIosNotificationRecoveryBridge(),
+            bridge: iosNotificationRecoveryBridge,
             loadActiveAccountPeerId: () async =>
                 (await repository.loadIdentity())?.peerId,
             loadCanonicalState: () => dbLoadCanonicalNotificationBadgeState(db),
@@ -4589,6 +4600,27 @@ final class ProductionApplicationBootstrap
           iosNotificationRecoveryCoordinator?.settleConversationRead,
       onAllNotificationsCleared: iosNotificationRecoveryCoordinator?.reconcile,
     );
+    retireContactRequestNotification = (expected) async {
+      final current = await dbLoadRequest(db, expected.peerId);
+      if (current == null ||
+          current['status'] == 'pending' ||
+          current['public_key'] != expected.publicKey ||
+          current['signature'] != expected.signature ||
+          current['received_at'] != expected.receivedAt) {
+        return;
+      }
+      try {
+        await notificationService.cancelConversationNotification(
+          NotificationRouteTarget.contactRequest(expected.peerId).toPayload(),
+        );
+      } finally {
+        if (iosNotificationRecoveryEnabled) {
+          await iosNotificationRecoveryBridge.retireContactRequest(
+            peerId: expected.peerId,
+          );
+        }
+      }
+    };
 
     final groupNotificationPresentationCoordinator =
         GroupNotificationPresentationCoordinator();
@@ -5323,6 +5355,38 @@ final class ProductionApplicationBootstrap
             db,
             introductionId,
           ),
+      onResponseSaved: (introductionId) async {
+        final row = await dbLoadIntroduction(db, introductionId);
+        final ownPeerId = (await repository.loadIdentity())?.peerId;
+        if (row == null || ownPeerId == null) return;
+        final intro = IntroductionModel.fromMap(row);
+        final ownStatus = intro.recipientId == ownPeerId
+            ? intro.recipientStatus
+            : intro.introducedId == ownPeerId
+            ? intro.introducedStatus
+            : null;
+        if (ownStatus == null ||
+            (ownStatus == IntroductionStatus.pending &&
+                intro.status == IntroductionOverallStatus.pending)) {
+          return;
+        }
+        final messageId = IntroductionPayload.buildEnvelopeMessageId(
+          introductionId: intro.id,
+          action: 'send',
+          senderPeerId: intro.introducerId,
+        );
+        try {
+          await notificationService.cancelConversationNotification(
+            NotificationRouteTarget.intros(messageId: messageId).toPayload(),
+          );
+        } finally {
+          if (iosNotificationRecoveryEnabled) {
+            await iosNotificationRecoveryBridge.retireIntroduction(
+              messageId: messageId,
+            );
+          }
+        }
+      },
     );
     final introReviewSeenRepository = IntroReviewSeenRepositoryImpl(
       dbLoadSeenKeys: () => dbLoadIntroReviewSeenKeys(db),

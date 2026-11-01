@@ -377,7 +377,10 @@ void main() {
           notificationService.shownGeneric.single.body,
           'Noor introduced Sarah to you',
         );
-        expect(notificationService.shownGeneric.single.payload, 'intros');
+        expect(
+          notificationService.shownGeneric.single.payload,
+          'intros|message:intro-flow::send::peer-A',
+        );
 
         final eventNames = events
             .map((event) => event['event'] as String)

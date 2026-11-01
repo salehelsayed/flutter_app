@@ -62,6 +62,29 @@ void main() {
     expect(retired, isEmpty);
   });
 
+  test('IN-008 retirement failure preserves the committed response', () async {
+    var retirementAttempted = false;
+    final repo = _responseRepository(
+      saveResponse: () async => true,
+      onResponseSaved: (_) async {
+        retirementAttempted = true;
+        throw StateError('notification center unavailable');
+      },
+    );
+    expect(
+      await repo.saveIntroductionResponseWithOutboxDeliveries(
+        introductionId: 'intro-1',
+        isRecipient: true,
+        responseStatus: IntroductionStatus.accepted,
+        overallStatus: IntroductionOverallStatus.pending,
+        respondedAt: '2026-11-01T01:00:00.000Z',
+        deliveries: const [],
+      ),
+      isTrue,
+    );
+    expect(retirementAttempted, isTrue);
+  });
+
   test(
     'deleteIntroduction clears staged responses before deleting intro row',
     () async {
