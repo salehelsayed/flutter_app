@@ -1048,7 +1048,11 @@ class _StartupRouterState extends State<StartupRouter> {
 
       setState(() {
         _hasError = true;
-        _errorMessage = e.toString();
+        _errorMessage = e is IdentitySecretsUnavailableException
+            ? AppLocalizations.of(context)?.startup_saved_account_unavailable ??
+                  'Your saved account cannot be opened right now. '
+                      'Your data has been kept. Try again.'
+            : e.toString();
       });
     }
   }

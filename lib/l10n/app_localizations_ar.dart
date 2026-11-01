@@ -3006,6 +3006,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get startup_failed_title => 'فشل التهيئة';
 
   @override
+  String get startup_saved_account_unavailable =>
+      'لا يمكن فتح حسابك المحفوظ الآن. تم الاحتفاظ ببياناتك. أعد المحاولة.';
+
+  @override
   String get identity_restore_action => 'استعادة الهوية';
 
   @override

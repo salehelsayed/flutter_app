@@ -166,23 +166,33 @@ class IdentityRepositoryImpl implements IdentityRepository {
     );
 
     // Read secrets from secure storage in parallel, fall back to DB columns (pre-migration)
-    final identity = await decodePassiveIdentitySnapshot(
-      row: row,
-      secureKeyStore: _secureKeyStore,
-    );
+    IdentityModel? identity;
+    try {
+      identity = await decodePassiveIdentitySnapshot(
+        row: row,
+        secureKeyStore: _secureKeyStore,
+      );
+    } catch (_) {
+      // Keep platform/storage details out of the foreground startup failure.
+    }
 
-    if (identity == null) {
-      await _groupReactionProjection?.clearForLogout();
-      await _directReactionProjection?.clearForLogout();
-      await _retireCanonicalAccountBinding?.call();
-      _cachedIdentity = null;
-      _hasCachedIdentity = true;
+    if (identity == null ||
+        identity.privateKey.trim().isEmpty ||
+        identity.mnemonic12.trim().isEmpty) {
+      try {
+        await _groupReactionProjection?.clearForLogout();
+        await _directReactionProjection?.clearForLogout();
+        await _retireCanonicalAccountBinding?.call();
+      } catch (_) {
+        // Cleanup failure must not replace the safe, retryable startup failure.
+      }
+      invalidateCache();
       emitFlowEvent(
         layer: 'FL',
         event: 'ID_REPO_LOAD_IDENTITY_MISSING_SECRETS',
         details: {'peerId': row['peer_id'] as String},
       );
-      return null;
+      throw const IdentitySecretsUnavailableException();
     }
 
     await _mirrorMlKemSecretForPush(identity.mlKemSecretKey);

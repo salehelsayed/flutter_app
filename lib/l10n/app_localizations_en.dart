@@ -2963,6 +2963,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get startup_failed_title => 'Failed to initialize';
 
   @override
+  String get startup_saved_account_unavailable =>
+      'Your saved account cannot be opened right now. Your data has been kept. Try again.';
+
+  @override
   String get identity_restore_action => 'Restore identity';
 
   @override

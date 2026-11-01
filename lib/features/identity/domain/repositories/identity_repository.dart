@@ -1,5 +1,13 @@
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
+/// A retained identity cannot be opened because its required secrets are unavailable.
+class IdentitySecretsUnavailableException implements Exception {
+  const IdentitySecretsUnavailableException();
+
+  @override
+  String toString() => 'IdentitySecretsUnavailableException';
+}
+
 /// Repository interface for identity persistence operations.
 ///
 /// This abstract class defines the contract for storing and retrieving
@@ -10,6 +18,8 @@ abstract class IdentityRepository {
   ///
   /// Returns the [IdentityModel] if an identity exists in the database,
   /// or `null` if no identity has been created or restored yet.
+  /// Throws [IdentitySecretsUnavailableException] if the saved identity's
+  /// required secrets are unavailable; a later call retries persistent storage.
   ///
   /// This method is typically called at app startup to determine
   /// whether to show the onboarding flow or proceed to the main app.

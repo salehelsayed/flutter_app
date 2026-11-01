@@ -38,6 +38,8 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/home/presentation/screens/first_time_experience_wired.dart';
 import 'package:flutter_app/features/identity/presentation/screens/identity_choice_wired.dart';
 import 'package:flutter_app/features/identity/presentation/startup_router.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
@@ -61,6 +63,18 @@ import '../../../../shared/fakes/in_memory_group_repository.dart';
 
 const _storedMnemonic =
     'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+class _UnavailableIdentitySecretsStore extends FakeSecureKeyStore {
+  bool failIdentityReads = false;
+
+  @override
+  Future<String?> read(String key) {
+    if (failIdentityReads && key == identityPrivateKeyStorageKey) {
+      throw StateError('LL-36 platform storage detail');
+    }
+    return super.read(key);
+  }
+}
 
 class _ThrowingStartupRejoinRepository extends InMemoryGroupRepository {
   @override
@@ -248,6 +262,7 @@ void main() {
   }
 
   Widget buildRouterApp({
+    IdentityRepository? repository,
     FakeSecureKeyStore? sharedSecureKeyStore,
     Future<void>? initialShareIntentCapture,
     Future<void> Function()? ensureRuntimeServicesReady,
@@ -293,7 +308,7 @@ void main() {
         ensureRuntimeServicesReady: ensureRuntimeServicesReady,
         afterP2PNodeStarted: afterP2PNodeStarted,
         linkedAuthorityOverride: linkedAuthorityOverride,
-        repository: identityRepository,
+        repository: repository ?? identityRepository,
         feedClearedRepository: InMemoryFeedClearedRepository(),
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
@@ -377,6 +392,116 @@ void main() {
     await saveAuthority(
       AccountMigrationAuthorityState.active,
       accountPeerId: peerId,
+    );
+  }
+
+  for (final storageThrows in [false, true]) {
+    testWidgets(
+      'LL-36 unavailable keys (storageThrows=$storageThrows) preserve data and Retry opens saved account',
+      (tester) async {
+        final store = _UnavailableIdentitySecretsStore();
+        secureKeyStore = store;
+        await seedActiveReturningAccount('peer-retained');
+        final identity = FakeIdentityRepository.makeIdentity(
+          peerId: 'peer-retained',
+          mlKemPublicKey: 'existing-mlkem-public',
+          mlKemSecretKey: 'existing-mlkem-secret',
+        );
+        final row = <String, Object?>{
+          'peer_id': identity.peerId,
+          'public_key': identity.publicKey,
+          'username': identity.username,
+          'ml_kem_public_key': identity.mlKemPublicKey,
+          'created_at': identity.createdAt,
+          'updated_at': identity.updatedAt,
+        };
+        final originalRow = Map<String, Object?>.of(row);
+        await store.write('ll36_retained_marker', 'kept');
+        await store.write(
+          identityMlKemSecretKeyStorageKey,
+          identity.mlKemSecretKey!,
+        );
+        if (storageThrows) {
+          await store.write(identityPrivateKeyStorageKey, identity.privateKey);
+          await store.write(identityMnemonic12StorageKey, identity.mnemonic12);
+          store.failIdentityReads = true;
+        }
+        final originalSecrets = await store.readAll();
+        var rowReads = 0;
+        var rowWrites = 0;
+        var eraseCalls = 0;
+        var runtimeRequests = 0;
+        final repository = IdentityRepositoryImpl(
+          dbLoadIdentityRow: () async {
+            rowReads++;
+            return row;
+          },
+          dbUpsertIdentityRow: (_) async => rowWrites++,
+          secureKeyStore: store,
+        );
+        await tester.pumpWidget(
+          buildRouterApp(
+            repository: repository,
+            ensureRuntimeServicesReady: () async => runtimeRequests++,
+            eraseLocalAccountDatabase: () async => eraseCalls++,
+          ),
+        );
+        await pumpFrames(tester);
+
+        void expectRefused() {
+          expect(find.text('Failed to initialize'), findsOneWidget);
+          expect(
+            find.text(
+              'Your saved account cannot be opened right now. Your data has been kept. Try again.',
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('Retry'), findsOneWidget);
+          expect(
+            find.textContaining('LL-36 platform storage detail'),
+            findsNothing,
+          );
+          expect(
+            find.textContaining('IdentitySecretsUnavailableException'),
+            findsNothing,
+          );
+          expect(find.byType(IdentityChoiceWired), findsNothing);
+          expect(find.byType(FirstTimeExperienceWired), findsNothing);
+          expect(find.byType(FeedWired), findsNothing);
+          expect(p2pService.startNodeCallCount, 0);
+          expect(runtimeRequests, 0);
+          expect(rowWrites, 0);
+          expect(eraseCalls, 0);
+          expect(row, originalRow);
+        }
+
+        expectRefused();
+        expect(rowReads, 1);
+        expect(await store.readAll(), originalSecrets);
+        await tester.tap(find.text('Retry'));
+        await pumpFrames(tester);
+        expectRefused();
+        expect(rowReads, 2);
+        expect(await store.readAll(), originalSecrets);
+
+        store.failIdentityReads = false;
+        await store.write(identityPrivateKeyStorageKey, identity.privateKey);
+        await store.write(identityMnemonic12StorageKey, identity.mnemonic12);
+        await tester.tap(find.text('Retry'));
+        await pumpFrames(tester);
+        expect(find.byType(FeedWired), findsOneWidget);
+        expect(find.text('Failed to initialize'), findsNothing);
+        expect(find.byType(IdentityChoiceWired), findsNothing);
+        expect(p2pService.startNodeCallCount, 1);
+        expect(p2pService.lastStartNodePeerId, identity.peerId);
+        expect(runtimeRequests, greaterThan(0));
+        expect(rowReads, 3);
+        expect(rowWrites, 0);
+        expect(eraseCalls, 0);
+        expect(row, originalRow);
+        expect(await store.read('ll36_retained_marker'), 'kept');
+        expect(await contactRepository.getContactCount(), 1);
+      },
     );
   }
 

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -13,12 +14,14 @@ class CountingSecureKeyStore implements SecureKeyStore {
   int writeCount = 0;
   int deleteCount = 0;
   int containsKeyCount = 0;
+  bool failReads = false;
 
   CountingSecureKeyStore(this._delegate);
 
   @override
   Future<String?> read(String key) async {
     readCount++;
+    if (failReads) throw StateError('LL-36 platform storage detail');
     return _delegate.read(key);
   }
 
@@ -207,22 +210,126 @@ void main() {
       expect(result.mlKemSecretKey, 'db-mlkem-sk');
     });
 
-    test('returns null when privateKey is missing from both stores', () async {
+    test('refuses a retained identity when privateKey is missing', () async {
       storedRow = makeDbRow(); // null secrets in DB, none in secure storage
 
-      final result = await repo.loadIdentity();
-      expect(result, isNull);
+      await expectLater(
+        repo.loadIdentity(),
+        throwsA(isA<IdentitySecretsUnavailableException>()),
+      );
       expect(secureKeyStore.readCount, 3);
     });
 
-    test('returns null when mnemonic12 is missing from both stores', () async {
+    test('refuses a retained identity when mnemonic12 is missing', () async {
       storedRow = makeDbRow();
       await backingSecureKeyStore.write('identity_private_key', testPrivateKey);
       // mnemonic12 missing from both
 
-      final result = await repo.loadIdentity();
-      expect(result, isNull);
+      await expectLater(
+        repo.loadIdentity(),
+        throwsA(isA<IdentitySecretsUnavailableException>()),
+      );
     });
+
+    for (final missing in ['privateKey', 'mnemonic12', 'storage read']) {
+      test(
+        'LL-36 $missing remains uncached and recovers after Retry',
+        () async {
+          storedRow = makeDbRow();
+          final originalRow = Map<String, Object?>.of(storedRow!);
+          await seedIdentitySecrets();
+          if (missing == 'privateKey') {
+            await backingSecureKeyStore.delete(identityPrivateKeyStorageKey);
+          } else if (missing == 'mnemonic12') {
+            await backingSecureKeyStore.delete(identityMnemonic12StorageKey);
+          } else {
+            secureKeyStore.failReads = true;
+          }
+          final originalSecrets = await backingSecureKeyStore.readAll();
+          for (var attempt = 1; attempt <= 2; attempt++) {
+            await expectLater(
+              repo.loadIdentity(),
+              throwsA(isA<IdentitySecretsUnavailableException>()),
+            );
+            expect(loadCallCount, attempt);
+            expect(secureKeyStore.readCount, attempt * 3);
+            expect(storedRow, originalRow);
+            expect(await backingSecureKeyStore.readAll(), originalSecrets);
+            expect(upsertCallCount, 0);
+            expect(secureKeyStore.writeCount, 0);
+            expect(secureKeyStore.deleteCount, 0);
+            expect(await sharedPushKeyStore.readAll(), isEmpty);
+          }
+
+          secureKeyStore.failReads = false;
+          await seedIdentitySecrets();
+          final recovered = await repo.loadIdentity();
+          expect(recovered?.peerId, testPeerId);
+          expect(recovered?.privateKey, testPrivateKey);
+          expect(recovered?.mnemonic12, testMnemonic);
+          expect(loadCallCount, 3);
+          expect(storedRow, originalRow);
+          expect(upsertCallCount, 0);
+        },
+      );
+    }
+
+    test(
+      'LL-36 unavailable-secret cleanup cannot expose storage details',
+      () async {
+        storedRow = makeDbRow();
+        final repository = IdentityRepositoryImpl(
+          dbLoadIdentityRow: () async {
+            loadCallCount++;
+            return storedRow;
+          },
+          dbUpsertIdentityRow: (_) async {
+            upsertCallCount++;
+          },
+          secureKeyStore: secureKeyStore,
+          retireCanonicalAccountBinding: () async {
+            throw StateError('LL-36 platform storage detail');
+          },
+        );
+
+        await expectLater(
+          repository.loadIdentity(),
+          throwsA(
+            isA<IdentitySecretsUnavailableException>().having(
+              (error) => error.toString(),
+              'safe message',
+              isNot(contains('LL-36 platform storage detail')),
+            ),
+          ),
+        );
+        await seedIdentitySecrets();
+        expect((await repository.loadIdentity())?.peerId, testPeerId);
+        expect(loadCallCount, 2);
+        expect(upsertCallCount, 0);
+      },
+    );
+
+    for (final key in [
+      identityPrivateKeyStorageKey,
+      identityMnemonic12StorageKey,
+    ]) {
+      test(
+        'LL-36 blank required secret $key cannot open retained account',
+        () async {
+          storedRow = makeDbRow();
+          await seedIdentitySecrets();
+          await backingSecureKeyStore.write(key, '  ');
+
+          await expectLater(
+            repo.loadIdentity(),
+            throwsA(isA<IdentitySecretsUnavailableException>()),
+          );
+          expect(upsertCallCount, 0);
+          expect(secureKeyStore.writeCount, 0);
+          expect(secureKeyStore.deleteCount, 0);
+        },
+      );
+    }
 
     test('mlKemSecretKey can be null and still returns identity', () async {
       storedRow = makeDbRow();

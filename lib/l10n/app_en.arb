@@ -1562,6 +1562,7 @@
   "intro_back_to_conversation": "Back to conversation",
   "identity_tagline": "Your identity, your control",
   "startup_failed_title": "Failed to initialize",
+  "startup_saved_account_unavailable": "Your saved account cannot be opened right now. Your data has been kept. Try again.",
   "identity_restore_action": "Restore identity",
   "settings_peer_id_title": "PEER ID",
   "intro_and_more": "{names} and {count} more",

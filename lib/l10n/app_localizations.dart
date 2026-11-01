@@ -4946,6 +4946,12 @@ abstract class AppLocalizations {
   /// **'Failed to initialize'**
   String get startup_failed_title;
 
+  /// No description provided for @startup_saved_account_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Your saved account cannot be opened right now. Your data has been kept. Try again.'**
+  String get startup_saved_account_unavailable;
+
   /// No description provided for @identity_restore_action.
   ///
   /// In en, this message translates to:

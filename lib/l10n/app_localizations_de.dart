@@ -3027,6 +3027,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get startup_failed_title => 'Initialisierung fehlgeschlagen';
 
   @override
+  String get startup_saved_account_unavailable =>
+      'Dein gespeichertes Konto kann gerade nicht geöffnet werden. Deine Daten bleiben erhalten. Versuche es erneut.';
+
+  @override
   String get identity_restore_action => 'Identität wiederherstellen';
 
   @override

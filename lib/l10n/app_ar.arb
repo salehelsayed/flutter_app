@@ -1442,6 +1442,7 @@
   "intro_back_to_conversation": "العودة إلى المحادثة",
   "identity_tagline": "هويتك تحت سيطرتك",
   "startup_failed_title": "فشل التهيئة",
+  "startup_saved_account_unavailable": "لا يمكن فتح حسابك المحفوظ الآن. تم الاحتفاظ ببياناتك. أعد المحاولة.",
   "identity_restore_action": "استعادة الهوية",
   "settings_peer_id_title": "معرّف النظير",
   "intro_and_more": "{names} و{count} آخرون",

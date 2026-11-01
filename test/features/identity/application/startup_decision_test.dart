@@ -152,29 +152,30 @@ void main() {
         );
         contactRepo.contactCountResult = state == 'empty' ? 0 : 1;
 
-        final decision = await decideStartupRoute(
+        final decision = decideStartupRoute(
           identityRepo: repository,
           contactRepo: contactRepo,
         );
 
-        expect(identityWrites, 0);
         if (state == 'missing secrets') {
           expect(row?['peer_id'], identity.peerId);
-          expect(
+          await expectLater(
             decision,
-            isNot(StartupDecision.needsIdentity),
+            throwsA(isA<IdentitySecretsUnavailableException>()),
             reason:
                 'an existing account whose keys are unavailable must not offer '
                 'fresh onboarding over its retained account data',
           );
+          expect(contactRepo.getContactCountCallCount, 0);
         } else {
           expect(
-            decision,
+            await decision,
             state == 'empty'
                 ? StartupDecision.needsIdentity
                 : StartupDecision.hasIdentityWithContacts,
           );
         }
+        expect(identityWrites, 0);
       });
     }
   });

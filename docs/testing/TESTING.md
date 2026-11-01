@@ -42,6 +42,27 @@ an empty list or null. The locale behavior case in
 French/German preference order and Arabic/German/English regional variants.
 The generated locale order and translation-preview target selection are separate.
 
+Retained-account startup (LL-36): foreground `IdentityRepositoryImpl.loadIdentity`
+returns `null` only for an absent SQL identity row. A retained row with missing
+or blank required signing secret or mnemonic, or an unavailable secret read,
+throws the fixed `IdentitySecretsUnavailableException` and leaves the identity
+cache unset. The existing startup error screen shows localized safe copy;
+Retry rereads the row and secure store, preserves account data, and resumes normal
+routing only after usable secrets return. Cleanup errors on that known failure
+path cannot replace the typed error with storage details. Passive/headless
+decoding, legacy SQL-secret fallback and optional ML-KEM migration stay unchanged.
+`startup_decision_test.dart`, `identity_repository_impl_test.dart` and
+`startup_router_recovery_test.dart` cover absence/intact controls, repeated
+refusal without identity writes or erasure, no onboarding or runtime start while
+keys are unavailable, restored-key Retry, and existing migration blocks. The
+runtime readiness hook can be requested by multiple existing startup owners
+after qualification; it is not an exactly-once hook. The node-start assertion
+remains separate. RED commit `2b6dd490e` reproduces retained data routing to
+onboarding; the repaired three-file selection plus localization tests passes
+108 cases. Evidence and the initial overconstrained readiness-count failure are
+under `.codex-test-logs/ll36-20261101/`. These are host tests using injected SQL
+rows and secure stores, not device Keychain/Keystore availability proof.
+
 Android ML Kit registrar retention: the merged release manifest discovers
 `BarcodeRegistrar`, `CommonComponentRegistrar`, and `VisionCommonRegistrar`
 under `com.google.mlkit` by reflection. R8 full mode requires their no-argument

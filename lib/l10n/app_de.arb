@@ -1442,6 +1442,7 @@
   "intro_back_to_conversation": "Zurück zur Unterhaltung",
   "identity_tagline": "Deine Identität, deine Kontrolle",
   "startup_failed_title": "Initialisierung fehlgeschlagen",
+  "startup_saved_account_unavailable": "Dein gespeichertes Konto kann gerade nicht geöffnet werden. Deine Daten bleiben erhalten. Versuche es erneut.",
   "identity_restore_action": "Identität wiederherstellen",
   "settings_peer_id_title": "PEER-ID",
   "intro_and_more": "{names} und {count} weitere",
