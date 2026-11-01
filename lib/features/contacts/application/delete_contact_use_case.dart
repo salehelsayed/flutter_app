@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/media/composer_draft_store.dart';
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -108,6 +109,14 @@ Future<void> deleteContactAndMessages({
       if (finalPurge != null) {
         final summary = await finalPurge
             .purgeDirectContactConversationAndContact(peerId);
+        recordContactRequestDiagnostic(
+          source: ContactRequestDiagnosticSource.localAction,
+          // deletedContact reports final absence, not affected-row history.
+          // Only the existing receive-side consent read can classify consent.
+          consent: ContactRequestConsentClass.unknown,
+          action: ContactRequestDiagnosticAction.withdraw,
+          disposition: ContactRequestDisposition.committed,
+        );
         emitFlowEvent(
           layer: 'UC',
           event: 'DELETE_CONTACT_FINAL_PURGE_COMMITTED',
@@ -139,6 +148,14 @@ Future<void> deleteContactAndMessages({
       );
 
       await contactRepo.deleteContact(peerId);
+      // A void deletion does not prove that a contact existed or that the
+      // durable withdrawal trigger ran. Do not infer history from absence.
+      recordContactRequestDiagnostic(
+        source: ContactRequestDiagnosticSource.localAction,
+        consent: ContactRequestConsentClass.unknown,
+        action: ContactRequestDiagnosticAction.withdraw,
+        disposition: ContactRequestDisposition.committed,
+      );
     }
 
     Future<void> deleteInventoriedState(

@@ -5,7 +5,7 @@ internal object MknoonAppDiagnosticSchema {
     val required = setOf("schemaVersion", "eventId", "source", "runId", "sequence", "occurredAtMs", "elapsedMs", "feature", "stage", "outcome", "reason", "build", "platform", "values")
     val optional = setOf("traceId", "attemptId", "reportingRunId")
     val uuidFields = setOf("eventId", "traceId", "runId", "attemptId", "reportingRunId")
-    val feature = setOf("media", "message", "private_media", "startup", "runtime", "push", "network", "storage")
+    val feature = setOf("media", "message", "private_media", "startup", "runtime", "push", "network", "storage", "contact_request")
     val stage = setOf("start", "preflight", "encrypt", "send", "store", "download", "verify", "decrypt", "commit", "receipt", "prepare", "present", "consume", "finish", "recover", "configure", "receive", "process", "snapshot", "launch", "bridge", "parse", "presentation", "recovery", "crash", "hang")
     val outcome = setOf("started", "ok", "success", "failed", "pending", "interrupted_unknown", "canceled", "blocked", "expired", "rejected", "timeout", "interrupted", "unknown")
     val reason = setOf("none", "unknown", "bootstrap", "interrupted_before_final_record", "flutter_error", "unhandled_error", "storage_failed", "bridge_unavailable", "network_unavailable", "timeout", "malformed_response", "permission_denied", "quota_exceeded", "unsupported", "user_action", "invalid_payload", "authority_rejected", "recipient_key_missing", "encryption_failed", "send_failed", "offline", "duplicate", "hash_mismatch", "auth_failed", "metadata_invalid", "io_failed", "size_mismatch", "missing_file", "retry_exhausted", "prepare_failed", "protection_failed", "authority_lost", "route_failed", "lifecycle_interrupted", "write_failed", "interrupted_unknown", "os_crash", "os_anr", "os_hang", "os_low_memory", "diagnostics_disabled", "stale_epoch", "sink_unavailable", "invalid_request", "retention_expired", "expired", "canceled", "bridge_handler_missing", "bridge_timeout", "bridge_rejected", "native_write_failed", "database_busy", "low_storage")
@@ -18,6 +18,10 @@ internal object MknoonAppDiagnosticSchema {
         "transport" to setOf("direct", "relay", "unknown"),
         "errorClass" to setOf("state", "format", "argument", "timeout", "platform", "file_system", "other"),
         "operation" to setOf("node_start", "node_stop", "relay_reconnect", "relay_probe", "peer_dial", "peer_disconnect", "notification_flock", "other"),
-        "appLifecycle" to setOf("unknown", "resumed", "inactive", "hidden", "paused", "detached")
+        "appLifecycle" to setOf("unknown", "resumed", "inactive", "hidden", "paused", "detached"),
+        "requestSource" to setOf("live", "stored_replay", "local_action"),
+        "consentClass" to setOf("active", "withdrawn", "declined", "none", "unknown"),
+        "requestAction" to setOf("withdraw", "local_add", "mutual_intro_add", "admit", "replay"),
+        "requestDisposition" to setOf("ignored", "pending", "automatic", "committed", "failed")
     )
 }

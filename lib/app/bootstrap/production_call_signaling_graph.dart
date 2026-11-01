@@ -884,6 +884,17 @@ final class ProductionCallSignalingGraph
       CallState.negotiating => 'connecting',
       _ => session.state.name,
     };
+    final remoteRingingValues = <String, Object?>{
+      if (session.isTerminal &&
+          session.direction == CallDirection.outgoing) ...{
+        'remoteRingingObserved': session.ringingAt != null,
+        if (session.ringingAt != null && session.startedAt != null)
+          'timeToRemoteRingingMs': session.ringingAt!
+              .difference(session.startedAt!)
+              .inMilliseconds
+              .clamp(0, 600000),
+      },
+    };
     diagnostics.record(
       stage: session.isTerminal ? 'terminal' : 'signaling',
       action: 'commit',
@@ -895,6 +906,7 @@ final class ProductionCallSignalingGraph
         'accepted': session.acceptedAt != null,
         'connected': session.connectedAt != null,
         'terminal': session.isTerminal,
+        ...remoteRingingValues,
       },
     );
     if (session.isTerminal) {
@@ -936,6 +948,7 @@ final class ProductionCallSignalingGraph
           'connected': session.connectedAt != null,
           'accepted': session.acceptedAt != null,
           'mediaFlowVerified': verified,
+          ...remoteRingingValues,
           if (failed) 'failureDisposition': 'terminal',
           if (session.startedAt != null && session.endedAt != null)
             'durationMs': session.endedAt!

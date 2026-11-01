@@ -10821,6 +10821,31 @@ correlation alone does not prove custody, displayed content, or recipient open.
 Only report a checkpoint that the retained instrumentation actually observes.
 State an investigation area separately from a proven root cause.
 
+Contact-request reports use closed source/action/disposition/consent enums with
+no peer or content fields. Local delete completion reports unknown consent:
+the purge result's `deletedContact` means the contact is absent, not that a row
+was deleted. Incoming request events use existing admission reads for durable consent
+classification; missing rows never invent past withdrawal. A fresh request from an
+absent withdrawn contact records an ignored observation before the existing
+option-A return; it does not create pending consent. Stored replay remains unknown
+unless its existing-contact decision proves activation. Automatic eligibility
+and completed acceptance are separate observations. Call preparation records
+bounded input booleans, at most 16 trusted devices, and repair outcomes on the
+original attempt. Outgoing terminal summaries retain observed ringing and an
+optional bounded timestamp difference; incoming ringing is not remote evidence.
+Call support export includes an explicit health/status allowlist and the most
+recently retained diagnostic trace code. Clear/disable removes that affordance.
+The existing preview stays bounded while clipboard copy retains the full report.
+New incident fields remain in local reports. Until receiver support is negotiated,
+legacy uploads strip the new values and project the contact-request feature to
+`runtime`, retaining event identity and ordinary outcome. Canonical schema copies
+still stay in sync for current tooling. Do not claim rich incident detail reached
+a deployed v1 relay. Frozen pre-change schema fixtures exercise compatibility;
+privacy tests reject free text and private fields. Evidence, including initial
+RED and the no-contact deletion classification correction, is retained in
+`.codex-test-logs/diagnostics-incidents-20261101/`. Host evidence does not establish
+native cancellation, full application/device behavior, or signed-build release.
+
 - **Go final-only diagnostic records:** `app_diagnostics_store.go` leaves the
   ordinary-event slice nil when only finals have been stored, so JSON contains
   `events: null`. The Python reader treats only that null as an empty list;

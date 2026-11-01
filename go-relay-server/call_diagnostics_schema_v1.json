@@ -266,7 +266,12 @@
     "leaseReleased",
     "requiredPersistenceComplete",
     "transportStarted",
-    "withdrawalFailed"
+    "withdrawalFailed",
+    "contactAccepted",
+    "contactBlocked",
+    "relayEndpointPresent",
+    "wakeHandleGrantPresent",
+    "remoteRingingObserved"
   ],
   "integerValues": [
     "durationMs",
@@ -287,7 +292,9 @@
     "limit",
     "bytes",
     "attemptCount",
-    "eventCount"
+    "eventCount",
+    "trustedDeviceCount",
+    "timeToRemoteRingingMs"
   ],
   "enumValues": {
     "state": [

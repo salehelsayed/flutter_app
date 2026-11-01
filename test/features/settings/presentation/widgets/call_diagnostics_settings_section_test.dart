@@ -25,23 +25,27 @@ void main() {
     addTearDown(() {
       messenger.setMockMethodCallHandler(SystemChannels.platform, null);
     });
-    await tester.pumpWidget(MaterialApp(
-      locale: const Locale('en'),
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(body: CallDiagnosticsSettingsSection(
-        enabled: enabled,
-        setEnabled: (value) async => enabled.value = value,
-        exportPreview: () async => '{}',
-        clear: () async {},
-        status: () async => <String, Object?>{
-          'enabled': true,
-          'consentPending': false,
-          'storageHealthy': true,
-          'supportCode': supportCode,
-        },
-      )),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: CallDiagnosticsSettingsSection(
+            enabled: enabled,
+            setEnabled: (value) async => enabled.value = value,
+            exportPreview: () async => '{}',
+            clear: () async {},
+            status: () async => <String, Object?>{
+              'enabled': true,
+              'consentPending': false,
+              'storageHealthy': true,
+              'supportCode': supportCode,
+            },
+          ),
+        ),
+      ),
+    );
     await tester.tap(find.text('Call diagnostics'));
     await tester.pumpAndSettle();
     final copy = find.widgetWithText(TextButton, 'Copy support code');
@@ -50,8 +54,10 @@ void main() {
     await tester.tap(copy);
     await tester.pumpAndSettle();
     expect(copied, supportCode);
-    expect(find.text('Support code copied. Share it when reporting a problem.'),
-        findsOneWidget);
+    expect(
+      find.text('Support code copied. Share it when reporting a problem.'),
+      findsOneWidget,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
   });

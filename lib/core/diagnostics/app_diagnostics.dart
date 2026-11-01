@@ -900,6 +900,19 @@ final class AppDiagnostics with WidgetsBindingObserver {
       localAppConnectionEnums,
     );
     final values = projected['values'];
+    // Incident detail remains local until a receiver explicitly negotiates it.
+    // A legacy relay must still accept the same event ID and ordinary outcome.
+    if (event['feature'] == 'contact_request') projected['feature'] = 'runtime';
+    if (values is Map) {
+      for (final key in const [
+        'requestSource',
+        'consentClass',
+        'requestAction',
+        'requestDisposition',
+      ]) {
+        values.remove(key);
+      }
+    }
     if (event['feature'] == 'push' &&
         event['stage'] == 'snapshot' &&
         values is Map &&

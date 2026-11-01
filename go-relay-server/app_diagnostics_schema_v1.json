@@ -51,7 +51,8 @@
     "runtime",
     "push",
     "network",
-    "storage"
+    "storage",
+    "contact_request"
   ],
   "stage": [
     "start",
@@ -233,6 +234,32 @@
       "hidden",
       "paused",
       "detached"
+    ],
+    "requestSource": [
+      "live",
+      "stored_replay",
+      "local_action"
+    ],
+    "consentClass": [
+      "active",
+      "withdrawn",
+      "declined",
+      "none",
+      "unknown"
+    ],
+    "requestAction": [
+      "withdraw",
+      "local_add",
+      "mutual_intro_add",
+      "admit",
+      "replay"
+    ],
+    "requestDisposition": [
+      "ignored",
+      "pending",
+      "automatic",
+      "committed",
+      "failed"
     ]
   },
   "hashValues": [

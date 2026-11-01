@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -661,6 +662,26 @@ class ContactRequestListener {
             accept: true,
             existingContactOnly: true,
           );
+          recordContactRequestDiagnostic(
+            source: ContactRequestDiagnosticSource.storedReplay,
+            consent:
+                decision == ContactRequestDecisionResult.accepted ||
+                    decision == ContactRequestDecisionResult.alreadyAccepted
+                ? ContactRequestConsentClass.active
+                : ContactRequestConsentClass.unknown,
+            action: ContactRequestDiagnosticAction.replay,
+            disposition: switch (decision) {
+              ContactRequestDecisionResult.pending =>
+                ContactRequestDisposition.pending,
+              ContactRequestDecisionResult.accepted ||
+              ContactRequestDecisionResult.alreadyAccepted =>
+                ContactRequestDisposition.committed,
+              ContactRequestDecisionResult.addContactError ||
+              ContactRequestDecisionResult.updateStatusError =>
+                ContactRequestDisposition.failed,
+              _ => ContactRequestDisposition.ignored,
+            },
+          );
           if (decision == ContactRequestDecisionResult.pending && !_disposed) {
             _routeToDialog(request);
           } else if (decision == ContactRequestDecisionResult.accepted ||
@@ -705,6 +726,12 @@ class ContactRequestListener {
             : 'CONTACT_AUTO_ADD_RATE_LIMITED_DIALOG_FALLBACK',
         details: {'peerId': peerIdPrefix},
       );
+      recordContactRequestDiagnostic(
+        source: ContactRequestDiagnosticSource.live,
+        consent: ContactRequestConsentClass.unknown,
+        action: ContactRequestDiagnosticAction.admit,
+        disposition: ContactRequestDisposition.pending,
+      );
       _routeToDialog(request);
       return;
     }
@@ -723,6 +750,12 @@ class ContactRequestListener {
         event: 'CONTACT_AUTO_ADD_ACCEPT_FAILED_DIALOG_FALLBACK',
         details: {'peerId': peerIdPrefix, 'result': acceptResult.name},
       );
+      recordContactRequestDiagnostic(
+        source: ContactRequestDiagnosticSource.live,
+        consent: ContactRequestConsentClass.unknown,
+        action: ContactRequestDiagnosticAction.admit,
+        disposition: ContactRequestDisposition.pending,
+      );
       _routeToDialog(request);
       return;
     }
@@ -738,6 +771,18 @@ class ContactRequestListener {
 
     // Surface the new contact for a non-modal notice + contact-list refresh.
     final added = await contactRepo.getContact(request.peerId);
+    // Eligibility was recorded during admission. Only an observed contact
+    // after acceptance proves that automatic completion actually happened.
+    recordContactRequestDiagnostic(
+      source: ContactRequestDiagnosticSource.live,
+      consent: added != null
+          ? ContactRequestConsentClass.active
+          : ContactRequestConsentClass.unknown,
+      action: ContactRequestDiagnosticAction.admit,
+      disposition: added != null
+          ? ContactRequestDisposition.committed
+          : ContactRequestDisposition.ignored,
+    );
     if (added != null && !_autoAddedController.isClosed) {
       _autoAddedController.add(added);
     }

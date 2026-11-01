@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -46,6 +47,13 @@ Future<AddContactResult> addContact({
       layer: 'FL',
       event: 'ADD_CONTACT_SUCCESS',
       details: {'peerId': contact.peerId.substring(0, 10)},
+    );
+
+    recordContactRequestDiagnostic(
+      source: ContactRequestDiagnosticSource.localAction,
+      consent: ContactRequestConsentClass.active,
+      action: ContactRequestDiagnosticAction.localAdd,
+      disposition: ContactRequestDisposition.committed,
     );
 
     return AddContactResult.success;

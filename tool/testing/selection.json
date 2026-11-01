@@ -5910,6 +5910,9 @@
       "id": "diagnostic-schema",
       "patterns": [
         "tool/app_diagnostics/*",
+        "tool/call_diagnostics/*",
+        "lib/features/call/diagnostics/call_diagnostic_schema.dart",
+        "go-relay-server/call_diagnostics_schema_v1.json",
         "lib/core/diagnostics/app_diagnostic_schema.dart",
         "ios/Runner/MknoonAppDiagnosticSchema.swift",
         "android/app/src/main/kotlin/com/mknoon/app/diagnostics/MknoonAppDiagnosticSchema.kt",

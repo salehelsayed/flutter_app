@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -76,6 +77,12 @@ Future<ContactModel?> handleMutualAcceptance({
     introducedByPeerId: introduction.introducerId,
   );
   await contactRepo.addContact(newContact);
+  recordContactRequestDiagnostic(
+    source: ContactRequestDiagnosticSource.localAction,
+    consent: ContactRequestConsentClass.active,
+    action: ContactRequestDiagnosticAction.mutualIntroAdd,
+    disposition: ContactRequestDisposition.committed,
+  );
 
   _scheduleIntroAvatarDownloadIfMissing(
     contact: newContact,

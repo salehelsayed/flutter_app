@@ -669,6 +669,9 @@ final class CallDiagnostics with WidgetsBindingObserver {
     await _syncConsent();
   }
 
+  String? get _supportCode =>
+      enabled && _ready && _groups.isNotEmpty ? _groups.keys.last : null;
+
   Future<Map<String, Object?>> status() async => {
     'enabled': enabled,
     'retainedEvents': _events.length,
@@ -684,6 +687,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
     'lastUploadAtMs': _lastUploadAtMs,
     'lastError': _lastError,
     'traceCodes': _groups.keys.toList(),
+    if (_supportCode case final String code) 'supportCode': code,
   };
 
   Future<String> exportPreview() async {
@@ -693,6 +697,34 @@ final class CallDiagnostics with WidgetsBindingObserver {
       'exportedAtMs': _nowMs,
       'retentionDays': 7,
       'droppedEvents': _dropped,
+      // Explicitly select public health fields; never spread private collector
+      // state or arbitrary error strings into a support report.
+      'status': {
+        'enabled': enabled,
+        'retainedEvents': _events.length,
+        'queuedEvents': _eventsById.length - _uploaded.length,
+        'droppedEvents': _dropped,
+        'storageHealthy': _storageHealthy && _nativeHealthy,
+        'nativeStorageHealthy': _nativeHealthy,
+        'consentPending':
+            _consentPending ||
+            _nativeConsentPending ||
+            _nativeClearPending ||
+            _clearPending,
+        'lastUploadAtMs': _lastUploadAtMs,
+        'lastError':
+            const {
+              'none',
+              'sink_unavailable',
+              'bridge_unavailable',
+              'legacy_peer',
+              'native_persistence_failed',
+              'quota_exceeded',
+            }.contains(_lastError)
+            ? _lastError
+            : 'unknown',
+        if (_supportCode case final String code) 'supportCode': code,
+      },
     };
     if (_testPersist == null && _storageHealthy && _directory != null) {
       try {
@@ -760,12 +792,7 @@ final class CallDiagnostics with WidgetsBindingObserver {
       if (!enabled || epoch != _consentEpoch || _nowMs < _nextUploadAtMs) {
         return;
       }
-      final batch = _pendingUploadBatch()
-          .map(
-            (event) =>
-                withoutLocalConnectionValues(event, localCallConnectionEnums),
-          )
-          .toList();
+      final batch = _pendingUploadBatch().map(_legacyRelayProjection).toList();
       if (batch.isEmpty) return;
       // Only explicit ACKs/rejections or existing local eviction resolve an ID.
       _retrying.addAll(batch.map((e) => e['eventId']! as String));
@@ -838,6 +865,30 @@ final class CallDiagnostics with WidgetsBindingObserver {
       _flushDone?.complete();
       _flushDone = null;
     }
+  }
+
+  static Map<String, Object?> _legacyRelayProjection(
+    Map<String, Object?> event,
+  ) {
+    final projected = withoutLocalConnectionValues(
+      event,
+      localCallConnectionEnums,
+    );
+    final values = projected['values']! as Map;
+    // Receivers have no negotiated support for these new incident fields.
+    // Keep their full local evidence while preserving v1 event IDs and ACKs.
+    for (final key in const [
+      'contactAccepted',
+      'contactBlocked',
+      'relayEndpointPresent',
+      'wakeHandleGrantPresent',
+      'trustedDeviceCount',
+      'remoteRingingObserved',
+      'timeToRemoteRingingMs',
+    ]) {
+      values.remove(key);
+    }
+    return projected;
   }
 
   List<Map<String, Object?>> _pendingUploadBatch() {

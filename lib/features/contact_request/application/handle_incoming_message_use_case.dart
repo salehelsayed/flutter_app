@@ -1,3 +1,4 @@
+import 'package:flutter_app/features/contact_request/application/contact_request_diagnostics.dart';
 import 'dart:collection';
 import 'dart:convert';
 
@@ -137,6 +138,26 @@ handleIncomingMessage({
   void Function(ContactRequestReceiveFacts facts)? onReceiveFacts,
   int Function()? nowMs,
 }) async {
+  var diagnosticConsent = ContactRequestConsentClass.unknown;
+  void reportDiagnostic(HandleMessageResult result) {
+    recordContactRequestDiagnostic(
+      source: ContactRequestDiagnosticSource.live,
+      consent: diagnosticConsent,
+      action: ContactRequestDiagnosticAction.admit,
+      disposition: switch (result) {
+        HandleMessageResult.contactAutoAdded =>
+          ContactRequestDisposition.automatic,
+        HandleMessageResult.contactRequest ||
+        HandleMessageResult.duplicateRequest =>
+          ContactRequestDisposition.pending,
+        HandleMessageResult.contactKeyUpdated ||
+        HandleMessageResult.silentIntroRecovered =>
+          ContactRequestDisposition.committed,
+        _ => ContactRequestDisposition.ignored,
+      },
+    );
+  }
+
   // Safe prefix for logging (handles short strings like "unknown")
   String safePrefix(String s) => s.length > 10 ? s.substring(0, 10) : s;
 
@@ -188,6 +209,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_MISSING_FIELDS',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -201,6 +223,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INCOMPLETE_ENCRYPTED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -211,6 +234,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_REPLAY_DETECTED',
         details: {'msgId': msgId},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -222,6 +246,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INVALID_TS',
         details: {'ts': ts},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -233,6 +258,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_EXPIRED',
         details: {'ageMinutes': age.inMinutes},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     if (age < const Duration(minutes: -5)) {
@@ -241,6 +267,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_FUTURE_TS',
         details: {'ageMinutes': age.inMinutes},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -251,6 +278,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_NO_PRIVATE_KEY',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -274,6 +302,7 @@ handleIncomingMessage({
           'errorMessage': decryptResponse['errorMessage'],
         },
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
 
@@ -285,6 +314,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_MALFORMED_DECRYPT',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     try {
@@ -295,6 +325,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_V2_INVALID_PAYLOAD',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   } else {
@@ -308,6 +339,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_MISSING_PAYLOAD',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -322,6 +354,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CONTROL_V1_REJECTED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     try {
@@ -332,6 +365,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CONTROL_MALFORMED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     if (control.id != outerMsgId ||
@@ -341,6 +375,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CONTROL_BINDING_MISMATCH',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -355,6 +390,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CALL_WAKE_HANDLE_V1_REJECTED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     try {
@@ -367,6 +403,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CALL_WAKE_HANDLE_MALFORMED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -386,6 +423,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_CALL_WAKE_RECEIPT_MALFORMED',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -398,6 +436,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_MISSING_FIELD',
         details: {'field': field},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -412,6 +451,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_FIELD_TYPE_INVALID',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -431,12 +471,14 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_SENDER_MISMATCH',
       details: {'claimed': peerIdPrefix, 'actual': safePrefix(message.from)},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
   // 6. Check not from self
   if (peerId == ownPeerId) {
     emitFlowEvent(layer: 'FL', event: 'CONTACT_REQUEST_FROM_SELF', details: {});
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -452,6 +494,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_IDENTITY_BINDING_MISMATCH',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -467,6 +510,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_STORED_AUTHORITY_MISMATCH',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     verificationKey = storedBeforeVerify.publicKey;
@@ -508,6 +552,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_INVALID_SIGNATURE',
       details: {'peerId': peerIdPrefix},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -523,6 +568,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_AUTHORITY_CHANGED_DURING_VERIFY',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
@@ -544,10 +590,20 @@ handleIncomingMessage({
           : 'CONTACT_REQUEST_ACCEPTED_REPLAY_IGNORED',
       details: {},
     );
+    reportDiagnostic(HandleMessageResult.invalidMessage);
     return (HandleMessageResult.invalidMessage, null, null);
   }
 
   final consent = await repairRepository?.readConsent(peerId);
+  diagnosticConsent = switch (consent?.state) {
+    ContactRelationshipState.active => ContactRequestConsentClass.active,
+    ContactRelationshipState.withdrawn => ContactRequestConsentClass.withdrawn,
+    ContactRelationshipState.declined => ContactRequestConsentClass.declined,
+    null =>
+      repairRepository == null
+          ? ContactRequestConsentClass.unknown
+          : ContactRequestConsentClass.none,
+  };
   final blocked = existingContact?.isBlocked ?? false;
   // Known withdrawal (deleted or declined) with no current contact.
   final refused =
@@ -562,6 +618,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_BEFORE_RELATIONSHIP_DECISION_IGNORED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     // Deletion requires a new local consent action. Neither a fresh timestamp,
@@ -572,6 +629,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_WITHDRAWN_RELATIONSHIP_IGNORED',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -590,6 +648,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_CONTROL_ID_CONFLICT',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -621,6 +680,7 @@ handleIncomingMessage({
       details: {},
     );
     reportFacts();
+    reportDiagnostic(HandleMessageResult.alreadyContact);
     return (HandleMessageResult.alreadyContact, null, null);
   }
   if (control != null && !control.isNewRequest && existingContact == null) {
@@ -630,6 +690,7 @@ handleIncomingMessage({
       details: {},
     );
     reportFacts();
+    reportDiagnostic(HandleMessageResult.repairReplyIgnored);
     return (HandleMessageResult.repairReplyIgnored, null, null);
   }
   if (control != null && existingContact != null) {
@@ -650,6 +711,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_RELATIONSHIP_CHANGED_DURING_RECEIVE',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
   }
@@ -686,6 +748,7 @@ handleIncomingMessage({
         writeIfAuthorized: writeIfAuthorized,
       );
       if (authorityRefused) {
+        reportDiagnostic(HandleMessageResult.invalidMessage);
         return (HandleMessageResult.invalidMessage, null, null);
       }
       final current = await receivedCallWakeHandleStore.readForIssuer(peerId);
@@ -740,6 +803,7 @@ handleIncomingMessage({
             writeIfAuthorized: writeIfAuthorized,
           );
           if (authorityRefused) {
+            reportDiagnostic(HandleMessageResult.invalidMessage);
             return (HandleMessageResult.invalidMessage, null, null);
           }
           emitFlowEvent(
@@ -776,6 +840,7 @@ handleIncomingMessage({
         );
       } on FormatException {
         reportFacts();
+        reportDiagnostic(result);
         return (result, null, verifiedPeerId);
       }
       if (signedAtMs == null) {
@@ -802,6 +867,7 @@ handleIncomingMessage({
       );
     }
     reportFacts(claim);
+    reportDiagnostic(result);
     return (result, null, verifiedPeerId);
   }
 
@@ -853,6 +919,7 @@ handleIncomingMessage({
         event: 'CONTACT_REQUEST_RELATIONSHIP_CHANGED_DURING_RECEIVE',
         details: {},
       );
+      reportDiagnostic(HandleMessageResult.invalidMessage);
       return (HandleMessageResult.invalidMessage, null, null);
     }
     final mlkemFromPayload = payload['mlkem'] as String?;
@@ -880,6 +947,7 @@ handleIncomingMessage({
                 signedAt: payloadTs,
               );
           if (!update.authorized) {
+            reportDiagnostic(HandleMessageResult.invalidMessage);
             return (HandleMessageResult.invalidMessage, null, null);
           }
           if (!update.updated) {
@@ -944,6 +1012,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_DUPLICATE',
       details: {'peerId': peerIdPrefix},
     );
+    reportDiagnostic(HandleMessageResult.duplicateRequest);
     return (HandleMessageResult.duplicateRequest, null, null);
   }
 
@@ -959,6 +1028,12 @@ handleIncomingMessage({
       layer: 'FL',
       event: 'CONTACT_REQUEST_STORE_ERROR',
       details: {'error': e.toString()},
+    );
+    recordContactRequestDiagnostic(
+      source: ContactRequestDiagnosticSource.live,
+      consent: diagnosticConsent,
+      action: ContactRequestDiagnosticAction.admit,
+      disposition: ContactRequestDisposition.failed,
     );
     rethrow;
   }
@@ -978,6 +1053,7 @@ handleIncomingMessage({
       event: 'CONTACT_REQUEST_AUTO_ADD_ELIGIBLE',
       details: {'peerId': peerIdPrefix, 'username': request.username},
     );
+    reportDiagnostic(HandleMessageResult.contactAutoAdded);
     return (HandleMessageResult.contactAutoAdded, request, null);
   }
 
@@ -986,6 +1062,7 @@ handleIncomingMessage({
     event: 'CONTACT_REQUEST_STORED',
     details: {'peerId': peerIdPrefix, 'username': request.username},
   );
+  reportDiagnostic(HandleMessageResult.contactRequest);
   return (HandleMessageResult.contactRequest, request, null);
 }
 

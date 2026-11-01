@@ -258,6 +258,11 @@ const Map<String, dynamic> callDiagnosticSchemaV1 = {
     "requiredPersistenceComplete",
     "transportStarted",
     "withdrawalFailed",
+    "contactAccepted",
+    "contactBlocked",
+    "relayEndpointPresent",
+    "wakeHandleGrantPresent",
+    "remoteRingingObserved",
   ],
   "integerValues": [
     "durationMs",
@@ -279,6 +284,8 @@ const Map<String, dynamic> callDiagnosticSchemaV1 = {
     "bytes",
     "attemptCount",
     "eventCount",
+    "trustedDeviceCount",
+    "timeToRemoteRingingMs",
   ],
   "enumValues": {
     "state": [

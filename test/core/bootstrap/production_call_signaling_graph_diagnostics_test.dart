@@ -245,18 +245,28 @@ void main() {
         '$deviceCount trusted devices', () async {
       final diagnostics = await installDiagnostics();
       final traceId = diagnostics.beginAttempt();
-      await diagnostics.runWithTrace(traceId, () => _probe(
-        rosterProvider: _RosterProvider(snapshot: CallTrustedRosterSnapshot(
-          contactAccountPeerId: _accountPeerId,
-          contactAccepted: true,
-          contactBlocked: false,
-          devices: List.filled(deviceCount, _trustedDevice()),
-        )),
-      ));
+      await diagnostics.runWithTrace(
+        traceId,
+        () => _probe(
+          rosterProvider: _RosterProvider(
+            snapshot: CallTrustedRosterSnapshot(
+              contactAccountPeerId: _accountPeerId,
+              contactAccepted: true,
+              contactBlocked: false,
+              devices: List.filled(deviceCount, _trustedDevice()),
+            ),
+          ),
+        ),
+      );
       final events = await exportedEvents(diagnostics);
-      final snapshots = events.where((event) =>
-          event['traceId'] == traceId && event['stage'] == 'preflight' &&
-          event['action'] == 'snapshot').toList();
+      final snapshots = events
+          .where(
+            (event) =>
+                event['traceId'] == traceId &&
+                event['stage'] == 'preflight' &&
+                event['action'] == 'snapshot',
+          )
+          .toList();
       expect(snapshots, hasLength(1));
       expect(snapshots.single['values'], {
         'contactAccepted': true,
@@ -272,48 +282,78 @@ void main() {
     test('CALL-INCIDENT endpoint repair exports $repair outcome', () async {
       final diagnostics = await installDiagnostics();
       final traceId = diagnostics.beginAttempt();
-      final authority = _Authority(endpoint: repair == 'expired'
-          ? _endpoint(expiresAtMs: _nowMs) : null);
+      final authority = _Authority(
+        endpoint: repair == 'expired' ? _endpoint(expiresAtMs: _nowMs) : null,
+      );
       var repairs = 0;
-      final result = await diagnostics.runWithTrace(traceId, () => _probe(
-        authority: authority,
-        request: OutgoingCallStartRequest(),
-        repairMissingEndpoint: (_, {beforeRequest}) async {
-          await beforeRequest?.call();
-          repairs++;
-          if (repair == 'canceled') throw const OutgoingCallStartCanceled();
-          if (repair == 'declined') return false;
-          authority.endpoint = _endpoint();
-          return true;
-        },
-      ));
+      final result = await diagnostics.runWithTrace(
+        traceId,
+        () => _probe(
+          authority: authority,
+          request: OutgoingCallStartRequest(),
+          repairMissingEndpoint: (_, {beforeRequest}) async {
+            await beforeRequest?.call();
+            repairs++;
+            if (repair == 'canceled') throw const OutgoingCallStartCanceled();
+            if (repair == 'declined') return false;
+            authority.endpoint = _endpoint();
+            return true;
+          },
+        ),
+      );
       expect(repairs, 1);
       expect(result.available, repair == 'missing' || repair == 'expired');
       final events = await exportedEvents(diagnostics);
-      final recovery = events.where((event) =>
-          event['traceId'] == traceId && event['stage'] == 'preflight' &&
-          event['action'] == 'recover').toList();
+      final recovery = events
+          .where(
+            (event) =>
+                event['traceId'] == traceId &&
+                event['stage'] == 'preflight' &&
+                event['action'] == 'recover',
+          )
+          .toList();
       expect(recovery.map((event) => event['outcome']), [
         'started',
-        repair == 'canceled' ? 'canceled' : repair == 'declined' ? 'failed' : 'ok',
+        repair == 'canceled'
+            ? 'canceled'
+            : repair == 'declined'
+            ? 'failed'
+            : 'ok',
       ]);
       if (repair == 'declined') {
-        expect(events.any((event) => event['reason'] == 'endpoint_not_found'),
-            isTrue);
+        expect(
+          events.any((event) => event['reason'] == 'endpoint_not_found'),
+          isTrue,
+        );
       } else {
-        expect(events.where((event) => event['traceId'] == traceId &&
-            event['outcome'] == 'preflight_failed'), isEmpty);
+        expect(
+          events.where(
+            (event) =>
+                event['traceId'] == traceId &&
+                event['outcome'] == 'preflight_failed',
+          ),
+          isEmpty,
+        );
       }
     });
   }
 
-  test('CALL-INCIDENT passive probes add no input or repair orphan events', () async {
-    final diagnostics = await installDiagnostics();
-    await _probe();
-    final events = await exportedEvents(diagnostics);
-    expect(events.where((event) => event['stage'] == 'preflight' &&
-        (event['action'] == 'snapshot' || event['action'] == 'recover')), isEmpty);
-  });
+  test(
+    'CALL-INCIDENT passive probes add no input or repair orphan events',
+    () async {
+      final diagnostics = await installDiagnostics();
+      await _probe();
+      final events = await exportedEvents(diagnostics);
+      expect(
+        events.where(
+          (event) =>
+              event['stage'] == 'preflight' &&
+              (event['action'] == 'snapshot' || event['action'] == 'recover'),
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'availability reports a closed network gate without resolving',

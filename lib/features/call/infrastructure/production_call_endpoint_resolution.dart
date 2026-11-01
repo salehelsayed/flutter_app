@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../../core/utils/flow_event_emitter.dart';
 import '../diagnostics/call_diagnostics.dart';
 import '../application/call_endpoint_resolver.dart';
+import '../application/outgoing_call_capability.dart';
 import '../domain/received_call_wake_handle_store.dart';
 import 'call_authority_client.dart';
 import 'call_trusted_roster_provider.dart';
@@ -29,6 +30,19 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
   RepairCallEndpoint? repairMissingEndpoint,
   Future<void> Function()? beforeOperation,
 }) async {
+  final diagnostics = CallDiagnostics.instance;
+  final traceId = diagnostics.currentTraceId;
+  void recordRepair(String outcome, {String reason = 'none'}) {
+    if (traceId == null) return;
+    diagnostics.record(
+      traceId: traceId,
+      stage: 'preflight',
+      action: 'recover',
+      outcome: outcome,
+      reason: reason,
+    );
+  }
+
   await beforeOperation?.call();
   var roster = await loadCallEndpointDependency(
     stage: 'trusted_roster_load',
@@ -88,10 +102,27 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
       'wakeHandleGrantPresent': wakeHandleGrant != null,
     },
   );
+  var repairRequested = false;
+  var inputRecorded = false;
   try {
-    var repairRequested = false;
     while (true) {
       await beforeOperation?.call();
+      if (!inputRecorded && traceId != null) {
+        inputRecorded = true;
+        diagnostics.record(
+          traceId: traceId,
+          stage: 'preflight',
+          action: 'snapshot',
+          outcome: 'ok',
+          values: <String, Object?>{
+            'contactAccepted': roster.contactAccepted,
+            'contactBlocked': roster.contactBlocked,
+            'trustedDeviceCount': roster.devices.length.clamp(0, 16),
+            'relayEndpointPresent': relayEndpoint != null,
+            'wakeHandleGrantPresent': wakeHandleGrant != null,
+          },
+        );
+      }
       try {
         final endpoint = await resolver.resolve(
           contactAccountPeerId: contactAccountPeerId,
@@ -104,6 +135,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
           wakeHandleGrant: wakeHandleGrant,
         );
         await beforeOperation?.call();
+        if (repairRequested) recordRepair('ok');
         emitCallEndpointResolutionResult(
           stage: 'ready',
           outcome: 'available',
@@ -119,6 +151,7 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
           if (!await canRepair()) continue;
           await beforeOperation?.call();
           repairRequested = true;
+          recordRepair('started');
           if (!await repairMissingEndpoint(
             contactAccountPeerId,
             beforeRequest: () async {
@@ -163,15 +196,20 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
       CallEndpointResolutionCode.unavailable => 'capability_unavailable',
       _ => 'endpoint_invalid',
     };
-    final diagnostics = CallDiagnostics.instance;
+    if (repairRequested) recordRepair('failed', reason: reason);
     diagnostics.record(
+      traceId: traceId,
       stage: 'preflight',
       action: 'lookup',
       outcome: 'rejected',
       reason: reason,
     );
-    if (diagnostics.currentTraceId != null) {
-      diagnostics.finishAttempt(outcome: 'preflight_failed', reason: reason);
+    if (traceId != null) {
+      diagnostics.finishAttempt(
+        traceId: traceId,
+        outcome: 'preflight_failed',
+        reason: reason,
+      );
     }
     emitCallEndpointResolutionResult(
       stage: 'endpoint_resolve',
@@ -179,7 +217,11 @@ Future<ResolvedCallEndpoint> resolveProductionCallEndpoint({
       reason: error.code.name,
     );
     rethrow;
+  } on OutgoingCallStartCanceled {
+    if (repairRequested) recordRepair('canceled', reason: 'canceled');
+    rethrow;
   } catch (_) {
+    if (repairRequested) recordRepair('failed', reason: 'unknown');
     emitCallEndpointResolutionResult(
       stage: 'endpoint_resolve',
       outcome: 'error',

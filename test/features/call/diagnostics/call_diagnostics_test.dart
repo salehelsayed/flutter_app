@@ -1114,6 +1114,7 @@ void main() {
           'exportedAtMs',
           'retentionDays',
           'droppedEvents',
+          'status',
           'events',
         ]),
       );

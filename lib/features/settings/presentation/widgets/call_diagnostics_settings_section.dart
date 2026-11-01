@@ -20,7 +20,7 @@ class CallDiagnosticsSettingsSection extends StatelessWidget {
     this.switchLabel,
     this.summary,
     this.details,
-    this.supportCodes = false,
+    this.supportCodes = true,
   });
 
   final ValueListenable<bool> enabled;
