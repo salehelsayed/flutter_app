@@ -5208,7 +5208,7 @@ do not count `test(...)` strings as executions. Runner listings took about
   EXIF IFD containing only display Orientation when it is not 1. No source GPS,
   MakerNote, XMP/IPTC or thumbnail IFD is copied. ICC profiles are deliberately
   retained as colour data; there is no ICC parser/rebuilder (owner decision
-  `m-e4771e73`). Unsupported/malformed JPEGs, Adobe colour-transform variants
+  `m-e4771e73`). Unsupported but decodable JPEGs, Adobe colour-transform variants
   and other existing image formats keep the native quality-100, source-resolution,
   `keepExif: false` fallback. This supersedes the earlier native-only Original
   implementation retained in `build/kayan-safe/original-full-res/`.
@@ -5240,6 +5240,15 @@ do not count `test(...)` strings as executions. Runner listings took about
   this packet (`m-b1fa2076`).
   `image_processor_test.dart` preserves native fallback/Compressed dimensions
   and exercises the real bounded Flutter thumbnail codec (320 px/49,152 bytes).
+  MEDIA-005 photo admission additionally requires a primary JPEG end marker
+  outside metadata segments and a successful 1×1 Flutter decode before either
+  quality path. Truncated and malformed JPEGs reuse the existing photo-processing
+  failure flow; native HEIC/HEIF conversion remains unchanged. Four causal cases
+  failed before the fix, then both image-processor files passed 83 tests with
+  scoped analysis clean. Evidence is under
+  `.codex-test-logs/media-contact-intro-20261101/` in the
+  `media-contact-intro-fixes-20261101` worktree. These host checks use native
+  encoder substitutes and do not establish phone HEIC conversion or delivery.
   Bounded returned rasters do not certify native transient peak memory. Native
   HEIC decode, real camera/picker metadata and Android's existing lower-resolution
   OOM retries still need phone evidence. Host evidence and patch are under
