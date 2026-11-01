@@ -1204,6 +1204,25 @@ void main() {
       );
       final root = localBodies['_buildRootWidget']!;
       final post = localBodies['_afterRunApp']!;
+      expect(
+        'cleanupWithdrawnContactRequests('.allMatches(normal),
+        hasLength(1),
+        reason: 'withdrawn request cleanup has one local startup owner',
+      );
+      expect(
+        post,
+        matches(
+          RegExp(
+            r'WidgetsBinding\.instance\.addPostFrameCallback\(\(_\) \{\s*'
+            r'unawaited\(\s*cleanupWithdrawnContactRequests\(\s*'
+            r'db: db,\s*retireNotification: retireContactRequestCard,?\s*'
+            r'\),?\s*\);\s*\}\);',
+          ),
+        ),
+        reason:
+            'local cleanup starts unawaited after the first frame, '
+            'outside first-screen and network-gated startup work',
+      );
 
       final reset = prepare.indexOf('runDisposableResetIfRequested()');
       final inertReturn = prepare.indexOf(

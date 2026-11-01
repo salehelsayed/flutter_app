@@ -63,6 +63,7 @@ import 'package:flutter_app/features/translate_preview/translate_preview_persist
 import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
+import 'package:flutter_app/features/contact_request/data/cleanup_withdrawn_contact_requests.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/authored_direct_text_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
@@ -4602,6 +4603,24 @@ final class ProductionApplicationBootstrap
           iosNotificationRecoveryCoordinator?.settleConversationRead,
       onAllNotificationsCleared: iosNotificationRecoveryCoordinator?.reconcile,
     );
+    Future<void> retireContactRequestCard(
+      String peerId,
+      bool Function() isExpired,
+    ) async {
+      if (isExpired()) return;
+      try {
+        await notificationService.cancelConversationNotification(
+          NotificationRouteTarget.contactRequest(peerId).toPayload(),
+        );
+      } finally {
+        if (!isExpired() && iosNotificationRecoveryEnabled) {
+          await iosNotificationRecoveryBridge.retireContactRequest(
+            peerId: peerId,
+          );
+        }
+      }
+    }
+
     retireContactRequestNotification = (expected) async {
       final current = await dbLoadRequest(db, expected.peerId);
       if (current == null ||
@@ -4611,17 +4630,7 @@ final class ProductionApplicationBootstrap
           current['received_at'] != expected.receivedAt) {
         return;
       }
-      try {
-        await notificationService.cancelConversationNotification(
-          NotificationRouteTarget.contactRequest(expected.peerId).toPayload(),
-        );
-      } finally {
-        if (iosNotificationRecoveryEnabled) {
-          await iosNotificationRecoveryBridge.retireContactRequest(
-            peerId: expected.peerId,
-          );
-        }
-      }
+      await retireContactRequestCard(expected.peerId, () => false);
     };
 
     final groupNotificationPresentationCoordinator =
@@ -10848,6 +10857,16 @@ final class ProductionApplicationBootstrap
 
     // ignore: no_leading_underscores_for_local_identifiers
     void _afterRunApp() {
+      // Read helpers already hide withdrawn pending requests. Physical cleanup
+      // starts after the first frame so slow SQLite/native work cannot delay it.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(
+          cleanupWithdrawnContactRequests(
+            db: db,
+            retireNotification: retireContactRequestCard,
+          ),
+        );
+      });
       debugE2EComposition?.startIosSenderProjectionAfterRunApp(
         directReactionNotificationProjection:
             directReactionNotificationProjection,

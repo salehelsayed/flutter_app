@@ -2,6 +2,16 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 
+// Hide retained cleanup/retry rows only when durable withdrawal proves the
+// local decision. Missing contacts alone never imply a prior deletion.
+const _withdrawnAbsentRequest = '''
+EXISTS (SELECT 1 FROM contact_relationship_consent consent
+        WHERE consent.peer_id = contact_requests.peer_id
+          AND consent.state = 'withdrawn')
+AND NOT EXISTS (SELECT 1 FROM contacts
+                WHERE contacts.peer_id = contact_requests.peer_id)
+''';
+
 /// Loads all pending contact requests from the database.
 Future<List<Map<String, Object?>>> dbLoadPendingRequests(Database db) async {
   emitFlowEvent(
@@ -13,7 +23,7 @@ Future<List<Map<String, Object?>>> dbLoadPendingRequests(Database db) async {
   try {
     final results = await db.query(
       'contact_requests',
-      where: 'status = ?',
+      where: 'status = ? AND NOT ($_withdrawnAbsentRequest)',
       whereArgs: ['pending'],
       orderBy: 'received_at DESC',
     );
@@ -48,7 +58,9 @@ Future<Map<String, Object?>?> dbLoadRequest(Database db, String peerId) async {
   try {
     final results = await db.query(
       'contact_requests',
-      where: 'peer_id = ?',
+      where:
+          'peer_id = ? AND NOT (status = \'pending\' AND '
+          '($_withdrawnAbsentRequest))',
       whereArgs: [peerId],
       limit: 1,
     );

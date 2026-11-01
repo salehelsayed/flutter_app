@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
+import 'package:flutter_app/core/database/migrations/121_contact_repair.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 
 void main() {
@@ -16,6 +17,7 @@ void main() {
     db = await openDatabase(inMemoryDatabasePath, version: 1);
     await runIdentityTableMigration(db);
     await runMlKemKeysMigration(db);
+    await runContactRepairMigration(db);
   });
 
   tearDown(() async {
@@ -123,14 +125,8 @@ void main() {
     });
 
     test('upserts on conflict', () async {
-      await dbUpsertRequest(
-        db,
-        makeRequestRow(username: 'OriginalName'),
-      );
-      await dbUpsertRequest(
-        db,
-        makeRequestRow(username: 'UpdatedName'),
-      );
+      await dbUpsertRequest(db, makeRequestRow(username: 'OriginalName'));
+      await dbUpsertRequest(db, makeRequestRow(username: 'UpdatedName'));
 
       final rows = await db.query('contact_requests');
       expect(rows.length, 1);

@@ -3387,6 +3387,17 @@ the new hint and reply with their old visible intent, so mixed-version OS push
 silence is not established. Evidence, including the initial swap-aborted GREEN
 attempt, is retained in `.codex-test-logs/deleted-contact-option-a-20261101/`.
 Device notification/UI behavior and signed-candidate acceptance remain separate.
+Existing pending rows from earlier receivers are hidden by both pending-list
+and exact-request reads only when consent is withdrawn and the contact is absent.
+Accepted/declined terminal identities, missing-consent peers and readded contacts
+remain readable. Physical cleanup starts after the first frame, retires the local
+notification before an exact conditional delete, preserves consent, and retries
+retained rows on the next launch. It processes at most 100 candidates within a
+150 ms scheduling budget. A timeout cannot cancel already submitted SQLite or
+native work; expiry prevents subsequent operations. Real SQL reopen/replay tests
+cover suppression and preservation; controlled futures cover DB/OS timeouts.
+The bootstrap phase contract checks post-frame wiring, not full app execution.
+Evidence: `.codex-test-logs/withdrawn-pending-startup-cleanup-20261101/`.
 
 The linked-device addressing foundation's historical v112 fixture also applies
 v121 when exercising current deletion helpers, alongside its existing v117
