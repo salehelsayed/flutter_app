@@ -4,7 +4,7 @@
 #   notify32_channel.sh toggle <channel-id>   open the page and tap the first switch node
 #   notify32_channel.sh state <channel-id>    importance of the channel from dumpsys (0 = blocked)
 export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-tcp:host.docker.internal:5037}
-P=21071FDF600CSC; A() { timeout 20 adb -s $P "$@"; }
+P=${PX:-21071FDF600CSC}; A() { timeout 20 adb -s $P "$@"; }
 open() { A shell am start -a android.settings.CHANNEL_NOTIFICATION_SETTINGS --es android.provider.extra.APP_PACKAGE com.mknoon.app --es android.provider.extra.CHANNEL_ID "$1" >/dev/null; sleep 2.5; }
 nodes() { A shell rm -f /sdcard/c.xml; A shell uiautomator dump /sdcard/c.xml >/dev/null 2>&1; A shell cat /sdcard/c.xml | tr '>' '\n' | grep -E 'class="android.widget.Switch"|checkable="true"|text="(Messages|mknoon|Mknoon|All [^"]*|Show notifications|Allow notifications)"'; A shell rm -f /sdcard/c.xml; }
 case "$1" in

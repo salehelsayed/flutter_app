@@ -6,7 +6,7 @@
 export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-tcp:host.docker.internal:5037}
 export AP_BASE=${AP_BASE:-http://192.168.65.254:4725}
 cd "$(dirname "$0")/.." || exit 2
-P=21071FDF600CSC; I=${IP:-13}
+P=${PX:-21071FDF600CSC}; I=${IP:-13}
 IRE='call_|Accept|Decline|Incoming|Connected|Calling|Ringing|duration|"End"|Mute|Speaker|Voice call|unavailable|Call ended|Dismiss|Reconnect|Answer|Mknoon|mknoon|Offline|Connecting'
 now() { date -u +%H:%M:%S.%3N; }
 case "$1" in

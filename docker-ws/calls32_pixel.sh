@@ -8,7 +8,7 @@
 #   calls32_pixel.sh channels              Mknoon notification channels with importance
 #   calls32_pixel.sh home                  HOME intent (app to background)
 export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-tcp:host.docker.internal:5037}
-P=21071FDF600CSC; A() { timeout 20 adb -s $P "$@"; }
+P=${PX:-21071FDF600CSC}; A() { timeout 20 adb -s $P "$@"; }
 KEEP='(text|content-desc)="(Answer|Decline|Hang up|Mknoon|mknoon|Incoming[^"]*|iphone[^"]*|Ongoing[^"]*|Voice call[^"]*)"'
 sdump() { A shell rm -f /sdcard/s.xml; A shell uiautomator dump /sdcard/s.xml >/dev/null 2>&1; A shell cat /sdcard/s.xml 2>/dev/null | tr '>' '\n' | grep -E "$KEEP"; A shell rm -f /sdcard/s.xml; }
 case "$1" in

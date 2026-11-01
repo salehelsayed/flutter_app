@@ -20,8 +20,10 @@ echo "== provenance $(date -u +%T) head=$(git rev-parse --short HEAD) dirty=$(gi
 python3 scripts/check_update_check_release_defines.py --dart-define-from-file=tool/build/voice_call_release_defines.json || { echo "RELEASE_GUARD FAILED"; exit 3; }
 bash scripts/ensure_go_android_bindings.sh || { echo "GO_ANDROID_BINDINGS FAILED"; exit 4; }
 MARK=$(mktemp); APK=build/app/outputs/flutter-apk/app-release.apk
+# No long-lived Gradle or Kotlin daemons after the build (they held up to 4.7 GB on the Mac, 2026-11-01).
+export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.daemon=false"
 echo "== flutter build apk $(date -u +%T)"
-flutter build apk --release --target=lib/main.dart --build-name="${VERSION%%+*}" --build-number="$BN" \
+flutter build apk --release --android-project-arg=kotlin.compiler.execution.strategy=in-process --target=lib/main.dart --build-name="${VERSION%%+*}" --build-number="$BN" \
   --dart-define-from-file=tool/build/voice_call_release_defines.json --dart-define=TRANSLATE_PREVIEW=true \
   --android-project-arg=enableAndroidNativeCalls=true --android-project-arg=allowDebugSigningInRelease=true
 rc=$?; echo "apk exit=$rc $(date -u +%T)"

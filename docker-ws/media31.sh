@@ -10,7 +10,7 @@
 export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-tcp:host.docker.internal:5037}
 export AP_BASE=${AP_BASE:-http://192.168.65.254:4725}
 cd "$(dirname "$0")/.." || exit 2
-P=21071FDF600CSC
+P=${PX:-21071FDF600CSC}
 MRE='chat_|message_|voice|Voice|Play|Pause|Photo|photo|Video|video|Image|image|caption|Send|Delete|delete|Download|download|Media|media|Document|document|Camera|camera|Record|record|Cancel|Discard|Keep|Sending|Sent|Received|Failed|Retry|Upload|upload|Processing|Open|Save|Share|Forward|Private|private|Protected|Allow|Settings|seconds|0:0|pdf|PDF|P0|p0'
 case "$1" in
   now) date -u +%H:%M:%S ;;
