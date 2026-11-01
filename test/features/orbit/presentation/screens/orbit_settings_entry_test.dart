@@ -376,7 +376,11 @@ void main() {
     expect(settingsButton(), findsOneWidget);
   });
 
-  testWidgets('center avatar tap and long-press open nothing', (tester) async {
+  testWidgets('You page off: center avatar tap and long-press open nothing', (
+    tester,
+  ) async {
+    debugYouPageEnabledOverride = false;
+    addTearDown(() => debugYouPageEnabledOverride = null);
     setLargeSurface(tester);
     suppressOverflowErrors();
     identityRepo.seed(identityWith());
@@ -473,6 +477,46 @@ void main() {
     await pumpFrames(tester);
     expect(find.byType(YouPageScreen), findsNothing);
   });
+
+  testWidgets('default build: tapping the center avatar opens the You page', (
+    tester,
+  ) async {
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
+
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+
+    await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+    await pumpFrames(tester);
+
+    expect(find.byType(YouPageScreen), findsOneWidget);
+    expect(find.text('Nothing shared right now'), findsOneWidget);
+  });
+
+  testWidgets(
+    'default build: a long-press on the center avatar enters Orbit edit mode, not the You page',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(identityWith());
+
+      await tester.pumpWidget(
+        buildOrbit(appShellController: freshController()),
+      );
+      await pumpFrames(tester);
+      expect(find.byKey(const ValueKey('orbit-edit-reset')), findsNothing);
+
+      await tester.longPress(
+        find.byKey(const ValueKey('orbit-center-self-avatar')),
+      );
+      await pumpFrames(tester);
+
+      expect(find.byKey(const ValueKey('orbit-edit-reset')), findsOneWidget);
+      expect(find.byType(YouPageScreen), findsNothing);
+    },
+  );
 
   testWidgets('settings button sits in the bottom-left corner', (tester) async {
     setLargeSurface(tester);
