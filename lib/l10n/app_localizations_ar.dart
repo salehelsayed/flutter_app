@@ -4051,7 +4051,7 @@ class AppLocalizationsAr extends AppLocalizations {
   String get call_status_calling => 'جارٍ الاتصال';
 
   @override
-  String get call_status_connecting => 'جارٍ التوصيل…';
+  String get call_status_connecting => 'جارٍ الاتصال';
 
   @override
   String get call_status_ringing => 'جارٍ الرنين';

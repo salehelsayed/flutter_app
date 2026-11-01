@@ -101,7 +101,7 @@ void main() {
       ),
       'ar': (
         calling: 'جارٍ الاتصال',
-        connecting: 'جارٍ التوصيل…',
+        connecting: 'جارٍ الاتصال',
         ringing: 'جارٍ الرنين',
         connected: 'متصل',
         reconnecting: 'إعادة الاتصال',
