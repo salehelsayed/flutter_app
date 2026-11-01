@@ -228,10 +228,11 @@ final class MethodChannelIosNotificationRecoveryBridge
   Future<bool> hasDeliveredIntroduction({required String messageId}) async {
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return false;
     try {
-      final response = await _channel.invokeMethod<Object?>(
-        'hasDeliveredIntroduction',
-        <String, Object?>{'messageId': messageId},
-      );
+      final response = await _channel
+          .invokeMethod<Object?>('hasDeliveredIntroduction', <String, Object?>{
+            'messageId': messageId,
+          })
+          .timeout(const Duration(seconds: 2), onTimeout: () => false);
       return response == true;
     } on PlatformException {
       return false;

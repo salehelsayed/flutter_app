@@ -3466,7 +3466,13 @@ prove Notification Center presence. The iOS bridge's read-only
 `hasDeliveredIntroduction` query uses the existing snapshot/matcher and canonical
 `send` envelope ID, with no retirement, ledger or badge mutation. Only Boolean
 true suppresses the local card; unsupported platforms or read errors keep the
-existing local publication. The two host regressions failed before the fix with
+existing local publication. The advisory read also returns false after two
+seconds, so a missing native reply cannot indefinitely block local publication
+or the stored processing outcome. Four fake-clock deadline cases first failed,
+then passed: no card before the bound, exactly one card and stored completion at
+the bound, and no second result/card after either late native Boolean reply.
+The five preservation files then pass all 139 tests. The two original host
+regressions failed before the fix with
 ten controls passing, then all 12 IN-008 cases and the five preservation files
 (135 tests) passed. The first native run at `d90b9be96` compiled and failed only
 the two expected provider/local positive assertions; malformed/no-side-effect
