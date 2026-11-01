@@ -7975,6 +7975,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{size} GB'**
   String translator_size_gb(String size);
+
+  /// No description provided for @you_page_reacted.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} reacted'**
+  String you_page_reacted(int count);
+
+  /// No description provided for @you_page_wrote_back.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} wrote back'**
+  String you_page_wrote_back(int count);
+
+  /// No description provided for @you_page_new_replies.
+  ///
+  /// In en, this message translates to:
+  /// **'· {count} new'**
+  String you_page_new_replies(int count);
+
+  /// No description provided for @you_page_live.
+  ///
+  /// In en, this message translates to:
+  /// **'still up for friends · gone in {hours} h'**
+  String you_page_live(int hours);
+
+  /// No description provided for @you_page_friends.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} friends'**
+  String you_page_friends(int count);
+
+  /// No description provided for @you_page_empty.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing shared right now'**
+  String get you_page_empty;
 }
 
 class _AppLocalizationsDelegate

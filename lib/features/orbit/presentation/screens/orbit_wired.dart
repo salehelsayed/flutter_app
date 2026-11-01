@@ -151,6 +151,9 @@ import 'package:flutter_app/features/posts/domain/repositories/posts_privacy_set
 import 'package:flutter_app/features/posts/application/send_thought_reply_use_case.dart';
 import 'package:flutter_app/features/posts/application/publish_thought_view_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
+import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
+import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/settings/presentation/navigation/settings_route_transition.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
@@ -3494,6 +3497,122 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  bool _youPageOpen = false;
+
+  /// Your own photo in the middle of Orbit opens your page.
+  Future<void> _openYouPage() async {
+    final identity = _identity;
+    if (!mounted || identity == null || _youPageOpen) return;
+    _youPageOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (routeContext) => YouPageScreen(
+            load: () => _loadYouPage(identity, _localThoughtWroteBack),
+            now: widget.thoughtNowProvider ?? DateTime.now,
+            onBack: () => Navigator.of(routeContext).maybePop(),
+            onOpenChat: _openConversationForPeerId,
+            onCompose: _composeThought,
+          ),
+        ),
+      );
+    } finally {
+      _youPageOpen = false;
+    }
+  }
+
+  Future<YouPageData> _loadYouPage(
+    IdentityModel identity,
+    Future<List<({String peerId, bool hasUnread})>> Function(String postId)
+    loadWroteBack,
+  ) async {
+    final friends = [
+      for (final contact in await widget.contactRepo.getAllContacts())
+        if (!contact.isBlocked && !contact.isArchived) contact,
+    ];
+    final repository = _thoughtPosts;
+    final own = repository == null
+        ? null
+        : await _thoughtQuery(
+            repository,
+          ).executeOwn(localPeerId: identity.peerId);
+    YouThought? thought;
+    if (repository != null && own != null) {
+      // Same recipients-only names as loadThoughtActivity.
+      final recipients = {
+        for (final delivery in await repository.getRecipientDeliveries(own.id))
+          delivery.recipientPeerId,
+      };
+      final names = {
+        for (final contact in friends)
+          if (recipients.contains(contact.peerId))
+            contact.peerId: contact.username,
+      };
+      final messageRepo = widget.messageRepo;
+      final replies = messageRepo is ThoughtReactionMessageRepository
+          ? await (messageRepo as ThoughtReactionMessageRepository)
+                .loadThoughtReactionMessages(own.id)
+          : const <ConversationMessage>[];
+      final media = await repository.loadPostMediaAttachmentsForPosts([own.id]);
+      thought = YouThought(
+        post: own.copyWith(media: media[own.id] ?? const []),
+        reactions: groupThoughtReactions(
+          postId: own.id,
+          replies: replies,
+          participantNames: names,
+        ),
+        wroteBack: [
+          for (final wrote in await loadWroteBack(own.id))
+            if (names[wrote.peerId] case final name?)
+              YouWroteBack(
+                peerId: wrote.peerId,
+                name: name,
+                hasUnread: wrote.hasUnread,
+              ),
+        ],
+      );
+    }
+    return YouPageData(
+      username: identity.username,
+      avatarBytes: _avatarBytes,
+      friendCount: friends.length,
+      thought: thought,
+    );
+  }
+
+  // Replaced by loadThoughtWroteBack (codex-ui/thought-wrote-back).
+  Future<List<({String peerId, bool hasUnread})>> _localThoughtWroteBack(
+    String postId,
+  ) async {
+    final messageRepo = widget.messageRepo;
+    if (messageRepo is! ThoughtReactionMessageRepository) return const [];
+    final quoteId = thoughtQuoteId(postId);
+    final senders = <String>{};
+    return [
+      for (final reply
+          in await (messageRepo as ThoughtReactionMessageRepository)
+              .loadThoughtReactionMessages(postId))
+        if (reply.isIncoming &&
+            !reply.isDeleted &&
+            !reply.isHidden &&
+            reply.quotedMessageId == quoteId &&
+            ThoughtReaction.fromText(reply.text) == null &&
+            senders.add(reply.contactPeerId))
+          (peerId: reply.contactPeerId, hasUnread: false),
+    ];
+  }
+
+  Future<void> _openConversationForPeerId(String peerId) async {
+    final contact = await widget.contactRepo.getContact(peerId);
+    if (!mounted ||
+        contact == null ||
+        contact.isBlocked ||
+        contact.isArchived) {
+      return;
+    }
+    await _openConversationForContact(contact);
+  }
+
   /// Opens the contact profile for [friend]; "Message" jumps into the chat.
   void _onFriendAvatarTap(OrbitFriend friend) {
     if (!mounted) return;
@@ -3855,6 +3974,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),
+      onSelfAvatarTap: youPageEnabled ? () => unawaited(_openYouPage()) : null,
       onThoughtsExpired: () => unawaited(_reloadThoughts()),
       thoughtNowProvider: widget.thoughtNowProvider,
       onFriendAvatarTap: _onFriendAvatarTap,

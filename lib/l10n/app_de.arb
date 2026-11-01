@@ -2185,5 +2185,11 @@
   "translator_settings_mobile_data": "Über mobile Daten laden",
   "translator_remove_title": "Übersetzung entfernen?",
   "translator_remove_body": "Gibt {size} frei. Du kannst sie jederzeit wieder laden.",
-  "translator_size_gb": "{size} GB"
+  "translator_size_gb": "{size} GB",
+  "you_page_reacted": "{count} reagiert",
+  "you_page_wrote_back": "{count} haben geantwortet",
+  "you_page_new_replies": "· {count} neu",
+  "you_page_live": "noch für Freunde da · weg in {hours} Std.",
+  "you_page_friends": "{count} Freunde",
+  "you_page_empty": "Gerade nichts geteilt"
 }

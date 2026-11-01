@@ -4852,4 +4852,32 @@ class AppLocalizationsAr extends AppLocalizations {
   String translator_size_gb(String size) {
     return '$size غيغابايت';
   }
+
+  @override
+  String you_page_reacted(int count) {
+    return '$count تفاعلوا';
+  }
+
+  @override
+  String you_page_wrote_back(int count) {
+    return '$count ردّوا';
+  }
+
+  @override
+  String you_page_new_replies(int count) {
+    return '· $count جديدة';
+  }
+
+  @override
+  String you_page_live(int hours) {
+    return 'ما زالت للأصدقاء · تختفي بعد $hours س';
+  }
+
+  @override
+  String you_page_friends(int count) {
+    return '$count أصدقاء';
+  }
+
+  @override
+  String get you_page_empty => 'لا شيء مشارك الآن';
 }

@@ -2185,5 +2185,11 @@
   "translator_settings_mobile_data": "التنزيل عبر بيانات الجوال",
   "translator_remove_title": "إزالة الترجمة؟",
   "translator_remove_body": "يحرر {size}. يمكنك تنزيلها مجددًا في أي وقت.",
-  "translator_size_gb": "{size} غيغابايت"
+  "translator_size_gb": "{size} غيغابايت",
+  "you_page_reacted": "{count} تفاعلوا",
+  "you_page_wrote_back": "{count} ردّوا",
+  "you_page_new_replies": "· {count} جديدة",
+  "you_page_live": "ما زالت للأصدقاء · تختفي بعد {hours} س",
+  "you_page_friends": "{count} أصدقاء",
+  "you_page_empty": "لا شيء مشارك الآن"
 }

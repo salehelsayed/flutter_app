@@ -2444,5 +2444,16 @@
   "translator_remove_body": "Frees {size}. You can download it again any time.",
   "@translator_remove_body": {"description": "Remove dialog body.", "placeholders": {"size": {"type": "String"}}},
   "translator_size_gb": "{size} GB",
-  "@translator_size_gb": {"description": "A size in gigabytes, like 2.6 GB.", "placeholders": {"size": {"type": "String"}}}
+  "@translator_size_gb": {"description": "A size in gigabytes, like 2.6 GB.", "placeholders": {"size": {"type": "String"}}},
+  "you_page_reacted": "{count} reacted",
+  "@you_page_reacted": {"placeholders": {"count": {"type": "int"}}},
+  "you_page_wrote_back": "{count} wrote back",
+  "@you_page_wrote_back": {"placeholders": {"count": {"type": "int"}}},
+  "you_page_new_replies": "· {count} new",
+  "@you_page_new_replies": {"placeholders": {"count": {"type": "int"}}},
+  "you_page_live": "still up for friends · gone in {hours} h",
+  "@you_page_live": {"placeholders": {"hours": {"type": "int"}}},
+  "you_page_friends": "{count} friends",
+  "@you_page_friends": {"placeholders": {"count": {"type": "int"}}},
+  "you_page_empty": "Nothing shared right now"
 }

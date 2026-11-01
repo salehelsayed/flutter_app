@@ -4900,4 +4900,32 @@ class AppLocalizationsDe extends AppLocalizations {
   String translator_size_gb(String size) {
     return '$size GB';
   }
+
+  @override
+  String you_page_reacted(int count) {
+    return '$count reagiert';
+  }
+
+  @override
+  String you_page_wrote_back(int count) {
+    return '$count haben geantwortet';
+  }
+
+  @override
+  String you_page_new_replies(int count) {
+    return '· $count neu';
+  }
+
+  @override
+  String you_page_live(int hours) {
+    return 'noch für Freunde da · weg in $hours Std.';
+  }
+
+  @override
+  String you_page_friends(int count) {
+    return '$count Freunde';
+  }
+
+  @override
+  String get you_page_empty => 'Gerade nichts geteilt';
 }
