@@ -337,6 +337,7 @@ const _applicationRootNormalizedSha256 =
 // repositories and notification bridge; no lifecycle/adapter owner moves. The
 // historical database callback remains unique and byte-identical. Both pins
 // are reconstructed in media-contact-intro-20261101/dtr18-pin-proof.json.
+// Wrote-back adds only the reviewed two-line database lookup at this app owner.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.
@@ -484,6 +485,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same contact-request requireFresh argument changes only the reviewed remainder.
 // The same retry composition leaves the historical notification callback exact.
 // The same additive Thoughts bindings leave the historical callback exact.
+// The same approved wrote-back delegate is present in this reviewed remainder.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
     '70ee52df3e2a8c10f08c6af090f5011670bf28ec36cdaf08bdc6608764feb528';
 

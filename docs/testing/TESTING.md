@@ -4015,6 +4015,26 @@ not executed during preparation because the unchanged host gate rejected the
 volume's free space; no passing runtime result is claimed. The owner excluded
 the 24-hour device measurement (K), leaving existing host expiry tests unchanged.
 
+Thought wrote-back activity uses one incoming-message lookup for the exact
+`thought:<postId>` quote, excluding hidden/deleted messages and marking attachment
+presence with `EXISTS`. It does not load whole conversations or add a schema.
+The repository groups by `contact_peer_id`, preserving the first counted reply's
+timestamp/ID order across linked senders. The existing `ThoughtReaction.fromText`
+classifier excludes lone trimmed reaction glyphs unless an attachment is present;
+photo/voice replies and text containing glyphs count. A friend is unread when any
+counted reply has null `read_at`, regardless of delivery status. Each call rereads
+that state; a missing production lookup fails instead of reporting zero replies.
+The database/repository cases in `thought_views_database_test.dart` and
+`message_repository_impl_test.dart` produced nine failures and seven controls
+before implementation, then all 16 passed. They use production host SQLite and
+repository ports; phone UI/delivery proof remains separate. Bootstrap adds only
+the approved two-line database delegate. The three DTR fingerprints retain the
+reviewed baseline and exact source-delta proof in ignored
+`.codex-test-logs/thought-wrote-back-20261101/`; no architecture debt was added.
+The full database/repository/activity/grouping and two DTR files passed 72 tests;
+the preserved DTR run before the reviewed pin updates had four expected hash
+failures and four controls.
+
 Thought retractions settle direct delivery only on `SendMessageResult.acknowledged`;
 `sent: true, acked: false` must attempt the existing inbox fallback and remain
 retryable if that storage fails. `post_follow_on_delivery_test.dart` covers both

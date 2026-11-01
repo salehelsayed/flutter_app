@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
@@ -907,8 +908,25 @@ class MessageRepositoryImpl
   }
 
   @override
-  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
-      const <ThoughtWroteBack>[];
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async {
+    final load = dbLoadThoughtWroteBackMessages;
+    if (load == null) {
+      throw StateError('Thought reply lookup is not configured.');
+    }
+    final byPeer = <String, bool>{};
+    for (final row in await load(postId)) {
+      if (row['has_attachment'] != 1 &&
+          ThoughtReaction.fromText(row['text'] as String) != null) {
+        continue;
+      }
+      final peerId = row['contact_peer_id'] as String;
+      byPeer[peerId] = (byPeer[peerId] ?? false) || row['read_at'] == null;
+    }
+    return [
+      for (final entry in byPeer.entries)
+        (peerId: entry.key, hasUnread: entry.value),
+    ];
+  }
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(

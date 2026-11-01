@@ -225,122 +225,144 @@ void main() {
       bool incoming = true,
       String? hiddenAt,
       String? deletedAt,
-    }) => db.insert(
-      'messages',
-      ConversationMessage(
-        id: id,
-        contactPeerId: peerId,
-        senderPeerId: senderPeerId ?? peerId,
-        text: text,
-        timestamp: timestamp,
-        createdAt: timestamp,
-        isIncoming: incoming,
-        status: 'delivered',
-        readAt: readAt,
-        quotedMessageId: quote,
-        hiddenAt: hiddenAt,
-        deletedAt: deletedAt,
-        deletedByPeerId: deletedAt == null ? null : peerId,
-      ).toMap(),
-    ).then((_) {});
+    }) => db
+        .insert(
+          'messages',
+          ConversationMessage(
+            id: id,
+            contactPeerId: peerId,
+            senderPeerId: senderPeerId ?? peerId,
+            text: text,
+            timestamp: timestamp,
+            createdAt: timestamp,
+            isIncoming: incoming,
+            status: 'delivered',
+            readAt: readAt,
+            quotedMessageId: quote,
+            hiddenAt: hiddenAt,
+            deletedAt: deletedAt,
+            deletedByPeerId: deletedAt == null ? null : peerId,
+          ).toMap(),
+        )
+        .then((_) {});
 
     Future<void> attachment(
       String id,
       String messageId, {
       String mediaType = 'image',
       String mime = 'image/jpeg',
-    }) => db.insert('media_attachments', {
-      'id': id,
-      'message_id': messageId,
-      'mime': mime,
-      'size': 1,
-      'media_type': mediaType,
-      'created_at': _viewed,
-    }).then((_) {});
+    }) => db
+        .insert('media_attachments', {
+          'id': id,
+          'message_id': messageId,
+          'mime': mime,
+          'size': 1,
+          'media_type': mediaType,
+          'created_at': _viewed,
+        })
+        .then((_) {});
 
-    test('database lookup includes attachment replies and excludes other quotes or hidden rows', () async {
-      await message('text', peerId: 'sam', readAt: _viewed);
-      await message(
-        'voice',
-        peerId: 'voice-friend',
-        senderPeerId: 'voice-friend-device',
-        text: '',
-        timestamp: '2026-10-27T12:00:01.000Z',
-      );
-      await attachment('voice-attachment', 'voice', mediaType: 'audio', mime: 'audio/ogg');
-      await message(
-        'photo',
-        peerId: 'photo-friend',
-        text: '❤️',
-        timestamp: '2026-10-27T12:00:02.000Z',
-      );
-      await attachment('photo-a', 'photo');
-      await attachment('photo-b', 'photo');
-      await message(
-        'reaction-candidate',
-        peerId: 'reactor',
-        text: '🔥',
-        timestamp: '2026-10-27T12:00:03.000Z',
-      );
-      await message('other-quote', peerId: 'other', quote: 'thought:other');
-      await message('quote-prefix', peerId: 'other', quote: 'thought:thought-1-copy');
-      await message('no-quote', peerId: 'other', quote: null);
-      await message('outgoing', peerId: 'other', incoming: false);
-      await message('hidden', peerId: 'other', hiddenAt: _viewed);
-      await message('deleted', peerId: 'other', deletedAt: _viewed);
+    test(
+      'database lookup includes attachment replies and excludes other quotes or hidden rows',
+      () async {
+        await message('text', peerId: 'sam', readAt: _viewed);
+        await message(
+          'voice',
+          peerId: 'voice-friend',
+          senderPeerId: 'voice-friend-device',
+          text: '',
+          timestamp: '2026-10-27T12:00:01.000Z',
+        );
+        await attachment(
+          'voice-attachment',
+          'voice',
+          mediaType: 'audio',
+          mime: 'audio/ogg',
+        );
+        await message(
+          'photo',
+          peerId: 'photo-friend',
+          text: '❤️',
+          timestamp: '2026-10-27T12:00:02.000Z',
+        );
+        await attachment('photo-a', 'photo');
+        await attachment('photo-b', 'photo');
+        await message(
+          'reaction-candidate',
+          peerId: 'reactor',
+          text: '🔥',
+          timestamp: '2026-10-27T12:00:03.000Z',
+        );
+        await message('other-quote', peerId: 'other', quote: 'thought:other');
+        await message(
+          'quote-prefix',
+          peerId: 'other',
+          quote: 'thought:thought-1-copy',
+        );
+        await message('no-quote', peerId: 'other', quote: null);
+        await message('outgoing', peerId: 'other', incoming: false);
+        await message('hidden', peerId: 'other', hiddenAt: _viewed);
+        await message('deleted', peerId: 'other', deletedAt: _viewed);
 
-      final rows = await dbLoadThoughtWroteBackMessages(db, 'thought-1');
-      expect(rows, [
-        {
-          'contact_peer_id': 'sam',
-          'text': 'A reply',
-          'read_at': _viewed,
-          'has_attachment': 0,
-        },
-        {
-          'contact_peer_id': 'voice-friend',
-          'text': '',
-          'read_at': null,
-          'has_attachment': 1,
-        },
-        {
-          'contact_peer_id': 'photo-friend',
-          'text': '❤️',
-          'read_at': null,
-          'has_attachment': 1,
-        },
-        {
-          'contact_peer_id': 'reactor',
-          'text': '🔥',
-          'read_at': null,
-          'has_attachment': 0,
-        },
-      ]);
-    });
+        final rows = await dbLoadThoughtWroteBackMessages(db, 'thought-1');
+        expect(rows, [
+          {
+            'contact_peer_id': 'sam',
+            'text': 'A reply',
+            'read_at': _viewed,
+            'has_attachment': 0,
+          },
+          {
+            'contact_peer_id': 'voice-friend',
+            'text': '',
+            'read_at': null,
+            'has_attachment': 1,
+          },
+          {
+            'contact_peer_id': 'photo-friend',
+            'text': '❤️',
+            'read_at': null,
+            'has_attachment': 1,
+          },
+          {
+            'contact_peer_id': 'reactor',
+            'text': '🔥',
+            'read_at': null,
+            'has_attachment': 0,
+          },
+        ]);
+      },
+    );
 
-    test('database lookup orders candidate replies by timestamp then id', () async {
-      await message('z-same-time', peerId: 'zoe', text: 'same-time-z');
-      await message(
-        'first',
-        peerId: 'bea',
-        text: 'earliest',
-        timestamp: '2026-10-27T11:59:59.000Z',
-      );
-      await message('a-same-time', peerId: 'alia', text: 'same-time-a');
+    test(
+      'database lookup orders candidate replies by timestamp then id',
+      () async {
+        await message('z-same-time', peerId: 'zoe', text: 'same-time-z');
+        await message(
+          'first',
+          peerId: 'bea',
+          text: 'earliest',
+          timestamp: '2026-10-27T11:59:59.000Z',
+        );
+        await message('a-same-time', peerId: 'alia', text: 'same-time-a');
 
-      final rows = await dbLoadThoughtWroteBackMessages(db, 'thought-1');
-      expect(rows.map((row) => row['text']), [
-        'earliest',
-        'same-time-a',
-        'same-time-z',
-      ]);
-    });
+        final rows = await dbLoadThoughtWroteBackMessages(db, 'thought-1');
+        expect(rows.map((row) => row['text']), [
+          'earliest',
+          'same-time-a',
+          'same-time-z',
+        ]);
+      },
+    );
 
-    test('database lookup returns no rows for an empty or missing quote', () async {
-      await message('existing', peerId: 'sam');
-      expect(await dbLoadThoughtWroteBackMessages(db, 'missing'), isEmpty);
-      expect(await dbLoadThoughtWroteBackMessages(db, ''), isEmpty);
-    });
+    test(
+      'database lookup returns no rows for an empty or missing quote',
+      () async {
+        await message('existing', peerId: 'sam');
+        expect(await dbLoadThoughtWroteBackMessages(db, 'missing'), isEmpty);
+        expect(await dbLoadThoughtWroteBackMessages(db, ''), isEmpty);
+      },
+    );
   });
 
   test(

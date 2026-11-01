@@ -102,4 +102,13 @@ Future<List<Map<String, Object?>>> dbLoadThoughtReactionMessages(
 Future<List<Map<String, Object?>>> dbLoadThoughtWroteBackMessages(
   Database db,
   String postId,
-) async => const <Map<String, Object?>>[];
+) => db.rawQuery(
+  '''SELECT m.contact_peer_id, m.text, m.read_at,
+            EXISTS (SELECT 1 FROM media_attachments a
+                    WHERE a.message_id = m.id) AS has_attachment
+     FROM messages m
+     WHERE m.quoted_message_id = ? AND m.is_incoming = 1
+       AND m.hidden_at IS NULL AND m.deleted_at IS NULL
+     ORDER BY m.timestamp ASC, m.id ASC''',
+  ['thought:$postId'],
+);

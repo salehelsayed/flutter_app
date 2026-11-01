@@ -522,7 +522,8 @@ void main() {
       dbMarkConversationAsRead: repo.dbMarkConversationAsRead,
       dbCountUnreadForContact: repo.dbCountUnreadForContact,
       dbCountTotalUnread: repo.dbCountTotalUnread,
-      dbCountTotalUnreadExcludingArchived: repo.dbCountTotalUnreadExcludingArchived,
+      dbCountTotalUnreadExcludingArchived:
+          repo.dbCountTotalUnreadExcludingArchived,
       dbDeleteMessagesForContact: repo.dbDeleteMessagesForContact,
       dbDeleteMessage: repo.dbDeleteMessage,
       dbExistsMessageByContent: repo.dbExistsMessageByContent,
@@ -531,7 +532,8 @@ void main() {
       dbLoadUnackedOutgoingMessages: repo.dbLoadUnackedOutgoingMessages,
       dbLoadConversationThreadSummaries: repo.dbLoadConversationThreadSummaries,
       dbRecoverStuckSendingMessages: repo.dbRecoverStuckSendingMessages,
-      dbLoadStuckSendingOutgoingMessages: repo.dbLoadStuckSendingOutgoingMessages,
+      dbLoadStuckSendingOutgoingMessages:
+          repo.dbLoadStuckSendingOutgoingMessages,
       dbLoadSendingOutgoingMessages: repo.dbLoadSendingOutgoingMessages,
       dbConditionalTransitionStatus: repo.dbConditionalTransitionStatus,
     );
@@ -552,92 +554,135 @@ void main() {
       'status': status,
     };
 
-    test('uses one quote lookup and groups linked senders by the friend', () async {
-      final requested = <String>[];
-      final subject = withThoughtReplies((postId) async {
-        requested.add(postId);
-        return [
-          reply('bea', senderPeerId: 'bea-phone', readAt: readTime),
-          reply('alia', senderPeerId: 'alia-phone'),
-          reply('bea', senderPeerId: 'bea-laptop'),
-          reply('alia', senderPeerId: 'alia-laptop', readAt: readTime),
-        ];
-      });
+    test(
+      'uses one quote lookup and groups linked senders by the friend',
+      () async {
+        final requested = <String>[];
+        final subject = withThoughtReplies((postId) async {
+          requested.add(postId);
+          return [
+            reply('bea', senderPeerId: 'bea-phone', readAt: readTime),
+            reply('alia', senderPeerId: 'alia-phone'),
+            reply('bea', senderPeerId: 'bea-laptop'),
+            reply('alia', senderPeerId: 'alia-laptop', readAt: readTime),
+          ];
+        });
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'bea', hasUnread: true),
-        (peerId: 'alia', hasUnread: true),
-      ]);
-      expect(requested, ['thought-1']);
-    });
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[
+            (peerId: 'bea', hasUnread: true),
+            (peerId: 'alia', hasUnread: true),
+          ],
+        );
+        expect(requested, ['thought-1']);
+      },
+    );
 
-    test('orders friends by the first counted reply, not an earlier reaction', () async {
-      final subject = withThoughtReplies((_) async => [
-        reply('zoe', text: '❤️'),
-        reply('bea', readAt: readTime),
-        reply('alia', readAt: readTime),
-        reply('zoe', readAt: readTime),
-        reply('bea', readAt: readTime),
-      ]);
+    test(
+      'orders friends by the first counted reply, not an earlier reaction',
+      () async {
+        final subject = withThoughtReplies(
+          (_) async => [
+            reply('zoe', text: '❤️'),
+            reply('bea', readAt: readTime),
+            reply('alia', readAt: readTime),
+            reply('zoe', readAt: readTime),
+            reply('bea', readAt: readTime),
+          ],
+        );
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'bea', hasUnread: false),
-        (peerId: 'alia', hasUnread: false),
-        (peerId: 'zoe', hasUnread: false),
-      ]);
-    });
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[
+            (peerId: 'bea', hasUnread: false),
+            (peerId: 'alia', hasUnread: false),
+            (peerId: 'zoe', hasUnread: false),
+          ],
+        );
+      },
+    );
 
-    test('unread follows read_at on counted replies, not delivery status', () async {
-      final subject = withThoughtReplies((_) async => [
-        reply('read-friend', readAt: readTime, status: 'delivered'),
-        reply('read-friend', text: '🔥'),
-        reply('unread-friend', status: 'read'),
-      ]);
+    test(
+      'unread follows read_at on counted replies, not delivery status',
+      () async {
+        final subject = withThoughtReplies(
+          (_) async => [
+            reply('read-friend', readAt: readTime, status: 'delivered'),
+            reply('read-friend', text: '🔥'),
+            reply('unread-friend', status: 'read'),
+          ],
+        );
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'read-friend', hasUnread: false),
-        (peerId: 'unread-friend', hasUnread: true),
-      ]);
-    });
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[
+            (peerId: 'read-friend', hasUnread: false),
+            (peerId: 'unread-friend', hasUnread: true),
+          ],
+        );
+      },
+    );
 
     for (final reaction in ThoughtReaction.values) {
-      test('a lone ${reaction.name} glyph is a reaction, not a reply', () async {
-        final subject = withThoughtReplies((_) async => [
-          reply('reaction-only', text: reaction.glyph),
-        ]);
-        expect(await subject.loadThoughtWroteBack('thought-1'), isEmpty);
-      });
+      test(
+        'a lone ${reaction.name} glyph is a reaction, not a reply',
+        () async {
+          final subject = withThoughtReplies(
+            (_) async => [reply('reaction-only', text: reaction.glyph)],
+          );
+          expect(await subject.loadThoughtWroteBack('thought-1'), isEmpty);
+        },
+      );
     }
 
     test('a whitespace-wrapped lone glyph stays a reaction', () async {
-      final subject = withThoughtReplies((_) async => [
-        reply('reaction-only', text: '\t❤️\n'),
-      ]);
+      final subject = withThoughtReplies(
+        (_) async => [reply('reaction-only', text: '\t❤️\n')],
+      );
       expect(await subject.loadThoughtWroteBack('thought-1'), isEmpty);
     });
 
-    test('glyph captions and attachment-only replies count as wrote back', () async {
-      final subject = withThoughtReplies((_) async => [
-        reply('photo-friend', text: '❤️', hasAttachment: true, readAt: readTime),
-        reply('voice-friend', text: '', hasAttachment: true),
-      ]);
+    test(
+      'glyph captions and attachment-only replies count as wrote back',
+      () async {
+        final subject = withThoughtReplies(
+          (_) async => [
+            reply(
+              'photo-friend',
+              text: '❤️',
+              hasAttachment: true,
+              readAt: readTime,
+            ),
+            reply('voice-friend', text: '', hasAttachment: true),
+          ],
+        );
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'photo-friend', hasUnread: false),
-        (peerId: 'voice-friend', hasUnread: true),
-      ]);
-    });
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[
+            (peerId: 'photo-friend', hasUnread: false),
+            (peerId: 'voice-friend', hasUnread: true),
+          ],
+        );
+      },
+    );
 
     test('ordinary text containing a reaction glyph remains a reply', () async {
-      final subject = withThoughtReplies((_) async => [
-        reply('text-friend', text: 'Nice ❤️'),
-        reply('two-glyphs-friend', text: '🔥🔥', readAt: readTime),
-      ]);
+      final subject = withThoughtReplies(
+        (_) async => [
+          reply('text-friend', text: 'Nice ❤️'),
+          reply('two-glyphs-friend', text: '🔥🔥', readAt: readTime),
+        ],
+      );
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'text-friend', hasUnread: true),
-        (peerId: 'two-glyphs-friend', hasUnread: false),
-      ]);
+      expect(
+        await subject.loadThoughtWroteBack('thought-1'),
+        <ThoughtWroteBack>[
+          (peerId: 'text-friend', hasUnread: true),
+          (peerId: 'two-glyphs-friend', hasUnread: false),
+        ],
+      );
     });
 
     test('an empty or missing quote lookup returns no friends', () async {
@@ -646,27 +691,38 @@ void main() {
       expect(await subject.loadThoughtWroteBack(''), isEmpty);
     });
 
-    test('rereads unread state after the conversation is marked read', () async {
-      String? readAt;
-      var calls = 0;
-      final subject = withThoughtReplies((_) async {
-        calls++;
-        return [reply('sam', readAt: readAt)];
-      });
+    test(
+      'rereads unread state after the conversation is marked read',
+      () async {
+        String? readAt;
+        var calls = 0;
+        final subject = withThoughtReplies((_) async {
+          calls++;
+          return [reply('sam', readAt: readAt)];
+        });
 
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'sam', hasUnread: true),
-      ]);
-      readAt = readTime;
-      expect(await subject.loadThoughtWroteBack('thought-1'), <ThoughtWroteBack>[
-        (peerId: 'sam', hasUnread: false),
-      ]);
-      expect(calls, 2);
-    });
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[(peerId: 'sam', hasUnread: true)],
+        );
+        readAt = readTime;
+        expect(
+          await subject.loadThoughtWroteBack('thought-1'),
+          <ThoughtWroteBack>[(peerId: 'sam', hasUnread: false)],
+        );
+        expect(calls, 2);
+      },
+    );
 
-    test('missing lookup capability fails instead of claiming zero replies', () async {
-      await expectLater(repo.loadThoughtWroteBack('thought-1'), throwsStateError);
-    });
+    test(
+      'missing lookup capability fails instead of claiming zero replies',
+      () async {
+        await expectLater(
+          repo.loadThoughtWroteBack('thought-1'),
+          throwsStateError,
+        );
+      },
+    );
   });
 
   group('MessageRepositoryImpl', () {

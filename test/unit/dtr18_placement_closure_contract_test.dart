@@ -115,7 +115,8 @@ const _relocations = <String, List<String>>{
     // projections to this same data adapter; placement is unchanged.
     // Thoughts128 adds the Thought-reaction message lookup delegate to this
     // same data adapter; placement is unchanged.
-    '1684680d864a6b0b6a0f984039b23b7db597430a62469998d3c4cae2e42f2761',
+    // Wrote-back adds its query delegate and aggregation to the same adapter.
+    '7aa9a66308399eabbae7145772186bfaa838cb54e127de0b06ff15d67a61e6e3',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

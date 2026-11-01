@@ -1497,6 +1497,8 @@ final class ProductionApplicationBootstrap
     final messageRepository = MessageRepositoryImpl(
       dbLoadThoughtReactionMessages: (postId) =>
           dbLoadThoughtReactionMessages(db, postId),
+      dbLoadThoughtWroteBackMessages: (postId) =>
+          dbLoadThoughtWroteBackMessages(db, postId),
       dbCancelAuthoredDirectTextIntent: (row) =>
           dbCancelAuthoredDirectTextIntent(db, row),
       dbSaveAuthoredDirectTextIntent: (row) =>
