@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_app_diagnostics.dart';
@@ -8,6 +10,7 @@ import 'package:flutter_app/app/bootstrap/update_check_background_entrypoints.da
 import 'package:flutter_app/core/debug/android_canonical_runtime_h0_probe.dart';
 import 'package:flutter_app/core/debug/android_headless_recovery_374_fixture.dart';
 import 'package:flutter_app/core/notifications/headless_canonical_recovery_entrypoint.dart';
+import 'package:flutter_app/core/storage/app_data_backup_exclusion.dart';
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 
 export 'package:flutter_app/app/application_root.dart'
@@ -21,6 +24,7 @@ void main() async {
   // schedules or cancels them. Before the bootstrap on purpose: a background
   // run must not wait for the Go bridge or SQLCipher.
   installUpdateCheckBackgroundHost();
+  unawaited(excludeAppDataFromBackup());
   await runWithProductionAppDiagnostics(() async {
     await DebugE2ECompositionRoot.acknowledgeGroupReactionNotificationIosDartMainEntryIfConfigured();
     await runApplicationBootstrap(

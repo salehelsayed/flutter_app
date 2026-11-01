@@ -13,6 +13,7 @@ final class ShareViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         loadIds()
+        excludeAppGroupFromBackup()
         configureLoadingView()
         beginProcessingShare()
     }
@@ -247,6 +248,17 @@ final class ShareViewController: UIViewController {
         }
 
         return SharedMediaFile(path: decodedPath, mimeType: mimeType, type: .image)
+    }
+
+    // Shared-in photos are written to the App Group container; keep them out of
+    // iCloud backups like the app's own media (owner, 11-01).
+    private func excludeAppGroupFromBackup() {
+        guard var containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupId
+        ) else { return }
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? containerURL.setResourceValues(values)
     }
 
     private func loadIds() {

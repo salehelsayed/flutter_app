@@ -2961,7 +2961,7 @@ final class AppGroupPushEnvelopeStore {
     ) else {
       return nil
     }
-    let dir = containerURL.appendingPathComponent(
+    var dir = containerURL.appendingPathComponent(
       "PushEnvelopeStaging",
       isDirectory: true
     )
@@ -2969,6 +2969,10 @@ final class AppGroupPushEnvelopeStore {
       at: dir,
       withIntermediateDirectories: true
     )
+    // Staged envelopes carry message content; never back them up (owner, 11-01).
+    var backupValues = URLResourceValues()
+    backupValues.isExcludedFromBackup = true
+    try? dir.setResourceValues(backupValues)
     directory = dir
     self.maxEntries = maxEntries
     self.ttlSeconds = ttlSeconds
