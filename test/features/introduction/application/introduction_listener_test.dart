@@ -101,7 +101,12 @@ void main() {
   }
 
   group('IntroductionListener', () {
-    for (final presence in ['matching', 'missing', 'unrelated', 'read-failure']) {
+    for (final presence in [
+      'matching',
+      'missing',
+      'unrelated',
+      'read-failure',
+    ]) {
       test(
         'IN-008 unopened intro $presence remote presence preserves one card',
         () async {

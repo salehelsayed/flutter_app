@@ -3460,6 +3460,21 @@ only after reconstructing their previous normalized identities and preserving
 the exact historical database callback; `dtr18-pin-proof.json` and the causal
 three-failure/four-pass contract runs are retained beside the Dart evidence.
 
+Opening the app normally with an unopened introduction APNs card also needs
+exact delivered-card suppression; the recent-announcement gate alone cannot
+prove Notification Center presence. The iOS bridge's read-only
+`hasDeliveredIntroduction` query uses the existing snapshot/matcher and canonical
+`send` envelope ID, with no retirement, ledger or badge mutation. Only Boolean
+true suppresses the local card; unsupported platforms or read errors keep the
+existing local publication. The two host regressions failed before the fix with
+ten controls passing, then all 12 IN-008 cases and the five preservation files
+(135 tests) passed. The first native run at `d90b9be96` compiled and failed only
+the two expected provider/local positive assertions; malformed/no-side-effect
+controls passed. Native GREEN and installed-phone proof remain separate, owned
+by Kayan/flutter_app. Evidence is under
+`.codex-test-logs/in008-unopened-20261101/` in the matching worktree; the preserved
+native RED log is `codexui-in008-red-20261101/xcodebuild_test.log` in flutter_app.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally

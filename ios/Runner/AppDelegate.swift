@@ -2625,6 +2625,21 @@ final class IosSetupReadinessEntryCoordinator {
         }
       }
 
+    case "hasDeliveredIntroduction":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["messageId"]
+            ),
+            let messageId = nonEmptyRecoveryString(arguments["messageId"]) else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.hasDeliveredIntroduction(messageId: messageId) { present in
+        DispatchQueue.main.async {
+          result(present)
+        }
+      }
+
     case "retireIntroduction":
       guard let arguments = recoveryArguments(
               call.arguments,

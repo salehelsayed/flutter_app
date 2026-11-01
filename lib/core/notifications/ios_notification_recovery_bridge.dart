@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../database/helpers/canonical_notification_badge_state_db_helpers.dart';
@@ -224,8 +225,20 @@ final class MethodChannelIosNotificationRecoveryBridge
     _requireAcknowledgement(response, method: 'retireIntroduction');
   }
 
-  Future<bool> hasDeliveredIntroduction({required String messageId}) async =>
-      false;
+  Future<bool> hasDeliveredIntroduction({required String messageId}) async {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return false;
+    try {
+      final response = await _channel.invokeMethod<Object?>(
+        'hasDeliveredIntroduction',
+        <String, Object?>{'messageId': messageId},
+      );
+      return response == true;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
 
   @override
   Future<void> clearAccount() async {

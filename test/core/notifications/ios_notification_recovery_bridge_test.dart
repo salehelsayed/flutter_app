@@ -63,7 +63,13 @@ void main() {
     });
 
     test('only a native boolean true establishes delivered presence', () async {
-      for (final reply in <Object?>[false, null, 1, 'true', {'ok': true}]) {
+      for (final reply in <Object?>[
+        false,
+        null,
+        1,
+        'true',
+        {'ok': true},
+      ]) {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
             .setMockMethodCallHandler(channel, (_) async => reply);
         expect(

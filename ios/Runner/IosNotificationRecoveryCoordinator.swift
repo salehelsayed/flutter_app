@@ -742,7 +742,18 @@ final class IosNotificationRecoveryCoordinator {
     messageId: String,
     completion: @escaping (Bool) -> Void
   ) {
-    completion(false)
+    let components = messageId.components(separatedBy: "::")
+    guard Self.isStrictRetirementIdentifier(messageId),
+          components.count >= 3,
+          components[components.count - 2] == "send",
+          !components[components.count - 1].isEmpty,
+          !components.dropLast(2).joined(separator: "::").isEmpty else {
+      completion(false)
+      return
+    }
+    center.getDeliveredNotificationSnapshots { delivered in
+      completion(delivered.contains { $0.matchesIntroduction(messageId: messageId) })
+    }
   }
 
   func retireIntroduction(

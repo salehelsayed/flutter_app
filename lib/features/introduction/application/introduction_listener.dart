@@ -12,6 +12,7 @@ import 'package:flutter_app/features/introduction/application/handle_incoming_in
 import 'package:flutter_app/features/introduction/application/introduction_copy.dart';
 import 'package:flutter_app/features/introduction/application/insert_intro_system_message.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -397,7 +398,11 @@ class IntroductionListener {
                   payload: notificationPayload,
                   messageId: messageId,
                 );
-            if (!alreadyAnnounced) {
+            final alreadyDelivered =
+                alreadyAnnounced ||
+                await MethodChannelIosNotificationRecoveryBridge()
+                    .hasDeliveredIntroduction(messageId: messageId);
+            if (!alreadyDelivered) {
               await notificationService!.showNotification(
                 title: 'New Introduction',
                 body: body,
