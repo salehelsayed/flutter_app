@@ -10222,6 +10222,18 @@ visible and cannot become an ordinary first-attempt PASS.
   than resetting it. [Episode and focus evidence](../../.codex-test-logs/audio-call-beta-rest-20260917/recovery/source-review.json)
   and the [queued-timeout regression](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate140-source/reconnect/audio-beta-timer-episode-red.log)
   are source proofs, separate from historical secure-transition device causes.
+  **VC-024 virtual long-call preservation:** the coordinator and screen tests
+  cover a virtual 30-minute call, repeated recovery, stable connected time,
+  terminal history duration, cleanup acknowledgement, screen remount/disposal,
+  and admission of another contact despite stale prior-call timer callbacks.
+  The coordinator, screen and RTP sampler selection passed 57 tests; focused
+  analysis reported no issues. Commands and first-attempt results are retained
+  in `.codex-test-logs/vc024-20261101/{tests,analyze}/` in the VC-024 worktree.
+  These fakes do not exercise endpoint resolution, native cleanup, sustained
+  audio or resource use. They cannot close a contact-specific unavailable-call
+  incident or certify a production soak. The
+  [long-call runbook](vc024-long-call-runbook.md) defines the separately required
+  device observations and approved resource investigation thresholds.
   An offline terminal send may fail immediately while local history, native
   acknowledgement and context cleanup complete. Its bounded delivery owner
   retains only the already sealed envelope and immutable destination metadata;

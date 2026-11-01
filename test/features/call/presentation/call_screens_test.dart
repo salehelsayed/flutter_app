@@ -54,6 +54,39 @@ void main() {
   );
 
   group('foreground call screens', () {
+    testWidgets('VC-024 duration survives thirty minutes and remounts', (
+      tester,
+    ) async {
+      final connectedAt = DateTime.utc(2026, 11, 1);
+      var now = connectedAt;
+      for (final minutes in [0, 5, 15, 30]) {
+        now = connectedAt.add(Duration(minutes: minutes));
+        await tester.pumpWidget(
+          wrap(
+            ActiveCallScreen(
+              contactPeerId: 'contact-a',
+              contactUsername: 'Alice',
+              state: minutes == 15
+                  ? CallState.reconnecting
+                  : CallState.connected,
+              connectedAt: connectedAt,
+              now: () => now,
+              controls: controls(),
+            ),
+          ),
+        );
+        expect(
+          find.text('${minutes.toString().padLeft(2, '0')}:00'),
+          findsOneWidget,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        // A disposed call screen must not retain its periodic repaint timer.
+        await tester.pump(const Duration(seconds: 60));
+        expect(tester.binding.transientCallbackCount, 0);
+        expect(tester.takeException(), isNull);
+      }
+    });
+
     for (final entry in const {
       'de': (
         connecting: 'Verbindung wird hergestellt',

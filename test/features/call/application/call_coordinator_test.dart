@@ -420,6 +420,107 @@ void main() {
     },
   );
 
+  test(
+    'VC-024 thirty-minute call retires timers and admits another contact',
+    () async {
+      final history = _MemoryHistoryRepository();
+      final timers = _FakeTimerScheduler();
+      var now = _now;
+      var cleanups = 0;
+      final secondId = CallId.parse('66666666-6666-4666-8666-666666666666');
+      final ids = <CallId>[_callId, secondId].iterator;
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator([
+          CallCleanupStep('media', (_) async {
+            cleanups++;
+          }, requiredForTerminalAck: true),
+        ]),
+        historyProjector: CallHistoryProjector(history, clock: () => now),
+        effectExecutor: _RecordingExecutor(),
+        clock: () => now,
+        idSource: () {
+          expect(ids.moveNext(), isTrue);
+          return ids.current;
+        },
+        timerScheduler: timers,
+      );
+      addTearDown(coordinator.dispose);
+      var sequence = 0;
+      Future<void> event(CallEventType type, CallId id, String contact) async {
+        await coordinator.dispatch(
+          CallEvent(
+            type: type,
+            eventId: 'soak-${sequence++}',
+            occurredAt: now,
+            callId: id,
+            contactPeerId: contact,
+            localAccountPeerId: 'local-account',
+            localDeviceId: 'local-device',
+            remoteAccountPeerId: contact,
+            remoteDeviceId: '$contact-device',
+          ),
+        );
+      }
+
+      Future<void> connect(CallId id, String contact) async {
+        final placed = await coordinator.placeCall(
+          contactPeerId: contact,
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-device',
+        );
+        expect(placed.decision, CallEventDecision.applied);
+        expect(placed.snapshot.callId, id);
+        for (final type in [
+          CallEventType.outgoingInviteReady,
+          CallEventType.remoteAccept,
+          CallEventType.negotiationReady,
+          CallEventType.mediaConnected,
+        ]) {
+          await event(type, id, contact);
+        }
+        expect(coordinator.activeSession?.state, CallState.connected);
+      }
+
+      await connect(_callId, 'contact-a');
+      final connectedAt = coordinator.activeSession!.connectedAt;
+      // Virtual elapsed time and supplied media observations, not a physical soak.
+      for (final minute in [5, 15, 29]) {
+        now = _now.add(Duration(minutes: minute));
+        await event(CallEventType.mediaLost, _callId, 'contact-a');
+        expect(timers.scheduled.where((t) => !t.canceled), hasLength(1));
+        now = now.add(const Duration(seconds: 2));
+        await event(CallEventType.mediaRecovered, _callId, 'contact-a');
+        expect(coordinator.activeSession?.callId, _callId);
+        expect(coordinator.activeSession?.connectedAt, connectedAt);
+        expect(timers.scheduled.where((t) => !t.canceled), isEmpty);
+      }
+      now = _now.add(const Duration(minutes: 30));
+      await event(CallEventType.end, _callId, 'contact-a');
+      expect(coordinator.activeSession, isNull);
+      expect(coordinator.terminalCleanupAckReady(_callId), isTrue);
+      expect(cleanups, 1);
+      final row = history.rows[_callId]!;
+      expect(
+        row.endedAt.difference(row.connectedAt!),
+        const Duration(minutes: 30),
+      );
+      final oldCallbacks = timers.scheduled.toList();
+      await connect(secondId, 'contact-b');
+      for (final timer in oldCallbacks) {
+        await timer.callback();
+      }
+      expect(coordinator.activeSession?.callId, secondId);
+      expect(coordinator.activeSession?.contactPeerId, 'contact-b');
+      expect(coordinator.activeSession?.state, CallState.connected);
+      expect(history.rows, hasLength(1));
+      await event(CallEventType.end, secondId, 'contact-b');
+      expect(cleanups, 2);
+      expect(history.rows, hasLength(2));
+      expect(timers.scheduled.where((t) => !t.canceled), isEmpty);
+    },
+  );
+
   for (final throwing in [false, true]) {
     test(
       'scheduled deadline observation preserves actual origins and no-answer when sink throws=$throwing',
