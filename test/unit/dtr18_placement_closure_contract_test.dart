@@ -28,7 +28,9 @@ const _relocations = <String, List<String>>{
     // Contact decisions retain this data adapter and its existing delegates;
     // the guarded SQL function moves here byte-identically from core.
     // See contact-request-decisions-20261026/architecture-placement-proof.json.
-    '3d92f9cb43074e905cf67dd651f78e56f0b4db6d72e6a18716e053ab760f2a5e',
+    // CR-008 adds an injected onRequestDecided hook to this same adapter so a
+    // settled request retires its notification card; imports are unchanged.
+    'b73055eb001fb37c173b97f70d87cbeeecc210fec1c01d068505563bbd411841',
   ],
   'lib/features/contacts/domain/repositories/'
       'contact_repository_impl.dart': <String>[
