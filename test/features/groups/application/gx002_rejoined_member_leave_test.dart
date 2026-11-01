@@ -449,8 +449,9 @@ void main() {
           // must not be omitted to make the membership repro easier to obtain.
           a.rotateAfterRemoteRemoval = (id) async {
             final outcome = await _rotateAsPeer(a, peers, id, keyDeliveries);
-            if (outcome.rotated)
+            if (outcome.rotated) {
               creatorRotations.add(outcome.key!.keyGeneration);
+            }
             return outcome.rotated;
           };
           addTearDown(() async {

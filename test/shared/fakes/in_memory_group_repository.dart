@@ -344,6 +344,14 @@ class InMemoryGroupRepository
       );
     }
     final acceptedAt = watermark.isAfter(issuedAt) ? watermark : issuedAt;
+    final suppliedEventId = group.lastMembershipEventId;
+    final membershipEventId =
+        group.lastMembershipEventAt?.isAtSameMomentAs(watermark) == true &&
+            suppliedEventId != null &&
+            suppliedEventId.isNotEmpty &&
+            suppliedEventId == suppliedEventId.trim()
+        ? suppliedEventId
+        : null;
     final authority = _shellAuthority(group.id, selfPeerId);
     final floor = _removalFloors[group.id];
     final isMarked =
@@ -376,6 +384,7 @@ class InMemoryGroupRepository
       signedIssuedAt: signedIssuedAt,
       keyGeneration: key.keyGeneration,
       acceptedAt: acceptedAt,
+      membershipEventId: membershipEventId,
       group: _groups[group.id],
       members: Map<String, GroupMember>.from(
         _members[group.id] ?? const <String, GroupMember>{},
@@ -384,8 +393,8 @@ class InMemoryGroupRepository
     );
     _groups[group.id] = group.copyWith(
       selfRemovedAt: null,
-      lastMembershipEventAt: acceptedAt,
-      lastMembershipEventId: null,
+      lastMembershipEventAt: watermark,
+      lastMembershipEventId: membershipEventId,
     );
     _members[group.id] = {for (final member in roster) member.peerId: member};
     _keys[group.id] = <GroupKeyInfo>[key];
@@ -411,7 +420,10 @@ class InMemoryGroupRepository
     final current = _shellAuthority(groupId, selfPeerId);
     if (current.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
         current.lastMembershipEventAt == null ||
-        !current.lastMembershipEventAt!.isAtSameMomentAs(prior.acceptedAt)) {
+        !current.lastMembershipEventAt!.isAtSameMomentAs(
+          DateTime.parse(prior.signedMembershipWatermark),
+        ) ||
+        current.lastMembershipEventId != prior.membershipEventId) {
       return SelfRemovedAcceptedRollbackOutcome.refusedStateChanged;
     }
     if (prior.group == null) {
@@ -454,9 +466,9 @@ class InMemoryGroupRepository
         authority.shape != SelfRemovedShellAuthorityShape.unmarkedSelfPresent ||
         authority.lastMembershipEventAt == null ||
         !authority.lastMembershipEventAt!.isAtSameMomentAs(
-          accepted.acceptedAt,
+          DateTime.parse(accepted.signedMembershipWatermark),
         ) ||
-        authority.lastMembershipEventId != null ||
+        authority.lastMembershipEventId != accepted.membershipEventId ||
         latestKey?.keyGeneration != keyGeneration) {
       return SelfRemovedAcceptedRetryAuthorizationOutcome.refusedStateChanged;
     }
@@ -841,6 +853,7 @@ class _AcceptedReentrySnapshot {
     required this.signedIssuedAt,
     required this.keyGeneration,
     required this.acceptedAt,
+    required this.membershipEventId,
     required this.group,
     required this.members,
     required this.keys,
@@ -852,6 +865,7 @@ class _AcceptedReentrySnapshot {
   final String signedIssuedAt;
   final int keyGeneration;
   final DateTime acceptedAt;
+  final String? membershipEventId;
   final GroupModel? group;
   final Map<String, GroupMember> members;
   final List<GroupKeyInfo> keys;

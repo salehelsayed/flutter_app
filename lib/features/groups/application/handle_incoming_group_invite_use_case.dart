@@ -1001,13 +1001,15 @@ materializeAcceptedGroupInvitePayload({
       (membershipWatermarkAt == null || inviteIssuedAt == null)) {
     return (HandleGroupInviteResult.invalidPayload, null);
   }
-  final acceptedMembershipWatermarkAt = isPostRemovalReentry
+  // Issuance authorizes local reentry; it is not a shared membership event.
+  final acceptedMembershipWatermarkAt = membershipWatermarkAt ?? inviteIssuedAt;
+  final acceptedMemberFallbackAt = isPostRemovalReentry
       ? _laterInstant(membershipWatermarkAt!, inviteIssuedAt!)
-      : membershipWatermarkAt ?? inviteIssuedAt;
+      : acceptedMembershipWatermarkAt;
 
   // The already authenticated invite config may carry the complete committed
   // membership version. Timestamp-only legacy invitations remain timestamp-only;
-  // never invent a tie-breaker or attach it to a newer reentry issuance floor.
+  // never invent a tie-breaker or replace this version with local issuance.
   String? acceptedMembershipEventId;
   if (config.containsKey(groupConfigMembershipVersionField)) {
     final version = config[groupConfigMembershipVersionField];
@@ -1060,7 +1062,7 @@ materializeAcceptedGroupInvitePayload({
       map: Map<String, dynamic>.from(memberMap),
       joinedAt: _acceptedMemberJoinedAt(
         Map<String, dynamic>.from(memberMap),
-        membershipWatermarkAt: acceptedMembershipWatermarkAt,
+        membershipWatermarkAt: acceptedMemberFallbackAt,
         materializedAt: materializedAt,
       ),
     );

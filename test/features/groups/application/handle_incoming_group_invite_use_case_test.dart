@@ -1285,7 +1285,7 @@ void main() {
         expect(acceptedId, groupId);
         expect(
           (await groupRepo.getGroup(groupId))?.lastMembershipEventAt,
-          laterIssuedAt,
+          removedAt,
         );
       },
     );
@@ -1391,7 +1391,7 @@ void main() {
           (await deleteFirstRepository.getGroup(
             deleteFirstGroupId,
           ))?.lastMembershipEventAt,
-          deleteFirstAcceptedAt,
+          deleteFirstRemovedAt,
         );
         expect(
           await deleteFirstRepository.getMember(deleteFirstGroupId, selfPeerId),
@@ -1455,7 +1455,7 @@ void main() {
           acceptFirstGroupId,
         );
         expect(acceptedGroup?.selfRemovedAt, isNull);
-        expect(acceptedGroup?.lastMembershipEventAt, acceptFirstAcceptedAt);
+        expect(acceptedGroup?.lastMembershipEventAt, acceptFirstRemovedAt);
         expect(
           await acceptFirstRepository.getMember(acceptFirstGroupId, selfPeerId),
           isNotNull,

@@ -1234,8 +1234,10 @@ dbCommitSelfRemovedGroupAcceptedReentry(
       );
       if (committed.shape !=
               SelfRemovedGroupShellAuthorityShape.unmarkedSelfPresent ||
-          committed._lastMembershipEventAtRaw != material.acceptedAtRaw ||
-          committed.lastMembershipEventId != null) {
+          committed._lastMembershipEventAtRaw !=
+              material.groupRow['last_membership_event_at'] ||
+          committed.lastMembershipEventId !=
+              material.groupRow['last_membership_event_id']) {
         throw const _AcceptedReentryStateChanged();
       }
       final binding = _acceptedBindingFromEventRow(bindingAppend.row).binding;
@@ -1743,8 +1745,7 @@ dbQualifySelfRemovedGroupAcceptedRollback(
           selected.keyHash != state.keyHash ||
           selected.draftHash != state.draftHash ||
           selected.selfPeerId != selfPeerId ||
-          selected.acceptedAtRaw != current._lastMembershipEventAtRaw ||
-          current.lastMembershipEventId != null) {
+          !_acceptedBindingMatchesMembershipAuthority(selected, current)) {
         return refusal(
           SelfRemovedGroupAcceptedRollbackQualificationDisposition
               .refusedStateChanged,
@@ -1902,8 +1903,7 @@ dbAuthorizeSelfRemovedGroupAcceptedReentryRetry(
           selected.signedMembershipWatermarkRaw != signedMembershipWatermark ||
           selected.signedIssuedAtRaw != signedIssuedAt ||
           selected.keyGeneration != keyGeneration ||
-          selected.acceptedAtRaw != current._lastMembershipEventAtRaw ||
-          current.lastMembershipEventId != null) {
+          !_acceptedBindingMatchesMembershipAuthority(selected, current)) {
         return SelfRemovedGroupAcceptedRetryAuthorizationDisposition
             .refusedStateChanged;
       }
@@ -2185,8 +2185,7 @@ dbRollbackSelfRemovedGroupAcceptedReentry(
           selected.keyHash != state.keyHash ||
           selected.draftHash != state.draftHash ||
           selected.selfPeerId != selfPeerId ||
-          selected.acceptedAtRaw != current._lastMembershipEventAtRaw ||
-          current.lastMembershipEventId != null) {
+          !_acceptedBindingMatchesMembershipAuthority(selected, current)) {
         return _acceptedRollbackRefusal(
           SelfRemovedGroupAcceptedRollbackDisposition.refusedStateChanged,
           current,
@@ -2256,13 +2255,14 @@ dbRollbackSelfRemovedGroupAcceptedReentry(
           'last_membership_event_at = ?, last_membership_event_id = ? '
           'WHERE id = ? AND self_removed_at IS NULL '
           'AND last_membership_event_at = ? '
-          'AND last_membership_event_id IS NULL',
+          'AND last_membership_event_id IS ?',
           <Object?>[
             floorEvidence.selfRemovedAtRaw,
             floorEvidence.lastMembershipEventAtRaw,
             floorEvidence.floor.lastMembershipEventId,
             groupId,
-            selected.acceptedAtRaw,
+            current._lastMembershipEventAtRaw,
+            current.lastMembershipEventId,
           ],
         );
         if (updated != 1) throw const _AcceptedReentryStateChanged();
@@ -2281,13 +2281,14 @@ dbRollbackSelfRemovedGroupAcceptedReentry(
         final deletedGroup = await txn.rawDelete(
           'DELETE FROM groups WHERE id = ? AND self_removed_at IS NULL '
           'AND last_membership_event_at = ? '
-          'AND last_membership_event_id IS NULL '
+          'AND last_membership_event_id IS ? '
           'AND EXISTS (SELECT 1 FROM group_keys key '
           'WHERE key.group_id = groups.id AND key.key_generation = ? '
           'AND key.encrypted_key = ? AND key.created_at = ?)',
           <Object?>[
             groupId,
-            selected.acceptedAtRaw,
+            current._lastMembershipEventAtRaw,
+            current.lastMembershipEventId,
             selected.keyGeneration,
             selected.keyReference,
             selected.keyCreatedAtRaw,
@@ -3469,9 +3470,26 @@ Future<_AcceptedReentryMaterial> _validateAcceptedReentryMaterial(
       SelfRemovedGroupAcceptedReentryDisposition.refusedInvalidMaterial,
     );
   }
+  final suppliedWatermarkRaw = normalizedGroup['last_membership_event_at'];
+  final suppliedWatermark = suppliedWatermarkRaw is String
+      ? DateTime.tryParse(suppliedWatermarkRaw)
+      : null;
+  final suppliedEventId = normalizedGroup['last_membership_event_id'];
+  // The caller supplies authenticated invite material. Retain its complete
+  // version only when its timestamp matches the separately verified watermark.
+  final membershipEventId =
+      suppliedWatermark != null &&
+          suppliedWatermark.isAtSameMomentAs(signedWatermark) &&
+          suppliedEventId is String &&
+          suppliedEventId.isNotEmpty &&
+          suppliedEventId == suppliedEventId.trim()
+      ? suppliedEventId
+      : null;
   normalizedGroup['self_removed_at'] = null;
-  normalizedGroup['last_membership_event_at'] = acceptedAtRaw;
-  normalizedGroup['last_membership_event_id'] = null;
+  normalizedGroup['last_membership_event_at'] = signedWatermark
+      .toUtc()
+      .toIso8601String();
+  normalizedGroup['last_membership_event_id'] = membershipEventId;
 
   final peerIds = <String>{};
   String? selfJoinedAtRaw;
@@ -3974,7 +3992,7 @@ Map<String, Object?> _acceptedBindingPayload({
     'signedMembershipWatermark': material.signedMembershipWatermarkRaw,
     'signedIssuedAt': material.signedIssuedAtRaw,
     'acceptedAt': material.acceptedAtRaw,
-    'lastMembershipEventId': null,
+    'lastMembershipEventId': material.groupRow['last_membership_event_id'],
     'selfJoinedAt': material.selfJoinedAtRaw,
     'keyGeneration': material.keyGeneration,
     'keyReference': material.keyReference,
@@ -4039,6 +4057,7 @@ class _AcceptedBindingEvidence {
     required this.signedMembershipWatermarkRaw,
     required this.signedIssuedAtRaw,
     required this.acceptedAtRaw,
+    required this.lastMembershipEventId,
     required this.selfJoinedAtRaw,
     required this.keyGeneration,
     required this.keyReference,
@@ -4065,6 +4084,7 @@ class _AcceptedBindingEvidence {
   final String signedMembershipWatermarkRaw;
   final String signedIssuedAtRaw;
   final String acceptedAtRaw;
+  final String? lastMembershipEventId;
   final String selfJoinedAtRaw;
   final int keyGeneration;
   final String keyReference;
@@ -4076,6 +4096,23 @@ class _AcceptedBindingEvidence {
   final String keyHash;
   final String draftHash;
   final String stateFingerprint;
+}
+
+// The full bound-state hashes are checked by each caller. Legacy v1 bindings
+// projected acceptedAt with no ID; new bindings retain the signed shared pair.
+bool _acceptedBindingMatchesMembershipAuthority(
+  _AcceptedBindingEvidence binding,
+  SelfRemovedGroupShellAuthoritySnapshot current,
+) {
+  if (current.lastMembershipEventId != binding.lastMembershipEventId) {
+    return false;
+  }
+  final canonicalWatermark = DateTime.parse(
+    binding.signedMembershipWatermarkRaw,
+  ).toUtc().toIso8601String();
+  return current._lastMembershipEventAtRaw == canonicalWatermark ||
+      (binding.lastMembershipEventId == null &&
+          current._lastMembershipEventAtRaw == binding.acceptedAtRaw);
 }
 
 _AcceptedBindingEvidence _acceptedBindingFromEventRow(
@@ -4099,7 +4136,11 @@ _AcceptedBindingEvidence _acceptedBindingFromEventRow(
       decoded['signedMembershipWatermark'] is! String ||
       decoded['signedIssuedAt'] is! String ||
       decoded['acceptedAt'] is! String ||
-      decoded['lastMembershipEventId'] != null ||
+      (decoded['lastMembershipEventId'] != null &&
+          (decoded['lastMembershipEventId'] is! String ||
+              (decoded['lastMembershipEventId'] as String).isEmpty ||
+              decoded['lastMembershipEventId'] !=
+                  (decoded['lastMembershipEventId'] as String).trim())) ||
       decoded['selfJoinedAt'] is! String ||
       decoded['keyGeneration'] is! int ||
       decoded['keyReference'] is! String ||
@@ -4205,6 +4246,7 @@ _AcceptedBindingEvidence _acceptedBindingFromEventRow(
         decoded['signedMembershipWatermark'] as String,
     signedIssuedAtRaw: decoded['signedIssuedAt'] as String,
     acceptedAtRaw: decoded['acceptedAt'] as String,
+    lastMembershipEventId: decoded['lastMembershipEventId'] as String?,
     selfJoinedAtRaw: decoded['selfJoinedAt'] as String,
     keyGeneration: keyGeneration,
     keyReference: keyReference,

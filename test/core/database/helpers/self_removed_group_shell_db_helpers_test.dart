@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_app/core/database/helpers/group_history_gap_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
@@ -1131,6 +1133,132 @@ void main() {
     },
   );
 
+  test(
+    'A5 legacy v1 pending reentry retains exact retry and qualified rollback',
+    () async {
+      // Captured from the real pre-fix prepare/stage/commit implementation.
+      // Keep its original event payloads and hashes; do not re-sign this fixture.
+      final fixture =
+          jsonDecode(
+                File(
+                  'test/core/database/helpers/fixtures/a5_legacy_reentry.json',
+                ).readAsStringSync(),
+              )
+              as Map<String, dynamic>;
+      expect(fixture['formatVersion'], 1);
+      expect(
+        fixture['producerSourceCommit'],
+        '03312f766f13f9e2ac52dbeec66b1e078d0fe63c',
+      );
+      expect(
+        fixture['producerSqlHelperSha256'],
+        '506cf375c21f27bdf25c5d4f036f1b52f8fb6f943d55f0c0db5e4d5d3759c205',
+      );
+      final tables = fixture['tables'] as Map<String, dynamic>;
+      for (final table in const [
+        'groups',
+        'group_members',
+        'group_keys',
+        'group_key_rotation_drafts',
+        'group_event_log',
+      ]) {
+        for (final row in tables[table] as List<dynamic>) {
+          await db.insert(table, Map<String, Object?>.from(row as Map));
+        }
+      }
+      final groupId = fixture['groupId'] as String;
+      final selfPeerId = fixture['selfPeerId'] as String;
+      final authorizationId = fixture['authorizationId'] as String;
+      final legacyGroup = (await db.query(
+        'groups',
+        where: 'id = ?',
+        whereArgs: [groupId],
+      )).single;
+      expect(
+        legacyGroup['last_membership_event_at'],
+        fixture['signedIssuedAt'],
+      );
+      expect(legacyGroup['last_membership_event_id'], isNull);
+      expect(
+        DateTime.parse(fixture['signedIssuedAt'] as String).isAfter(
+          DateTime.parse(fixture['signedMembershipWatermark'] as String),
+        ),
+        isTrue,
+      );
+      Future<SelfRemovedGroupAcceptedRetryAuthorizationDisposition> retry() =>
+          dbAuthorizeSelfRemovedGroupAcceptedReentryRetry(
+            db,
+            groupId: groupId,
+            selfPeerId: selfPeerId,
+            authorizationId: authorizationId,
+            signedMembershipWatermark:
+                fixture['signedMembershipWatermark'] as String,
+            signedIssuedAt: fixture['signedIssuedAt'] as String,
+            keyGeneration: fixture['keyGeneration'] as int,
+          );
+      // Accepting the legacy timestamp cannot authorize a changed tuple or a
+      // different row under the old binding's exact full-state fingerprint.
+      for (final change in const <Map<String, Object?>>[
+        {'last_membership_event_id': 'unbound-a5-version'},
+        {'name': 'unbound-a5-group-name'},
+      ]) {
+        await db.update(
+          'groups',
+          change,
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+        expect(
+          await retry(),
+          isNot(
+            SelfRemovedGroupAcceptedRetryAuthorizationDisposition.authorized,
+          ),
+        );
+        final refused = await dbQualifySelfRemovedGroupAcceptedRollback(
+          db,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          authorizationId: authorizationId,
+        );
+        expect(refused.qualified, isFalse);
+        await db.update(
+          'groups',
+          legacyGroup,
+          where: 'id = ?',
+          whereArgs: [groupId],
+        );
+      }
+      expect(
+        await retry(),
+        SelfRemovedGroupAcceptedRetryAuthorizationDisposition.authorized,
+      );
+      final qualified = await dbQualifySelfRemovedGroupAcceptedRollback(
+        db,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+      );
+      expect(qualified.qualified, isTrue);
+      final rolledBack = await dbRollbackSelfRemovedGroupAcceptedReentry(
+        db,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        authorizationId: authorizationId,
+        qualification: qualified.qualification,
+      );
+      expect(rolledBack.rolledBack, isTrue);
+      expect(
+        rolledBack.authority.shape,
+        SelfRemovedGroupShellAuthorityShape.markedSelfAbsent,
+      );
+      expect(rolledBack.authority.selfRemovedAt, DateTime.parse(_removedAt));
+      expect(
+        rolledBack.binding!.acceptedAt,
+        DateTime.parse(fixture['signedIssuedAt'] as String),
+      );
+    },
+  );
+
   for (final absentPrior in [false, true]) {
     test(
       'A5 SQL accepted reentry preserves signed membership version with later '
@@ -1232,7 +1360,16 @@ void main() {
               ? SelfRemovedGroupShellAuthorityShape.absent
               : SelfRemovedGroupShellAuthorityShape.markedSelfAbsent,
         );
-        expect(await _countForGroup(db, 'group_keys', groupId), 0);
+        // SQL rollback retains the owned key address until the caller deletes
+        // primary/mirror material and invokes the existing key finalizer.
+        expect(
+          (await db.query(
+            'group_keys',
+            where: 'group_id = ?',
+            whereArgs: [groupId],
+          )).single['encrypted_key'],
+          rolledBack.binding!.encryptedKeyReference,
+        );
       },
     );
   }

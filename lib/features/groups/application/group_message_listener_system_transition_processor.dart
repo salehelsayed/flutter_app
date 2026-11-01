@@ -4390,17 +4390,49 @@ final class _GroupMessageSystemTransitionProcessor {
       );
     }
 
+    final memberData = parsed['member'] as Map<String, dynamic>?;
+    final removedPeerId = memberData?['peerId'] as String?;
+    final existingMember = removedPeerId != null && removedPeerId.isNotEmpty
+        ? await _groupRepo.getMember(groupId, removedPeerId)
+        : null;
+    final joinedAt = existingMember?.joinedAt.toUtc();
+    // A local reentry can have a newer joinedAt than the shared watermark.
+    if (removedPeerId != null &&
+        removedPeerId.isNotEmpty &&
+        existingMember != null &&
+        joinedAt != null &&
+        joinedAt.isAfter(eventAt)) {
+      final deleted = await _deleteContentMessagesAtOrAfterRemoval(
+        groupId: groupId,
+        removedPeerId: removedPeerId,
+        removedAt: eventAt,
+        beforeRejoinAt: joinedAt,
+        msgRepo: msgRepo,
+      );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_REPAIRED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'memberPeerId': removedPeerId.length > 8
+              ? removedPeerId.substring(0, 8)
+              : removedPeerId,
+          'eventAt': eventAt.toIso8601String(),
+          'rejoinedAt': joinedAt.toIso8601String(),
+          'deletedCount': deleted,
+        },
+      );
+      return true;
+    }
+
     final watermark = await _resolveMembershipEventWatermark(groupId);
     if (watermark == null || eventAt.isAfter(watermark)) {
       return false;
     }
 
-    final memberData = parsed['member'] as Map<String, dynamic>?;
-    final removedPeerId = memberData?['peerId'] as String?;
     if (allowProtectedProjectionRepair &&
         removedPeerId != null &&
         removedPeerId.isNotEmpty) {
-      final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
       if (existingMember == null ||
           !existingMember.joinedAt.toUtc().isAfter(eventAt.toUtc())) {
         final laterAdd = await msgRepo.getLatestSystemEventTimestampForTarget(
@@ -4414,32 +4446,7 @@ final class _GroupMessageSystemTransitionProcessor {
       }
     }
     if (removedPeerId != null && removedPeerId.isNotEmpty) {
-      final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
-      final joinedAt = existingMember?.joinedAt.toUtc();
       if (existingMember != null && joinedAt != null) {
-        if (joinedAt.isAfter(eventAt)) {
-          final deleted = await _deleteContentMessagesAtOrAfterRemoval(
-            groupId: groupId,
-            removedPeerId: removedPeerId,
-            removedAt: eventAt,
-            beforeRejoinAt: joinedAt,
-            msgRepo: msgRepo,
-          );
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_MESSAGE_LISTENER_STALE_MEMBER_REMOVED_REPAIRED',
-            details: {
-              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-              'memberPeerId': removedPeerId.length > 8
-                  ? removedPeerId.substring(0, 8)
-                  : removedPeerId,
-              'eventAt': eventAt.toIso8601String(),
-              'rejoinedAt': joinedAt.toIso8601String(),
-              'deletedCount': deleted,
-            },
-          );
-          return true;
-        }
         if (hasExplicitConfigVersion) {
           emitFlowEvent(
             layer: 'FL',

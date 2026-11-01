@@ -7570,12 +7570,40 @@ visible and cannot become an ordinary first-attempt PASS.
   configurations now carry optional `membershipVersion` with the committed
   `eventAt` and `eventId`. The complete configuration is covered by the existing
   invite signature. Validate both fields against the authenticated freshness
-  watermark before materialization; retain the ID only when the accepted
-  timestamp still matches. A raised re-entry freshness floor must not retain an
-  older event ID. Pre-commit configuration overrides omit the pair, including
+  watermark before materialization; retain the ID with that signed timestamp.
+  Re-entry issuance authorizes the local transition but must not replace the
+  shared membership version. Private `acceptedAt` remains the later issuance/
+  watermark instant for the existing origin/binding evidence. Pre-commit
+  configuration overrides omit the pair, including
   an override equal to the stored timestamp. Legacy invitations without the
-  pair retain their behavior; resending an invite to an already joined group
+  pair remain timestamp-only; resending an invite to an already joined group
   does not silently repair older timestamp-only rows.
+  A5's create/accept/promote/remove/re-add/accept/leave regression reproduces
+  the consequence of publishing the local issuance floor as shared state:
+  A and B agree at key epoch 3, but B rejects C's signed leave pre-state and
+  keeps C as admin, including after listener recreation. Only the membership
+  timestamp hash differs. RED `03312f766` has one fresh-control pass and one
+  exact-history failure; real-SQL RED `58216897f` exposes the same timestamp
+  substitution. The corrected five-case selection passes shared canonical
+  timestamp/ID, private issuance evidence, qualified retry/rollback, member UI
+  and content-refusal checks. SQL rollback retains its owned key address until
+  external deletion and the existing finalizer; it is not itself key deletion.
+  The legacy-v1 fixture was exported unchanged by the real pre-fix SQL producer
+  (verified helper SHA `506cf375`), then imported under the fix. Its separate
+  passing case authorizes retry and qualified rollback of the old issuance-time/
+  null-ID projection while rejecting altered IDs and full-row hashes.
+  A member's newer `joinedAt` fence must run before the shared-watermark fast
+  path. The ML-017 race exposed a real intermediate regression: a delayed B3
+  removal newer than the canonical watermark but older than re-entry removed
+  the accepted member. Its unchanged stale-removal assertions failed after
+  correcting the two public-timestamp expectations, then passed after moving
+  the existing strict newer-join repair/ignore branch ahead of that fast path.
+  Protected supersession checks still run first; the existing content cutoff,
+  equal-time semantics, native actions and phase rules stay in place. The first
+  broader group failure and focused RED/GREEN remain in the same evidence tree.
+  Evidence and retained fixture/preservation failures are under
+  `.codex-test-logs/a5-20261101/`. Host crypto/transport are fakes; listener
+  recreation does not establish SQL reopen or device packet delivery.
   Both application-test peers now use the actual production replay callback,
   including its complete membership-version postcondition. The
   [eight-file validation](../../.codex-test-logs/audio-call-beta-rest-20260917/candidate148-source/group-media-invite-watermark-convergence/validation-summary-final-eight.json)
