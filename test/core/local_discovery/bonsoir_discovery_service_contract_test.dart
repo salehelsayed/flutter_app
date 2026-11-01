@@ -36,6 +36,8 @@ void main() {
     Future<void>? broadcastStartGate;
     Future<void>? discoveryReadyGate;
     _AndroidSerialResolveQueue? androidResolveQueue;
+    var replayA1Services = false;
+    final externalServices = <String, BonsoirService>{};
 
     _FakeBonsoirBroadcast broadcast() => broadcasts.last;
     _FakeBonsoirDiscovery discovery() => discoveries.last;
@@ -47,6 +49,8 @@ void main() {
       broadcastStartGate = null;
       discoveryReadyGate = null;
       androidResolveQueue = null;
+      replayA1Services = false;
+      externalServices.clear();
       service = BonsoirDiscoveryService(
         createBroadcast: (bonsoirService) {
           final fake = _FakeBonsoirBroadcast(bonsoirService)
@@ -69,9 +73,51 @@ void main() {
                           (event) => fake.emit(event),
                         ),
                   onStop: queue == null ? null : () => queue.dispose(owner),
+                  onFound: (found) {
+                    final key =
+                        '${found.type}/${found.name}/${queue == null ? found.attributes['peerId'] ?? '' : ''}';
+                    if (found.attributes.isNotEmpty ||
+                        !externalServices.containsKey(key)) {
+                      externalServices[key] = found;
+                    }
+                    if (queue != null) {
+                      queue.services['${found.type}/${found.name}'] =
+                          externalServices[key]!;
+                    }
+                  },
+                  onStart: () {
+                    if (!replayA1Services) return;
+                    final services = externalServices.values.toList();
+                    if (queue != null) {
+                      services.sort(
+                        (a, b) => (a.name == queue.targetName ? 1 : 0)
+                            .compareTo(b.name == queue.targetName ? 1 : 0),
+                      );
+                    }
+                    for (final found in services) {
+                      fake.emit(
+                        BonsoirDiscoveryEvent(
+                          type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                          service:
+                              queue != null && found.name == queue.targetName
+                              ? BonsoirService(
+                                  name: found.name,
+                                  type: found.type,
+                                  port: 0,
+                                  attributes: const {},
+                                )
+                              : found,
+                        ),
+                      );
+                    }
+                  },
                 )
                 ..startError = discoveryStartError
                 ..readyGate = discoveryReadyGate;
+          if (replayA1Services) {
+            fake.resolver.wasFound = (service) =>
+                fake.foundKeys.contains('${service.type}/${service.name}');
+          }
           discoveries.add(fake);
           return fake;
         },
@@ -85,6 +131,12 @@ void main() {
     });
 
     Future<void> flush() => Future<void>.delayed(Duration.zero);
+
+    Future<void> pumpA1Clock(FakeAsync clock, Zone realZone) async {
+      clock.flushMicrotasks();
+      await realZone.run(() => Future<void>.delayed(Duration.zero));
+      clock.flushMicrotasks();
+    }
 
     Future<P2PServiceImpl> healthService(
       _DiscoveryHealthBridge bridge,
@@ -582,6 +634,7 @@ void main() {
     ]) {
       test(scenario.name, () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        replayA1Services = true;
         addTearDown(() => debugDefaultTargetPlatformOverride = null);
         const targetId = 'account-migration-0123456789abcdef0123456789abcdef';
         const targetName = 'mknoon-456789abcdef';
@@ -599,85 +652,98 @@ void main() {
         late List<String> startedAtDeadline;
         late String? activeAtDeadline;
 
-        fakeAsync((clock) {
-          unawaited(service.startAdvertising('me-peer', 54321));
-          clock.flushMicrotasks();
-          discovery().emit(
-            BonsoirDiscoveryEvent(
-              type: BonsoirDiscoveryEventType.discoveryServiceFound,
-              service: BonsoirService(
-                name: targetName,
-                type: '_mknoon._tcp',
-                port: 51234,
-                attributes: const {'peerId': targetId},
+        final realZone = Zone.current;
+        await fakeAsync((clock) async {
+          try {
+            unawaited(service.startAdvertising('me-peer', 54321));
+            await pumpA1Clock(clock, realZone);
+            discovery().emit(
+              BonsoirDiscoveryEvent(
+                type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                service: BonsoirService(
+                  name: targetName,
+                  type: '_mknoon._tcp',
+                  port: 51234,
+                  attributes: const {'peerId': targetId},
+                ),
               ),
-            ),
-          );
-          clock.flushMicrotasks();
-          queue.resolveActive(targetName, host: '192.168.0.7', port: 51234);
-          clock.flushMicrotasks();
-          expect(service.getLocalPeer(targetId), isNotNull);
+            );
+            await pumpA1Clock(clock, realZone);
+            queue.resolveActive(targetName, host: '192.168.0.7', port: 51234);
+            await pumpA1Clock(clock, realZone);
+            expect(service.getLocalPeer(targetId), isNotNull);
 
-          // Android can find a different service before its TXT/identity arrives.
-          // Its dispatch ACK succeeds; its native ResolveListener never calls back.
-          discovery().emit(
-            BonsoirDiscoveryEvent(
-              type: BonsoirDiscoveryEventType.discoveryServiceFound,
-              service: BonsoirService(
-                name: unrelatedName,
-                type: '_mknoon._tcp',
-                port: 0,
+            // Android can find a different service before its TXT/identity arrives.
+            // Its dispatch ACK succeeds; its native ResolveListener never calls back.
+            discovery().emit(
+              BonsoirDiscoveryEvent(
+                type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                service: BonsoirService(
+                  name: unrelatedName,
+                  type: '_mknoon._tcp',
+                  port: 0,
+                ),
               ),
-            ),
-          );
-          clock.flushMicrotasks();
-          expect(queue.activeName, unrelatedName);
-          expect(queue.nativeStarted, [targetName, unrelatedName]);
+            );
+            await pumpA1Clock(clock, realZone);
+            expect(queue.activeName, unrelatedName);
+            expect(queue.nativeStarted, [targetName, unrelatedName]);
 
-          // DateTime.now is not advanced by fake_async. Back-date the actual
-          // cached endpoint to exercise production's real TTL predicate.
-          cached = LocalPeer(
-            peerId: targetId,
-            host: '192.168.0.7',
-            port: 51234,
-            discoveredAt: DateTime.now().toUtc().subtract(scenario.cacheAge),
-          );
-          service.debugSeedPeer(cached);
-          unawaited(
-            service.resolvePeer(targetId, timeout: budget).then((peer) {
-              result = peer;
-              completed = true;
-              completedAt = clock.elapsed;
-            }),
-          );
-          clock.flushMicrotasks();
+            // DateTime.now is not advanced by fake_async. Back-date the actual
+            // cached endpoint to exercise production's real TTL predicate.
+            cached = LocalPeer(
+              peerId: targetId,
+              host: '192.168.0.7',
+              port: 51234,
+              discoveredAt: DateTime.now().toUtc().subtract(scenario.cacheAge),
+            );
+            service.debugSeedPeer(cached);
+            unawaited(
+              service.resolvePeer(targetId, timeout: budget).then((peer) {
+                result = peer;
+                completed = true;
+                completedAt = clock.elapsed;
+              }),
+            );
+            await pumpA1Clock(clock, realZone);
 
-          if (scenario.cacheAge < LocalPeer.ttl) {
-            expect(completed, isTrue);
-            expect(result, same(cached));
-            expect(queue.queuedNames, isEmpty);
-          } else {
-            if (scenario.releaseHead) {
-              clock.elapse(const Duration(seconds: 4));
-              if (queue.activeName == unrelatedName) {
-                queue.failActive(unrelatedName);
-              }
-              clock.flushMicrotasks();
+            if (scenario.cacheAge < LocalPeer.ttl) {
+              expect(completed, isTrue);
+              expect(result, same(cached));
+              expect(queue.queuedNames, isEmpty);
             } else {
-              // Permit a real recovery to complete early; do not require the
-              // implementation to remain queued until its final deadline.
-              clock.elapse(budget);
-              clock.flushMicrotasks();
+              if (scenario.releaseHead) {
+                clock.elapse(const Duration(seconds: 4));
+                if (queue.activeName == unrelatedName) {
+                  queue.failActive(unrelatedName);
+                }
+                await pumpA1Clock(clock, realZone);
+              } else {
+                // Permit a real recovery to complete early; do not require the
+                // implementation to remain queued until its final deadline.
+                clock.elapse(const Duration(seconds: 6));
+                await pumpA1Clock(clock, realZone);
+                clock.elapse(const Duration(seconds: 6));
+                await pumpA1Clock(clock, realZone);
+              }
             }
+            queuedAtDeadline = queue.queuedNames;
+            startedAtDeadline = List<String>.of(queue.nativeStarted);
+            activeAtDeadline = queue.activeName;
+          } finally {
+            // Close replacement streams in the fake zone that owns them.
+            var stopped = false;
+            unawaited(service.stopAdvertising().then((_) => stopped = true));
+            await pumpA1Clock(clock, realZone);
+            expect(
+              stopped,
+              isTrue,
+              reason: 'A1 cleanup must finish in fake time',
+            );
           }
-          queuedAtDeadline = queue.queuedNames;
-          startedAtDeadline = List<String>.of(queue.nativeStarted);
-          activeAtDeadline = queue.activeName;
         });
 
-        // Dispose mirrors the plugin queue cleanup, not NSD cancellation. Finish
-        // cleanup before the intentional RED assertion so failure leaks no timer.
-        await service.stopAdvertising();
+        // Browse disposal clears queued entries without cancelling native NSD.
         expect(queue.queuedNames, isEmpty);
         expect(
           queue.activeName,
@@ -733,78 +799,91 @@ void main() {
       'A1 concurrent demands share one recovery and retain targets joining ready',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        replayA1Services = true;
         addTearDown(() => debugDefaultTargetPlatformOverride = null);
         final ready = Completer<void>();
         var completed = false;
         List<LocalPeer?>? results;
-        fakeAsync((clock) {
-          unawaited(service.startAdvertising('me-peer', 54321));
-          clock.flushMicrotasks();
-          final original = discovery();
-          for (final peerId in ['peer-a', 'peer-b']) {
+        final realZone = Zone.current;
+        await fakeAsync((clock) async {
+          try {
+            unawaited(service.startAdvertising('me-peer', 54321));
+            await pumpA1Clock(clock, realZone);
+            final original = discovery();
+            for (final peerId in ['peer-a', 'peer-b']) {
+              original.emit(
+                BonsoirDiscoveryEvent(
+                  type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                  service: _peerService(peerId, 51234),
+                ),
+              );
+            }
+            await pumpA1Clock(clock, realZone);
+            final first = service.resolvePeer(
+              'peer-a',
+              timeout: const Duration(seconds: 12),
+            );
+            final joined = service.resolvePeer(
+              'peer-a',
+              timeout: const Duration(seconds: 12),
+            );
+            discoveryReadyGate = ready.future;
+            clock.elapse(const Duration(seconds: 6));
+            await pumpA1Clock(clock, realZone);
+            expect(discoveries, hasLength(2));
+            final replacement = discovery();
+            expect(replacement.startCalls, 0);
+            final other = service.resolvePeer(
+              'peer-b',
+              timeout: const Duration(seconds: 12),
+            );
+            unawaited(
+              Future.wait([first, joined, other]).then((peers) {
+                results = peers;
+                completed = true;
+              }),
+            );
+            ready.complete();
+            await pumpA1Clock(clock, realZone);
+            expect(discoveries, hasLength(2));
+            expect(broadcasts, hasLength(1));
+            expect(broadcast().stopCalls, 0);
+            expect(replacement.startCalls, 1);
+            expect(
+              replacement.resolver.resolved.map((s) => s.attributes['peerId']),
+              ['peer-a', 'peer-b'],
+            );
+            replacement.emit(
+              _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
+            );
+            replacement.emit(
+              _resolvedEvent('peer-b', host: '192.168.0.9', port: 51236),
+            );
+            await pumpA1Clock(clock, realZone);
+            expect(completed, isTrue);
+            expect(results!.map((p) => p!.host), [
+              '192.168.0.8',
+              '192.168.0.8',
+              '192.168.0.9',
+            ]);
+            // A late native callback still belongs to the disposed browser.
             original.emit(
-              BonsoirDiscoveryEvent(
-                type: BonsoirDiscoveryEventType.discoveryServiceFound,
-                service: _peerService(peerId, 51234),
-              ),
+              _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
+            );
+            await pumpA1Clock(clock, realZone);
+            expect(service.getLocalPeer('peer-a')!.host, '192.168.0.8');
+          } finally {
+            // Close replacement streams in the fake zone that owns them.
+            var stopped = false;
+            unawaited(service.stopAdvertising().then((_) => stopped = true));
+            await pumpA1Clock(clock, realZone);
+            expect(
+              stopped,
+              isTrue,
+              reason: 'A1 cleanup must finish in fake time',
             );
           }
-          clock.flushMicrotasks();
-          final first = service.resolvePeer(
-            'peer-a',
-            timeout: const Duration(seconds: 12),
-          );
-          final joined = service.resolvePeer(
-            'peer-a',
-            timeout: const Duration(seconds: 12),
-          );
-          discoveryReadyGate = ready.future;
-          clock.elapse(const Duration(seconds: 6));
-          clock.flushMicrotasks();
-          expect(discoveries, hasLength(2));
-          final replacement = discovery();
-          expect(replacement.startCalls, 0);
-          final other = service.resolvePeer(
-            'peer-b',
-            timeout: const Duration(seconds: 12),
-          );
-          unawaited(
-            Future.wait([first, joined, other]).then((peers) {
-              results = peers;
-              completed = true;
-            }),
-          );
-          ready.complete();
-          clock.flushMicrotasks();
-          expect(discoveries, hasLength(2));
-          expect(broadcasts, hasLength(1));
-          expect(broadcast().stopCalls, 0);
-          expect(replacement.startCalls, 1);
-          expect(
-            replacement.resolver.resolved.map((s) => s.attributes['peerId']),
-            ['peer-a', 'peer-b'],
-          );
-          replacement.emit(
-            _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
-          );
-          replacement.emit(
-            _resolvedEvent('peer-b', host: '192.168.0.9', port: 51236),
-          );
-          clock.flushMicrotasks();
-          expect(completed, isTrue);
-          expect(results!.map((p) => p!.host), [
-            '192.168.0.8',
-            '192.168.0.8',
-            '192.168.0.9',
-          ]);
-          // A late native callback still belongs to the disposed browser.
-          original.emit(
-            _resolvedEvent('peer-a', host: '192.168.0.7', port: 51234),
-          );
-          clock.flushMicrotasks();
-          expect(service.getLocalPeer('peer-a')!.host, '192.168.0.8');
         });
-        await service.stopAdvertising();
       },
     );
 
@@ -812,152 +891,25 @@ void main() {
       'A1 held recovery ready expires at the original deadline and permits retry',
       () async {
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        replayA1Services = true;
         addTearDown(() => debugDefaultTargetPlatformOverride = null);
         final ready = Completer<void>();
         var completed = false;
         LocalPeer? result;
         var retried = false;
         LocalPeer? retryResult;
-        fakeAsync((clock) {
-          unawaited(service.startAdvertising('me-peer', 54321));
-          clock.flushMicrotasks();
-          discovery().emit(
-            BonsoirDiscoveryEvent(
-              type: BonsoirDiscoveryEventType.discoveryServiceFound,
-              service: _peerService('peer-a', 51234),
-            ),
-          );
-          clock.flushMicrotasks();
-          unawaited(
-            service
-                .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
-                .then((peer) {
-                  completed = true;
-                  result = peer;
-                }),
-          );
-          discoveryReadyGate = ready.future;
-          clock.elapse(const Duration(seconds: 6));
-          clock.flushMicrotasks();
-          expect(discoveries, hasLength(2));
-          final held = discovery();
-          expect(held.startCalls, 0);
-          clock.elapse(const Duration(milliseconds: 5999));
-          expect(completed, isFalse);
-          clock.elapse(const Duration(milliseconds: 1));
-          clock.flushMicrotasks();
-          expect(completed, isTrue);
-          expect(result, isNull);
-          expect(clock.elapsed, const Duration(seconds: 12));
-
-          discoveryReadyGate = null;
-          unawaited(
-            service
-                .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
-                .then((peer) {
-                  retried = true;
-                  retryResult = peer;
-                }),
-          );
-          clock.elapse(const Duration(seconds: 6));
-          clock.flushMicrotasks();
-          expect(discoveries, hasLength(3));
-          final current = discovery();
-          expect(current.startCalls, 1);
-          expect(current.resolver.resolved, hasLength(1));
-          // The abandoned initialization finishes after the newer browser owns
-          // discovery; it must neither start nor overwrite that newer owner.
-          ready.complete();
-          clock.flushMicrotasks();
-          expect(held.startCalls, 0);
-          expect(held.stopCalls, greaterThanOrEqualTo(1));
-          expect(discovery(), same(current));
-          expect(broadcasts, hasLength(1));
-          current.emit(
-            _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
-          );
-          clock.flushMicrotasks();
-          expect(retried, isTrue);
-          expect(retryResult!.host, '192.168.0.8');
-        });
-        await service.stopAdvertising();
-      },
-    );
-
-    test(
-      'A1 stop during recovery ready settles demand and rejects late completion',
-      () async {
-        debugDefaultTargetPlatformOverride = TargetPlatform.android;
-        addTearDown(() => debugDefaultTargetPlatformOverride = null);
-        final ready = Completer<void>();
-        var completed = false;
-        LocalPeer? result;
-        fakeAsync((clock) {
-          unawaited(service.startAdvertising('me-peer', 54321));
-          clock.flushMicrotasks();
-          discovery().emit(
-            BonsoirDiscoveryEvent(
-              type: BonsoirDiscoveryEventType.discoveryServiceFound,
-              service: _peerService('peer-a', 51234),
-            ),
-          );
-          clock.flushMicrotasks();
-          unawaited(
-            service
-                .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
-                .then((peer) {
-                  completed = true;
-                  result = peer;
-                }),
-          );
-          discoveryReadyGate = ready.future;
-          clock.elapse(const Duration(seconds: 6));
-          clock.flushMicrotasks();
-          final held = discovery();
-          unawaited(service.stopAdvertising());
-          clock.flushMicrotasks();
-          expect(completed, isTrue);
-          expect(result, isNull);
-          expect(service.discoveredPeers, isEmpty);
-          discoveryReadyGate = null;
-          unawaited(service.startAdvertising('me-peer', 54321));
-          clock.flushMicrotasks();
-          expect(discoveries, hasLength(3));
-          final current = discovery();
-          ready.complete();
-          clock.flushMicrotasks();
-          expect(held.startCalls, 0);
-          expect(held.resolver.resolved, isEmpty);
-          expect(discovery(), same(current));
-          expect(current.startCalls, 1);
-          current.emit(
-            _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
-          );
-          clock.flushMicrotasks();
-          expect(service.getLocalPeer('peer-a')!.host, '192.168.0.8');
-        });
-        await service.stopAdvertising();
-      },
-    );
-
-    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
-      test(
-        'A1 $platform unanswered demand keeps its original 12s deadline',
-        () async {
-          debugDefaultTargetPlatformOverride = platform;
-          addTearDown(() => debugDefaultTargetPlatformOverride = null);
-          var completed = false;
-          LocalPeer? result;
-          fakeAsync((clock) {
+        final realZone = Zone.current;
+        await fakeAsync((clock) async {
+          try {
             unawaited(service.startAdvertising('me-peer', 54321));
-            clock.flushMicrotasks();
+            await pumpA1Clock(clock, realZone);
             discovery().emit(
               BonsoirDiscoveryEvent(
                 type: BonsoirDiscoveryEventType.discoveryServiceFound,
                 service: _peerService('peer-a', 51234),
               ),
             );
-            clock.flushMicrotasks();
+            await pumpA1Clock(clock, realZone);
             unawaited(
               service
                   .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
@@ -966,22 +918,188 @@ void main() {
                     result = peer;
                   }),
             );
-            clock.elapse(const Duration(milliseconds: 11999));
-            clock.flushMicrotasks();
+            discoveryReadyGate = ready.future;
+            clock.elapse(const Duration(seconds: 6));
+            await pumpA1Clock(clock, realZone);
+            expect(discoveries, hasLength(2));
+            final held = discovery();
+            expect(held.startCalls, 0);
+            clock.elapse(const Duration(milliseconds: 5999));
             expect(completed, isFalse);
-            expect(
-              discoveries,
-              hasLength(platform == TargetPlatform.android ? 2 : 1),
-            );
-            expect(broadcasts, hasLength(1));
             clock.elapse(const Duration(milliseconds: 1));
-            clock.flushMicrotasks();
+            await pumpA1Clock(clock, realZone);
             expect(completed, isTrue);
             expect(result, isNull);
-            expect(service.getLocalPeer('peer-a'), isNull);
             expect(clock.elapsed, const Duration(seconds: 12));
+
+            discoveryReadyGate = null;
+            unawaited(
+              service
+                  .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
+                  .then((peer) {
+                    retried = true;
+                    retryResult = peer;
+                  }),
+            );
+            clock.elapse(const Duration(seconds: 6));
+            await pumpA1Clock(clock, realZone);
+            expect(discoveries, hasLength(3));
+            final current = discovery();
+            expect(current.startCalls, 1);
+            expect(current.resolver.resolved, hasLength(1));
+            // The abandoned initialization finishes after the newer browser owns
+            // discovery; it must neither start nor overwrite that newer owner.
+            ready.complete();
+            await pumpA1Clock(clock, realZone);
+            expect(held.startCalls, 0);
+            expect(held.stopCalls, greaterThanOrEqualTo(1));
+            expect(discovery(), same(current));
+            expect(broadcasts, hasLength(1));
+            current.emit(
+              _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
+            );
+            await pumpA1Clock(clock, realZone);
+            expect(retried, isTrue);
+            expect(retryResult!.host, '192.168.0.8');
+          } finally {
+            // Close replacement streams in the fake zone that owns them.
+            var stopped = false;
+            unawaited(service.stopAdvertising().then((_) => stopped = true));
+            await pumpA1Clock(clock, realZone);
+            expect(
+              stopped,
+              isTrue,
+              reason: 'A1 cleanup must finish in fake time',
+            );
+          }
+        });
+      },
+    );
+
+    test(
+      'A1 stop during recovery ready settles demand and rejects late completion',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        replayA1Services = true;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final ready = Completer<void>();
+        var completed = false;
+        LocalPeer? result;
+        final realZone = Zone.current;
+        await fakeAsync((clock) async {
+          try {
+            unawaited(service.startAdvertising('me-peer', 54321));
+            await pumpA1Clock(clock, realZone);
+            discovery().emit(
+              BonsoirDiscoveryEvent(
+                type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                service: _peerService('peer-a', 51234),
+              ),
+            );
+            await pumpA1Clock(clock, realZone);
+            unawaited(
+              service
+                  .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
+                  .then((peer) {
+                    completed = true;
+                    result = peer;
+                  }),
+            );
+            discoveryReadyGate = ready.future;
+            clock.elapse(const Duration(seconds: 6));
+            await pumpA1Clock(clock, realZone);
+            final held = discovery();
+            unawaited(service.stopAdvertising());
+            await pumpA1Clock(clock, realZone);
+            expect(completed, isTrue);
+            expect(result, isNull);
+            expect(service.discoveredPeers, isEmpty);
+            discoveryReadyGate = null;
+            unawaited(service.startAdvertising('me-peer', 54321));
+            await pumpA1Clock(clock, realZone);
+            expect(discoveries, hasLength(3));
+            final current = discovery();
+            ready.complete();
+            await pumpA1Clock(clock, realZone);
+            expect(held.startCalls, 0);
+            expect(held.resolver.resolved, isEmpty);
+            expect(discovery(), same(current));
+            expect(current.startCalls, 1);
+            current.emit(
+              _resolvedEvent('peer-a', host: '192.168.0.8', port: 51235),
+            );
+            await pumpA1Clock(clock, realZone);
+            expect(service.getLocalPeer('peer-a')!.host, '192.168.0.8');
+          } finally {
+            // Close replacement streams in the fake zone that owns them.
+            var stopped = false;
+            unawaited(service.stopAdvertising().then((_) => stopped = true));
+            await pumpA1Clock(clock, realZone);
+            expect(
+              stopped,
+              isTrue,
+              reason: 'A1 cleanup must finish in fake time',
+            );
+          }
+        });
+      },
+    );
+
+    for (final platform in [TargetPlatform.android, TargetPlatform.iOS]) {
+      test(
+        'A1 $platform unanswered demand keeps its original 12s deadline',
+        () async {
+          debugDefaultTargetPlatformOverride = platform;
+          replayA1Services = true;
+          addTearDown(() => debugDefaultTargetPlatformOverride = null);
+          var completed = false;
+          LocalPeer? result;
+          final realZone = Zone.current;
+          await fakeAsync((clock) async {
+            try {
+              unawaited(service.startAdvertising('me-peer', 54321));
+              await pumpA1Clock(clock, realZone);
+              discovery().emit(
+                BonsoirDiscoveryEvent(
+                  type: BonsoirDiscoveryEventType.discoveryServiceFound,
+                  service: _peerService('peer-a', 51234),
+                ),
+              );
+              await pumpA1Clock(clock, realZone);
+              unawaited(
+                service
+                    .resolvePeer('peer-a', timeout: const Duration(seconds: 12))
+                    .then((peer) {
+                      completed = true;
+                      result = peer;
+                    }),
+              );
+              clock.elapse(const Duration(milliseconds: 11999));
+              await pumpA1Clock(clock, realZone);
+              expect(completed, isFalse);
+              expect(
+                discoveries,
+                hasLength(platform == TargetPlatform.android ? 2 : 1),
+              );
+              expect(broadcasts, hasLength(1));
+              clock.elapse(const Duration(milliseconds: 1));
+              await pumpA1Clock(clock, realZone);
+              expect(completed, isTrue);
+              expect(result, isNull);
+              expect(service.getLocalPeer('peer-a'), isNull);
+              expect(clock.elapsed, const Duration(seconds: 12));
+            } finally {
+              // Close replacement streams in the fake zone that owns them.
+              var stopped = false;
+              unawaited(service.stopAdvertising().then((_) => stopped = true));
+              await pumpA1Clock(clock, realZone);
+              expect(
+                stopped,
+                isTrue,
+                reason: 'A1 cleanup must finish in fake time',
+              );
+            }
           });
-          await service.stopAdvertising();
         },
       );
     }
@@ -2010,9 +2128,19 @@ class _DiscoveryHealthBridge extends Bridge {
 
 class _RecordingResolver with ServiceResolver {
   final resolved = <BonsoirService>[];
+  bool Function(BonsoirService)? wasFound;
+
+  void requireFound(BonsoirService service) {
+    if (wasFound != null && !wasFound!(service)) {
+      throw StateError(
+        'Native discovery cannot resolve a service before found',
+      );
+    }
+  }
 
   @override
   Future<void> resolveService(BonsoirService service) async {
+    requireFound(service);
     resolved.add(service);
   }
 }
@@ -2033,6 +2161,7 @@ class _AndroidSerialResolveQueue {
   _AndroidSerialResolveQueue(this.targetName);
 
   final String targetName;
+  final services = <String, BonsoirService>{};
   final _queued = <_AndroidResolveRequest>[];
   final nativeStarted = <String>[];
   _AndroidResolveRequest? _nativeActive;
@@ -2141,8 +2270,12 @@ class _AndroidSerialResolver extends _RecordingResolver {
 
   @override
   Future<void> resolveService(BonsoirService service) {
+    requireFound(service);
     resolved.add(service);
-    queue.admit((owner: owner, service: service, emit: emit));
+    // Native findService supplies the external service's current TXT on success.
+    final nativeService =
+        queue.services['${service.type}/${service.name}'] ?? service;
+    queue.admit((owner: owner, service: nativeService, emit: emit));
     // The method channel ACKs admission immediately; native completion is an
     // independent event, not a future that a Dart .timeout can cancel.
     return Future<void>.value();
@@ -2154,6 +2287,9 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   final String type;
   final _RecordingResolver resolver;
   final void Function()? onStop;
+  final void Function()? onStart;
+  final void Function(BonsoirService)? onFound;
+  final foundKeys = <String>{};
   final _controller = StreamController<BonsoirDiscoveryEvent>.broadcast();
   int startCalls = 0;
   int stopCalls = 0;
@@ -2161,11 +2297,22 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   Future<void>? readyGate;
   bool _ready = false;
 
-  _FakeBonsoirDiscovery(this.type, {_RecordingResolver? resolver, this.onStop})
-    : resolver = resolver ?? _RecordingResolver();
+  _FakeBonsoirDiscovery(
+    this.type, {
+    _RecordingResolver? resolver,
+    this.onStop,
+    this.onStart,
+    this.onFound,
+  }) : resolver = resolver ?? _RecordingResolver();
 
   void emit(BonsoirDiscoveryEvent event) {
     if (!_controller.isClosed) {
+      if (event.type == BonsoirDiscoveryEventType.discoveryServiceFound &&
+          event.service != null) {
+        final service = event.service!;
+        foundKeys.add('${service.type}/${service.name}');
+        onFound?.call(service);
+      }
       _controller.add(event);
     }
   }
@@ -2196,6 +2343,7 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
     if (startError != null) {
       throw startError!;
     }
+    onStart?.call();
   }
 
   @override
