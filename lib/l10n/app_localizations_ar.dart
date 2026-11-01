@@ -658,6 +658,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get orbit_open_settings => 'فتح الإعدادات';
 
   @override
+  String get orbit_open_your_page => 'افتح صفحتك';
+
+  @override
   String get orbit_search_trigger_semantics => 'البحث في الدردشات';
 
   @override

@@ -659,6 +659,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get orbit_open_settings => 'Einstellungen öffnen';
 
   @override
+  String get orbit_open_your_page => 'Deine Seite öffnen';
+
+  @override
   String get orbit_search_trigger_semantics => 'Chats durchsuchen';
 
   @override

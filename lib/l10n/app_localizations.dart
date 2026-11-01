@@ -1126,6 +1126,12 @@ abstract class AppLocalizations {
   /// **'Open settings'**
   String get orbit_open_settings;
 
+  /// No description provided for @orbit_open_your_page.
+  ///
+  /// In en, this message translates to:
+  /// **'Open your page'**
+  String get orbit_open_your_page;
+
   /// No description provided for @orbit_search_trigger_semantics.
   ///
   /// In en, this message translates to:

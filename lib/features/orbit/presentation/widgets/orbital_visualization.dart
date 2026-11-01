@@ -465,7 +465,7 @@ class OrbitalVisualization extends StatelessWidget {
                 )
               : Semantics(
                   button: true,
-                  label: l10n.orbit_open_settings,
+                  label: l10n.orbit_open_your_page,
                   child: GestureDetector(
                     key: const ValueKey('orbit-center-self-avatar'),
                     behavior: HitTestBehavior.opaque,
