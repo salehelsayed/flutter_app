@@ -7,6 +7,118 @@ import XCTest
 @testable import Runner
 
 final class IosNotificationRecoveryTests: XCTestCase {
+  func testCR008DeliveredContactRequestMatchesOnlyItsPeer() {
+    let peerId = "request-peer"
+    let vectors: [(String, [AnyHashable: Any], Bool)] = [
+      ("provider-exact", ["type": "contact_request", "sender_id": peerId], true),
+      (
+        "provider-exact-with-transport-id",
+        [
+          "type": "contact_request",
+          "sender_id": peerId,
+          "message_id": "request-envelope",
+          "gcm.message_id": "apns-transport",
+        ],
+        true
+      ),
+      (
+        "local-exact",
+        ["NotificationId": 8008, "payload": "contact_request:\(peerId)"],
+        true
+      ),
+      ("another-peer", ["type": "contact_request", "sender_id": "other-peer"], false),
+      ("another-type", ["type": "new_message", "sender_id": peerId], false),
+      ("missing-type", ["sender_id": peerId], false),
+      ("missing-sender", ["type": "contact_request"], false),
+      ("substring", ["type": "contact_request", "sender_id": "\(peerId)-copy"], false),
+      ("whitespace", ["type": "contact_request", "sender_id": " \(peerId)"], false),
+      (
+        "local-another-peer",
+        ["NotificationId": 8009, "payload": "contact_request:other-peer"],
+        false
+      ),
+      ("local-missing-id", ["payload": "contact_request:\(peerId)"], false),
+      (
+        "local-malformed-id",
+        ["NotificationId": "8008", "payload": "contact_request:\(peerId)"],
+        false
+      ),
+      (
+        "local-provider-confusion",
+        [
+          "NotificationId": 8010,
+          "payload": "contact_request:other-peer",
+          "type": "contact_request",
+          "sender_id": peerId,
+        ],
+        false
+      ),
+    ]
+
+    for (name, userInfo, expected) in vectors {
+      let snapshot = IosDeliveredNotificationSnapshot(
+        requestIdentifier: name,
+        userInfo: userInfo
+      )
+      XCTAssertEqual(snapshot.matchesContactRequest(peerId: peerId), expected, name)
+    }
+    XCTAssertFalse(
+      IosDeliveredNotificationSnapshot(
+        requestIdentifier: "",
+        userInfo: ["type": "contact_request", "sender_id": peerId]
+      ).matchesContactRequest(peerId: peerId)
+    )
+  }
+
+  func testIN008DeliveredIntroductionMatchesOnlyItsCanonicalOffer() {
+    let messageId = "intro-offer::send::introducer-peer"
+    let exactPayload = "intros|message:\(messageId)"
+    let vectors: [(String, [AnyHashable: Any], Bool)] = [
+      ("provider-exact", ["type": "intros", "message_id": messageId], true),
+      ("local-exact", ["NotificationId": 8011, "payload": exactPayload], true),
+      (
+        "another-intro",
+        ["type": "intros", "message_id": "another-intro::send::introducer-peer"],
+        false
+      ),
+      (
+        "same-intro-accept-event",
+        ["type": "intros", "message_id": "intro-offer::accept::recipient-peer"],
+        false
+      ),
+      ("another-type", ["type": "contact_request", "message_id": messageId], false),
+      ("missing-type", ["message_id": messageId], false),
+      ("missing-message", ["type": "intros"], false),
+      ("local-generic-intros", ["NotificationId": 8012, "payload": "intros"], false),
+      ("local-missing-id", ["payload": exactPayload], false),
+      ("local-malformed-id", ["NotificationId": true, "payload": exactPayload], false),
+      (
+        "local-provider-confusion",
+        [
+          "NotificationId": 8013,
+          "payload": "intros",
+          "type": "intros",
+          "message_id": messageId,
+        ],
+        false
+      ),
+    ]
+
+    for (name, userInfo, expected) in vectors {
+      let snapshot = IosDeliveredNotificationSnapshot(
+        requestIdentifier: name,
+        userInfo: userInfo
+      )
+      XCTAssertEqual(snapshot.matchesIntroduction(messageId: messageId), expected, name)
+    }
+    XCTAssertFalse(
+      IosDeliveredNotificationSnapshot(
+        requestIdentifier: "",
+        userInfo: ["type": "intros", "message_id": messageId]
+      ).matchesIntroduction(messageId: messageId)
+    )
+  }
+
   func testTC396DeliveredInventoryClassifiesExactSources() throws {
     let fixture = try loadTC396DirectSourceFixture()
     XCTAssertEqual(fixture["version"] as? Int, 1)

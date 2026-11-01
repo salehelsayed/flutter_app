@@ -68,6 +68,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   dbDeleteIntroductionOutboxDelivery;
   final Future<void> Function(String introductionId)
   dbDeleteIntroductionOutboxDeliveriesForIntroduction;
+  final Future<void> Function(String introductionId)? onResponseSaved;
 
   IntroductionRepositoryImpl({
     required this.dbInsertIntroduction,
@@ -93,6 +94,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     required this.dbLoadRetryableIntroductionOutboxDeliveries,
     required this.dbDeleteIntroductionOutboxDelivery,
     required this.dbDeleteIntroductionOutboxDeliveriesForIntroduction,
+    this.onResponseSaved,
   });
 
   @override

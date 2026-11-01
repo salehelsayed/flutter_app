@@ -417,6 +417,14 @@ struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
       providerMessageId == inviteId
   }
 
+  func matchesContactRequest(peerId: String) -> Bool {
+    false
+  }
+
+  func matchesIntroduction(messageId: String) -> Bool {
+    false
+  }
+
   private static func isValidFlutterNotificationId(_ value: Any?) -> Bool {
     guard let number = value as? NSNumber,
           CFGetTypeID(number) != CFBooleanGetTypeID(),

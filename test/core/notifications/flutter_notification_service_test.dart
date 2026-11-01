@@ -134,6 +134,39 @@ void main() {
     }
   });
 
+  for (final route in <String>[
+    'contact_request:request-peer',
+    'intros|message:intro-offer::send::introducer-peer',
+  ]) {
+    test(
+      'CR-008 IN-008 exact local card retirement preserves other cards: $route',
+      () async {
+        final service = buildService();
+        await service.initialize();
+        await service.showNotification(
+          title: 'Pending request',
+          body: 'Pending decision',
+          payload: route,
+        );
+        final selectedId = (log.last.arguments as Map)['id'];
+        await service.showNotification(
+          title: 'Another request',
+          body: 'Unrelated pending decision',
+          payload: 'contact_request:another-peer',
+        );
+        final otherId = (log.last.arguments as Map)['id'];
+
+        await service.cancelConversationNotification(route);
+
+        final cancellations = log.where((call) => call.method == 'cancel');
+        expect(cancellations, hasLength(1));
+        expect((cancellations.single.arguments as Map)['id'], selectedId);
+        expect(selectedId, isNot(otherId));
+        expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
+      },
+    );
+  }
+
   test(
     'missed Call back foreground action is distinct from an ordinary card tap and waits for handler binding',
     () async {

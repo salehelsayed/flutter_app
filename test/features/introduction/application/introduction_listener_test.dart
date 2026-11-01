@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/notifications/notification_route_target.dart';
+import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
@@ -94,6 +97,112 @@ void main() {
   }
 
   group('IntroductionListener', () {
+    test(
+      'IN-008 tapped intro does not post a second local card on inbox replay',
+      () async {
+        final directory = Directory.systemTemp.createTempSync(
+          'intro-open-replay-',
+        );
+        final gate = RecentRemoteNotificationGate(
+          filePath: '${directory.path}/gate.json',
+        );
+        debugSetRecentRemoteNotificationGate(gate);
+        addTearDown(() async {
+          debugResetRecentRemoteNotificationGate();
+          await gate.clear();
+          if (directory.existsSync()) directory.deleteSync(recursive: true);
+        });
+        contactRepo.addTestContact(
+          makeContact(peerId: 'introducer-peer', username: 'Introducer'),
+        );
+        const introId = 'intro-open-replayed';
+        final envelopeId = IntroductionPayload.buildEnvelopeMessageId(
+          introductionId: introId,
+          action: 'send',
+          senderPeerId: 'introducer-peer',
+        );
+        await gate.markAnnouncement(
+          payload: NotificationRouteTarget.intros(
+            messageId: envelopeId,
+          ).toPayload(),
+          messageId: envelopeId,
+        );
+        final payload = IntroductionPayload(
+          action: 'send',
+          introductionId: introId,
+          introducerId: 'introducer-peer',
+          introducerUsername: 'Introducer',
+          recipientId: 'own-peer',
+          recipientUsername: 'Me',
+          introducedId: 'introduced-peer',
+          introducedUsername: 'Introduced',
+          introducedPublicKey: 'introduced-key',
+          introducedMlKemPublicKey: 'introduced-mlkem',
+          recipientPublicKey: 'own-key',
+          recipientMlKemPublicKey: 'own-mlkem',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+        );
+
+        final outcome = await listener.processIncomingMessage(
+          ChatMessage(
+            from: 'introducer-peer',
+            to: 'own-peer',
+            content: payload.toJson(),
+            timestamp: payload.timestamp,
+            isIncoming: true,
+          ),
+        );
+
+        expect(outcome.state, IntroductionMessageProcessState.stored);
+        expect(await introRepo.getIntroduction(introId), isNotNull);
+        expect(notificationService.shownGeneric, isEmpty);
+      },
+    );
+
+    test('IN-008 live intro card carries its canonical event route', () async {
+      contactRepo.addTestContact(
+        makeContact(peerId: 'introducer-peer', username: 'Introducer'),
+      );
+      const introId = 'intro-live-event';
+      final payload = IntroductionPayload(
+        action: 'send',
+        introductionId: introId,
+        introducerId: 'introducer-peer',
+        introducerUsername: 'Introducer',
+        recipientId: 'own-peer',
+        recipientUsername: 'Me',
+        introducedId: 'introduced-peer',
+        introducedUsername: 'Introduced',
+        introducedPublicKey: 'introduced-key',
+        introducedMlKemPublicKey: 'introduced-mlkem',
+        recipientPublicKey: 'own-key',
+        recipientMlKemPublicKey: 'own-mlkem',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+      );
+      final outcome = await listener.processIncomingMessage(
+        ChatMessage(
+          from: 'introducer-peer',
+          to: 'own-peer',
+          content: payload.toJson(),
+          timestamp: payload.timestamp,
+          isIncoming: true,
+        ),
+      );
+
+      expect(outcome.state, IntroductionMessageProcessState.stored);
+      expect(notificationService.shownGeneric, hasLength(1));
+      expect(
+        notificationService.shownGeneric.single.payload,
+        NotificationRouteTarget.intros(
+          messageId: IntroductionPayload.buildEnvelopeMessageId(
+            introductionId: introId,
+            action: 'send',
+            senderPeerId: 'introducer-peer',
+          ),
+        ).toPayload(),
+      );
+    });
+
     test('rejects send messages from blocked senders', () async {
       contactRepo.addTestContact(
         ContactModel(

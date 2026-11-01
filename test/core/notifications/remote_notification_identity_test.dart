@@ -6,6 +6,46 @@ import 'package:flutter_app/core/notifications/remote_notification_identity.dart
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('IN-008 intro open records only the canonical intro event', () async {
+    final directory = Directory.systemTemp.createTempSync('remote-intro-');
+    final gate = RecentRemoteNotificationGate(
+      filePath: '${directory.path}/gate.json',
+    );
+    addTearDown(() async {
+      await gate.clear();
+      if (directory.existsSync()) directory.deleteSync(recursive: true);
+    });
+    const messageId = 'intro-open::send::introducer-peer';
+    const data = <String, dynamic>{'type': 'intros', 'message_id': messageId};
+
+    expect(
+      await markRemoteNotificationOpenAsRecentAnnouncement(
+        data: data,
+        gate: gate,
+      ),
+      isTrue,
+    );
+    expect(
+      await gate.hasRecentAnnouncement(
+        payload: const NotificationRouteTarget.intros(
+          messageId: messageId,
+        ).toPayload(),
+        messageId: messageId,
+      ),
+      isTrue,
+    );
+    const unrelated = 'another-intro::send::introducer-peer';
+    expect(
+      await gate.hasRecentAnnouncement(
+        payload: const NotificationRouteTarget.intros(
+          messageId: unrelated,
+        ).toPayload(),
+        messageId: unrelated,
+      ),
+      isFalse,
+    );
+  });
+
   test('message_reaction identity uses event id instead of target id', () {
     const data = <String, dynamic>{
       'type': 'message_reaction',
@@ -128,41 +168,44 @@ void main() {
     );
   });
 
-  test('thought open marks the post card plus its event announcement', () async {
-    final directory = Directory.systemTemp.createTempSync('remote-thought-');
-    final gate = RecentRemoteNotificationGate(
-      filePath: '${directory.path}/gate.json',
-    );
-    addTearDown(() async {
-      await gate.clear();
-      if (directory.existsSync()) directory.deleteSync(recursive: true);
-    });
-    const data = <String, dynamic>{
-      'type': 'post_create',
-      'sender_id': 'peer-alice',
-      'message_id': 'evt-thought-1',
-      'post_id': 'post-1',
-    };
+  test(
+    'thought open marks the post card plus its event announcement',
+    () async {
+      final directory = Directory.systemTemp.createTempSync('remote-thought-');
+      final gate = RecentRemoteNotificationGate(
+        filePath: '${directory.path}/gate.json',
+      );
+      addTearDown(() async {
+        await gate.clear();
+        if (directory.existsSync()) directory.deleteSync(recursive: true);
+      });
+      const data = <String, dynamic>{
+        'type': 'post_create',
+        'sender_id': 'peer-alice',
+        'message_id': 'evt-thought-1',
+        'post_id': 'post-1',
+      };
 
-    expect(
-      routeTargetSupportsMessageAwareRemoteDedupe(
-        NotificationRouteTargetKind.post,
-      ),
-      isTrue,
-    );
-    expect(
-      await markRemoteNotificationOpenAsRecentAnnouncement(
-        data: data,
-        gate: gate,
-      ),
-      isTrue,
-    );
-    expect(
-      await gate.consumeIfRecentAnnouncement(
-        payload: 'post:post-1',
-        messageId: 'evt-thought-1',
-      ),
-      isTrue,
-    );
-  });
+      expect(
+        routeTargetSupportsMessageAwareRemoteDedupe(
+          NotificationRouteTargetKind.post,
+        ),
+        isTrue,
+      );
+      expect(
+        await markRemoteNotificationOpenAsRecentAnnouncement(
+          data: data,
+          gate: gate,
+        ),
+        isTrue,
+      );
+      expect(
+        await gate.consumeIfRecentAnnouncement(
+          payload: 'post:post-1',
+          messageId: 'evt-thought-1',
+        ),
+        isTrue,
+      );
+    },
+  );
 }

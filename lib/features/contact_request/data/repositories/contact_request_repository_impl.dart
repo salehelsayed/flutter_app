@@ -22,6 +22,7 @@ class ContactRequestRepositoryImpl implements ContactRequestRepository {
   final Future<void> Function(String peerId) dbDeleteRequest;
   final Future<bool> Function(String peerId) dbRequestExists;
   final Future<void> Function(String peerId)? onContactAccepted;
+  final Future<void> Function(ContactRequestModel request)? onRequestDecided;
 
   ContactRequestRepositoryImpl({
     required this.dbLoadPendingRequests,
@@ -32,6 +33,7 @@ class ContactRequestRepositoryImpl implements ContactRequestRepository {
     required this.dbDeleteRequest,
     required this.dbRequestExists,
     this.onContactAccepted,
+    this.onRequestDecided,
   });
 
   @override
