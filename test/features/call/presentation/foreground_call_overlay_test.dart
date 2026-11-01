@@ -7,6 +7,7 @@ import 'package:flutter_app/features/call/application/call_audio_controller.dart
 import 'package:flutter_app/features/call/application/foreground_call_capability.dart';
 import 'package:flutter_app/features/call/application/locked_call_presentation.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
+import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_audio_output_device.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
@@ -31,6 +32,7 @@ void main() {
 
   Widget harness({
     required _FakeForegroundCallCapability capability,
+    Locale locale = const Locale('en'),
     MicPermissionGateway? micPermission,
     VoidCallback? onAttached,
     Future<String?> Function(String peerId)? loadContactDisplayName,
@@ -42,7 +44,7 @@ void main() {
       ),
     ),
   }) => MaterialApp(
-    locale: const Locale('en'),
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     theme: ThemeData(
@@ -72,6 +74,218 @@ void main() {
       },
     ),
   );
+
+  CallSessionSnapshot outgoingProgress(List<CallEventType> events) {
+    const reducer = CallReducer();
+    var snapshot = CallSessionSnapshot.idle(now: now);
+    for (var index = 0; index < events.length; index++) {
+      snapshot = reducer
+          .reduce(
+            snapshot,
+            CallEvent(
+              type: events[index],
+              eventId: 'progress-$index',
+              occurredAt: now,
+              callId: _outgoingId,
+              contactPeerId: 'outgoing-peer',
+              localAccountPeerId: 'local-peer',
+              localDeviceId: 'local-device',
+              remoteAccountPeerId: 'outgoing-peer',
+              remoteDeviceId: 'remote-device',
+              timeoutKind: events[index] == CallEventType.timeout
+                  ? CallTimeoutKind.noAnswer
+                  : null,
+            ),
+          )
+          .snapshot;
+    }
+    return snapshot;
+  }
+
+  for (final (locale, calling) in <(Locale, String)>[
+    (const Locale('en'), 'Calling'),
+    (const Locale('de'), 'Wird angerufen…'),
+    (const Locale('ar'), 'جارٍ الاتصال'),
+  ]) {
+    testWidgets('CALL-PROGRESS ${locale.languageCode} labels preparation and '
+        'invitation as Calling', (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      await tester.pumpWidget(harness(capability: capability, locale: locale));
+      for (final events in <List<CallEventType>>[
+        [CallEventType.place],
+        [CallEventType.place, CallEventType.outgoingInviteReady],
+      ]) {
+        capability.emit(
+          ForegroundCallProjection(
+            session: outgoingProgress(events),
+            audio: CallAudioControlState.idle,
+          ),
+        );
+        await tester.pump();
+        expect(find.text(calling), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('CALL-PROGRESS confirmed alerting and accepted audio setup keep '
+      'distinct labels and connected duration', (tester) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    await tester.pumpWidget(harness(capability: capability));
+    final events = <CallEventType>[
+      CallEventType.place,
+      CallEventType.outgoingInviteReady,
+      CallEventType.remoteRinging,
+    ];
+    for (final (event, label) in <(CallEventType?, String)>[
+      (null, 'Ringing'),
+      (CallEventType.remoteAccept, 'Connecting'),
+      (CallEventType.negotiationReady, 'Connecting'),
+      (CallEventType.mediaConnected, 'Connected'),
+    ]) {
+      if (event != null) events.add(event);
+      capability.emit(
+        ForegroundCallProjection(
+          session: outgoingProgress(events),
+          audio: CallAudioControlState.idle,
+        ),
+      );
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+      expect(find.text('Calling'), findsNothing);
+    }
+    expect(find.text('00:00'), findsOneWidget);
+  });
+
+  for (final alerted in [false, true]) {
+    testWidgets(
+      'CALL-PROGRESS ${alerted ? 'confirmed ringing' : 'no alerting acknowledgement'} '
+      'timeout has truthful wording',
+      (tester) async {
+        final capability = _FakeForegroundCallCapability();
+        addTearDown(capability.dispose);
+        await tester.pumpWidget(harness(capability: capability));
+        capability.emit(
+          ForegroundCallProjection(
+            session: outgoingProgress([
+              CallEventType.place,
+              CallEventType.outgoingInviteReady,
+              if (alerted) CallEventType.remoteRinging,
+              CallEventType.timeout,
+            ]),
+            audio: CallAudioControlState.idle,
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.text(alerted ? 'No answer.' : 'Call could not connect.'),
+          findsOneWidget,
+        );
+        expect(
+          find.text(alerted ? 'Call could not connect.' : 'No answer.'),
+          findsNothing,
+        );
+      },
+    );
+  }
+
+  testWidgets('CALL-PROGRESS answer before ringing remains Connecting and '
+      'preserves a later remote no-answer reason', (tester) async {
+    final capability = _FakeForegroundCallCapability();
+    addTearDown(capability.dispose);
+    await tester.pumpWidget(harness(capability: capability));
+    final accepted = outgoingProgress([
+      CallEventType.place,
+      CallEventType.outgoingInviteReady,
+      CallEventType.remoteAccept,
+    ]);
+    expect(accepted.ringingAt, isNull);
+    expect(accepted.acceptedAt, isNotNull);
+    capability.emit(
+      ForegroundCallProjection(
+        session: accepted,
+        audio: CallAudioControlState.idle,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Connecting'), findsOneWidget);
+    expect(find.text('Ringing'), findsNothing);
+    capability.emit(
+      ForegroundCallProjection(
+        session: const CallReducer()
+            .reduce(
+              accepted,
+              CallEvent(
+                type: CallEventType.remoteTerminate,
+                eventId: 'remote-no-answer',
+                occurredAt: now,
+                callId: _outgoingId,
+                endReason: CallEndReason.noAnswer,
+              ),
+            )
+            .snapshot,
+        audio: CallAudioControlState.idle,
+      ),
+    );
+    await tester.pump();
+    expect(find.text('No answer.'), findsOneWidget);
+  });
+
+  for (final (event, reason, label) in [
+    (CallEventType.remoteReject, CallEndReason.declined, 'Call declined.'),
+    (
+      CallEventType.remoteReject,
+      CallEndReason.busy,
+      'The contact is on another call.',
+    ),
+    (
+      CallEventType.remoteTerminate,
+      CallEndReason.permissionDenied,
+      "Local contact can't take calls right now. Their microphone is off.",
+    ),
+  ]) {
+    testWidgets('CALL-PROGRESS ${reason.name} before alerting keeps its '
+        'explicit notice', (tester) async {
+      final capability = _FakeForegroundCallCapability();
+      addTearDown(capability.dispose);
+      await tester.pumpWidget(harness(capability: capability));
+      final inviting = outgoingProgress([
+        CallEventType.place,
+        CallEventType.outgoingInviteReady,
+      ]);
+      capability.emit(
+        ForegroundCallProjection(
+          session: inviting,
+          audio: CallAudioControlState.idle,
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      capability.emit(
+        ForegroundCallProjection(
+          session: const CallReducer()
+              .reduce(
+                inviting,
+                CallEvent(
+                  type: event,
+                  eventId: 'explicit-${reason.name}',
+                  occurredAt: now,
+                  callId: _outgoingId,
+                  endReason: reason,
+                ),
+              )
+              .snapshot,
+          audio: CallAudioControlState.idle,
+        ),
+      );
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+      expect(find.text('No answer.'), findsNothing);
+      expect(find.text('Call could not connect.'), findsNothing);
+    });
+  }
 
   testWidgets(
     'call projection attaches and signals readiness without a frame',

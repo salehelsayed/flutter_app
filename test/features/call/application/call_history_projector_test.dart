@@ -1,9 +1,12 @@
 import 'package:flutter_app/features/call/application/call_history_projector.dart';
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
+import 'package:flutter_app/features/call/data/call_history_conversation_timeline_source.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_state.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/call_timeline_row.dart';
+import 'package:flutter_app/l10n/app_localizations_en.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final class _Repository implements CallHistoryRepository {
@@ -29,6 +32,8 @@ CallSessionSnapshot _terminal({
   required CallDirection direction,
   required CallEndReason reason,
   required DateTime startedAt,
+  DateTime? ringingAt,
+  DateTime? acceptedAt,
   DateTime? connectedAt,
 }) => CallSessionSnapshot.active(
   callId: CallId.parse(id),
@@ -42,12 +47,105 @@ CallSessionSnapshot _terminal({
       ? 'local-device'
       : 'contact-device',
   startedAt: startedAt,
+  ringingAt: ringingAt,
+  acceptedAt: acceptedAt,
   connectedAt: connectedAt,
   endedAt: startedAt.add(const Duration(seconds: 5)),
   endReason: reason,
 );
 
 void main() {
+  for (final (ringing, accepted, expectedStatus, expectedLabel) in [
+    (false, false, CallHistoryStatus.failed, 'Call could not connect.'),
+    (true, false, CallHistoryStatus.missed, 'No answer'),
+    (false, true, CallHistoryStatus.missed, 'No answer'),
+  ]) {
+    test('CALL-PROGRESS history preserves no-answer evidence '
+        'ringing=$ringing accepted=$accepted', () async {
+      final started = DateTime.utc(2026, 11, 1, 12);
+      final repository = _Repository();
+      final projector = CallHistoryProjector(repository);
+      final entry = await projector.projectTerminal(
+        _terminal(
+          id: 'a2f0a1d6-0000-4000-8000-000000000046',
+          direction: CallDirection.outgoing,
+          reason: CallEndReason.noAnswer,
+          startedAt: started,
+          ringingAt: ringing ? started : null,
+          acceptedAt: accepted ? started : null,
+        ),
+      );
+
+      expect(entry.status, expectedStatus);
+      expect(entry.terminalReason, CallEndReason.noAnswer);
+      final restored = CallHistoryEntry.fromMap(entry.toMap());
+      expect(
+        callTimelineStatusLabel(
+          projectCallTimelineEntry(restored),
+          AppLocalizationsEn(),
+        ),
+        expectedLabel,
+      );
+    });
+  }
+
+  test('CALL-PROGRESS legacy missed rows are not reinterpreted from absent '
+      'milestones', () async {
+    final started = DateTime.utc(2026, 11, 1, 12);
+    final id = CallId.parse('a2f0a1d6-0000-4000-8000-000000000047');
+    final repository = _Repository();
+    repository.rows[id] = CallHistoryEntry(
+      callId: id,
+      contactAccountPeerId: 'contact-a',
+      direction: CallDirection.outgoing,
+      terminalReason: CallEndReason.noAnswer,
+      status: CallHistoryStatus.missed,
+      startedAt: started,
+      endedAt: started.add(const Duration(seconds: 5)),
+      transportRoute: null,
+      createdAt: started,
+      updatedAt: started,
+    );
+    final entry = await CallHistoryProjector(repository).projectTerminal(
+      _terminal(
+        id: id.value,
+        direction: CallDirection.outgoing,
+        reason: CallEndReason.noAnswer,
+        startedAt: started,
+      ),
+    );
+    expect(entry.status, CallHistoryStatus.missed);
+    expect(
+      callTimelineStatusLabel(
+        projectCallTimelineEntry(entry),
+        AppLocalizationsEn(),
+      ),
+      'No answer',
+    );
+  });
+
+  test(
+    'CALL-PROGRESS incoming no-answer still records a missed call',
+    () async {
+      final entry = await CallHistoryProjector(_Repository()).projectTerminal(
+        _terminal(
+          id: 'a2f0a1d6-0000-4000-8000-000000000048',
+          direction: CallDirection.incoming,
+          reason: CallEndReason.noAnswer,
+          startedAt: DateTime.utc(2026, 11, 1, 12),
+        ),
+      );
+      expect(entry.status, CallHistoryStatus.missed);
+      expect(
+        callTimelineStatusLabel(
+          projectCallTimelineEntry(entry),
+          AppLocalizationsEn(),
+        ),
+        'Missed voice call',
+      );
+    },
+  );
+
   test('TC-405-43 a projected terminal call announces itself once', () async {
     final announced = <bool>[];
     final projector = CallHistoryProjector(
@@ -222,6 +320,9 @@ void main() {
             direction: value.$1,
             reason: value.$2,
             startedAt: DateTime.utc(2026, 8, 30, 12, index),
+            ringingAt: value.$2 == CallEndReason.noAnswer
+                ? DateTime.utc(2026, 8, 30, 12, index)
+                : null,
           ),
         );
         expect(entry.status, value.$3, reason: value.$2.name);

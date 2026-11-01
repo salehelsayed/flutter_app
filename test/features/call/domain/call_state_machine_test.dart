@@ -50,6 +50,98 @@ CallSessionSnapshot _reduce(List<CallEvent> events) {
 }
 
 void main() {
+  for (final alerted in [false, true]) {
+    test('CALL-PROGRESS no-answer timeout preserves '
+        '${alerted ? 'confirmed' : 'absent'} ringing evidence', () {
+      final snapshot = _reduce([
+        _event(CallEventType.place),
+        _event(CallEventType.outgoingInviteReady),
+        if (alerted) _event(CallEventType.remoteRinging),
+        _event(
+          CallEventType.timeout,
+          timeoutKind: CallTimeoutKind.noAnswer,
+          at: _t0.add(const Duration(seconds: 30)),
+        ),
+      ]);
+      expect(snapshot.state, CallState.ended);
+      expect(snapshot.endReason, CallEndReason.noAnswer);
+      expect(snapshot.ringingAt, alerted ? _t0 : isNull);
+      expect(snapshot.acceptedAt, isNull);
+      final late = const CallReducer().reduce(
+        snapshot,
+        _event(CallEventType.remoteRinging, eventId: 'late-ring'),
+      );
+      expect(late.snapshot.state, CallState.ended);
+      expect(late.snapshot.ringingAt, snapshot.ringingAt);
+      expect(late.effects, isEmpty);
+    });
+  }
+
+  test('CALL-PROGRESS answer before ringing never regresses to alerting', () {
+    const reducer = CallReducer();
+    final accepted = _reduce([
+      _event(CallEventType.place),
+      _event(CallEventType.outgoingInviteReady),
+      _event(CallEventType.remoteAccept),
+    ]);
+    expect(accepted.state, CallState.accepted);
+    expect(accepted.ringingAt, isNull);
+    expect(accepted.acceptedAt, _t0);
+    final late = reducer.reduce(accepted, _event(CallEventType.remoteRinging));
+    expect(late.snapshot.state, CallState.accepted);
+    expect(late.snapshot.ringingAt, isNull);
+    expect(late.effects, isEmpty);
+  });
+
+  test(
+    'CALL-PROGRESS duplicate ringing preserves the first alert milestone',
+    () {
+      const reducer = CallReducer();
+      final ringing = _reduce([
+        _event(CallEventType.place),
+        _event(CallEventType.outgoingInviteReady),
+        _event(CallEventType.remoteRinging),
+      ]);
+      final duplicate = reducer.reduce(
+        ringing,
+        _event(
+          CallEventType.remoteRinging,
+          eventId: 'another-ring',
+          at: _t0.add(const Duration(seconds: 5)),
+        ),
+      );
+      expect(duplicate.snapshot.state, CallState.ringing);
+      expect(duplicate.snapshot.ringingAt, _t0);
+      expect(duplicate.effects, isEmpty);
+    },
+  );
+
+  for (final (event, received, expected) in [
+    (
+      CallEventType.remoteReject,
+      CallEndReason.declined,
+      CallEndReason.declined,
+    ),
+    (CallEventType.remoteReject, CallEndReason.busy, CallEndReason.busy),
+    (
+      CallEventType.remoteTerminate,
+      CallEndReason.permissionDenied,
+      CallEndReason.remotePermissionDenied,
+    ),
+  ]) {
+    test('CALL-PROGRESS ${expected.name} remains explicit before alerting', () {
+      final snapshot = _reduce([
+        _event(CallEventType.place),
+        _event(CallEventType.outgoingInviteReady),
+        _event(event, endReason: received),
+      ]);
+      expect(snapshot.state, CallState.ended);
+      expect(snapshot.endReason, expected);
+      expect(snapshot.ringingAt, isNull);
+      expect(snapshot.acceptedAt, isNull);
+    });
+  }
+
   for (final direction in CallDirection.values) {
     test(
       'audio interruption upgrades once to transport recovery for ${direction.name}',
