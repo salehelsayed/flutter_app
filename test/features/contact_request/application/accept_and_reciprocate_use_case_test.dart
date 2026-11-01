@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -393,8 +394,13 @@ void main() {
     },
   );
 
-  test('success: reciprocal send produces v2 encrypted envelope', () async {
+  test('QUIET-REPLY acceptance sends a quiet v2 key-exchange reply', () async {
     _seedPendingRequest(requestRepo);
+    final delivered = Completer<void>();
+    p2pService.sendWithReplyHandler = () {
+      if (!delivered.isCompleted) delivered.complete();
+      return const SendMessageResult(sent: true, acked: true);
+    };
 
     await acceptAndReciprocateContactRequest(
       requestRepo: requestRepo,
@@ -405,13 +411,15 @@ void main() {
       bridge: bridge,
     );
 
-    await Future.delayed(const Duration(milliseconds: 200));
+    await delivered.future.timeout(const Duration(seconds: 2));
 
     expect(p2pService.lastSentMessage, isNotNull);
     final sent =
         jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
     expect(sent['type'], equals('contact_request'));
     expect(sent['version'], equals('2'));
+    expect(sent['intent'], 'key_exchange_retry');
+    expect(sent['reciprocalReply'], isTrue);
     expect(sent['encrypted'], isA<Map>());
     expect(sent.containsKey('payload'), isFalse);
   });

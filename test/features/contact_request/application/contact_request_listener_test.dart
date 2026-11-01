@@ -1444,6 +1444,7 @@ void main() {
       String? confirmNonce,
       String? from,
       String intent = 'new_request',
+      bool reciprocalReply = false,
       CallWakeHandleGrant? callWakeHandle,
       String? callWakeReceiptChallenge,
     }) {
@@ -1466,6 +1467,7 @@ void main() {
           'type': 'contact_request',
           'version': '2',
           'intent': intent,
+          if (reciprocalReply) 'reciprocalReply': true,
           'msgId': msgId ?? 'v2-${DateTime.now().microsecondsSinceEpoch}',
           'ts': DateTime.now().toUtc().toIso8601String(),
           'encrypted': {
@@ -1576,8 +1578,10 @@ void main() {
 
     // Owner decision A: an authenticated, unmarked legacy key-exchange retry
     // is ACKed with its exact receipt first, then gets exactly one reciprocal.
+    for (final reciprocalReply in [false, true]) {
     test(
-      'ACKs an unmarked key-exchange retry with its receipt, then reciprocates once',
+      'QUIET-REPLY ACKs an unmarked key-exchange retry with its receipt '
+      '${reciprocalReply ? 'without replying to a reply' : 'then reciprocates once'}',
       () async {
         const challenge = '123e4567-e89b-42d3-a456-426614174000';
         contactRepo.addTestContact(
@@ -1594,8 +1598,11 @@ void main() {
         bridge.onSend = (request) {
           if (request['cmd'] == 'message:confirm') order.add('ack');
         };
+        final store = _FakeReceivedCallWakeHandleStore();
+        final grant = wakeGrant();
         final l = makeListener(
-          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+          receivedCallWakeHandleStore: store,
+          prepareCallWakeReply: () async => order.add('prepare'),
           requestReciprocalCallWakeRecovery: (peerId) async {
             order.add('recover:$peerId');
           },
@@ -1607,13 +1614,18 @@ void main() {
             confirmNonce: 'nonce-recovery',
             from: 'unknown',
             intent: 'key_exchange_retry',
-            callWakeHandle: wakeGrant(),
+            reciprocalReply: reciprocalReply,
+            callWakeHandle: grant,
             callWakeReceiptChallenge: challenge,
           ),
         );
 
         expect(result, HandleMessageResult.alreadyContact);
-        expect(order, ['ack', 'recover:$_testPeerId']);
+        expect(await store.readForIssuer(_testPeerId), grant);
+        expect(order, [
+          'ack',
+          if (!reciprocalReply) ...['prepare', 'recover:$_testPeerId'],
+        ]);
         expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
           'nonce': 'nonce-recovery',
           'ok': true,
@@ -1621,6 +1633,7 @@ void main() {
         });
       },
     );
+    }
 
     for (final changedAuthority in ['none', 'blocked', 'key_changed']) {
       test('legacy endpoint repair ACK precedes advertisement and reply '
