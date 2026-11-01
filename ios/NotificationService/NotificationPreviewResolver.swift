@@ -2972,7 +2972,11 @@ final class AppGroupPushEnvelopeStore {
     // Staged envelopes carry message content; never back them up (owner, 11-01).
     var backupValues = URLResourceValues()
     backupValues.isExcludedFromBackup = true
-    try? dir.setResourceValues(backupValues)
+    do {
+      try dir.setResourceValues(backupValues)
+    } catch {
+      NSLog("[FLOW] {\"details\":{\"root\":\"push_envelope_staging\"},\"event\":\"BACKUP_EXCLUSION_REFUSED\"}")
+    }
     directory = dir
     self.maxEntries = maxEntries
     self.ttlSeconds = ttlSeconds

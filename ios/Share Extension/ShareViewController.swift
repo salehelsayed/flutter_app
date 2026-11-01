@@ -258,7 +258,11 @@ final class ShareViewController: UIViewController {
         ) else { return }
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
-        try? containerURL.setResourceValues(values)
+        do {
+            try containerURL.setResourceValues(values)
+        } catch {
+            NSLog("[FLOW] {\"details\":{\"root\":\"share_app_group\"},\"event\":\"BACKUP_EXCLUSION_REFUSED\"}")
+        }
     }
 
     private func loadIds() {
