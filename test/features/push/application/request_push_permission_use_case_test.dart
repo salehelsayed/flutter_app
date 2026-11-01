@@ -1,5 +1,7 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/request_push_permission_use_case.dart';
 
@@ -24,6 +26,8 @@ NotificationSettings _makeSettings(AuthorizationStatus status) {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   final capturedEvents = <Map<String, dynamic>>[];
 
   List<Map<String, dynamic>> eventsNamed(String event) => capturedEvents
@@ -34,13 +38,31 @@ void main() {
       (payload['details'] as Map).cast<String, dynamic>();
 
   setUp(() {
+    // The default OS reader now uses the plugin's platform resolution. Exercise
+    // its Android channel instead of relying on the host dart:io no-op.
+    AndroidFlutterLocalNotificationsPlugin.registerWith();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          channel,
+          (call) async => switch (call.method) {
+            'areNotificationsEnabled' => true,
+            'getNotificationChannels' => <Map<String, Object?>>[],
+            _ => throw StateError(
+              'Unexpected notification call: ${call.method}',
+            ),
+          },
+        );
     flowEventLoggingEnabled = false;
     capturedEvents.clear();
     // The sink fires regardless of `flowEventLoggingEnabled`.
     debugSetFlowEventSink(capturedEvents.add);
   });
 
-  tearDown(() => debugSetFlowEventSink(null));
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    debugSetFlowEventSink(null);
+  });
 
   group('requestPushPermission', () {
     // TC-385-05: granted-path preservation through the DEFAULT OS check, with

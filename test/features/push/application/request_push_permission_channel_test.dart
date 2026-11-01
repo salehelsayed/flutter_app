@@ -48,6 +48,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   var primaryImportance = Importance.none;
+  var appNotificationsEnabled = true;
   List<Map<String, Object?>>? channels;
   final calls = <String>[];
 
@@ -56,13 +57,14 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     primaryImportance = Importance.none;
+    appNotificationsEnabled = true;
     channels = null;
     calls.clear();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           calls.add(call.method);
           return switch (call.method) {
-            'areNotificationsEnabled' => true,
+            'areNotificationsEnabled' => appNotificationsEnabled,
             'getNotificationChannels' =>
               channels ??
                   [
@@ -108,6 +110,20 @@ void main() {
         isFalse,
       );
       expect(calls, ['areNotificationsEnabled', 'getNotificationChannels']);
+    },
+  );
+
+  test(
+    'an app-level block stays denied without reading channel settings',
+    () async {
+      appNotificationsEnabled = false;
+      expect(
+        await readPushPermission(
+          readSettingsFn: () async => _authorizedSettings(),
+        ),
+        isFalse,
+      );
+      expect(calls, ['areNotificationsEnabled']);
     },
   );
 
@@ -169,69 +185,74 @@ void main() {
   testWidgets(
     'NOTIFY-004 resume shows the existing Settings notice and reopening the channel clears it',
     (tester) async {
-      primaryImportance = Importance.high;
-      final notifier = PushRegistrationHealthNotifier();
-      var requests = 0;
-      var registrations = 0;
-      var settingsOpens = 0;
-      final coordinator = PushRegistrationCoordinator(
-        requestPermission: () {
-          requests++;
-          return requestPushPermission(
-            requestPermissionFn: () async => _authorizedSettings(),
-          );
-        },
-        readPermission: () => readPushPermission(
-          readSettingsFn: () async => _authorizedSettings(),
-        ),
-        registerPushToken: () async {
-          registrations++;
-          return RegisterPushTokenResult.success;
-        },
-        tokenRefreshStream: const Stream.empty(),
-        healthNotifier: notifier,
-      );
-      addTearDown(coordinator.dispose);
-      addTearDown(notifier.dispose);
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('en'),
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: Scaffold(
-            body: PushRegistrationHealthWarning(
-              healthListenable: notifier,
-              onRetry: () {},
-              onDismiss: () {},
-              onOpenNotificationSettings: () => settingsOpens++,
+      try {
+        primaryImportance = Importance.high;
+        final notifier = PushRegistrationHealthNotifier();
+        var requests = 0;
+        var registrations = 0;
+        var settingsOpens = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () {
+            requests++;
+            return requestPushPermission(
+              requestPermissionFn: () async => _authorizedSettings(),
+            );
+          },
+          readPermission: () => readPushPermission(
+            readSettingsFn: () async => _authorizedSettings(),
+          ),
+          registerPushToken: () async {
+            registrations++;
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream.empty(),
+          healthNotifier: notifier,
+        );
+        addTearDown(coordinator.dispose);
+        addTearDown(notifier.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: Scaffold(
+              body: PushRegistrationHealthWarning(
+                healthListenable: notifier,
+                onRetry: () {},
+                onDismiss: () {},
+                onOpenNotificationSettings: () => settingsOpens++,
+              ),
             ),
           ),
-        ),
-      );
-      await tester.runAsync(coordinator.ensureStarted);
-      await tester.pumpAndSettle();
-      expect(registrations, 1);
-      expect(find.text('Notifications are off'), findsNothing);
+        );
+        await tester.runAsync(coordinator.ensureStarted);
+        await tester.pumpAndSettle();
+        expect(registrations, 1);
+        expect(find.text('Notifications are off'), findsNothing);
 
-      primaryImportance = Importance.none;
-      await tester.runAsync(coordinator.refreshOnResume);
-      await tester.pumpAndSettle();
-      expect(find.text('Notifications are off'), findsOneWidget);
-      expect(find.text('Settings'), findsOneWidget);
-      expect(registrations, 1);
-      expect(requests, 1);
-      await tester.tap(
-        find.byKey(const ValueKey('push-registration-health-action')),
-      );
-      expect(settingsOpens, 1);
+        primaryImportance = Importance.none;
+        await tester.runAsync(coordinator.refreshOnResume);
+        await tester.pumpAndSettle();
+        expect(find.text('Notifications are off'), findsOneWidget);
+        expect(find.text('Settings'), findsOneWidget);
+        expect(registrations, 1);
+        expect(requests, 1);
+        await tester.tap(
+          find.byKey(const ValueKey('push-registration-health-action')),
+        );
+        expect(settingsOpens, 1);
 
-      primaryImportance = Importance.high;
-      await tester.runAsync(coordinator.refreshOnResume);
-      await tester.pumpAndSettle();
-      expect(find.text('Notifications are off'), findsNothing);
-      expect(registrations, 2);
-      expect(requests, 1);
-      expect(tester.takeException(), isNull);
+        primaryImportance = Importance.high;
+        await tester.runAsync(coordinator.refreshOnResume);
+        await tester.pumpAndSettle();
+        expect(find.text('Notifications are off'), findsNothing);
+        expect(registrations, 2);
+        expect(requests, 1);
+        expect(tester.takeException(), isNull);
+      } finally {
+        // Widget invariants run before package:test's outer tearDown.
+        debugDefaultTargetPlatformOverride = null;
+      }
     },
   );
 }

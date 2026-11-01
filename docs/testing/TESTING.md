@@ -5452,6 +5452,19 @@ do not count `test(...)` strings as executions. Runner listings took about
   an installed iOS Settings launch or native screen-reader behavior. Initial
   failures and corrected receipts are retained under
   `.codex-test-logs/notification-permission-banner-20261025/`.
+  Android postability also reads the primary Messages channel's importance:
+  Firebase and the app-level notification grant can stay enabled while that
+  channel is blocked. The existing channel helper now feeds both permission
+  request and resume reads, so the existing notice/settings action follows the
+  same denial path. Nine default-channel/coordinator/widget cases preserve
+  app-level denial, low-importance posting, absent channels, silent-channel
+  isolation and iOS behavior. A widget's platform override must reset in its
+  body `finally`, before binding invariants run; an outer teardown is too late.
+  Default-reader unit fixtures initialize the binding and mock the real Android
+  plugin channel instead of relying on a host `dart:io` no-op.
+  First RED and fixture-cleanup failures remain under
+  `.codex-test-logs/notify004-20261101/`. These host channel mocks do not prove
+  installed Android Settings behavior.
 - The approved UI-25 loading label fits Orbit's existing top-strip reservation;
   skeleton geometry and settled list position are unchanged. Geometry checks
   must advance the existing zero-delay, 400 ms row entrance before comparing

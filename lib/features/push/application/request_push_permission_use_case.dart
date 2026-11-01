@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/push_diagnostics_logger.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -168,14 +167,19 @@ Future<({bool granted, bool? osEnabled})> _confirmWithOs(
 /// permission_handler's `Permission.notification.status`, which both route to
 /// `checkSelfPermission` on SDK >= 33 and therefore repeat the same lie. It is
 /// a read-only binder query: it never prompts and never mutates state.
+/// A user can also block just the Messages channel while this app-level query
+/// stays enabled, so the same verdict includes that channel's live importance.
 ///
 /// Fails OPEN on a null platform resolve so non-Android hosts and any
 /// unregistered-plugin case keep today's behavior.
 Future<bool> _defaultOsNotificationsEnabled() async {
-  if (kIsWeb || !Platform.isAndroid) return true;
-  final android = FlutterLocalNotificationsPlugin()
+  if (kIsWeb) return true;
+  final plugin = FlutterLocalNotificationsPlugin();
+  final android = plugin
       .resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin
       >();
-  return await android?.areNotificationsEnabled() ?? true;
+  if (android == null) return true;
+  if (!(await android.areNotificationsEnabled() ?? true)) return false;
+  return mknoonPrimaryMessageChannelEnabled(plugin);
 }
