@@ -11,12 +11,16 @@ import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/application/call_coordinator.dart';
+import 'package:flutter_app/features/call/application/call_cleanup_coordinator.dart';
 import 'package:flutter_app/features/call/application/call_signaling_service.dart';
 import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/application/voice_call_feature_flags.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
+import 'package:flutter_app/features/call/domain/call_end_reason.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
+import 'package:flutter_app/features/call/domain/call_state.dart';
 import 'package:flutter_app/features/call/infrastructure/call_authority_client.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_call_lifecycle_adapter.dart';
 import 'package:flutter_app/features/call/infrastructure/ios_voip_token_coordinator.dart';
@@ -39,6 +43,114 @@ final _callA = CallId.parse('11111111-1111-4111-8111-111111111111');
 final _activeAt = DateTime.fromMillisecondsSinceEpoch(2_000_000, isUtc: true);
 
 void main() {
+  for (final progress in ['no-ack', 'ringing', 'answer-before-ringing', 'incoming']) {
+    test('CALL-INCIDENT terminal export records $progress ringing evidence', () async {
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createFixture();
+      await fixture.composition.start();
+      final source = fixture.graphs.single;
+      // Keep the real reducer and graph observer, while excluding unrelated
+      // microphone/transport effects from this diagnostic producer proof.
+      final coordinator = CallCoordinator(
+        reducer: const CallReducer(),
+        cleanupCoordinator: CallCleanupCoordinator(const <CallCleanupStep>[]),
+        historyProjector: source.coordinator.historyProjector,
+        clock: () => _activeAt,
+        idSource: () => _callA,
+      );
+      final graph = ProductionCallSignalingGraph(
+        runtime: source.runtime,
+        coordinator: coordinator,
+        signalingService: source.signalingService,
+        endpointResolver: source.endpointResolver,
+        trustedRosterProvider: source.trustedRosterProvider,
+        authorityClient: source.authorityClient,
+        wakeAuthorizationCoordinator: source.wakeAuthorizationCoordinator,
+        issuedCallWakeHandleStore: source.issuedCallWakeHandleStore,
+        receivedCallWakeHandleStore: source.receivedCallWakeHandleStore,
+        loadWakeEligibleContacts: source.loadWakeEligibleContacts,
+        localDeviceKeyEpoch: source.localDeviceKeyEpoch,
+        localIdentity: source.localIdentity,
+        platform: source.platform,
+        mediaOwner: source.mediaOwner,
+        networkEffectsAllowed: () => true,
+        nowMs: () => _activeAt.millisecondsSinceEpoch,
+      );
+      addTearDown(() async {
+        await coordinator.dispose();
+        await graph.shutdown();
+      });
+      var sequence = 0;
+      Future<void> dispatch(CallEventType type, int elapsedMs, {
+        CallEndReason? endReason,
+      }) async {
+        await coordinator.dispatch(CallEvent(
+          type: type,
+          eventId: 'incident-${sequence++}',
+          occurredAt: _activeAt.add(Duration(milliseconds: elapsedMs)),
+          callId: _callA,
+          contactPeerId: 'remote-account',
+          localAccountPeerId: 'local-account',
+          localDeviceId: 'local-account',
+          remoteAccountPeerId: 'remote-account',
+          remoteDeviceId: 'remote-device',
+          endReason: endReason,
+        ));
+      }
+
+      if (progress == 'incoming') {
+        await _ringIncoming(graph);
+      } else {
+        await dispatch(CallEventType.place, 0);
+        await dispatch(CallEventType.outgoingInviteReady, 100);
+        await dispatch(CallEventType.wakeRequested, 200);
+        if (progress == 'ringing') {
+          await dispatch(CallEventType.remoteRinging, 1200);
+          await dispatch(CallEventType.remoteRinging, 1600);
+          expect(coordinator.activeSession?.ringingAt,
+              _activeAt.add(const Duration(milliseconds: 1200)));
+        } else if (progress == 'answer-before-ringing') {
+          await dispatch(CallEventType.remoteAccept, 1000);
+          await dispatch(CallEventType.remoteRinging, 1200);
+          expect(coordinator.activeSession?.acceptedAt, isNotNull);
+          expect(coordinator.activeSession?.ringingAt, isNull);
+        }
+      }
+      final traceId = diagnostics.traceForCall(callId: _callA.value);
+      expect(traceId, isNotNull);
+      await dispatch(CallEventType.remoteTerminate, 2000,
+          endReason: CallEndReason.noAnswer);
+      final exported = await diagnostics.exportPreview();
+      final events = (jsonDecode(exported)['events'] as List).cast<Map>();
+      final terminal = events.where((event) => event['traceId'] == traceId &&
+          event['stage'] == 'terminal' && event['action'] == 'finish').single;
+      final values = terminal['values'] as Map;
+      if (progress == 'incoming') {
+        expect(values.containsKey('remoteRingingObserved'), isFalse);
+      } else {
+        expect(values['remoteRingingObserved'], progress == 'ringing');
+      }
+      if (progress == 'ringing') {
+        expect(values['timeToRemoteRingingMs'], 1200);
+      } else {
+        expect(values.containsKey('timeToRemoteRingingMs'), isFalse);
+      }
+      expect(terminal['reason'], 'no_answer');
+      expect(terminal['outcome'], progress == 'answer-before-ringing'
+          ? 'answered_without_verified_media' : 'no_answer');
+      for (final privateValue in [
+        'remote-account', 'remote-device', 'local-account', _callA.value,
+        'remote-public-key', 'remote-mlkem-public-key', 'Remote contact',
+      ]) {
+        expect(exported, isNot(contains(privateValue)));
+      }
+    });
+  }
+
   test(
     'production cleanup remains correlated after terminal summary commits',
     () async {
