@@ -119,7 +119,7 @@ class _YouPageScreenState extends State<YouPageScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _reload();
+    if (state == AppLifecycleState.resumed) _expireThenReload();
   }
 
   @override
@@ -146,7 +146,29 @@ class _YouPageScreenState extends State<YouPageScreen>
     }
   }
 
-  /// Reloads the moment the Thought expires, so it never outlives its time.
+  /// The clock, not the reload, ends an expired Thought: it leaves the page
+  /// and its viewer at once, whether or not the reload answers.
+  void _expireThenReload() {
+    final data = _data;
+    final expiry = DateTime.tryParse(
+      data?.thought?.post.expiresAt ?? '',
+    )?.toUtc();
+    if (data != null &&
+        expiry != null &&
+        !expiry.isAfter(widget.now().toUtc())) {
+      _closeMediaViewer();
+      setState(
+        () => _data = YouPageData(
+          username: data.username,
+          avatarBytes: data.avatarBytes,
+          friendCount: data.friendCount,
+          thought: null,
+        ),
+      );
+    }
+    _reload();
+  }
+
   void _armExpiry(PostModel? post) {
     _expiryTimer?.cancel();
     final expiry = post == null
@@ -156,7 +178,7 @@ class _YouPageScreenState extends State<YouPageScreen>
     final remaining = expiry.difference(widget.now().toUtc());
     _expiryTimer = Timer(
       remaining.isNegative ? Duration.zero : remaining,
-      _reload,
+      _expireThenReload,
     );
   }
 
