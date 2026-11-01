@@ -209,7 +209,11 @@ final class FileComposerDraftStore implements ComposerDraftStore {
       await _deleteIfExists(folder);
       return;
     }
-    final canStoreMedia = await _ensureRootExcluded(root);
+    // A private setting that cannot be stored must never come back as an
+    // ordinary photo, so its media is not kept.
+    final canStoreMedia =
+        await _ensureRootExcluded(root) &&
+        !(key.allowsPrivateMedia && draft.privateMediaPolicy.isUnsupported);
     final previous = await _readEntries(folder);
     await folder.create(recursive: true);
 
@@ -352,6 +356,10 @@ final class FileComposerDraftStore implements ComposerDraftStore {
     final policy = key.allowsPrivateMedia && restored.isNotEmpty
         ? PrivateMediaPolicy.fromJson(json['privateMediaPolicy'])
         : const PrivateMediaPolicy.ordinary();
+    if (policy.isUnsupported) {
+      restored.clear();
+      updatedEntries.clear();
+    }
     final draft = ComposerDraft(
       text: text,
       attachments: restored,
@@ -434,10 +442,7 @@ final class FileComposerDraftStore implements ComposerDraftStore {
 
   List<_MediaEntry> _parseEntries(Object? raw) {
     if (raw is! List) return const [];
-    return [
-      for (final item in raw)
-        ?_MediaEntry.tryParse(item),
-    ];
+    return [for (final item in raw) ?_MediaEntry.tryParse(item)];
   }
 
   Future<void> _deleteIfExists(Directory directory) async {

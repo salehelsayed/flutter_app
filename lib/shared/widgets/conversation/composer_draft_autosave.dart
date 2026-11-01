@@ -23,6 +23,8 @@ final class ComposerDraftAutosave {
   bool _ready = false;
   bool _closed = false;
   ComposerDraft? _lastSaved;
+  ComposerDraft? _pendingRestore;
+  void Function(ComposerDraft draft)? _pendingApply;
 
   /// Loads the saved draft and passes it to [apply] if the user has not
   /// started composing in the meantime. A failed load restores nothing.
@@ -35,11 +37,29 @@ final class ComposerDraftAutosave {
       saved = null;
     }
     if (_closed || _ready || key != _key) return;
-    final current = _read();
-    if (saved != null && (current == null || current.isEmpty)) apply(saved);
     _lastSaved = saved ?? ComposerDraft.empty;
     _ready = true;
+    if (saved != null) {
+      _pendingRestore = saved;
+      _pendingApply = apply;
+    }
     changed();
+  }
+
+  /// Applies a loaded draft once the composer is a real, empty draft. While
+  /// the composer edits a sent message ([read] returns null) it waits, so a
+  /// late load never lands inside that edit. Typing first discards it.
+  bool _applyPendingRestore() {
+    final draft = _pendingRestore;
+    final apply = _pendingApply;
+    if (draft == null || apply == null) return false;
+    final current = _read();
+    if (current == null) return true;
+    _pendingRestore = null;
+    _pendingApply = null;
+    if (!current.isEmpty) return false;
+    apply(draft);
+    return false;
   }
 
   /// For a screen opened with its own content (a share, a thought reply):
@@ -54,6 +74,7 @@ final class ComposerDraftAutosave {
   /// Saves the composer if it differs from what was last saved.
   void changed() {
     if (!_ready || _closed) return;
+    if (_applyPendingRestore()) return;
     final draft = _read();
     if (draft == null || draft == _lastSaved) return;
     _lastSaved = draft;
@@ -67,6 +88,8 @@ final class ComposerDraftAutosave {
     _key = key;
     _ready = false;
     _lastSaved = null;
+    _pendingRestore = null;
+    _pendingApply = null;
   }
 
   /// Saves the final state. Later calls do nothing.
