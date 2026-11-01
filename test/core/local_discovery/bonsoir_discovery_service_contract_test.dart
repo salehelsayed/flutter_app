@@ -74,8 +74,7 @@ void main() {
                         ),
                   onStop: queue == null ? null : () => queue.dispose(owner),
                   onFound: (found) {
-                    final key =
-                        '${found.type}/${found.name}/${queue == null ? found.attributes['peerId'] ?? '' : ''}';
+                    final key = '${found.type}/${found.name}';
                     if (found.attributes.isNotEmpty ||
                         !externalServices.containsKey(key)) {
                       externalServices[key] = found;
@@ -814,7 +813,10 @@ void main() {
               original.emit(
                 BonsoirDiscoveryEvent(
                   type: BonsoirDiscoveryEventType.discoveryServiceFound,
-                  service: _peerService(peerId, 51234),
+                  service: _peerService(
+                    peerId,
+                    51234,
+                  ).copyWith(name: 'mknoon-$peerId'),
                 ),
               );
             }
@@ -1103,6 +1105,67 @@ void main() {
         },
       );
     }
+
+
+    test('A1 missing-TXT target failure releases its inferred peer flight', () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      replayA1Services = true;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      const peerId = 'peer-failure';
+      final known = BonsoirService(
+        name: 'mknoon-failure', type: '_mknoon._tcp', port: 51234,
+        attributes: const {'peerId': peerId},
+      );
+      final withoutTxt = BonsoirService(
+        name: known.name, type: known.type, port: 0,
+      );
+      LocalPeer? result;
+      final realZone = Zone.current;
+      await fakeAsync((clock) async {
+        try {
+          unawaited(service.startAdvertising('me-peer', 54321));
+          await pumpA1Clock(clock, realZone);
+          discovery().emit(BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: known,
+          ));
+          await pumpA1Clock(clock, realZone);
+          unawaited(service.resolvePeer(peerId, timeout: const Duration(seconds: 12))
+              .then((peer) => result = peer));
+          externalServices['${known.type}/${known.name}'] = withoutTxt;
+          clock.elapse(const Duration(seconds: 6));
+          await pumpA1Clock(clock, realZone);
+          expect(discoveries, hasLength(2));
+          final replacement = discovery();
+          expect(replacement.resolver.resolved, hasLength(1));
+          replacement.emit(BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceResolveFailed,
+            service: withoutTxt,
+          ));
+          await pumpA1Clock(clock, realZone);
+          replacement.emit(BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceFound,
+            service: known,
+          ));
+          await pumpA1Clock(clock, realZone);
+          expect(replacement.resolver.resolved, hasLength(2),
+              reason: 'Failure without TXT must release the name/type-mapped flight');
+          replacement.emit(BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceResolved,
+            service: ResolvedBonsoirService(name: known.name, type: known.type,
+                port: 51235, host: '192.168.0.8', attributes: known.attributes),
+          ));
+          await pumpA1Clock(clock, realZone);
+          expect(result!.host, '192.168.0.8');
+          expect(clock.elapsed, const Duration(seconds: 6));
+        } finally {
+          var stopped = false;
+          unawaited(service.stopAdvertising().then((_) => stopped = true));
+          await pumpA1Clock(clock, realZone);
+          expect(stopped, isTrue);
+        }
+      });
+    });
 
     test(
       'early migration resolve accepts an HTTP peer without libp2p ports',
