@@ -7,15 +7,15 @@
 export ADB_SERVER_SOCKET=${ADB_SERVER_SOCKET:-tcp:host.docker.internal:5037}
 CMD="$1"; S="$2"
 dump() {
-  adb -s "$S" shell rm -f /sdcard/u.xml
-  adb -s "$S" shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1
-  adb -s "$S" shell cat /sdcard/u.xml 2>/dev/null | tr '>' '\n'
+  timeout 15 adb -s "$S" shell rm -f /sdcard/u.xml
+  timeout 20 adb -s "$S" shell uiautomator dump /sdcard/u.xml >/dev/null 2>&1
+  timeout 15 adb -s "$S" shell cat /sdcard/u.xml 2>/dev/null | tr '>' '\n'
 }
 center() { read -r x1 y1 x2 y2 <<<"$(echo "$1" | grep -o 'bounds="[^"]*"' | head -1 | tr -c '0-9' ' ')"; echo "$(( (x1+x2)/2 )) $(( (y1+y2)/2 ))"; }
 mk_fg() { adb -s "$S" shell dumpsys window | grep mCurrentFocus | grep -q 'com.mknoon.app/'; }
 case "$CMD" in
   texts)
-    adb -s "$S" shell dumpsys window | grep mCurrentFocus
+    timeout 15 adb -s "$S" shell dumpsys window | grep mCurrentFocus
     X=$(dump); [ -z "$X" ] && { echo DUMP_FAILED; exit 4; }
     echo "$X" | grep -o -E '(content-desc|text)="[^"]{1,160}"' | grep -v '=""' ;;
   tap)
