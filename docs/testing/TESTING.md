@@ -3408,6 +3408,20 @@ pass in `.codex-test-logs/astra-it4/DC-023-final.log`. These prove Dart routing,
 read/suppression policy, replay durability and generic private previews; native
 shade behavior, channel blocking and settings on a signed app remain separate.
 
+Contact-request and introduction decision cards retire only after the successful
+repository decision and a fresh row check. Introduction offers use their exact
+`send` envelope ID for local publication, remote-open suppression and retirement;
+another participant's acceptance must not retire a still-pending local offer.
+The focused Dart notification tests and bridge adapter pass (109 cases) in
+`.codex-test-logs/media-contact-intro-20261101/`. Native retirement matches provider
+metadata or a valid Flutter-local ID plus exact payload, preserving unrelated
+cards and the canonical badge ledger. Legacy bare `intros` cards have no offer
+identity and remain untouched. The first native matcher run reproduced five
+expected positive-assertion failures while the existing group-invite sentinel
+passed; retain Kayan's `codexui-notif-red-20261101/xcodebuild_test.log`.
+Native GREEN and installed APNs delivery/decision proof remain separate from
+the Dart callbacks and synthetic delivered-card fixtures.
+
 Muted call host integration must enter connected state through the real engine's
 structural readiness observation and canonical coordinator, rather than directly
 dispatching `mediaConnected`. `CallConnectionSnapshot.isMediaReady` intentionally

@@ -382,7 +382,7 @@ struct IosGroupNotificationInventory: Equatable, Sendable {
 }
 
 /// Sendable, narrow projection of delivered notification content used only for
-/// exact group-invite retirement. Raw `userInfo` never crosses the notification
+/// exact pending-card retirement. Raw `userInfo` never crosses the notification
 /// center callback boundary.
 struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
   let requestIdentifier: String
@@ -393,6 +393,7 @@ struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
   private let providerType: String?
   private let providerGroupId: String?
   private let providerMessageId: String?
+  private let providerSenderId: String?
 
   init(requestIdentifier: String, userInfo: [AnyHashable: Any]) {
     self.requestIdentifier = requestIdentifier
@@ -404,6 +405,7 @@ struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
     providerType = userInfo["type"] as? String
     providerGroupId = userInfo["groupId"] as? String
     providerMessageId = userInfo["message_id"] as? String
+    providerSenderId = userInfo["sender_id"] as? String
   }
 
   func matchesGroupInvite(groupId: String, inviteId: String) -> Bool {
@@ -418,11 +420,21 @@ struct IosDeliveredNotificationSnapshot: Equatable, Sendable {
   }
 
   func matchesContactRequest(peerId: String) -> Bool {
-    false
+    guard !requestIdentifier.isEmpty else { return false }
+    if hasFlutterLocalNotificationId {
+      return hasValidFlutterLocalNotificationId &&
+        localPayload == "contact_request:\(peerId)"
+    }
+    return providerType == "contact_request" && providerSenderId == peerId
   }
 
   func matchesIntroduction(messageId: String) -> Bool {
-    false
+    guard !requestIdentifier.isEmpty else { return false }
+    if hasFlutterLocalNotificationId {
+      return hasValidFlutterLocalNotificationId &&
+        localPayload == "intros|message:\(messageId)"
+    }
+    return providerType == "intros" && providerMessageId == messageId
   }
 
   private static func isValidFlutterNotificationId(_ value: Any?) -> Bool {
@@ -704,6 +716,53 @@ final class IosNotificationRecoveryCoordinator {
       completion(false)
       return
     }
+    retireDeliveredNotifications(
+      diagnosticEvent: "remove_group_invite",
+      matching: { $0.matchesGroupInvite(groupId: groupId, inviteId: inviteId) },
+      completion: completion
+    )
+  }
+
+  func retireContactRequest(
+    peerId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    guard Self.isStrictRetirementIdentifier(peerId) else {
+      completion(false)
+      return
+    }
+    retireDeliveredNotifications(
+      diagnosticEvent: "remove_contact_request",
+      matching: { $0.matchesContactRequest(peerId: peerId) },
+      completion: completion
+    )
+  }
+
+  func retireIntroduction(
+    messageId: String,
+    completion: @escaping (Bool) -> Void
+  ) {
+    let components = messageId.components(separatedBy: "::")
+    guard Self.isStrictRetirementIdentifier(messageId),
+          components.count >= 3,
+          components[components.count - 2] == "send",
+          !components[components.count - 1].isEmpty,
+          !components.dropLast(2).joined(separator: "::").isEmpty else {
+      completion(false)
+      return
+    }
+    retireDeliveredNotifications(
+      diagnosticEvent: "remove_introduction",
+      matching: { $0.matchesIntroduction(messageId: messageId) },
+      completion: completion
+    )
+  }
+
+  private func retireDeliveredNotifications(
+    diagnosticEvent: String,
+    matching: @escaping @Sendable (IosDeliveredNotificationSnapshot) -> Bool,
+    completion: @escaping (Bool) -> Void
+  ) {
     center.getDeliveredNotificationSnapshots { [weak self] delivered in
       guard let self else {
         completion(false)
@@ -711,21 +770,17 @@ final class IosNotificationRecoveryCoordinator {
       }
       let selected = Set(
         delivered.lazy
-          .filter {
-            $0.matchesGroupInvite(groupId: groupId, inviteId: inviteId)
-          }
+          .filter(matching)
           .map(\.requestIdentifier)
       ).sorted()
       if !selected.isEmpty {
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
-        logIosPayloadProfileDiagnostic("remove_group_invite", identifiers: selected)
+        logIosPayloadProfileDiagnostic(diagnosticEvent, identifiers: selected)
 #endif
         self.center.removeDeliveredNotifications(withIdentifiers: selected)
       }
       self.center.getDeliveredNotificationSnapshots { remaining in
-        completion(!remaining.contains { snapshot in
-          snapshot.matchesGroupInvite(groupId: groupId, inviteId: inviteId)
-        })
+        completion(!remaining.contains(where: matching))
       }
     }
   }

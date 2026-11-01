@@ -119,6 +119,101 @@ final class IosNotificationRecoveryTests: XCTestCase {
     )
   }
 
+  func testCR008IN008DecisionRetirementIsSurgicalAndIdempotent() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let messageId = "intro-offer::send::introducer-peer"
+    let rawDeliveredRows: [(String, [AnyHashable: Any])] = [
+      ("request-remote", ["type": "contact_request", "sender_id": "request-peer"]),
+      (
+        "request-local",
+        ["NotificationId": 8008, "payload": "contact_request:request-peer"]
+      ),
+      ("other-request", ["type": "contact_request", "sender_id": "other-peer"]),
+      ("direct", ["type": "new_message", "sender_id": "request-peer"]),
+      ("intro-remote", ["type": "intros", "message_id": messageId]),
+      (
+        "intro-local",
+        ["NotificationId": 8011, "payload": "intros|message:\(messageId)"]
+      ),
+      (
+        "another-intro",
+        ["type": "intros", "message_id": "another::send::introducer-peer"]
+      ),
+      (
+        "connection",
+        ["type": "intros", "message_id": "intro-offer::accept::recipient-peer"]
+      ),
+      ("generic-intros", ["NotificationId": 8012, "payload": "intros"]),
+      ("group-invite", ["type": "group_invite", "message_id": messageId]),
+    ]
+    let center = MutableSnapshotRecoveryCenter(
+      snapshots: rawDeliveredRows.map {
+        IosDeliveredNotificationSnapshot(requestIdentifier: $0.0, userInfo: $0.1)
+      }
+    )
+    let store = IosNotificationRecoveryStore(directory: directory)
+    XCTAssertEqual(
+      store.claimPrepared(
+        requestIdentifier: "direct",
+        identity: ordinaryIdentity(eventId: "unrelated-direct-event")
+      ),
+      .unique
+    )
+    let badgeBefore = try XCTUnwrap(store.desiredBadgeSnapshot())
+    let badge = RecordingBadgeWriter()
+    let coordinator = IosNotificationRecoveryCoordinator(
+      store: store,
+      center: center,
+      badgeWriter: badge
+    )
+
+    for _ in 0..<2 {
+      let requestRetired = expectation(description: "contact request retired")
+      coordinator.retireContactRequest(peerId: "request-peer") { ok in
+        XCTAssertTrue(ok)
+        requestRetired.fulfill()
+      }
+      wait(for: [requestRetired], timeout: 2)
+    }
+    for _ in 0..<2 {
+      let introRetired = expectation(description: "intro offer retired")
+      coordinator.retireIntroduction(messageId: messageId) { ok in
+        XCTAssertTrue(ok)
+        introRetired.fulfill()
+      }
+      wait(for: [introRetired], timeout: 2)
+    }
+
+    XCTAssertEqual(center.removals.map { Set($0) }, [
+      Set(["request-remote", "request-local"]),
+      Set(["intro-remote", "intro-local"]),
+    ])
+    XCTAssertEqual(center.currentIdentifiers, Set([
+      "other-request", "direct", "another-intro", "connection", "generic-intros", "group-invite",
+    ]))
+    XCTAssertEqual(center.snapshotInventoryCount, 8)
+
+    let invalidRequest = expectation(description: "invalid request rejected")
+    coordinator.retireContactRequest(peerId: "bad\npeer") { ok in
+      XCTAssertFalse(ok)
+      invalidRequest.fulfill()
+    }
+    let nonOffer = expectation(description: "connection event rejected")
+    coordinator.retireIntroduction(
+      messageId: "intro-offer::accept::recipient-peer"
+    ) { ok in
+      XCTAssertFalse(ok)
+      nonOffer.fulfill()
+    }
+    wait(for: [invalidRequest, nonOffer], timeout: 2)
+    XCTAssertEqual(center.snapshotInventoryCount, 8)
+    XCTAssertEqual(center.removals.count, 2)
+    XCTAssertTrue(store.containsRequestForTesting("direct"))
+    XCTAssertEqual(store.desiredBadgeSnapshot(), badgeBefore)
+    XCTAssertEqual(badge.calls, 0)
+  }
+
   func testTC396DeliveredInventoryClassifiesExactSources() throws {
     let fixture = try loadTC396DirectSourceFixture()
     XCTAssertEqual(fixture["version"] as? Int, 1)

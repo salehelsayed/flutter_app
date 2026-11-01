@@ -2607,6 +2607,45 @@ final class IosSetupReadinessEntryCoordinator {
         }
       }
 
+    case "retireContactRequest":
+      guard let arguments = recoveryArguments(call.arguments, keys: ["peerId"]),
+            let peerId = nonEmptyRecoveryString(arguments["peerId"]) else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.retireContactRequest(peerId: peerId) { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(
+              code: "retire_contact_request_rejected"
+            ))
+          }
+        }
+      }
+
+    case "retireIntroduction":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["messageId"]
+            ),
+            let messageId = nonEmptyRecoveryString(arguments["messageId"]) else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.retireIntroduction(messageId: messageId) { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(
+              code: "retire_introduction_rejected"
+            ))
+          }
+        }
+      }
+
     case "clearAccount":
       guard let arguments = recoveryArguments(call.arguments, keys: []),
             arguments.isEmpty else {
