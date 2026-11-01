@@ -58,6 +58,60 @@ void main() {
     await directory.delete(recursive: true);
   });
 
+  for (final origin in const [
+    'incoming_report',
+    'outgoing_transaction',
+    'audio_configuration',
+    'audio_activation',
+    'action_timeout',
+    'answer_adoption_timeout',
+    'unknown',
+  ]) {
+    test(
+      'native failure origin $origin stays local with legacy ACKs',
+      () async {
+        final uploads = <Map<String, Object?>>[];
+        final diagnostics = await CallDiagnostics.installForTesting(
+          directory: Directory('${directory.path}/call'),
+          upload: (batch) async {
+            uploads.addAll(batch);
+            return batch.map((event) => event['eventId']! as String).toSet();
+          },
+        );
+        diagnostics.record(
+          stage: 'terminal',
+          action: 'commit',
+          outcome: 'ok',
+          reason: 'native_lifecycle_failed',
+          values: {
+            'nativeCommitted': true,
+            'terminal': true,
+            'nativeFailureOrigin': origin,
+          },
+        );
+        final event = (await diagnostics.eventsForTesting()).single;
+        expect(event['values'], containsPair('nativeFailureOrigin', origin));
+        expect(
+          CallDiagnostics.validateEvent({...event, 'source': 'ios'}),
+          isNotNull,
+        );
+        final exported = jsonDecode(await diagnostics.exportPreview()) as Map;
+        expect(
+          (exported['events'] as List).single['values'],
+          containsPair('nativeFailureOrigin', origin),
+        );
+        await diagnostics.flush();
+        final uploaded = uploads.singleWhere(
+          (row) => row['eventId'] == event['eventId'],
+        );
+        expectLegacyAccepted(uploaded, 'call');
+        expect(uploaded['values'], {'nativeCommitted': true, 'terminal': true});
+        expect((await diagnostics.eventsForTesting()).single, event);
+        expect((await diagnostics.status())['queuedEvents'], 0);
+      },
+    );
+  }
+
   test(
     'contact incident export retains detail while old relay receives compatible record',
     () async {
@@ -269,6 +323,7 @@ void main() {
         'trustedDeviceCount': 'PRIVATE_COUNT',
         'remoteRingingObserved': 'PRIVATE_BOOL',
         'timeToRemoteRingingMs': 'PRIVATE_TIME',
+        'nativeFailureOrigin': 'PRIVATE_ORIGIN',
       }.entries) {
         expect(
           CallDiagnostics.validateEvent({

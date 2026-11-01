@@ -64,6 +64,7 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
   }
 
   func testCallKitErrorFromRealControllerReachesPushSpoolWithoutPrivateErrorFields() throws {
+    try beginNativeCallDiagnosticCapture()
     let app = MknoonAppDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
     let calls = MknoonCallDiagnosticSpool(backend: PresentationDiagnosticMemory(), now: { self.now })
     XCTAssertTrue(app.configure(true, consentEpoch: nil)); XCTAssertTrue(calls.configure(true))
@@ -90,6 +91,8 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     XCTAssertEqual(completions, 1)
     XCTAssertEqual(store.snapshot()?.terminalEvent?.type, .nativeFailure)
     XCTAssertEqual(provider.endReports.count, 1)
+    try assertNativeFailureOrigin("incoming_report")
+    let nativeEvents = try nativeCallDiagnosticEvents()
     let appEvent = try XCTUnwrap((app.drain()["events"] as? [[String: Any]])?.first)
     XCTAssertEqual(appEvent["reason"] as? String, "prepare_failed")
     let values = try XCTUnwrap(appEvent["values"] as? [String: Any])
@@ -97,7 +100,7 @@ final class MknoonVoipPushRegistryTests: XCTestCase {
     XCTAssertEqual(values["errorClass"] as? String, "platform")
     let callEvent = try XCTUnwrap((calls.drain(64)["events"] as? [[String: Any]])?.first)
     XCTAssertEqual(callEvent["reason"] as? String, "provider_error")
-    let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [appEvent, callEvent]), as: UTF8.self)
+    let encoded = String(decoding: try JSONSerialization.data(withJSONObject: [appEvent, callEvent] + nativeEvents), as: UTF8.self)
     for secret in ["private-error-text", CXErrorDomainIncomingCall, call, contact] { XCTAssertFalse(encoded.contains(secret)) }
     XCTAssertTrue(MknoonCallDiagnosticScope.current.isEmpty)
   }

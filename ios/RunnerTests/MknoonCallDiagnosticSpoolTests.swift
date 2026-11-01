@@ -82,6 +82,32 @@ final class MknoonCallDiagnosticSpoolTests: XCTestCase {
       XCTAssertEqual(MknoonCallDiagnosticSpool.journalReason(.endRequested, context: input), "unknown")
     }
   }
+  func testNativeFailureOriginIsClosedAndCannotBypassConsentOrFailedStorage() throws {
+    let memory = Memory()
+    let store = MknoonCallDiagnosticSpool(backend: memory)
+    XCTAssertTrue(store.configure(true, consentEpoch: 10))
+    let origins = ["incoming_report", "outgoing_transaction", "audio_configuration", "audio_activation",
+                   "action_timeout", "answer_adoption_timeout", "unknown"]
+    for origin in origins {
+      XCTAssertTrue(store.append(handle: handle, stage: "terminal", action: "commit", outcome: "ok",
+        reason: "native_lifecycle_failed", values: ["nativeFailureOrigin": origin, "nativeCommitted": true, "terminal": true]))
+    }
+    XCTAssertEqual(events(store).compactMap { ($0["values"] as? [String: Any])?["nativeFailureOrigin"] as? String }, origins)
+    XCTAssertTrue(store.append(handle: handle, stage: "terminal", action: "commit", outcome: "ok",
+      reason: "native_lifecycle_failed", values: ["nativeFailureOrigin": "private-error-token", "nativeCommitted": true]))
+    XCTAssertNil((events(store).last?["values"] as? [String: Any])?["nativeFailureOrigin"])
+    XCTAssertFalse(String(decoding: try JSONSerialization.data(withJSONObject: events(store)), as: UTF8.self).contains("private-error-token"))
+
+    XCTAssertTrue(store.configure(false, consentEpoch: 11))
+    XCTAssertFalse(store.append(handle: handle, stage: "terminal", action: "commit", outcome: "ok",
+      reason: "native_lifecycle_failed", values: ["nativeFailureOrigin": "incoming_report"]))
+    XCTAssertTrue(events(store).isEmpty)
+    XCTAssertTrue(store.configure(true, consentEpoch: 12))
+    memory.fail = true
+    XCTAssertFalse(store.append(handle: handle, stage: "terminal", action: "commit", outcome: "ok",
+      reason: "native_lifecycle_failed", values: ["nativeFailureOrigin": "incoming_report"]))
+    XCTAssertTrue(events(store).isEmpty)
+  }
   func testDefaultOffOptOutErasesBindingsAndEvents() throws {
     let memory = Memory(), store = MknoonCallDiagnosticSpool(backend: Memory())
     store.append(handle: handle, stage: "push", action: "receive", outcome: "ok")
@@ -228,6 +254,60 @@ final class MknoonCallDiagnosticSpoolTests: XCTestCase {
     XCTAssertEqual(MknoonCallDiagnosticSpool.context(["reason": "resume_refresh"]) as NSDictionary,
                    ["reason": "resume_refresh"] as NSDictionary)
     XCTAssertTrue(MknoonCallDiagnosticSpool.context(["cause": "private-token"]).isEmpty)
+  }
+}
+
+private let nativeCallDiagnosticCaptureTrace = "423e4567-e89b-42d3-a456-426614174003"
+
+extension XCTestCase {
+  // Use the existing command queue so drains follow the controller's queued journal
+  // writes. Captures in this RunnerTests process run serially and always opt out
+  // and clear at teardown; no app/device session supplies their diagnostic state.
+  func beginNativeCallDiagnosticCapture() throws {
+    XCTAssertEqual(try nativeCallDiagnosticCommand("clear") as? Bool, true)
+    XCTAssertEqual(try nativeCallDiagnosticCommand("configure", ["enabled": true]) as? Bool, true)
+    XCTAssertEqual(try nativeCallDiagnosticCommand("bind", [
+      "callHandle": "123e4567-e89b-42d3-a456-426614174000", "traceId": nativeCallDiagnosticCaptureTrace,
+    ]) as? Bool, true)
+    addTeardownBlock {
+      XCTAssertEqual(try self.nativeCallDiagnosticCommand("configure", ["enabled": false]) as? Bool, true)
+      XCTAssertEqual(try self.nativeCallDiagnosticCommand("clear") as? Bool, true)
+    }
+  }
+
+  func nativeCallDiagnosticCommand(_ method: String, _ args: [String: Any] = [:]) throws -> Any {
+    let completed = expectation(description: "call diagnostics \(method)")
+    var captured: Any?
+    MknoonCallDiagnostics.shared.command(method, args.merging(["version": 1]) { _, new in new }) {
+      captured = $0
+      completed.fulfill()
+    }
+    wait(for: [completed], timeout: 5)
+    return try XCTUnwrap(captured)
+  }
+
+  func nativeCallDiagnosticEvents() throws -> [[String: Any]] {
+    let result = try XCTUnwrap(nativeCallDiagnosticCommand("drain") as? [String: Any])
+    return try XCTUnwrap(result["events"] as? [[String: Any]]).filter {
+      $0["traceId"] as? String == nativeCallDiagnosticCaptureTrace
+    }
+  }
+
+  func assertNativeFailureOrigin(_ origin: String, file: StaticString = #filePath, line: UInt = #line) throws {
+    let rows = try nativeCallDiagnosticEvents()
+    let terminals = rows.filter { $0["stage"] as? String == "terminal" && $0["reason"] as? String == "native_lifecycle_failed" }
+    XCTAssertEqual(terminals.count, 1, file: file, line: line)
+    let event = try XCTUnwrap(terminals.first, file: file, line: line)
+    let values = try XCTUnwrap(event["values"] as? [String: Any], file: file, line: line)
+    XCTAssertEqual(event["source"] as? String, "ios", file: file, line: line)
+    XCTAssertEqual(event["action"] as? String, "commit", file: file, line: line)
+    XCTAssertEqual(event["outcome"] as? String, "ok", file: file, line: line)
+    XCTAssertEqual(values["nativeCommitted"] as? Bool, true, file: file, line: line)
+    XCTAssertEqual(values["terminal"] as? Bool, true, file: file, line: line)
+    XCTAssertEqual(values["nativeFailureOrigin"] as? String, origin, file: file, line: line)
+    for row in rows where row["reason"] as? String != "native_lifecycle_failed" {
+      XCTAssertNil((row["values"] as? [String: Any])?["nativeFailureOrigin"], file: file, line: line)
+    }
   }
 }
 

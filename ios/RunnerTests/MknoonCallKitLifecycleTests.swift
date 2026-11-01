@@ -597,6 +597,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
   }
 
   func testProviderResetSerializesOneTerminalAndNotifiesDartOnce() throws {
+    try beginNativeCallDiagnosticCapture()
     let rig = makeRig()
     var events: [PendingNativeCallEvent] = []
     rig.controller.setEventHandler { events.append($0) }
@@ -605,6 +606,9 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertFalse(rig.controller.handleProviderReset())
     XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .providerRemoved)
     XCTAssertEqual(events.filter { $0.type == .providerRemoved }.count, 1)
+    let diagnosticEvents = try nativeCallDiagnosticEvents()
+    XCTAssertEqual(diagnosticEvents.filter { $0["reason"] as? String == "provider_reset" }.count, 1)
+    XCTAssertTrue(diagnosticEvents.allSatisfy { ($0["values"] as? [String: Any])?["nativeFailureOrigin"] == nil })
   }
 
   func testExpiredDescriptorOnColdLaunchEndsWithoutRestoringRinging() throws {
@@ -1032,7 +1036,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
   }
 
-  func testCapabilityDisablePersistsAndFailsCurrentCallDespiteRegistryHandlerFailure() {
+  func testCapabilityDisablePersistsAndFailsCurrentCallDespiteRegistryHandlerFailure() throws {
+    try beginNativeCallDiagnosticCapture()
     let rig = makeRig()
     XCTAssertEqual(present(rig, payload(callA)), .presented)
     var disableAttempts = 0
@@ -1047,6 +1052,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertFalse(rig.capability.enabled)
     XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
     XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
+    try assertNativeFailureOrigin("unknown")
   }
 
   func testFailedDisablePersistenceStillBlocksEveryNativeAdmissionUntilExplicitEnable() {
@@ -1538,7 +1544,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   // MARK: - Ringback
 
-  func testAudioSessionConfigurationFailureFailsAnswerAndEndsTheCall() {
+  func testAudioSessionConfigurationFailureFailsAnswerAndEndsTheCall() throws {
+    try beginNativeCallDiagnosticCapture()
     let rig = makeRig()
     XCTAssertEqual(present(rig, payload(callA)), .presented)
     rig.audio.prepareError = NSError(domain: "audio-test", code: 1)
@@ -1552,9 +1559,11 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
     XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
     XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+    try assertNativeFailureOrigin("audio_configuration")
   }
 
-  func testAudioSessionConfigurationFailureFailsStartAndEndsTheCall() {
+  func testAudioSessionConfigurationFailureFailsStartAndEndsTheCall() throws {
+    try beginNativeCallDiagnosticCapture()
     let rig = makeRig()
     registerOutgoing(rig)
     rig.audio.prepareError = NSError(domain: "audio-test", code: 1)
@@ -1568,6 +1577,74 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.store.snapshot()?.terminalEvent?.type, .nativeFailure)
     XCTAssertEqual(rig.provider.endReports.last?.1, .failed)
     XCTAssertFalse(rig.controller.startRingback(callA))
+    try assertNativeFailureOrigin("audio_configuration")
+  }
+
+  func testOutgoingTransactionFailureExportsItsOriginWithoutChangingCompletionOrJournal() throws {
+    try beginNativeCallDiagnosticCapture()
+    let rig = makeRig()
+    rig.transactions.nextError = NSError(domain: "private-domain", code: 7,
+      userInfo: [NSLocalizedDescriptionKey: "private-error-text"])
+    var results: [Bool] = []
+    rig.controller.registerOutgoingAuthenticated(callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 30_000) { results.append($0) }
+    XCTAssertEqual(results, [false])
+    XCTAssertEqual(rig.store.snapshot()?.events.map(\.type), [.nativeFailure])
+    XCTAssertTrue(rig.provider.endReports.isEmpty)
+    XCTAssertTrue(rig.provider.outgoingConnecting.isEmpty)
+    try assertNativeFailureOrigin("outgoing_transaction")
+    let output = String(decoding: try JSONSerialization.data(withJSONObject: nativeCallDiagnosticEvents()), as: UTF8.self)
+    XCTAssertFalse(output.contains("private-domain"))
+    XCTAssertFalse(output.contains("private-error-text"))
+    XCTAssertFalse(String(decoding: try XCTUnwrap(rig.backend.descriptor), as: UTF8.self).contains("nativeFailureOrigin"))
+  }
+
+  func testFailedNativeTerminalPersistenceDoesNotExportACommittedFailureOrigin() throws {
+    try beginNativeCallDiagnosticCapture()
+    let rig = makeRig()
+    rig.transactions.delayRequests = true
+    var results: [Bool] = []
+    rig.controller.registerOutgoingAuthenticated(callHandle: callA.uuidString.lowercased(),
+      expiresAtMs: now + 30_000) { results.append($0) }
+    rig.backend.failWrites = true
+    rig.transactions.delayedCompletion?(NSError(domain: "transaction-test", code: 1))
+    XCTAssertEqual(results, [false])
+    XCTAssertNil(rig.store.snapshot()?.terminalEvent)
+    let rows = try nativeCallDiagnosticEvents()
+    XCTAssertEqual(rows.filter { $0["reason"] as? String == "native_persistence_failed" }.count, 1)
+    XCTAssertFalse(rows.contains { ($0["values"] as? [String: Any])?["nativeCommitted"] as? Bool == true })
+    XCTAssertTrue(rows.allSatisfy { ($0["values"] as? [String: Any])?["nativeFailureOrigin"] == nil })
+  }
+
+  func testCallKitActivationFailureExportsItsOriginAndEndsOnlyOnce() throws {
+    try beginNativeCallDiagnosticCapture()
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    XCTAssertTrue(rig.controller.handleAnswer(callA))
+    rig.audio.prepareError = NSError(domain: "audio-test", code: 1)
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    rig.controller.provider(provider, didActivate: AVAudioSession.sharedInstance())
+    rig.controller.provider(provider, didActivate: AVAudioSession.sharedInstance())
+    XCTAssertEqual(rig.store.snapshot()?.events.filter(\.type.isTerminal).map(\.type), [.nativeFailure])
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+    XCTAssertFalse(rig.controller.audioState(callA)?.active ?? true)
+    XCTAssertEqual(rig.webRTCAudioSession.events, ["activate", "activate"])
+    try assertNativeFailureOrigin("audio_activation")
+  }
+
+  func testCallKitActionTimeoutExportsItsOriginAndEndsOnlyOnce() throws {
+    try beginNativeCallDiagnosticCapture()
+    let rig = makeRig()
+    XCTAssertEqual(present(rig, payload(callA)), .presented)
+    let provider = CXProvider(configuration: CXProviderConfiguration())
+    let action = RecordedAnswerCallAction(call: callA)
+    rig.controller.provider(provider, timedOutPerforming: action)
+    rig.controller.provider(provider, timedOutPerforming: action)
+    XCTAssertEqual(action.failures, 2)
+    XCTAssertEqual(action.fulfillments, 0)
+    XCTAssertEqual(rig.store.snapshot()?.events.filter(\.type.isTerminal).map(\.type), [.nativeFailure])
+    XCTAssertEqual(rig.provider.endReports.map(\.0), [callA])
+    try assertNativeFailureOrigin("action_timeout")
   }
 
   func testInterruptionAndMediaResetPauseRingbackUntilCallKitReactivates() {
@@ -1698,7 +1775,8 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
 
   // MARK: - Answer adoption bound
 
-  func testAnswerNobodyConsumesEndsTheCallAtTheAdoptionBound() {
+  func testAnswerNobodyConsumesEndsTheCallAtTheAdoptionBound() throws {
+    try beginNativeCallDiagnosticCapture()
     var clock = now
     let rig = makeRig(nowMsProvider: { clock })
     XCTAssertEqual(present(rig, payload(callA)), .presented)
@@ -1716,6 +1794,7 @@ final class MknoonCallKitLifecycleTests: XCTestCase {
     XCTAssertEqual(rig.provider.endReports.map(\.1), [.failed])
     // Idempotent: the bound never ends a call twice.
     XCTAssertFalse(rig.controller.enforceAnswerAdoptionBound(callA))
+    try assertNativeFailureOrigin("answer_adoption_timeout")
   }
 
   func testAnswerConsumedByTheRuntimeIsNotEndedAtTheAdoptionBound() {
