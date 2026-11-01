@@ -15,8 +15,8 @@ void main() {
     MobileScannerErrorCode.genericError,
   ]) {
     testWidgets(
-      'CONTACT-001 denied camera reported as ${reported.name} explains itself '
-      'and opens Settings',
+      'CONTACT-001 denied camera reported as ${reported.name} explains itself, '
+      'opens Settings, and scans after access is granted there',
       (tester) async {
         final previous = MobileScannerPlatform.instance;
         final camera = _CameraPlatform()..deniedAs = reported;
@@ -28,6 +28,7 @@ void main() {
           MobileScannerPlatform.instance = previous;
         });
         var settingsOpened = 0;
+        var osDenied = true;
         await tester.pumpWidget(
           MaterialApp(
             locale: const Locale('en'),
@@ -39,7 +40,7 @@ void main() {
                 settingsOpened++;
                 return true;
               },
-              isCameraDenied: () async => true,
+              isCameraDenied: () async => osDenied,
             ),
           ),
         );
@@ -59,6 +60,42 @@ void main() {
         await tester.tap(find.text('Open Settings'));
         await tester.pump();
         expect(settingsOpened, 1);
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        camera.granted = true;
+        osDenied = false;
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pumpAndSettle();
+
+        expect(camera.starts, 2);
+        expect(
+          find.text(
+            'This app needs camera access to scan QR codes and take photos',
+          ),
+          findsNothing,
+        );
+        expect(
+          find.text("Point your camera at a friend's QR code"),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widget<MobileScanner>(find.byType(MobileScanner))
+              .controller!
+              .value
+              .isRunning,
+          isTrue,
+        );
       },
     );
   }
