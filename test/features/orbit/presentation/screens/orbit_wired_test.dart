@@ -7,6 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart' show XFile;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
+import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
@@ -1471,6 +1474,115 @@ void main() {
         await pumpOrbitFrames(tester, count: 8);
         expect(ownNote, findsNothing);
         expect(find.text('Friend thought'), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'the open You page follows a late reply, a late photo and the expiry',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        final messages = _WroteBackMessageRepository();
+        var now = thoughtNow;
+        final deadline = thoughtNow.add(const Duration(minutes: 30));
+        await posts.savePost(
+          thought(
+            'you-live',
+            text: 'Morning walk',
+            expiresAt: deadline,
+          ).copyWith(
+            senderPeerId: testIdentity.peerId,
+            authorPeerId: testIdentity.peerId,
+            authorUsername: testIdentity.username,
+            isIncoming: false,
+          ),
+        );
+        await posts.saveRecipientDelivery(
+          PostRecipientDelivery(
+            postId: 'you-live',
+            recipientPeerId: testContact.peerId,
+            deliveryStatus: 'delivered',
+            lastAttemptAt: thoughtNow.toIso8601String(),
+            deliveryPath: 'direct',
+            createdAt: thoughtNow.toIso8601String(),
+            updatedAt: thoughtNow.toIso8601String(),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            messageRepository: messages,
+            thoughtNowProvider: () => now,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.byType(YouPageScreen), findsOneWidget);
+        expect(find.text('Morning walk'), findsOneWidget);
+        expect(
+          find.byKey(ValueKey('you-wrote-${testContact.peerId}')),
+          findsNothing,
+        );
+
+        messages.wroteBack = [(peerId: testContact.peerId, hasUnread: true)];
+        messages.debugEmitMessageChange(
+          ConversationMessage(
+            id: 'reply-1',
+            contactPeerId: testContact.peerId,
+            senderPeerId: testContact.peerId,
+            text: 'Lovely',
+            timestamp: thoughtNow.toIso8601String(),
+            createdAt: thoughtNow.toIso8601String(),
+            status: 'delivered',
+            isIncoming: true,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+        expect(
+          find.byKey(ValueKey('you-wrote-${testContact.peerId}')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(ValueKey('you-unread-${testContact.peerId}')),
+          findsOneWidget,
+        );
+
+        await posts.savePostMediaAttachment(
+          PostMediaAttachmentModel(
+            mediaId: 'you-photo',
+            postId: 'you-live',
+            blobId: 'blob-you-photo',
+            kind: 'image',
+            mime: 'image/jpeg',
+            sizeBytes: 10,
+            localPath: 'missing/you-photo.jpg',
+            downloadStatus: 'done',
+            createdAt: thoughtNow.toIso8601String(),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 4);
+        expect(
+          find.byKey(const ValueKey('you-media-you-photo')),
+          findsOneWidget,
+        );
+
+        now = deadline.add(const Duration(seconds: 1));
+        await tester.pump(const Duration(minutes: 30));
+        await pumpOrbitFrames(tester, count: 4);
+        expect(find.text('Morning walk'), findsNothing);
+        expect(find.text('Nothing shared right now'), findsOneWidget);
+
         await finishThoughtCase(tester);
       },
     );
@@ -12673,3 +12785,18 @@ Finder get _replySend => find
       matching: find.byType(GestureDetector),
     )
     .first;
+
+/// Who wrote back to a Thought, as the test sets it.
+class _WroteBackMessageRepository extends InMemoryMessageRepository
+    implements ThoughtReactionMessageRepository {
+  List<ThoughtWroteBack> wroteBack = const [];
+
+  @override
+  Future<List<ConversationMessage>> loadThoughtReactionMessages(
+    String postId,
+  ) async => const [];
+
+  @override
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
+      wroteBack;
+}

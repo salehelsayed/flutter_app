@@ -1,10 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
+import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
+
+import '../../../../shared/fakes/fake_just_audio.dart';
 
 final _now = DateTime.utc(2026, 11, 1, 12);
 
@@ -62,6 +68,21 @@ Finder _keysStartingWith(String prefix) => find.byWidgetPredicate(
       widget.key is ValueKey<String> &&
       (widget.key! as ValueKey<String>).value.startsWith(prefix),
 );
+
+PostMediaAttachmentModel _media(String id, String kind, int position) =>
+    PostMediaAttachmentModel(
+      mediaId: id,
+      postId: 'post-1',
+      blobId: 'blob-$id',
+      kind: kind,
+      mime: kind == 'voice' ? 'audio/aac' : 'image/jpeg',
+      sizeBytes: 10,
+      position: position,
+      durationMs: kind == 'voice' ? 4000 : null,
+      localPath: 'missing/$id',
+      downloadStatus: 'done',
+      createdAt: _now.toIso8601String(),
+    );
 
 void main() {
   late List<String> openedChats;
@@ -217,5 +238,61 @@ void main() {
     );
 
     expect(find.text('still up for friends · gone in 1 h'), findsOneWidget);
+  });
+
+  testWidgets('a voice-only thought shows its voice player', (tester) async {
+    final original = JustAudioPlatform.instance;
+    JustAudioPlatform.instance = FakeJustAudioPlatform();
+    addTearDown(() => JustAudioPlatform.instance = original);
+    final thought = _thought();
+    await pumpPage(
+      tester,
+      () async => _data(
+        thought: YouThought(
+          post: thought.post.copyWith(
+            text: '',
+            media: [_media('voice-1', 'voice', 0)],
+          ),
+          reactions: thought.reactions,
+          wroteBack: thought.wroteBack,
+        ),
+      ),
+    );
+
+    final player = tester.widget<AudioPlayerWidget>(
+      find.byKey(const ValueKey('you-voice-voice-1')),
+    );
+    expect(player.attachment.mediaType, 'audio');
+  });
+
+  testWidgets('tapping the second photo opens the viewer on that photo', (
+    tester,
+  ) async {
+    final thought = _thought();
+    await pumpPage(
+      tester,
+      () async => _data(
+        thought: YouThought(
+          post: thought.post.copyWith(
+            media: [_media('p1', 'image', 0), _media('p2', 'image', 1)],
+          ),
+          reactions: thought.reactions,
+          wroteBack: thought.wroteBack,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('you-media-p2')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final viewer = tester.widget<FullScreenTypedMediaViewer>(
+      find.byKey(const ValueKey('you-media-viewer')),
+    );
+    expect(viewer.initialIndex, 1);
+    expect(viewer.items.map((item) => item.attachmentId), [
+      'blob-p1',
+      'blob-p2',
+    ]);
   });
 }
