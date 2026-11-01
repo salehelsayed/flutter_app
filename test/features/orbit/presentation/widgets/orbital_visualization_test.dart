@@ -178,66 +178,70 @@ void main() {
     expect(find.byKey(const ValueKey('orbit-compose-thought')), findsNothing);
   });
 
-  testWidgets('own note sits above the centre avatar and leaves the plus in place', (
+  testWidgets(
+    'own note sits above the centre avatar and leaves the plus in place',
+    (tester) async {
+      final now = DateTime.utc(2026, 10, 21, 12);
+      var shares = 0;
+      Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
+        OrbitalVisualization(
+          userPeerId: 'me',
+          items: const [],
+          onSelfAvatarTap: () {},
+          onComposeThought: () => shares++,
+          thoughtsByPeerId: thoughts,
+          nowProvider: () => now,
+        ),
+      );
+      final plus = find.byKey(const ValueKey('orbit-compose-thought'));
+      final self = find.byKey(const ValueKey('orbit-center-self-avatar'));
+      // The bare canvas widens to its parent when notes are out (the host
+      // centres it), so the plus is pinned relative to the self avatar.
+      Offset plusFromSelf() =>
+          tester.getRect(plus).topLeft - tester.getRect(self).center;
+      await tester.pumpWidget(scene(const {}));
+      await pumpBounded(tester);
+      final plusWithout = plusFromSelf();
+      expect(plusWithout, const Offset(4, 4));
+
+      await tester.pumpWidget(
+        scene({
+          'me': OrbitThoughtNote(
+            postId: 'mine',
+            text: 'Mine',
+            isRead: true,
+            expiresAt: now.add(const Duration(hours: 1)),
+          ),
+        }),
+      );
+      await pumpBounded(tester);
+      expect(find.text('Mine'), findsOneWidget);
+      expect(plusFromSelf(), plusWithout);
+      final selfRect = tester.getRect(self);
+      final own = tester.getRect(
+        find.byKey(const ValueKey('orbit-thought-note-self')),
+      );
+      expect(own.bottom, lessThanOrEqualTo(selfRect.top));
+      expect(own.center.dx, closeTo(selfRect.center.dx, 0.01));
+      expect(own.overlaps(tester.getRect(plus)), isFalse);
+      await tester.tap(plus);
+      expect(shares, 1);
+    },
+  );
+
+  testWidgets('UI25 replacing a seat during a press cannot open the new peer', (
     tester,
   ) async {
-    final now = DateTime.utc(2026, 10, 21, 12);
-    var shares = 0;
-    Widget scene(Map<String, OrbitThoughtNote> thoughts) => wrap(
-      OrbitalVisualization(
-        userPeerId: 'me',
-        items: const [],
-        onSelfAvatarTap: () {},
-        onComposeThought: () => shares++,
-        thoughtsByPeerId: thoughts,
-        nowProvider: () => now,
-      ),
-    );
-    final plus = find.byKey(const ValueKey('orbit-compose-thought'));
-    final self = find.byKey(const ValueKey('orbit-center-self-avatar'));
-    // The bare canvas widens to its parent when notes are out (the host
-    // centres it), so the plus is pinned relative to the self avatar.
-    Offset plusFromSelf() =>
-        tester.getRect(plus).topLeft - tester.getRect(self).center;
-    await tester.pumpWidget(scene(const {}));
-    await pumpBounded(tester);
-    final plusWithout = plusFromSelf();
-    expect(plusWithout, const Offset(4, 4));
-
-    await tester.pumpWidget(
-      scene({
-        'me': OrbitThoughtNote(
-          postId: 'mine',
-          text: 'Mine',
-          isRead: true,
-          expiresAt: now.add(const Duration(hours: 1)),
-        ),
-      }),
-    );
-    await pumpBounded(tester);
-    expect(find.text('Mine'), findsOneWidget);
-    expect(plusFromSelf(), plusWithout);
-    final selfRect = tester.getRect(self);
-    final own = tester.getRect(
-      find.byKey(const ValueKey('orbit-thought-note-self')),
-    );
-    expect(own.bottom, lessThanOrEqualTo(selfRect.top));
-    expect(own.center.dx, closeTo(selfRect.center.dx, 0.01));
-    expect(own.overlaps(tester.getRect(plus)), isFalse);
-    await tester.tap(plus);
-    expect(shares, 1);
-  });
-
-  testWidgets('UI25 replacing a seat during a press cannot open the new peer',
-      (tester) async {
     final opened = <String>[];
     final a = _makeFriend(1);
     final b = _makeFriend(2);
     Widget scene(List<OrbitFriend> friends) => wrapMq(
       OrbitalVisualization(
-        userPeerId: 'me', items: _items(friends),
+        userPeerId: 'me',
+        items: _items(friends),
         onFriendTap: (friend) => opened.add(friend.peerId),
-      ), disableAnimations: true,
+      ),
+      disableAnimations: true,
     );
     await tester.pumpWidget(scene([a, b]));
     final point = tester.getCenter(find.byKey(const ValueKey('orbit-node-0')));
@@ -245,37 +249,62 @@ void main() {
     await tester.pumpWidget(scene([b, a]));
     await gesture.up();
     await tester.pump();
-    expect(opened, isEmpty, reason: 'A replaced target must cancel its in-flight tap');
+    expect(
+      opened,
+      isEmpty,
+      reason: 'A replaced target must cancel its in-flight tap',
+    );
     await tester.tapAt(point);
-    expect(opened, [b.peerId], reason: 'A fresh tap opens the visible replacement once');
+    expect(opened, [
+      b.peerId,
+    ], reason: 'A fresh tap opens the visible replacement once');
   });
 
   for (final count in [3, 13, 21]) {
-    testWidgets('UI25 Orbit center edge and halo sweep for $count nodes', (tester) async {
+    testWidgets('UI25 Orbit center edge and halo sweep for $count nodes', (
+      tester,
+    ) async {
       tester.view.reset();
       tester.view.physicalSize = const Size(420, 900);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
       final opened = <String>[];
-      await tester.pumpWidget(wrapMq(OrbitalVisualization(
-        userPeerId: 'me', items: _items([for (var i = 0; i < count; i++) _makeFriend(i)]),
-        overflowExpanded: count > 13, labelsVisible: true,
-        onFriendTap: (f) => opened.add(f.peerId),
-      ), disableAnimations: true));
+      await tester.pumpWidget(
+        wrapMq(
+          OrbitalVisualization(
+            userPeerId: 'me',
+            items: _items([for (var i = 0; i < count; i++) _makeFriend(i)]),
+            overflowExpanded: count > 13,
+            labelsVisible: true,
+            onFriendTap: (f) => opened.add(f.peerId),
+          ),
+          disableAnimations: true,
+        ),
+      );
       for (var i = 0; i < count; i++) {
         final node = find.byKey(ValueKey('orbit-node-$i'));
         final rect = tester.getRect(node);
-        final avatar = tester.widget<OrbitalAvatar>(find.descendant(of: node, matching: find.byType(OrbitalAvatar)));
+        final avatar = tester.widget<OrbitalAvatar>(
+          find.descendant(of: node, matching: find.byType(OrbitalAvatar)),
+        );
         final edge = avatar.size / 2 - 1;
         final offsets = <Offset>[
-          Offset.zero, Offset(edge, 0), Offset(-edge, 0), Offset(0, edge), Offset(0, -edge),
-          Offset(edge * .7, edge * .7), Offset(-edge * .7, -edge * .7),
-          Offset(rect.width / 2 - 1, 0), Offset(0, -rect.height / 2 + 1),
+          Offset.zero,
+          Offset(edge, 0),
+          Offset(-edge, 0),
+          Offset(0, edge),
+          Offset(0, -edge),
+          Offset(edge * .7, edge * .7),
+          Offset(-edge * .7, -edge * .7),
+          Offset(rect.width / 2 - 1, 0),
+          Offset(0, -rect.height / 2 + 1),
         ];
         for (final offset in offsets) {
           opened.clear();
           await tester.tapAt(rect.center + offset);
-          expect(opened, [_makeFriend(i).peerId], reason: 'count=$count node=$i offset=$offset');
+          expect(opened, [
+            _makeFriend(i).peerId,
+          ], reason: 'count=$count node=$i offset=$offset');
         }
       }
       opened.clear();
@@ -285,86 +314,117 @@ void main() {
     });
   }
 
-  testWidgets('UI25 animated Orbit taps and pointer cancellation retain exact entity', (tester) async {
-    final opened = <String>[];
-    await tester.pumpWidget(wrap(OrbitalVisualization(
-      userPeerId: 'me', items: _items([_makeFriend(1, unreadCount: 2)]),
-      onFriendTap: (f) => opened.add(f.peerId),
-    )));
-    await tester.pump(); // Deliver the zero-delay entrance start.
-    await tester.pump(const Duration(milliseconds: 1)); // Establish the first ticker frame.
-    for (final elapsed in [80, 160, 400]) {
-      await tester.pump(Duration(milliseconds: elapsed));
-      final detector = find.descendant(of: find.byType(OrbitalAvatar), matching: find.byType(GestureDetector));
-      final point = tester.getCenter(detector);
-      opened.clear();
-      await tester.tapAt(point);
-      expect(opened, [_makeFriend(1).peerId], reason: 'phase step=$elapsed point=$point');
-      final gesture = await tester.startGesture(point);
-      await tester.pump(const Duration(milliseconds: 30));
-      await gesture.cancel();
-      expect(opened, [_makeFriend(1).peerId]);
-    }
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'UI25 animated Orbit taps and pointer cancellation retain exact entity',
+    (tester) async {
+      final opened = <String>[];
+      await tester.pumpWidget(
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'me',
+            items: _items([_makeFriend(1, unreadCount: 2)]),
+            onFriendTap: (f) => opened.add(f.peerId),
+          ),
+        ),
+      );
+      await tester.pump(); // Deliver the zero-delay entrance start.
+      await tester.pump(
+        const Duration(milliseconds: 1),
+      ); // Establish the first ticker frame.
+      for (final elapsed in [80, 160, 400]) {
+        await tester.pump(Duration(milliseconds: elapsed));
+        final detector = find.descendant(
+          of: find.byType(OrbitalAvatar),
+          matching: find.byType(GestureDetector),
+        );
+        final point = tester.getCenter(detector);
+        opened.clear();
+        await tester.tapAt(point);
+        expect(opened, [
+          _makeFriend(1).peerId,
+        ], reason: 'phase step=$elapsed point=$point');
+        final gesture = await tester.startGesture(point);
+        await tester.pump(const Duration(milliseconds: 30));
+        await gesture.cancel();
+        expect(opened, [_makeFriend(1).peerId]);
+      }
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   group('TC-202 repaint isolation', () {
     testWidgets(
-        'TC-202-01 every node subtree is isolated by a RepaintBoundary inside its dim layer',
-        (tester) async {
-      const n = 8;
-      await tester.pumpWidget(wrap(OrbitalVisualization(
-        userPeerId: 'me',
-        items: _items([for (var i = 0; i < n; i++) _makeFriend(i)]),
-        onFriendTap: (_) {},
-      )));
-      await tester.pump();
-      for (var i = 0; i < n; i++) {
-        expect(
-          find.descendant(
-            of: find.byKey(ValueKey('orbit-node-dim-$i')),
-            matching: find.byType(RepaintBoundary),
+      'TC-202-01 every node subtree is isolated by a RepaintBoundary inside its dim layer',
+      (tester) async {
+        const n = 8;
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'me',
+              items: _items([for (var i = 0; i < n; i++) _makeFriend(i)]),
+              onFriendTap: (_) {},
+            ),
           ),
-          findsOneWidget,
-          reason: 'node $i must isolate its raster inside the keyed dim Opacity',
         );
-      }
-      await pumpBounded(tester);
-    });
+        await tester.pump();
+        for (var i = 0; i < n; i++) {
+          expect(
+            find.descendant(
+              of: find.byKey(ValueKey('orbit-node-dim-$i')),
+              matching: find.byType(RepaintBoundary),
+            ),
+            findsOneWidget,
+            reason:
+                'node $i must isolate its raster inside the keyed dim Opacity',
+          );
+        }
+        await pumpBounded(tester);
+      },
+    );
 
     testWidgets(
-        'TC-202-03 the ring CustomPaint is isolated by a keyed RepaintBoundary',
-        (tester) async {
-      await tester.pumpWidget(wrap(OrbitalVisualization(
-        userPeerId: 'me',
-        items: _items([for (var i = 0; i < 5; i++) _makeFriend(i)]),
-        onFriendTap: (_) {},
-      )));
-      await tester.pump();
-      final ringBoundary = find.descendant(
-        of: find.byType(OrbitalVisualization),
-        matching: find.byKey(const ValueKey('orbit-ring-boundary')),
-      );
-      expect(ringBoundary, findsOneWidget);
-      expect(
-        find.descendant(
-          of: ringBoundary,
-          matching: find.byWidgetPredicate(
-            (w) => w is CustomPaint && w.painter is OrbitalRingPainter,
+      'TC-202-03 the ring CustomPaint is isolated by a keyed RepaintBoundary',
+      (tester) async {
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'me',
+              items: _items([for (var i = 0; i < 5; i++) _makeFriend(i)]),
+              onFriendTap: (_) {},
+            ),
           ),
-        ),
-        findsOneWidget,
-        reason: 'the ring painter renders inside the keyed boundary',
-      );
-      await pumpBounded(tester);
-    });
+        );
+        await tester.pump();
+        final ringBoundary = find.descendant(
+          of: find.byType(OrbitalVisualization),
+          matching: find.byKey(const ValueKey('orbit-ring-boundary')),
+        );
+        expect(ringBoundary, findsOneWidget);
+        expect(
+          find.descendant(
+            of: ringBoundary,
+            matching: find.byWidgetPredicate(
+              (w) => w is CustomPaint && w.painter is OrbitalRingPainter,
+            ),
+          ),
+          findsOneWidget,
+          reason: 'the ring painter renders inside the keyed boundary',
+        );
+        await pumpBounded(tester);
+      },
+    );
   });
 
   group('OrbitalVisualization', () {
     testWidgets('TC-203-14 renders no inner-circle heading', (tester) async {
       // 203 B5: the "YOUR INNER CIRCLE" title block was removed.
       await tester.pumpWidget(
-        wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: const <OrbitItem>[])),
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: const <OrbitItem>[],
+          ),
+        ),
       );
       await pumpPastAnimations(tester);
       expect(find.text('YOUR INNER CIRCLE'), findsNothing);
@@ -372,7 +432,12 @@ void main() {
 
     testWidgets('renders center UserAvatar', (tester) async {
       await tester.pumpWidget(
-        wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: const <OrbitItem>[])),
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: const <OrbitItem>[],
+          ),
+        ),
       );
       await pumpPastAnimations(tester);
       expect(find.byType(UserAvatar), findsOneWidget);
@@ -382,7 +447,10 @@ void main() {
       final friends = List.generate(3, (i) => _makeFriend(i));
       await tester.pumpWidget(
         wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+          ),
         ),
       );
       await pumpPastAnimations(tester);
@@ -393,7 +461,10 @@ void main() {
       final friends = List.generate(8, (i) => _makeFriend(i));
       await tester.pumpWidget(
         wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+          ),
         ),
       );
       await pumpPastAnimations(tester);
@@ -407,7 +478,10 @@ void main() {
       final friends = List.generate(15, (i) => _makeFriend(i));
       await tester.pumpWidget(
         wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+          ),
         ),
       );
       await pumpPastAnimations(tester);
@@ -418,7 +492,10 @@ void main() {
       final friends = List.generate(10, (i) => _makeFriend(i));
       await tester.pumpWidget(
         wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+          ),
         ),
       );
       await pumpPastAnimations(tester);
@@ -427,21 +504,27 @@ void main() {
 
     testWidgets('renders CustomPaint for orbital rings', (tester) async {
       await tester.pumpWidget(
-        wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: const <OrbitItem>[])),
+        wrap(
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: const <OrbitItem>[],
+          ),
+        ),
       );
       await pumpPastAnimations(tester);
       expect(find.byType(CustomPaint), findsWidgets);
     });
 
-    testWidgets('uses readable overflow text on daylight', (
-      tester,
-    ) async {
+    testWidgets('uses readable overflow text on daylight', (tester) async {
       const colors = BackgroundReadableColors.representativeLight;
       final friends = List.generate(15, (i) => _makeFriend(i));
 
       await tester.pumpWidget(
         wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+          OrbitalVisualization(
+            userPeerId: 'my-peer-id-123',
+            items: _items(friends),
+          ),
           readableColors: colors,
         ),
       );
@@ -501,84 +584,94 @@ void main() {
     // still never opens a chat, and the badge now TOGGLES the arcs (fires
     // onBadgeTap) while NEVER opening a chat (INV-1).
     testWidgets(
-        'TC-198-67: center avatar never opens chat; badge toggles arcs, never opens chat',
-        (tester) async {
-      final friends = List.generate(15, (i) => _makeFriend(i));
-      var friendTaps = 0;
-      var badgeTaps = 0;
+      'TC-198-67: center avatar never opens chat; badge toggles arcs, never opens chat',
+      (tester) async {
+        final friends = List.generate(15, (i) => _makeFriend(i));
+        var friendTaps = 0;
+        var badgeTaps = 0;
 
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: 'my-peer-id-123',
-            items: _items(friends),
-            onFriendTap: (_) => friendTaps++,
-            onBadgeTap: () => badgeTaps++,
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+              onFriendTap: (_) => friendTaps++,
+              onBadgeTap: () => badgeTaps++,
+            ),
           ),
-        ),
-      );
-      await pumpPastAnimations(tester);
+        );
+        await pumpPastAnimations(tester);
 
-      await tester.tap(find.byType(UserAvatar).first, warnIfMissed: false);
-      await tester.tap(find.byType(OverflowBadge));
-      await tester.pump();
+        await tester.tap(find.byType(UserAvatar).first, warnIfMissed: false);
+        await tester.tap(find.byType(OverflowBadge));
+        await tester.pump();
 
-      expect(friendTaps, 0, reason: 'neither center nor badge opens a chat');
-      expect(badgeTaps, 1, reason: 'the badge toggled the arcs');
-    });
+        expect(friendTaps, 0, reason: 'neither center nor badge opens a chat');
+        expect(badgeTaps, 1, reason: 'the badge toggled the arcs');
+      },
+    );
 
     // TC-198-03 — overflow re-spreads ring 2 across 9 slots so the badge and
     // seat 13 no longer overlap (HEAD had their hit boxes ~9.42px apart).
     testWidgets(
-        'TC-198-03 overflow re-spreads ring 2 across 9 slots; badge and seat 13 disjoint',
-        (tester) async {
-      final friends = List.generate(15, (i) => _makeFriend(i));
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: 'p',
-            items: _items(friends),
-            onFriendTap: (_) {},
-            onBadgeTap: () {},
+      'TC-198-03 overflow re-spreads ring 2 across 9 slots; badge and seat 13 disjoint',
+      (tester) async {
+        final friends = List.generate(15, (i) => _makeFriend(i));
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'p',
+              items: _items(friends),
+              onFriendTap: (_) {},
+              onBadgeTap: () {},
+            ),
           ),
-        ),
-      );
-      await pumpPastAnimations(tester);
+        );
+        await pumpPastAnimations(tester);
 
-      // seat 13 = the 13th member (index 12), the last ring-2 slot.
-      final seat13 = tester.getRect(
-        find.bySemanticsLabel('Open chat with friend12'),
-      );
-      final badge = tester.getRect(find.byType(OverflowBadge));
-      expect(seat13.overlaps(badge), isFalse,
-          reason: 'badge and seat 13 hit boxes must be disjoint');
-    });
+        // seat 13 = the 13th member (index 12), the last ring-2 slot.
+        final seat13 = tester.getRect(
+          find.bySemanticsLabel('Open chat with friend12'),
+        );
+        final badge = tester.getRect(find.byType(OverflowBadge));
+        expect(
+          seat13.overlaps(badge),
+          isFalse,
+          reason: 'badge and seat 13 hit boxes must be disjoint',
+        );
+      },
+    );
 
     // TC-198-04 — badge floors its hit target to ≥44pt and carries a localized
     // plural Semantics label.
-    testWidgets('TC-198-04 badge ≥44pt hit target + localized plural semantics',
-        (tester) async {
-      final friends = List.generate(16, (i) => _makeFriend(i)); // overflow = 3
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: 'p',
-            items: _items(friends),
-            onFriendTap: (_) {},
-            onBadgeTap: () {},
+    testWidgets(
+      'TC-198-04 badge ≥44pt hit target + localized plural semantics',
+      (tester) async {
+        final friends = List.generate(
+          16,
+          (i) => _makeFriend(i),
+        ); // overflow = 3
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'p',
+              items: _items(friends),
+              onFriendTap: (_) {},
+              onBadgeTap: () {},
+            ),
           ),
-        ),
-      );
-      await pumpPastAnimations(tester);
+        );
+        await pumpPastAnimations(tester);
 
-      final hit = find.descendant(
-        of: find.byType(OverflowBadge),
-        matching: find.byType(GestureDetector),
-      );
-      expect(tester.getSize(hit).width, greaterThanOrEqualTo(44));
-      expect(tester.getSize(hit).height, greaterThanOrEqualTo(44));
-      expect(find.bySemanticsLabel(RegExp(r'3 more people')), findsOneWidget);
-    });
+        final hit = find.descendant(
+          of: find.byType(OverflowBadge),
+          matching: find.byType(GestureDetector),
+        );
+        expect(tester.getSize(hit).width, greaterThanOrEqualTo(44));
+        expect(tester.getSize(hit).height, greaterThanOrEqualTo(44));
+        expect(find.bySemanticsLabel(RegExp(r'3 more people')), findsOneWidget);
+      },
+    );
 
     // ── 194: per-node unread "messenger orbit" indicator ───────────────────
 
@@ -593,7 +686,10 @@ void main() {
         ];
         await tester.pumpWidget(
           wrap(
-            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
           ),
         );
         await pumpBounded(tester);
@@ -614,7 +710,10 @@ void main() {
         );
         await tester.pumpWidget(
           wrap(
-            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
           ),
         );
         await pumpBounded(tester);
@@ -628,43 +727,51 @@ void main() {
       },
     );
 
-    testWidgets('TC-194-07: all 13 visible nodes lit renders without exceptions', (
-      tester,
-    ) async {
-      final friends = List.generate(13, (i) => _makeFriend(i, unreadCount: 1));
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
-        ),
-      );
-      await pumpBounded(tester);
-
-      expect(find.byType(UnreadOrbitIndicator), findsNWidgets(13));
-      expect(tester.takeException(), isNull);
-    });
-
-    testWidgets('TC-194-26: lit node keeps at least 48px tap target and opens chat', (
-      tester,
-    ) async {
-      final friends = [_makeFriend(0, unreadCount: 3)];
-      OrbitFriend? tapped;
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: 'my-peer-id-123',
-            items: _items(friends),
-            onFriendTap: (f) => tapped = f,
+    testWidgets(
+      'TC-194-07: all 13 visible nodes lit renders without exceptions',
+      (tester) async {
+        final friends = List.generate(
+          13,
+          (i) => _makeFriend(i, unreadCount: 1),
+        );
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
           ),
-        ),
-      );
-      await pumpBounded(tester);
+        );
+        await pumpBounded(tester);
 
-      final tapTarget = find.byType(GestureDetector);
-      expect(tester.getSize(tapTarget), const Size(38 * 1.4, 38 * 1.4));
-      final rect = tester.getRect(tapTarget);
-      await tester.tapAt(rect.center + const Offset(22, 0));
-      expect(tapped?.peerId, 'peer-0-abcdef1234');
-    });
+        expect(find.byType(UnreadOrbitIndicator), findsNWidgets(13));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'TC-194-26: lit node keeps at least 48px tap target and opens chat',
+      (tester) async {
+        final friends = [_makeFriend(0, unreadCount: 3)];
+        OrbitFriend? tapped;
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+              onFriendTap: (f) => tapped = f,
+            ),
+          ),
+        );
+        await pumpBounded(tester);
+
+        final tapTarget = find.byType(GestureDetector);
+        expect(tester.getSize(tapTarget), const Size(38 * 1.4, 38 * 1.4));
+        final rect = tester.getRect(tapTarget);
+        await tester.tapAt(rect.center + const Offset(22, 0));
+        expect(tapped?.peerId, 'peer-0-abcdef1234');
+      },
+    );
 
     testWidgets(
       'TC-194-27: lit node semantics announces unread; unlit label unchanged',
@@ -686,10 +793,7 @@ void main() {
           find.bySemanticsLabel('Open chat with friend0, 2 unread messages'),
           findsOneWidget,
         );
-        expect(
-          find.bySemanticsLabel('Open chat with friend1'),
-          findsOneWidget,
-        );
+        expect(find.bySemanticsLabel('Open chat with friend1'), findsOneWidget);
         handle.dispose();
       },
     );
@@ -724,7 +828,10 @@ void main() {
         final friends = [_makeFriend(0, unreadCount: 2), _makeFriend(1)];
         await tester.pumpWidget(
           wrap(
-            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
             readableColors: colors,
           ),
         );
@@ -749,7 +856,10 @@ void main() {
         );
         await tester.pumpWidget(
           wrap(
-            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
           ),
         );
         await pumpBounded(tester);
@@ -770,7 +880,10 @@ void main() {
         final friends = [_makeFriend(0, unreadCount: 2)];
         await tester.pumpWidget(
           wrapMq(
-            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: _items(friends)),
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+            ),
             disableAnimations: true,
           ),
         );
@@ -796,7 +909,9 @@ void main() {
           ),
         ];
         await tester.pumpWidget(
-          wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items)),
+          wrap(
+            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items),
+          ),
         );
         await pumpPastAnimations(tester);
 
@@ -813,7 +928,9 @@ void main() {
           OrbitGroupItem(_makeGroup(1, name: 'Alpha Group', unreadCount: 3)),
         ];
         await tester.pumpWidget(
-          wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items)),
+          wrap(
+            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items),
+          ),
         );
         await pumpBounded(tester);
 
@@ -828,7 +945,9 @@ void main() {
           OrbitGroupItem(_makeGroup(1, name: 'Alpha Group', unreadCount: 0)),
         ];
         await tester.pumpWidget(
-          wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items)),
+          wrap(
+            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items),
+          ),
         );
         await pumpPastAnimations(tester);
 
@@ -843,7 +962,9 @@ void main() {
           OrbitGroupItem(_makeGroup(1, name: 'Alpha Group', avatarPath: null)),
         ];
         await tester.pumpWidget(
-          wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items)),
+          wrap(
+            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items),
+          ),
         );
         await pumpPastAnimations(tester);
 
@@ -907,7 +1028,9 @@ void main() {
             OrbitGroupItem(_makeGroup(100 + i, name: 'Group $i')),
         ];
         await tester.pumpWidget(
-          wrap(OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items)),
+          wrap(
+            OrbitalVisualization(userPeerId: 'my-peer-id-123', items: items),
+          ),
         );
         await pumpPastAnimations(tester);
 
@@ -924,29 +1047,30 @@ void main() {
     const centerKey = ValueKey('orbit-center-self-avatar');
 
     testWidgets(
-        'TC-206-10 wired self-tap fires onSelfAvatarTap, never onFriendTap',
-        (tester) async {
-      final friends = List.generate(15, (i) => _makeFriend(i));
-      var selfTaps = 0;
-      var friendTaps = 0;
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: 'my-peer-id-123',
-            items: _items(friends),
-            onFriendTap: (_) => friendTaps++,
-            onSelfAvatarTap: () => selfTaps++,
+      'TC-206-10 wired self-tap fires onSelfAvatarTap, never onFriendTap',
+      (tester) async {
+        final friends = List.generate(15, (i) => _makeFriend(i));
+        var selfTaps = 0;
+        var friendTaps = 0;
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: 'my-peer-id-123',
+              items: _items(friends),
+              onFriendTap: (_) => friendTaps++,
+              onSelfAvatarTap: () => selfTaps++,
+            ),
           ),
-        ),
-      );
-      await pumpPastAnimations(tester);
+        );
+        await pumpPastAnimations(tester);
 
-      await tester.tap(find.byKey(centerKey));
-      await tester.pump();
+        await tester.tap(find.byKey(centerKey));
+        await tester.pump();
 
-      expect(selfTaps, 1);
-      expect(friendTaps, 0);
-    });
+        expect(selfTaps, 1);
+        expect(friendTaps, 0);
+      },
+    );
 
     testWidgets('TC-206-25 semantics button + l10n label', (tester) async {
       final handle = tester.ensureSemantics();
@@ -961,12 +1085,13 @@ void main() {
       );
       await pumpPastAnimations(tester);
 
-      expect(find.bySemanticsLabel('Open settings'), findsOneWidget);
+      expect(find.bySemanticsLabel('Open your page'), findsOneWidget);
       handle.dispose();
     });
 
-    testWidgets('TC-206-26 hit target >=48 and position unchanged',
-        (tester) async {
+    testWidgets('TC-206-26 hit target >=48 and position unchanged', (
+      tester,
+    ) async {
       await tester.pumpWidget(
         wrap(
           OrbitalVisualization(
@@ -985,37 +1110,42 @@ void main() {
       // The wrapper must not shift the painted center: it stays on the canvas
       // center anchor (same geometry the sculpt/arcs locks pin).
       final avatarCenter = tester.getRect(find.byKey(centerKey)).center;
-      final canvasCenter =
-          tester.getRect(find.byKey(const ValueKey('orbit-viz-canvas'))).center;
+      final canvasCenter = tester
+          .getRect(find.byKey(const ValueKey('orbit-viz-canvas')))
+          .center;
       expect((avatarCenter - canvasCenter).distance, lessThan(0.5));
     });
 
-    testWidgets('TC-206-05 null userPeerId -> no center avatar, canvas tap no-op',
-        (tester) async {
-      var selfTaps = 0;
-      await tester.pumpWidget(
-        wrap(
-          OrbitalVisualization(
-            userPeerId: null,
-            items: const <OrbitItem>[],
-            onSelfAvatarTap: () => selfTaps++,
+    testWidgets(
+      'TC-206-05 null userPeerId -> no center avatar, canvas tap no-op',
+      (tester) async {
+        var selfTaps = 0;
+        await tester.pumpWidget(
+          wrap(
+            OrbitalVisualization(
+              userPeerId: null,
+              items: const <OrbitItem>[],
+              onSelfAvatarTap: () => selfTaps++,
+            ),
           ),
-        ),
-      );
-      await pumpPastAnimations(tester);
+        );
+        await pumpPastAnimations(tester);
 
-      expect(find.byType(UserAvatar), findsNothing);
-      expect(find.byKey(centerKey), findsNothing);
-      final canvasCenter =
-          tester.getRect(find.byKey(const ValueKey('orbit-viz-canvas'))).center;
-      await tester.tapAt(canvasCenter);
-      await tester.pump();
-      expect(selfTaps, 0);
-      expect(tester.takeException(), isNull);
-    });
+        expect(find.byType(UserAvatar), findsNothing);
+        expect(find.byKey(centerKey), findsNothing);
+        final canvasCenter = tester
+            .getRect(find.byKey(const ValueKey('orbit-viz-canvas')))
+            .center;
+        await tester.tapAt(canvasCenter);
+        await tester.pump();
+        expect(selfTaps, 0);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets('INV-206-1 no callback -> no detector (TC-194-26 guard)',
-        (tester) async {
+    testWidgets('INV-206-1 no callback -> no detector (TC-194-26 guard)', (
+      tester,
+    ) async {
       final friends = [_makeFriend(0)];
       await tester.pumpWidget(
         wrap(
@@ -1031,7 +1161,10 @@ void main() {
       // No self-tap callback → no center detector mounts, so the 1-friend tree
       // still has EXACTLY one GestureDetector (TC-194-26's single-match holds).
       expect(find.byKey(centerKey), findsNothing);
-      expect(tester.getSize(find.byType(GestureDetector)), const Size(38 * 1.4, 38 * 1.4));
+      expect(
+        tester.getSize(find.byType(GestureDetector)),
+        const Size(38 * 1.4, 38 * 1.4),
+      );
     });
   });
 }

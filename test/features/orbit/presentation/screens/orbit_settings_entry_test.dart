@@ -424,6 +424,30 @@ void main() {
     expect(find.byType(YouPageScreen), findsNothing);
   });
 
+  for (final youPage in [false, true]) {
+    testWidgets('You page ${youPage ? 'on' : 'off'}: center avatar label', (
+      tester,
+    ) async {
+      debugYouPageEnabledOverride = youPage;
+      addTearDown(() => debugYouPageEnabledOverride = null);
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(identityWith());
+
+      await tester.pumpWidget(
+        buildOrbit(appShellController: freshController()),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        find.bySemanticsLabel('Open your page'),
+        youPage ? findsOneWidget : findsNothing,
+      );
+      // Only the bottom-left settings button says "Open settings".
+      expect(find.bySemanticsLabel('Open settings'), findsOneWidget);
+    });
+  }
+
   testWidgets('You page on: tapping the center avatar opens the You page', (
     tester,
   ) async {
