@@ -55,11 +55,22 @@ decoding, legacy SQL-secret fallback and optional ML-KEM migration stay unchange
 `startup_router_recovery_test.dart` cover absence/intact controls, repeated
 refusal without identity writes or erasure, no onboarding or runtime start while
 keys are unavailable, restored-key Retry, and existing migration blocks. The
+missing-keys/migration-block cross-product must also preserve the existing
+account-migration blocked screen and its recovery actions. The startup decision
+checks blocking authority after the typed missing-secret failure; ordinary
+unavailable accounts keep safe Retry, unreadable authority preserves the same
+typed error, and recoverable export pauses remain unchanged until identity loads.
+The regression covers every blocking state with intact/missing required secrets,
+fail-closed authority, nonblocking controls, and four blocked-screen erase-dialog
+cancel paths without runtime start, identity writes or automatic erasure. The
 runtime readiness hook can be requested by multiple existing startup owners
 after qualification; it is not an exactly-once hook. The node-start assertion
 remains separate. RED commit `2b6dd490e` reproduces retained data routing to
-onboarding; the repaired three-file selection plus localization tests passes
-108 cases. Evidence and the initial overconstrained readiness-count failure are
+onboarding; the original three-file selection plus localization tests passed
+108 cases but tested missing keys and migration blocking separately. Review RED
+commit `f67a59731` exposes the missed cross-product (13 pass, 17 fail); the same
+30-case selection passes after the routing correction. Evidence, that causal RED
+and the initial overconstrained readiness-count failure are
 under `.codex-test-logs/ll36-20261101/`. These are host tests using injected SQL
 rows and secure stores, not device Keychain/Keystore availability proof.
 

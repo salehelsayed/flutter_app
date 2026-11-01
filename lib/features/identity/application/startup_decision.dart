@@ -2,6 +2,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/account_migration_authority_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
 /// Represents the startup routing decision based on identity and contacts.
@@ -37,7 +38,33 @@ Future<StartupDecision> decideStartupRoute({
     details: {},
   );
 
-  final identity = await identityRepo.loadIdentity();
+  IdentityModel? identity;
+  try {
+    identity = await identityRepo.loadIdentity();
+  } on IdentitySecretsUnavailableException {
+    AccountMigrationAuthorityRecord? blockedAuthority;
+    try {
+      blockedAuthority = await migrationAuthorityRepository?.loadAuthority();
+    } catch (_) {
+      // Preserve the safe identity failure if authority storage is unavailable.
+    }
+
+    // Leave recoverable export pauses unchanged until identity can load again.
+    if (blockedAuthority != null &&
+        blockedAuthority.state.blocksNormalStartup &&
+        (blockedAuthority.isFailClosed ||
+            blockedAuthority.state !=
+                AccountMigrationAuthorityState
+                    .migrationExportingNetworkPaused)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ID_STARTUP_MIGRATION_BLOCKED',
+        details: {'state': blockedAuthority.state.wireName},
+      );
+      return StartupDecision.accountMigrationBlocked;
+    }
+    rethrow;
+  }
   var migrationAuthority = await migrationAuthorityRepository?.loadAuthority();
 
   if (migrationAuthority != null &&
