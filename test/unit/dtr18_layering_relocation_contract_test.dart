@@ -450,7 +450,9 @@ const _productionBootstrapNormalizedSha256 =
     // Contact-request burst fix: the received-call-wake recovery send passes
     // requireFresh: true so it never reuses an earlier coalesced send. One
     // argument at the existing call site; no owner moves.
-    'c2806ae28a8613f023130014b3d2906b6f627c270041e57c151277003690decf';
+    // Push round 4 combines the CR-008/IN-008 retirement wiring with the
+    // wrote-back lookup in this same app-owned bootstrap; no owner moves.
+    '2f129523666f867625da14248b22dd964c3c76077fc6817e87fcde8b9b0b1c80';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -487,7 +489,7 @@ const _productionBootstrapNormalizedSha256 =
 // The same additive Thoughts bindings leave the historical callback exact.
 // The same approved wrote-back delegate is present in this reviewed remainder.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    '70ee52df3e2a8c10f08c6af090f5011670bf28ec36cdaf08bdc6608764feb528';
+    'd492ff46470cce28102420ec61d728537f4c5baf3cf861f370f97d90a902944e';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
