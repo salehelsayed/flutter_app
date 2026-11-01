@@ -11033,7 +11033,20 @@ State an investigation area separately from a proven root cause.
   Preview requests now keep task instructions in LiteRT-LM's supported
   `systemInstruction` and source audio/text in the user message. Prompt-contract
   tests check verbatim spoken-language and data-only translation instructions;
-  they do not prove model obedience or exclude instruction echo. The WAV
+  they do not prove model obedience or exclude instruction echo. The owner
+  selected V1 from the 2026-11-01 Round 02 comparison: the existing translation
+  safety instructions followed by the tested casual-chat, Arabic-dialect,
+  nickname-preservation and formatting guidance. Full English, German and
+  Arabic prompt assertions bind that exact text. The frozen instructions SHA-256
+  `32a6a2fcbfa3de97ab6455c8421d1d77402ba758d7eeaead679ae38f6568689f`
+  matches the actual device round `ac0bc494-2c20-4992-b9fa-e84e61e9cabe`.
+  The transcription instruction and decoding settings are unchanged. The
+  comparison still records baby-nickname failures for V1; owner selection does
+  not establish that case as fixed. The self-contained report is retained at
+  `/Volumes/CrucialX9/Kayan/data/prompt-reports/2026-11-01-translate-r1.html`;
+  prompt-contract RED/GREEN evidence belongs under
+  `.codex-test-logs/translator-v1-prompt-20261101/`.
+  The WAV
   converter rejects decoded PCM with no complete input frame or no normalized
   output sample before an audio inference session is created. Valid short and
   zero-amplitude complete samples remain accepted; there is no duration or
