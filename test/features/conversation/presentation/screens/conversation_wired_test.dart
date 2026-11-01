@@ -10656,6 +10656,62 @@ void main() {
       },
     );
 
+    for (final tile in ['Take Photo', 'Record Video']) {
+      testWidgets(
+        'MEDIA-010 denied camera on $tile offers Open Settings, not Media unavailable (1:1)',
+        (tester) async {
+          final denied = PlatformException(code: 'camera_access_denied');
+          final mediaPicker = FakeMediaPicker()
+            ..imageError = denied
+            ..videoError = denied;
+          final gateway = FakeMicPermissionGateway();
+          final messageRepo = FakeMessageRepository();
+          await pumpScreen(
+            tester,
+            identityRepo: FakeIdentityRepository(makeIdentity()),
+            messageRepo: messageRepo,
+            chatListener: ChatMessageListener(
+              chatMessageStream: const Stream.empty(),
+              messageRepo: messageRepo,
+              contactRepo: FakeContactRepository(),
+            ),
+            sendFn: _instantSuccessSendFn,
+            mediaPicker: mediaPicker,
+            micPermissionGateway: gateway,
+          );
+
+          await tester.tap(find.byIcon(Icons.add_rounded));
+          await tester.pump(const Duration(milliseconds: 500));
+          tester
+              .widget<ListTile>(
+                find.ancestor(
+                  of: find.text(tile),
+                  matching: find.byType(ListTile),
+                ),
+              )
+              .onTap!();
+          await tester.pump(const Duration(milliseconds: 500));
+
+          expect(find.text('Media unavailable'), findsNothing);
+          expect(
+            find.text(
+              'This app needs camera access to scan QR codes and take photos',
+            ),
+            findsOneWidget,
+          );
+          // The sheet extends below the short test viewport; invoke the
+          // button the way this file drives the picker tiles.
+          tester
+              .widget<FilledButton>(
+                find.byKey(const ValueKey('camera-perm-open-settings')),
+              )
+              .onPressed!();
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(gateway.openAppSettingsCallCount, 1);
+        },
+      );
+    }
+
     testWidgets(
       'MEDIA-009/MEDIA-013 cancelled picks and real oversized file preserve draft; removal sends only the valid sibling',
       (tester) async {
@@ -11141,6 +11197,14 @@ void main() {
           expect(sends, 0);
           expect(uploads, 0);
           expect(tester.takeException(), isNull);
+          if (camera) {
+            tester
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('camera-perm-not-now')),
+                )
+                .onPressed!();
+            await tester.pump(const Duration(milliseconds: 500));
+          }
 
           // Native permission is modeled only at the existing picker boundary.
           picker.granted = true;
@@ -11206,11 +11270,11 @@ void main() {
         final l10n = AppLocalizations.of(
           tester.element(find.byType(ConversationWired)),
         )!;
+        expect(find.text(l10n.media_unavailable), findsNothing);
         expect(
-          find.text(l10n.media_unavailable),
+          find.text(l10n.perm_camera),
           findsOneWidget,
-          reason:
-              'camera permission denial must be visible, as gallery failure is',
+          reason: 'camera permission denial must say why and offer Settings',
         );
       });
     });

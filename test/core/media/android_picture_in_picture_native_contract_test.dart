@@ -981,6 +981,20 @@ void main() {
 
   // The subprocess inventories the full device-proof corpus and can exceed
   // the default 30 seconds during the concurrent host gate.
+  test('the PiP activity never removes the chat task it was launched into', () {
+    // Before Android moves it into its own pinned task, the PiP activity
+    // shares MainActivity's task. Removing that task kills the app.
+    final activity = File(activityPath).readAsStringSync();
+    expect(
+      RegExp(r'finishAndRemoveTask\(\)').allMatches(activity),
+      hasLength(1),
+    );
+    expect(
+      activity,
+      contains('if (isTaskRoot) finishAndRemoveTask() else finish()'),
+    );
+  });
+
   test('PiP proof discovery paths have exact classifications', () async {
     const expected = <String, String>{
       'integration_test/received_video_picture_in_picture_proof_test.dart':
@@ -1018,10 +1032,7 @@ void main() {
     ).readAsStringSync();
 
     expect(fullRegressionRunner, contains('local attempt_id'));
-    expect(
-      fullRegressionRunner,
-      contains(r'pip-$scenario-$attempt_id'),
-    );
+    expect(fullRegressionRunner, contains(r'pip-$scenario-$attempt_id'));
     expect(
       fullRegressionRunner,
       isNot(contains(r'--output "$run_dir/aux/pip-$scenario"')),

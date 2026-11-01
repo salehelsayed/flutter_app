@@ -2077,51 +2077,60 @@ void main() {
     );
 
     for (final action in ['Take Photo', 'Record Video']) {
-      testWidgets('camera $action refusal shows notice and preserves draft', (
-        tester,
-      ) async {
-        tester.view.physicalSize = const Size(800, 1600);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-        final group = makeChatGroup();
-        await groupRepo.saveGroup(group);
-        final picker = _FailingCameraPicker();
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            mediaPicker: picker,
-            initialText: 'Keep this draft',
-          ),
-        );
-        await pumpFrames(tester, count: 20);
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
-        final cameraAction = find.widgetWithText(ListTile, action);
-        expect(cameraAction.hitTestable(), findsOneWidget);
-        await tester.tap(cameraAction);
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
-        await pumpFrames(tester);
-        final screen = find.byType(GroupConversationScreen);
-        final l10n = AppLocalizations.of(tester.element(screen))!;
-        expect(picker.pickImageCalls, action == 'Take Photo' ? 1 : 0);
-        expect(picker.pickVideoCalls, action == 'Record Video' ? 1 : 0);
-        expect(find.text(l10n.media_unavailable).hitTestable(), findsOneWidget);
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller!.text,
-          'Keep this draft',
-        );
-        expect(
-          tester.widget<GroupConversationScreen>(screen).pendingAttachments,
-          isEmpty,
-        );
-        expect(await msgRepo.getMessagesPage(group.id), isEmpty);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump(const Duration(seconds: 1));
-      });
+      testWidgets(
+        'MEDIA-010 denied camera $action offers Open Settings and preserves draft',
+        (tester) async {
+          tester.view.physicalSize = const Size(800, 1600);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final group = makeChatGroup();
+          await groupRepo.saveGroup(group);
+          final picker = _FailingCameraPicker();
+          final gateway = FakeMicPermissionGateway();
+          await tester.pumpWidget(
+            buildWidget(
+              group: group,
+              mediaPicker: picker,
+              micPermissionGateway: gateway,
+              initialText: 'Keep this draft',
+            ),
+          );
+          await pumpFrames(tester, count: 20);
+          await tester.tap(find.byIcon(Icons.add_rounded));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          final cameraAction = find.widgetWithText(ListTile, action);
+          expect(cameraAction.hitTestable(), findsOneWidget);
+          await tester.tap(cameraAction);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 500));
+          await pumpFrames(tester);
+          final screen = find.byType(GroupConversationScreen);
+          final l10n = AppLocalizations.of(tester.element(screen))!;
+          expect(picker.pickImageCalls, action == 'Take Photo' ? 1 : 0);
+          expect(picker.pickVideoCalls, action == 'Record Video' ? 1 : 0);
+          expect(find.text(l10n.media_unavailable), findsNothing);
+          expect(find.text(l10n.perm_camera), findsOneWidget);
+          await tester.tap(
+            find.byKey(const ValueKey('camera-perm-open-settings')),
+          );
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(gateway.openAppSettingsCallCount, 1);
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller!.text,
+            'Keep this draft',
+          );
+          expect(
+            tester.widget<GroupConversationScreen>(screen).pendingAttachments,
+            isEmpty,
+          );
+          expect(await msgRepo.getMessagesPage(group.id), isEmpty);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(const Duration(seconds: 1));
+        },
+      );
     }
 
     testWidgets(

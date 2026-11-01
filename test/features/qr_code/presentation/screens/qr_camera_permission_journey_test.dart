@@ -10,6 +10,59 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 // scanner route/controller's admission callback, not contact persistence or OS
 // Settings. The complete contact/Orbit route remains UI-Update-owned.
 void main() {
+  for (final reported in [
+    MobileScannerErrorCode.permissionDenied,
+    MobileScannerErrorCode.genericError,
+  ]) {
+    testWidgets(
+      'CONTACT-001 denied camera reported as ${reported.name} explains itself '
+      'and opens Settings',
+      (tester) async {
+        final previous = MobileScannerPlatform.instance;
+        final camera = _CameraPlatform()..deniedAs = reported;
+        MobileScannerPlatform.instance = camera;
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+          await tester.runAsync(camera.frames.close);
+          MobileScannerPlatform.instance = previous;
+        });
+        var settingsOpened = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('en'),
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: QRScannerScreen(
+              onScanned: (_) {},
+              openAppSettings: () async {
+                settingsOpened++;
+                return true;
+              },
+              isCameraDenied: () async => true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('An unexpected error occurred.'), findsNothing);
+        expect(
+          find.text("Point your camera at a friend's QR code"),
+          findsNothing,
+        );
+        expect(
+          find.text(
+            'This app needs camera access to scan QR codes and take photos',
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Open Settings'));
+        await tester.pump();
+        expect(settingsOpened, 1);
+      },
+    );
+  }
+
   for (final denied in [false, true]) {
     testWidgets(
       'CONTACT-001 ${denied ? 'denied' : 'cancelled'} camera admits no code; '
@@ -101,6 +154,7 @@ void main() {
 
 class _CameraPlatform extends MobileScannerPlatform {
   bool granted = false;
+  MobileScannerErrorCode deniedAs = MobileScannerErrorCode.permissionDenied;
   int starts = 0;
   final frames = StreamController<BarcodeCapture?>.broadcast(sync: true);
 
@@ -116,9 +170,7 @@ class _CameraPlatform extends MobileScannerPlatform {
   Future<MobileScannerViewAttributes> start(StartOptions options) async {
     starts++;
     if (!granted) {
-      throw const MobileScannerException(
-        errorCode: MobileScannerErrorCode.permissionDenied,
-      );
+      throw MobileScannerException(errorCode: deniedAs);
     }
     return MobileScannerViewAttributes(
       cameraDirection: options.cameraDirection,

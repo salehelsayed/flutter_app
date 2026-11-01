@@ -131,6 +131,74 @@ void main() {
     },
   );
 
+  test(
+    'a video that finishes in PiP gives the viewer its player back at the start',
+    () async {
+      final gateway = _Gateway();
+      final restores = <MediaPictureInPictureRestore>[];
+      final authorization = _authorization(durationMs: 6000);
+      final controller = MediaPictureInPictureController(
+        gateway: gateway,
+        pathAuthority: _PathAuthority(),
+        reloadCurrent: () async => authorization,
+        resumeStore: _Store(),
+        restorePlayback: (restore) async => restores.add(restore),
+        sessionIdFactory: () => 'opaque-session',
+        pollTicks: const Stream<void>.empty(),
+      );
+      addTearDown(controller.dispose);
+      await controller.start(
+        authorization: authorization,
+        playback: _Playback(
+          position: const Duration(milliseconds: 1000),
+          duration: const Duration(milliseconds: 6000),
+        ),
+      );
+      gateway.emit(
+        const PictureInPictureEvent(
+          session: 'opaque-session',
+          attachment: 'attachment-1',
+          state: PictureInPictureState.completed,
+          positionMs: 0,
+          durationMs: 6000,
+          reason: PictureInPictureTerminalReason.completed,
+        ),
+      );
+      await controller.drain();
+
+      expect(restores, hasLength(1));
+      expect(restores.single.positionMs, 0);
+      expect(restores.single.shouldPlay, isFalse);
+    },
+  );
+
+  test('PiP on a video that already ended plays it from the start', () async {
+    final gateway = _Gateway();
+    final authorization = _authorization(durationMs: 6000);
+    final controller = MediaPictureInPictureController(
+      gateway: gateway,
+      pathAuthority: _PathAuthority(),
+      reloadCurrent: () async => authorization,
+      resumeStore: _Store(),
+      restorePlayback: (_) async {},
+      sessionIdFactory: () => 'opaque-session',
+      pollTicks: const Stream<void>.empty(),
+    );
+    addTearDown(controller.dispose);
+
+    expect(
+      await controller.start(
+        authorization: authorization,
+        playback: _Playback(
+          position: const Duration(milliseconds: 6000),
+          duration: const Duration(milliseconds: 6000),
+        ),
+      ),
+      MediaPictureInPictureStartOutcome.started,
+    );
+    expect(gateway.requests.single.positionMs, 0);
+  });
+
   test('non-video never writes resume state or reaches native', () async {
     final gateway = _Gateway();
     final store = _Store();
@@ -193,6 +261,7 @@ MediaPictureInPictureAuthorization _authorization({
 class _Gateway implements PictureInPictureGateway {
   final _events = StreamController<PictureInPictureEvent>.broadcast(sync: true);
   int calls = 0;
+  final requests = <PictureInPictureRequest>[];
 
   void emit(PictureInPictureEvent event) => _events.add(event);
 
@@ -209,6 +278,7 @@ class _Gateway implements PictureInPictureGateway {
     PictureInPictureRequest request,
   ) async {
     calls++;
+    requests.add(request);
     return PictureInPictureStartOutcome.started;
   }
 

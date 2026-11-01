@@ -6,6 +6,8 @@ class FakeMediaPicker implements MediaPicker {
   XFile? imageResult;
   XFile? videoResult;
   List<XFile> documentsResult = const [];
+  Object? imageError;
+  Object? videoError;
 
   int pickMultipleMediaCalls = 0;
   int pickImageCalls = 0;
@@ -21,12 +23,16 @@ class FakeMediaPicker implements MediaPicker {
   @override
   Future<XFile?> pickImage({required ImageSource source}) async {
     pickImageCalls++;
+    final error = imageError;
+    if (error != null) throw error;
     return imageResult;
   }
 
   @override
   Future<XFile?> pickVideo({required ImageSource source}) async {
     pickVideoCalls++;
+    final error = videoError;
+    if (error != null) throw error;
     return videoResult;
   }
 
