@@ -3022,7 +3022,7 @@ void main() {
 
   for (final stage in ['readiness', 'contact', 'start']) {
     testWidgets(
-      'Connecting appears on the first frame and cancel fences late $stage',
+      'Calling appears on the first frame and cancel fences late $stage',
       (tester) async {
         final messageRepo = FakeMessageRepository();
         final readiness = Completer<bool>();
@@ -3054,12 +3054,12 @@ void main() {
         (screen.onCall ?? screen.onCallRetry)!();
         (screen.onCall ?? screen.onCallRetry)!();
         await tester.pump();
-        expect(find.text('Connecting'), findsOneWidget);
+        expect(find.text('Calling'), findsOneWidget);
         expect(find.byTooltip('Cancel call'), findsOneWidget);
         expect(capability.peerIds, hasLength(stage == 'start' ? 1 : 0));
         await tester.tap(find.byTooltip('Cancel call'));
         await tester.pump();
-        expect(find.text('Connecting'), findsNothing);
+        expect(find.text('Calling'), findsNothing);
         if (stage == 'start') {
           expect(capability.startRequests.single!.isCanceled, isTrue);
         }
@@ -3068,12 +3068,12 @@ void main() {
         capability.startCompleter = Completer<OutgoingCallStartResult>();
         await tester.tap(find.byIcon(Icons.call_outlined));
         await tester.pump();
-        expect(find.text('Connecting'), findsOneWidget);
+        expect(find.text('Calling'), findsOneWidget);
         if (stage == 'readiness') readiness.complete(true);
         if (stage == 'contact') contact.complete(true);
         if (stage == 'start') start.complete(OutgoingCallStartResult.failed);
         await tester.pump();
-        expect(find.text('Connecting'), findsOneWidget);
+        expect(find.text('Calling'), findsOneWidget);
         expect(
           find.text("Couldn't start voice call. Please try again."),
           findsNothing,
@@ -3081,7 +3081,7 @@ void main() {
         expect(capability.peerIds, hasLength(stage == 'start' ? 2 : 1));
         capability.startCompleter!.complete(OutgoingCallStartResult.started);
         await tester.pump();
-        expect(find.text('Connecting'), findsNothing);
+        expect(find.text('Calling'), findsNothing);
       },
     );
   }
@@ -3123,7 +3123,7 @@ void main() {
       );
       await tester.tap(find.byTooltip('Start voice call'));
       await tester.pump();
-      expect(find.text('Connecting'), findsOneWidget);
+      expect(find.text('Calling'), findsOneWidget);
       final events = await tester.runAsync(diagnostics.eventsForTesting);
       final frames = events!
           .where(
@@ -3139,7 +3139,7 @@ void main() {
       final request = capability.startRequests.single!;
       request.admit();
       await tester.pump();
-      expect(find.text('Connecting'), findsNothing);
+      expect(find.text('Calling'), findsNothing);
       await tester.pump(const Duration(seconds: 31));
       expect(request.isCanceled, isFalse);
       expect(
@@ -3186,7 +3186,7 @@ void main() {
         await tester.pump();
         expect(callAction, findsNothing);
         expect(recordAction, findsNothing);
-        expect(find.semantics.byLabel('Connecting'), findsOneWidget);
+        expect(find.semantics.byLabel('Calling'), findsOneWidget);
         final cancelAction = find.semantics.byPredicate(
           (node) => node.tooltip == 'Cancel call',
         );
@@ -3206,7 +3206,7 @@ void main() {
   );
 
   testWidgets(
-    'Connecting preflight timeout cancels downstream work and permits retry',
+    'Calling preflight timeout cancels downstream work and permits retry',
     (tester) async {
       final messageRepo = FakeMessageRepository();
       final pending = Completer<OutgoingCallStartResult>();
@@ -3229,11 +3229,11 @@ void main() {
       );
       await tester.tap(find.byTooltip('Start voice call'));
       await tester.pump();
-      expect(find.text('Connecting'), findsOneWidget);
+      expect(find.text('Calling'), findsOneWidget);
       await tester.pump(const Duration(seconds: 31));
       await tester.pump();
       expect(capability.startRequests.single!.isCanceled, isTrue);
-      expect(find.text('Connecting'), findsNothing);
+      expect(find.text('Calling'), findsNothing);
       expect(
         find.text("Couldn't start voice call. Please try again."),
         findsOneWidget,
@@ -3244,7 +3244,7 @@ void main() {
       expect(capability.peerIds, hasLength(2));
       pending.complete(OutgoingCallStartResult.started);
       await tester.pump();
-      expect(find.text('Connecting'), findsNothing);
+      expect(find.text('Calling'), findsNothing);
     },
   );
 
