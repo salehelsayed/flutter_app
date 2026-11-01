@@ -7736,11 +7736,23 @@ abstract class AppLocalizations {
   /// **'Transcription didn\'t download'**
   String get translator_link_transcribe_failed;
 
-  /// Retries the translator download.
+  /// Retries the translator download or rechecks memory from Settings.
   ///
   /// In en, this message translates to:
   /// **'Try again'**
   String get translator_try_again;
+
+  /// Temporary inference refusal; the translator remains available for a manual retry.
+  ///
+  /// In en, this message translates to:
+  /// **'Not enough free memory right now. Close a few apps and try again.'**
+  String get translator_memory_temporary;
+
+  /// One-time notice after a known RAM shortage, typed load resource exhaustion, or two consecutive interrupted inference attempts.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone doesn\'t have enough memory to run the private translator. If you switch phones or update this one, you can try again in Settings.'**
+  String get translator_memory_unsupported;
 
   /// Shown while a message is being translated.
   ///
@@ -7946,7 +7958,7 @@ abstract class AppLocalizations {
   /// **'Didn\'t finish'**
   String get translator_settings_failed;
 
-  /// Greyed Settings row on phones that cannot run the translator.
+  /// Settings row on phones that cannot currently run the translator; a manual retry remains available.
   ///
   /// In en, this message translates to:
   /// **'Not available on this phone'**

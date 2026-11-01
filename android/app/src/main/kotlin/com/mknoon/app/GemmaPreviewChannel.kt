@@ -58,11 +58,12 @@ object GemmaPreviewChannel {
         }
     }
 
-    private fun memory(context: Context): Map<String, Long?> {
+    private fun memory(context: Context): Map<String, Any?> {
         val info = ActivityManager.MemoryInfo()
         context.getSystemService(ActivityManager::class.java)?.getMemoryInfo(info)
         return mapOf(
             "availableBytes" to info.availMem,
+            "lowMemory" to info.lowMemory,
             "footprintBytes" to Debug.getPss() * 1024,
             "peakFootprintBytes" to peakRssKib()?.let { it * 1024 },
         )

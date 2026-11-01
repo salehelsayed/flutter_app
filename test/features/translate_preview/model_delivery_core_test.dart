@@ -1,8 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/translation_capability.dart';
+import 'package:flutter_edge_ai/flutter_edge_ai.dart';
+import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _manifest = ModelDeliveryManifest.fromJson({
@@ -37,6 +42,7 @@ ModelDeliveryRecord _verifiedRecord() => ModelDeliveryRecord(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test(
     'unsupported capability never enqueues; consent alone is not opt-in',
     () async {
@@ -762,6 +768,610 @@ void main() {
       expect(restored.allowMobileData, isTrue);
     },
   );
+
+  group('inference memory safety', () {
+    test('safety record round trips independent of download metadata', () {
+      for (final reason in ModelBlockedReason.values) {
+        final restored = ModelSafetyRecord.fromJson(
+          ModelSafetyRecord(
+            blockedReason: reason,
+            inferenceInProgress: true,
+            consecutiveInterruptions: 2,
+            noticePending: true,
+          ).toJson(),
+        );
+        expect(restored.blockedReason, reason);
+        expect(restored.inferenceInProgress, isTrue);
+        expect(restored.consecutiveInterruptions, 2);
+        expect(restored.noticePending, isTrue);
+      }
+    });
+
+    test(
+      'first interrupted startup clears marker silently and permits manual inference',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(inferenceInProgress: true),
+        );
+        addTearDown(h.dispose);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 1);
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(h.storage.safety!.noticePending, isFalse);
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(await h.controller.consumeMemoryNotice(), isFalse);
+        expect(h.transport.enqueues, isEmpty);
+        await h.controller.beginInference();
+        expect(h.storage.safety!.inferenceInProgress, isTrue);
+        await h.controller.finishInference(succeeded: true);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+      },
+    );
+
+    test(
+      'second consecutive interrupted startup blocks and consumes exactly one durable notice',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(
+            inferenceInProgress: true,
+            consecutiveInterruptions: 1,
+          ),
+        );
+        addTearDown(h.dispose);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 2);
+        expect(h.storage.safety!.blockedReason, ModelBlockedReason.interrupted);
+        expect(h.storage.safety!.noticePending, isTrue);
+        expect(h.controller.state.value, isA<ModelUnsupported>());
+        await expectLater(
+          h.controller.beginInference(),
+          throwsA(isA<TranslatorMemoryUnsupported>()),
+        );
+        expect(
+          await Future.wait([
+            h.controller.consumeMemoryNotice(),
+            h.controller.consumeMemoryNotice(),
+          ]),
+          [true, false],
+        );
+        expect(h.storage.safety!.noticePending, isFalse);
+
+        final restarted = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: h.storage.safety,
+        );
+        addTearDown(restarted.dispose);
+        expect(restarted.storage.safety!.consecutiveInterruptions, 2);
+        expect(restarted.controller.state.value, isA<ModelUnsupported>());
+        expect(await restarted.controller.consumeMemoryNotice(), isFalse);
+      },
+    );
+
+    test(
+      'every completed inference attempt clears marker and breaks the interruption streak',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(consecutiveInterruptions: 1),
+        );
+        addTearDown(h.dispose);
+        await h.controller.beginInference();
+        await h.controller.finishInference(succeeded: false);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(h.storage.safety!.noticePending, isFalse);
+        await h.controller.beginInference();
+        await h.controller.finishInference(succeeded: true);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+      },
+    );
+
+    test(
+      'temporary headroom rejection keeps Ready and manual retry can recover',
+      () async {
+        var available = false;
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(consecutiveInterruptions: 1),
+          readAvailableMemory: () async => available,
+        );
+        addTearDown(h.dispose);
+        await expectLater(
+          h.controller.beginInference(),
+          throwsA(isA<TranslatorMemoryTemporarilyUnavailable>()),
+        );
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(h.storage.safety?.blockedReason, isNull);
+        expect(h.storage.safety?.inferenceInProgress ?? false, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 1);
+        expect(await h.controller.consumeMemoryNotice(), isFalse);
+        available = true;
+        await h.controller.beginInference();
+        await h.controller.finishInference(succeeded: true);
+        expect(h.controller.state.value, isA<ModelReady>());
+      },
+    );
+
+    test(
+      'Settings retry clears all safety, rechecks facts and restores without starting a download',
+      () async {
+        var capabilityReads = 0;
+        var memoryReads = 0;
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(
+            blockedReason: ModelBlockedReason.interrupted,
+            inferenceInProgress: true,
+            consecutiveInterruptions: 2,
+            noticePending: true,
+          ),
+          readCapability: () async {
+            capabilityReads++;
+            return (supported: true, insufficientMemory: false);
+          },
+          readAvailableMemory: () async {
+            memoryReads++;
+            return true;
+          },
+        );
+        addTearDown(h.dispose);
+        capabilityReads = 0;
+        memoryReads = 0;
+        await h.controller.retryMemorySafety();
+        expect(capabilityReads, 1);
+        expect(memoryReads, 1);
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+        expect(h.storage.safety!.noticePending, isFalse);
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(h.network.fetches, 0);
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    test(
+      'Settings retry with temporary low RAM stays recoverable and does not allocate',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(
+            blockedReason: ModelBlockedReason.resourceExhausted,
+            consecutiveInterruptions: 2,
+            noticePending: true,
+          ),
+          readAvailableMemory: () async => false,
+        );
+        addTearDown(h.dispose);
+        await expectLater(
+          h.controller.retryMemorySafety(),
+          throwsA(isA<TranslatorMemoryTemporarilyUnavailable>()),
+        );
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+        expect(h.storage.safety!.noticePending, isFalse);
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    test(
+      'Settings retry without a model restores the offer without downloading',
+      () async {
+        final h = await _Harness.create(
+          safety: const ModelSafetyRecord(
+            blockedReason: ModelBlockedReason.interrupted,
+            consecutiveInterruptions: 2,
+          ),
+        );
+        addTearDown(h.dispose);
+        await h.controller.retryMemorySafety();
+        expect(h.controller.state.value, isA<ModelNotDownloaded>());
+        expect(h.network.fetches, 0);
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    test(
+      'Settings retry leaves API or ABI incompatibility generic after clearing prior memory safety',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(
+            blockedReason: ModelBlockedReason.interrupted,
+            consecutiveInterruptions: 2,
+            noticePending: true,
+          ),
+          readCapability: () async =>
+              (supported: false, insufficientMemory: false),
+        );
+        addTearDown(h.dispose);
+        await h.controller.retryMemorySafety();
+        expect(h.controller.state.value, isA<ModelUnsupported>());
+        expect(h.storage.safety!.blockedReason, isNull);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+        expect(await h.controller.consumeMemoryNotice(), isFalse);
+        expect(h.transport.enqueues, isEmpty);
+      },
+    );
+
+    test(
+      'known total-RAM shortage has a memory reason; API or ABI rejection stays generic',
+      () async {
+        final known = await _Harness.create(record: _verifiedRecord());
+        addTearDown(known.dispose);
+        known.controller.setCapability(false, insufficientMemory: true);
+        await known.flush();
+        expect(
+          known.storage.safety!.blockedReason,
+          ModelBlockedReason.totalRam,
+        );
+        expect(known.storage.safety!.noticePending, isTrue);
+        final generic = await _Harness.create(supported: false);
+        addTearDown(generic.dispose);
+        expect(generic.controller.state.value, isA<ModelUnsupported>());
+        expect(generic.storage.safety?.blockedReason, isNull);
+        expect(await generic.controller.consumeMemoryNotice(), isFalse);
+      },
+    );
+
+    test('ordinary model removal preserves memory safety', () async {
+      final h = await _Harness.create(
+        record: _verifiedRecord(),
+        safety: const ModelSafetyRecord(
+          blockedReason: ModelBlockedReason.resourceExhausted,
+          consecutiveInterruptions: 1,
+          noticePending: true,
+        ),
+      );
+      addTearDown(h.dispose);
+      await h.controller.remove();
+      expect(h.storage.removals, 1);
+      expect(
+        h.storage.safety!.blockedReason,
+        ModelBlockedReason.resourceExhausted,
+      );
+      expect(h.storage.safety!.consecutiveInterruptions, 1);
+      expect(h.storage.safety!.noticePending, isTrue);
+      expect(h.controller.state.value, isA<ModelUnsupported>());
+    });
+
+    test(
+      'Gemma waits for durable marker before load and clears it after full success',
+      () async {
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          safety: const ModelSafetyRecord(consecutiveInterruptions: 1),
+        );
+        addTearDown(h.dispose);
+        final saved = h.storage.safetySaveStarted = Completer<void>();
+        final flush = h.storage.safetySaveGate = Completer<void>();
+        final reply = Completer<String>();
+        final loadStarted = Completer<void>();
+        var loads = 0;
+        final service = GemmaPreviewService.forTesting(
+          controller: h.controller,
+          loadModel: () async {
+            loads++;
+            loadStarted.complete();
+            expect(h.storage.safety!.inferenceInProgress, isTrue);
+            return _MemoryModel(() => reply.future);
+          },
+        );
+        final run = service.translate('مرحبا', languageName: 'English');
+        await saved.future;
+        expect(loads, 0);
+        h.storage.safetySaveGate = null;
+        flush.complete();
+        await loadStarted.future;
+        expect(loads, 1);
+        expect(h.storage.safety!.inferenceInProgress, isTrue);
+        reply.complete('Hello');
+        expect(await run, 'Hello');
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.consecutiveInterruptions, 0);
+      },
+    );
+
+    test('failed durable marker prevents every model allocation', () async {
+      final h = await _Harness.create(
+        record: _verifiedRecord(),
+        safety: const ModelSafetyRecord(consecutiveInterruptions: 1),
+      );
+      addTearDown(h.dispose);
+      h.storage.failSafetySave = true;
+      var loads = 0;
+      final service = GemmaPreviewService.forTesting(
+        controller: h.controller,
+        loadModel: () async {
+          loads++;
+          return _MemoryModel(() async => 'Hello');
+        },
+      );
+      await expectLater(
+        service.translate('مرحبا', languageName: 'English'),
+        throwsA(isA<Object>()),
+      );
+      expect(loads, 0);
+      expect(h.storage.safety!.consecutiveInterruptions, 1);
+    });
+
+    test(
+      'Settings retry cannot erase an actually active inference marker',
+      () async {
+        final h = await _Harness.create(record: _verifiedRecord());
+        addTearDown(h.dispose);
+        await h.controller.beginInference();
+        // Either a no-op or an explicit rejection is valid while a run owns it.
+        await h.controller.retryMemorySafety().then<void>(
+          (_) {},
+          onError: (Object _) {},
+        );
+        expect(h.storage.safety!.inferenceInProgress, isTrue);
+        await h.controller.finishInference(succeeded: true);
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+      },
+    );
+
+    test(
+      'Remove waiting for Gemma cannot deadlock inference safety completion',
+      () async {
+        final h = await _Harness.create(record: _verifiedRecord());
+        addTearDown(h.dispose);
+        final started = Completer<void>();
+        final reply = Completer<String>();
+        final removeEntered = Completer<void>();
+        final service = GemmaPreviewService.forTesting(
+          controller: h.controller,
+          loadModel: () async => _MemoryModel(() {
+            started.complete();
+            return reply.future;
+          }),
+        );
+        final run = service.translate('مرحبا', languageName: 'English');
+        await started.future;
+        h.storage.onRemove = () async {
+          removeEntered.complete();
+          // Production remove waits on Gemma's serial queue in the same order.
+          await run;
+        };
+        final removal = h.controller.remove();
+        await removeEntered.future;
+        reply.complete('Hello');
+        expect(await run.timeout(const Duration(seconds: 3)), 'Hello');
+        await removal.timeout(const Duration(seconds: 3));
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.removals, 1);
+        expect(h.controller.state.value, isA<ModelNotDownloaded>());
+      },
+    );
+
+    for (final facts in <({String name, Map<String, Object?> facts})>[
+      (
+        name: 'low available RAM',
+        facts: {'availableBytes': 1, 'lowMemory': false},
+      ),
+      (
+        name: 'Android lowMemory',
+        facts: {'availableBytes': 8 * (1 << 30), 'lowMemory': true},
+      ),
+      (
+        name: 'malformed snapshot',
+        facts: {'availableBytes': 'unknown', 'lowMemory': false},
+      ),
+    ]) {
+      for (final transcribe in [false, true]) {
+        test(
+          '${facts.name} prevents cold ${transcribe ? 'transcribe' : 'translate'} allocation',
+          () async {
+            const channel = MethodChannel('mknoon/gemma_preview');
+            final messenger = TestDefaultBinaryMessengerBinding
+                .instance
+                .defaultBinaryMessenger;
+            messenger.setMockMethodCallHandler(channel, (call) async {
+              expect(call.method, 'memory');
+              return facts.facts;
+            });
+            addTearDown(
+              () => messenger.setMockMethodCallHandler(channel, null),
+            );
+            final h = await _Harness.create(
+              record: _verifiedRecord(),
+              readAvailableMemory: () => readTranslationMemoryAvailability(
+                platform: TranslationPlatform.android,
+              ),
+            );
+            addTearDown(h.dispose);
+            var loads = 0;
+            final service = GemmaPreviewService.forTesting(
+              controller: h.controller,
+              loadModel: () async {
+                loads++;
+                return _MemoryModel(() async => 'unused');
+              },
+            );
+            await expectLater(
+              transcribe
+                  ? service.transcribe('/voice.m4a')
+                  : service.translate('مرحبا', languageName: 'English'),
+              throwsA(isA<TranslatorMemoryTemporarilyUnavailable>()),
+            );
+            expect(loads, 0);
+            expect(h.controller.state.value, isA<ModelReady>());
+            expect(h.storage.safety?.inferenceInProgress ?? false, isFalse);
+            expect(h.storage.safety?.blockedReason, isNull);
+          },
+        );
+      }
+    }
+
+    test(
+      'each queued operation preflights again, including a warm Transcribe',
+      () async {
+        var available = true;
+        var reads = 0;
+        final h = await _Harness.create(
+          record: _verifiedRecord(),
+          readAvailableMemory: () async {
+            reads++;
+            return available;
+          },
+        );
+        addTearDown(h.dispose);
+        final reply = Completer<String>();
+        final started = Completer<void>();
+        var loads = 0;
+        final service = GemmaPreviewService.forTesting(
+          controller: h.controller,
+          loadModel: () async {
+            loads++;
+            return _MemoryModel(() {
+              started.complete();
+              return reply.future;
+            });
+          },
+        );
+        final first = service.translate('مرحبا', languageName: 'English');
+        await started.future;
+        final second = service.transcribe('/voice.m4a');
+        final rejected = expectLater(
+          second,
+          throwsA(isA<TranslatorMemoryTemporarilyUnavailable>()),
+        );
+        available = false;
+        reply.complete('Hello');
+        expect(await first, 'Hello');
+        await rejected;
+        expect(reads, 2);
+        expect(loads, 1);
+        expect(h.controller.state.value, isA<ModelReady>());
+        expect(h.storage.safety!.inferenceInProgress, isFalse);
+        expect(h.storage.safety!.blockedReason, isNull);
+      },
+    );
+
+    for (final wrapped in [false, true]) {
+      test(
+        'typed load resource exhaustion blocks immediately (wrapped=$wrapped)',
+        () async {
+          final h = await _Harness.create(record: _verifiedRecord());
+          addTearDown(h.dispose);
+          const native = LiteRtLmEngineCreateException(
+            'load refused',
+            nativeCode: 8,
+          );
+          final Object error = wrapped
+              ? BackendInitException(
+                  attempts: [
+                    BackendInitAttemptFailure(
+                      backend: PreferredBackend.cpu,
+                      error: native,
+                      stackTrace: StackTrace.empty,
+                    ),
+                  ],
+                )
+              : native;
+          var loads = 0;
+          var failLoad = true;
+          final service = GemmaPreviewService.forTesting(
+            controller: h.controller,
+            loadModel: () async {
+              loads++;
+              if (failLoad) throw error;
+              return _MemoryModel(() async => 'Hello');
+            },
+          );
+          await expectLater(
+            service.translate('مرحبا', languageName: 'English'),
+            throwsA(isA<TranslatorMemoryUnsupported>()),
+          );
+          expect(h.controller.state.value, isA<ModelUnsupported>());
+          expect(
+            h.storage.safety!.blockedReason,
+            ModelBlockedReason.resourceExhausted,
+          );
+          expect(h.storage.safety!.inferenceInProgress, isFalse);
+          expect(h.storage.safety!.noticePending, isTrue);
+          expect(await h.controller.consumeMemoryNotice(), isTrue);
+          expect(await h.controller.consumeMemoryNotice(), isFalse);
+          await expectLater(
+            service.translate('مرحبا', languageName: 'English'),
+            throwsA(isA<TranslatorMemoryUnsupported>()),
+          );
+          expect(loads, 1);
+          failLoad = false;
+          await h.controller.retryMemorySafety();
+          expect(loads, 1, reason: 'Settings retry must never auto-load');
+          expect(
+            await service.translate('مرحبا', languageName: 'English'),
+            'Hello',
+          );
+          expect(loads, 2);
+        },
+      );
+    }
+
+    for (final error in <Object>[
+      StateError('out of memory OOM RESOURCE_EXHAUSTED code: 8'),
+      const LiteRtLmEngineCreateException('out of memory', nativeCode: 13),
+    ]) {
+      test(
+        'untyped or non-resource load errors do not become sticky (${error.runtimeType})',
+        () async {
+          final h = await _Harness.create(record: _verifiedRecord());
+          addTearDown(h.dispose);
+          final service = GemmaPreviewService.forTesting(
+            controller: h.controller,
+            loadModel: () async => throw error,
+          );
+          await expectLater(
+            service.translate('مرحبا', languageName: 'English'),
+            throwsA(same(error)),
+          );
+          expect(h.storage.safety!.inferenceInProgress, isFalse);
+          expect(h.storage.safety!.blockedReason, isNull);
+          expect(h.storage.safety!.noticePending, isFalse);
+          expect(h.controller.state.value, isA<ModelReady>());
+        },
+      );
+    }
+
+    for (final responseError in <Object>[
+      StateError('generation failed'),
+      const LiteRtLmEngineCreateException(
+        'typed error during response, not load',
+        nativeCode: 8,
+      ),
+    ]) {
+      test(
+        'a completed model response failure resets the interruption streak without classifying load exhaustion (${responseError.runtimeType})',
+        () async {
+          final h = await _Harness.create(
+            record: _verifiedRecord(),
+            safety: const ModelSafetyRecord(consecutiveInterruptions: 1),
+          );
+          addTearDown(h.dispose);
+          final service = GemmaPreviewService.forTesting(
+            controller: h.controller,
+            loadModel: () async =>
+                _MemoryModel(() async => throw responseError),
+          );
+          await expectLater(
+            service.translate('مرحبا', languageName: 'English'),
+            throwsA(same(responseError)),
+          );
+          expect(h.storage.safety!.inferenceInProgress, isFalse);
+          expect(h.storage.safety!.consecutiveInterruptions, 0);
+          expect(h.storage.safety!.blockedReason, isNull);
+          expect(h.storage.safety!.noticePending, isFalse);
+        },
+      );
+    }
+  });
 }
 
 Future<T> _nextState<T extends ModelDeliveryState>(
@@ -803,9 +1413,14 @@ class _Harness {
     bool failPrepare = false,
     Completer<bool>? verification,
     ModelDeliveryFileIdentity? identity,
+    ModelSafetyRecord? safety,
+    Future<bool> Function()? readAvailableMemory,
+    Future<({bool supported, bool insufficientMemory})> Function()?
+    readCapability,
   }) async {
     final storage = _Storage()
       ..record = record ?? ModelDeliveryRecord(manifest: _manifest)
+      ..safety = safety
       ..freeBytes = freeBytes
       ..failPrepare = failPrepare
       ..verification = verification;
@@ -826,6 +1441,10 @@ class _Harness {
       transport: transport,
       appBuild: () async => 129,
       supported: supported,
+      readAvailableMemory: readAvailableMemory ?? () async => true,
+      readCapability:
+          readCapability ??
+          () async => (supported: supported, insufficientMemory: false),
       spaceReserveBytes: 20,
       newTaskId: () => 'task-${++next}',
     );
@@ -868,6 +1487,10 @@ class _Harness {
 
 class _Storage implements ModelDeliveryStorage {
   ModelDeliveryRecord? record;
+  ModelSafetyRecord? safety;
+  bool failSafetySave = false;
+  Completer<void>? safetySaveStarted;
+  Completer<void>? safetySaveGate;
   int freeBytes = 1000;
   int? length;
   ModelDeliveryFileIdentity? identity = _fileIdentity();
@@ -884,6 +1507,18 @@ class _Storage implements ModelDeliveryStorage {
   @override
   Future<void> saveRecord(ModelDeliveryRecord value) async {
     record = value;
+  }
+
+  @override
+  Future<ModelSafetyRecord?> readSafety() async => safety;
+
+  @override
+  Future<void> saveSafety(ModelSafetyRecord value) async {
+    if (failSafetySave) throw StateError('safety was not saved');
+    final started = safetySaveStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    await safetySaveGate?.future;
+    safety = value;
   }
 
   @override
@@ -917,6 +1552,34 @@ class _Storage implements ModelDeliveryStorage {
     length = null;
     identity = null;
   }
+}
+
+class _MemoryModel extends Fake implements InferenceModel {
+  _MemoryModel(this.reply);
+  final Future<String> Function() reply;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    if (invocation.memberName == #createSession) {
+      return Future<InferenceModelSession>.value(_MemorySession(reply));
+    }
+    if (invocation.memberName == #close) return Future<void>.value();
+    return super.noSuchMethod(invocation);
+  }
+}
+
+class _MemorySession extends Fake implements InferenceModelSession {
+  _MemorySession(this.reply);
+  final Future<String> Function() reply;
+
+  @override
+  Future<String> getResponse() => reply();
+
+  @override
+  Future<void> addQueryChunk(Message message) async {}
+
+  @override
+  Future<void> close() async {}
 }
 
 class _Network implements ModelDeliveryNetwork {

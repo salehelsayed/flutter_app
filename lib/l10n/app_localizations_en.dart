@@ -4650,6 +4650,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_try_again => 'Try again';
 
   @override
+  String get translator_memory_temporary =>
+      'Not enough free memory right now. Close a few apps and try again.';
+
+  @override
+  String get translator_memory_unsupported =>
+      'This phone doesn\'t have enough memory to run the private translator. If you switch phones or update this one, you can try again in Settings.';
+
+  @override
   String get translator_translating => 'Translating…';
 
   @override

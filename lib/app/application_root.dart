@@ -121,6 +121,9 @@ import 'package:flutter_app/core/notifications/remote_notification_identity.dart
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/app_shell_theme_binding.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/startup_timing.dart';
 import 'dart:io' show Platform;
@@ -3568,8 +3571,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
                 (await widget.contactRepository.getContact(peerId))?.username,
             child: updateGate,
           );
-          return widget.debugE2EOverlayBuilder?.call(callSurface) ??
-              callSurface;
+          final surface =
+              widget.debugE2EOverlayBuilder?.call(callSurface) ?? callSurface;
+          final translator = translatePreviewEnabled
+              ? translatePreviewDelivery
+              : null;
+          return translator == null
+              ? surface
+              : TranslatorMemoryNoticeListener(
+                  controller: translator,
+                  messengerKey: MyApp.scaffoldMessengerKey,
+                  child: surface,
+                );
         },
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,

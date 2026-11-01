@@ -11,6 +11,53 @@ const modelDeliveryGroup = 'mknoon_gemma_translation';
 const modelDeliveryDirectory = 'gemma_translation';
 const modelDeliverySpaceReserve = 2800000000 - gemmaModelBytes;
 
+enum ModelBlockedReason { totalRam, resourceExhausted, interrupted }
+
+/// Local inference safety, deliberately separate from download preferences.
+final class ModelSafetyRecord {
+  const ModelSafetyRecord({
+    this.blockedReason,
+    this.inferenceInProgress = false,
+    this.consecutiveInterruptions = 0,
+    this.noticePending = false,
+  });
+
+  final ModelBlockedReason? blockedReason;
+  final bool inferenceInProgress;
+  final int consecutiveInterruptions;
+  final bool noticePending;
+
+  factory ModelSafetyRecord.fromJson(Map<String, Object?> json) {
+    final reason = json['blockedReason'];
+    final inProgress = json['inferenceInProgress'];
+    final count = json['consecutiveInterruptions'];
+    final notice = json['noticePending'];
+    final matches = ModelBlockedReason.values.where(
+      (value) => value.name == reason,
+    );
+    if ((reason != null && matches.isEmpty) ||
+        inProgress is! bool ||
+        count is! int ||
+        count < 0 ||
+        notice is! bool) {
+      throw const FormatException('Invalid translator safety state');
+    }
+    return ModelSafetyRecord(
+      blockedReason: reason == null ? null : matches.single,
+      inferenceInProgress: inProgress,
+      consecutiveInterruptions: count,
+      noticePending: notice,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'blockedReason': blockedReason?.name,
+    'inferenceInProgress': inferenceInProgress,
+    'consecutiveInterruptions': consecutiveInterruptions,
+    'noticePending': noticePending,
+  };
+}
+
 final class ModelDeliveryManifest {
   const ModelDeliveryManifest({
     required this.url,
@@ -282,6 +329,8 @@ final class ModelTransferSnapshot {
 abstract interface class ModelDeliveryStorage {
   Future<ModelDeliveryRecord?> readRecord();
   Future<void> saveRecord(ModelDeliveryRecord record);
+  Future<ModelSafetyRecord?> readSafety();
+  Future<void> saveSafety(ModelSafetyRecord record);
   Future<void> prepare();
   Future<int> availableBytes();
   Future<int?> modelLength();
@@ -320,6 +369,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     required ModelDeliveryTransport transport,
     required Future<int> Function() appBuild,
     bool supported = false,
+    Future<bool> Function()? readAvailableMemory,
+    Future<({bool supported, bool insufficientMemory})> Function()?
+    readCapability,
     int spaceReserveBytes = modelDeliverySpaceReserve,
     String Function()? newTaskId,
   }) : _storage = storage,
@@ -327,6 +379,8 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
        _transport = transport,
        _appBuild = appBuild,
        _supported = supported,
+       _readAvailableMemory = readAvailableMemory ?? (() async => false),
+       _readCapability = readCapability,
        _spaceReserveBytes = spaceReserveBytes,
        _newTaskId = newTaskId ?? _makeTaskId {
     _transferSubscription = _transport.events.listen(_receiveEvent);
@@ -337,14 +391,23 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   final ModelDeliveryNetwork _network;
   final ModelDeliveryTransport _transport;
   final Future<int> Function() _appBuild;
+  final Future<bool> Function() _readAvailableMemory;
+  final Future<({bool supported, bool insufficientMemory})> Function()?
+  _readCapability;
   final int _spaceReserveBytes;
   final String Function() _newTaskId;
   final _state = ValueNotifier<ModelDeliveryState>(const ModelUnsupported());
   final _allowMobileData = ValueNotifier(false);
+  final _memoryNoticePending = ValueNotifier(false);
   late final StreamSubscription<ModelTransferEvent> _transferSubscription;
   late final StreamSubscription<bool> _wifiSubscription;
   Future<void>? _initialization;
   Future<void> _tail = Future.value();
+  // Remove owns _tail while awaiting Gemma's queue. Inference safety must never
+  // join it while Gemma owns that queue, or the two operations deadlock.
+  Future<void> _safetyTail = Future.value();
+  ModelSafetyRecord _safety = const ModelSafetyRecord();
+  bool _inferenceActive = false;
   ModelDeliveryRecord _record = const ModelDeliveryRecord();
   bool _supported;
   bool _onWifi = false;
@@ -361,6 +424,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
 
   @override
   ValueListenable<bool> get allowMobileData => _allowMobileData;
+
+  @override
+  ValueListenable<bool> get memoryNoticePending => _memoryNoticePending;
 
   static String _makeTaskId() =>
       'gemma_${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(1 << 31)}';
@@ -382,8 +448,24 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       _record = await _storage.readRecord() ?? const ModelDeliveryRecord();
       _allowMobileData.value = _record.allowMobileData;
       _build = await _appBuild();
-      _onWifi = await _network.checkWifi();
       await _storage.prepare();
+      _safety = await _storage.readSafety() ?? const ModelSafetyRecord();
+      if (_safety.inferenceInProgress) {
+        final count = _safety.consecutiveInterruptions + 1;
+        final newlyBlocked = count >= 2 && _safety.blockedReason == null;
+        await _saveSafety(
+          ModelSafetyRecord(
+            blockedReason: newlyBlocked
+                ? ModelBlockedReason.interrupted
+                : _safety.blockedReason,
+            consecutiveInterruptions: count,
+            noticePending: _safety.noticePending || newlyBlocked,
+          ),
+        );
+      } else {
+        _memoryNoticePending.value = _safety.noticePending;
+      }
+      _onWifi = await _network.checkWifi();
       _freeBytes = await _storage.availableBytes();
       await _transport.initialize(_record.taskId);
       if (_record.phase == ModelDeliveryPhase.removing) {
@@ -447,7 +529,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
   }
 
-  void setCapability(bool supported) {
+  void setCapability(bool supported, {bool insufficientMemory = false}) {
     if (_disposed) return;
     _supported = supported;
     if (!supported) {
@@ -457,6 +539,20 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     }
     unawaited(
       _perform(() async {
+        if (insufficientMemory) {
+          await _safetyQueue(() async {
+            if (_safety.blockedReason == null) {
+              await _saveSafety(
+                ModelSafetyRecord(
+                  blockedReason: ModelBlockedReason.totalRam,
+                  inferenceInProgress: _safety.inferenceInProgress,
+                  consecutiveInterruptions: _safety.consecutiveInterruptions,
+                  noticePending: true,
+                ),
+              );
+            }
+          });
+        }
         if (!supported && _record.phase == ModelDeliveryPhase.ready) {
           _record = _record.copyWith(phase: ModelDeliveryPhase.verifying);
           await _persist();
@@ -473,6 +569,135 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
         }
       }),
     );
+  }
+
+  Future<void> beginInference() async {
+    await initialize();
+    await _safetyQueue(() async {
+      if (_safety.blockedReason != null) {
+        throw const TranslatorMemoryUnsupported();
+      }
+      if (_disposed ||
+          !_canRun ||
+          _state.value is! ModelReady ||
+          _verifiedPath == null) {
+        throw StateError('Translator model is not ready');
+      }
+      final generation = _generation;
+      bool available;
+      try {
+        available = await _readAvailableMemory();
+      } on Object {
+        available = false;
+      }
+      if (!available) throw const TranslatorMemoryTemporarilyUnavailable();
+      if (_disposed ||
+          generation != _generation ||
+          !_canRun ||
+          _verifiedPath == null) {
+        throw StateError('Translator model is no longer ready');
+      }
+      await _saveSafety(
+        ModelSafetyRecord(
+          inferenceInProgress: true,
+          consecutiveInterruptions: _safety.consecutiveInterruptions,
+          noticePending: _safety.noticePending,
+        ),
+      );
+      _inferenceActive = true;
+    });
+  }
+
+  /// Called only after session/error cleanup. Every completed attempt breaks
+  /// the interruption streak; a refusal before beginInference does not.
+  Future<void> finishInference({
+    required bool succeeded,
+    bool resourceExhausted = false,
+  }) => _safetyQueue(() async {
+    final completed = ModelSafetyRecord(
+      blockedReason: resourceExhausted
+          ? ModelBlockedReason.resourceExhausted
+          : _safety.blockedReason,
+      consecutiveInterruptions: succeeded || !resourceExhausted
+          ? 0
+          : _safety.consecutiveInterruptions,
+      noticePending: _safety.noticePending || resourceExhausted,
+    );
+    if (resourceExhausted) {
+      // Refuse queued allocations even if persisting the block fails.
+      _safety = completed;
+      if (!_disposed) _memoryNoticePending.value = true;
+      _render();
+    }
+    try {
+      await _saveSafety(completed);
+    } finally {
+      _inferenceActive = false;
+      _render();
+    }
+  });
+
+  @override
+  Future<bool> consumeMemoryNotice() async {
+    await initialize();
+    var consumed = false;
+    await _safetyQueue(() async {
+      if (!_safety.noticePending) return;
+      await _saveSafety(
+        ModelSafetyRecord(
+          blockedReason: _safety.blockedReason,
+          inferenceInProgress: _safety.inferenceInProgress,
+          consecutiveInterruptions: _safety.consecutiveInterruptions,
+        ),
+      );
+      consumed = true;
+    });
+    return consumed;
+  }
+
+  @override
+  Future<void> retryMemorySafety() async {
+    await initialize();
+    var temporary = false;
+    await _safetyQueue(() async {
+      if (_disposed || _inferenceActive) return;
+      await _saveSafety(const ModelSafetyRecord());
+      final facts =
+          await _readCapability?.call() ??
+          (supported: _supported, insufficientMemory: false);
+      _supported = facts.supported;
+      if (facts.insufficientMemory) {
+        await _saveSafety(
+          const ModelSafetyRecord(
+            blockedReason: ModelBlockedReason.totalRam,
+            noticePending: true,
+          ),
+        );
+      } else if (_supported) {
+        try {
+          temporary = !await _readAvailableMemory();
+        } on Object {
+          temporary = true;
+        }
+      }
+      _render();
+      if (_canRun && _record.phase == ModelDeliveryPhase.verifying) {
+        _beginVerification();
+      }
+    });
+    if (temporary) throw const TranslatorMemoryTemporarilyUnavailable();
+  }
+
+  Future<void> _saveSafety(ModelSafetyRecord value) async {
+    await _storage.saveSafety(value);
+    _safety = value;
+    if (!_disposed) _memoryNoticePending.value = value.noticePending;
+  }
+
+  Future<void> _safetyQueue(Future<void> Function() action) {
+    final run = _safetyTail.then((_) => action());
+    _safetyTail = run.then<void>((_) {}, onError: (Object _) {});
+    return run;
   }
 
   // This snapshot must not queue behind Remove, which waits for Gemma's queue.
@@ -581,7 +806,7 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
   }
 
   Future<void> _startOrResume() async {
-    if (!_supported || _record.phase == ModelDeliveryPhase.removing) return;
+    if (!_canRun || _record.phase == ModelDeliveryPhase.removing) return;
     if (_record.phase == ModelDeliveryPhase.ready ||
         _record.phase == ModelDeliveryPhase.active ||
         _record.phase == ModelDeliveryPhase.resumeRequested ||
@@ -868,7 +1093,9 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
       max(0, _totalBytes - _record.receivedBytes) + _spaceReserveBytes;
   int _clamp(int bytes) => bytes.clamp(0, _totalBytes);
   bool get _canRun =>
-      _supported && (_record.manifest?.minAppBuild ?? 0) <= _build;
+      _supported &&
+      _safety.blockedReason == null &&
+      (_record.manifest?.minAppBuild ?? 0) <= _build;
 
   void _render() {
     if (_disposed) return;
@@ -966,8 +1193,10 @@ final class PersistentModelDeliveryController extends ModelDeliveryController {
     await _transferSubscription.cancel();
     await _wifiSubscription.cancel();
     await _tail;
+    await _safetyTail;
     await _transport.dispose();
     _state.dispose();
     _allowMobileData.dispose();
+    _memoryNoticePending.dispose();
   }
 }

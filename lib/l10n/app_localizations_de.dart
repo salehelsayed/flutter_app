@@ -4758,6 +4758,14 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_try_again => 'Erneut versuchen';
 
   @override
+  String get translator_memory_temporary =>
+      'Gerade ist nicht genug freier Speicher verfügbar. Schließe ein paar Apps und versuche es erneut.';
+
+  @override
+  String get translator_memory_unsupported =>
+      'Dieses Telefon hat nicht genug Arbeitsspeicher für den privaten Übersetzer. Wenn du das Telefon wechselst oder dieses aktualisierst, kannst du es in den Einstellungen erneut versuchen.';
+
+  @override
   String get translator_translating => 'Wird übersetzt…';
 
   @override

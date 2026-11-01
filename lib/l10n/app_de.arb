@@ -2147,6 +2147,8 @@
   "translator_link_transcribe_paused": "Transkription pausiert · {percent} %",
   "translator_link_transcribe_failed": "Transkription nicht geladen",
   "translator_try_again": "Erneut versuchen",
+  "translator_memory_temporary": "Gerade ist nicht genug freier Speicher verfügbar. Schließe ein paar Apps und versuche es erneut.",
+  "translator_memory_unsupported": "Dieses Telefon hat nicht genug Arbeitsspeicher für den privaten Übersetzer. Wenn du das Telefon wechselst oder dieses aktualisierst, kannst du es in den Einstellungen erneut versuchen.",
   "translator_translating": "Wird übersetzt…",
   "translator_translate_failed": "Übersetzen fehlgeschlagen",
   "voice_send_as_text_action": "Als Text senden",

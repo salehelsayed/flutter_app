@@ -37,29 +37,19 @@ Future<FakeModelDeliveryController> _pumpRow(
 }
 
 void main() {
-  testWidgets('6b unsupported: one greyed row, no button, no mobile-data '
-      'switch, tapping does nothing', (tester) async {
+  testWidgets('unsupported: Settings row keeps a manual memory retry without '
+      'a download or mobile-data switch', (tester) async {
     final controller = await _pumpRow(tester, const ModelUnsupported());
     expect(find.text('Private translator'), findsOneWidget);
     expect(find.text('Not available on this phone'), findsOneWidget);
-    expect(find.byType(TextButton), findsNothing);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(find.byType(TextButton), findsOneWidget);
     expect(find.byType(Switch), findsNothing);
     expect(find.text('Download over mobile data'), findsNothing);
-    expect(
-      tester
-          .widget<Opacity>(
-            find.ancestor(
-              of: find.text('Private translator'),
-              matching: find.byType(Opacity),
-            ),
-          )
-          .opacity,
-      0.45,
-    );
-    await tester.tap(find.text('Private translator'));
+    await tester.tap(find.text('Try again'));
     await tester.pumpAndSettle();
     expect(find.text('Your private translator'), findsNothing);
-    expect(controller.calls, isEmpty);
+    expect(controller.calls, ['retryMemorySafety']);
   });
 
   testWidgets('5a not downloaded: Get opens the offer sheet', (tester) async {

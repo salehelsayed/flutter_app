@@ -32,8 +32,14 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
               onFreeUpSpace: onFreeUpSpace,
             ),
           );
-          final (String subtitle, _RowAction? action) = switch (state) {
-            ModelUnsupported() => (l10n.translator_settings_unsupported, null),
+          final (String subtitle, _RowAction action) = switch (state) {
+            ModelUnsupported() => (
+              l10n.translator_settings_unsupported,
+              (
+                l10n.translator_try_again,
+                () => unawaited(_retryMemorySafety(context)),
+              ),
+            ),
             ModelNotDownloaded() => (
               l10n.translator_settings_not_downloaded,
               (l10n.translator_get, openSheet),
@@ -69,18 +75,16 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
             icon: Icons.translate,
             label: l10n.translator_settings_title,
             subtitle: subtitle,
-            trailing: action == null
-                ? null
-                : TextButton(
-                    onPressed: action.$2,
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(action.$1),
-                  ),
+            trailing: TextButton(
+              onPressed: action.$2,
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(action.$1),
+            ),
           );
-          if (action == null) return Opacity(opacity: 0.45, child: row);
+          if (state is ModelUnsupported) return row;
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -113,6 +117,32 @@ class PrivateTranslatorSettingsSection extends StatelessWidget {
           );
         },
       );
+
+  Future<void> _retryMemorySafety(BuildContext context) async {
+    try {
+      await controller.retryMemorySafety();
+    } on TranslatorMemoryTemporarilyUnavailable {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.translator_memory_temporary,
+            ),
+          ),
+        );
+      }
+    } on Object {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.translator_settings_failed,
+            ),
+          ),
+        );
+      }
+    }
+  }
 
   Future<void> _confirmRemove(BuildContext context, int sizeBytes) async {
     final l10n = AppLocalizations.of(context)!;

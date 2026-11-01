@@ -2147,6 +2147,8 @@
   "translator_link_transcribe_paused": "التفريغ النصي متوقف مؤقتًا · {percent}%",
   "translator_link_transcribe_failed": "لم يكتمل تنزيل التفريغ النصي",
   "translator_try_again": "حاول مجددًا",
+  "translator_memory_temporary": "لا توجد ذاكرة متاحة كافية الآن. أغلق بعض التطبيقات وحاول مرة أخرى.",
+  "translator_memory_unsupported": "لا يحتوي هذا الهاتف على ذاكرة كافية لتشغيل المترجم الخاص. إذا غيّرت هاتفك أو حدّثت هذا الهاتف، يمكنك المحاولة مرة أخرى من الإعدادات.",
   "translator_translating": "جارٍ الترجمة…",
   "translator_translate_failed": "تعذّرت الترجمة",
   "voice_send_as_text_action": "إرسال كنص",

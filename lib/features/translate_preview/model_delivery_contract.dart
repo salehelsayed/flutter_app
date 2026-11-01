@@ -88,6 +88,14 @@ final class ModelReady extends ModelDeliveryState {
   final int sizeBytes;
 }
 
+final class TranslatorMemoryTemporarilyUnavailable implements Exception {
+  const TranslatorMemoryTemporarilyUnavailable();
+}
+
+final class TranslatorMemoryUnsupported implements Exception {
+  const TranslatorMemoryUnsupported();
+}
+
 /// The download logic the translator UI drives. The UI depends only on this
 /// file.
 abstract class ModelDeliveryController {
@@ -95,6 +103,14 @@ abstract class ModelDeliveryController {
 
   /// The Settings "Download over mobile data" switch.
   ValueListenable<bool> get allowMobileData;
+
+  ValueListenable<bool> get memoryNoticePending;
+
+  /// Persists consumption before the sole app UI owner presents the notice.
+  Future<bool> consumeMemoryNotice();
+
+  /// Explicit Settings recovery; never downloads or loads a model.
+  Future<void> retryMemorySafety();
 
   Future<void> setAllowMobileData(bool allow);
 

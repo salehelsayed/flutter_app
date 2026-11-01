@@ -17,6 +17,13 @@ ModelDeliveryController? get productionTranslatePreviewDelivery {
 
 PersistentModelDeliveryController _createController() {
   final controller = createProductionModelDeliveryController();
-  unawaited(readTranslationCapability().then(controller.setCapability));
+  unawaited(
+    readTranslationCapabilityFacts().then((facts) {
+      controller.setCapability(
+        facts.supported,
+        insufficientMemory: facts.insufficientMemory,
+      );
+    }),
+  );
   return controller;
 }

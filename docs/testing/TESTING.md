@@ -11456,23 +11456,53 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   `focused-final/partial.json`, `focused-preview-recovery/results.json`,
   `final-combined-analyze-receipt.json`, `final-merged-swift-parse-receipt.json`,
   `review-final/results.json` and `review-final-analyze-receipt.json`.
-  Translation capability uses OS-reported physical/kernel-visible total RAM,
-  typed OS version/API level and the running process ABI, never available RAM
-  or advertised supported ABIs. The approved conservative policy requires
-  iOS 15+ ARM64 with at least 3.5 GiB, or Android API 30+ ARM64 with at least 5.5 GiB.
-  These RAM thresholds approximate nominal 4/6 GB classes with reservation
-  tolerance; they are policy inferences, not calibrated phone totals or an
-  inference/thermal guarantee. The pinned LiteRT-LM 1.19.0 runtime requires
-  Android 30 despite the app/plugin build minimum 24, and does not ship x86_64.
-  Unknown/malformed/missing/failed reads are unsupported without loading the
-  model. `translation_capability_test.dart` passed 54 pure-policy/mock-channel
-  cases, including raw-byte boundaries, SDK 24/25/29 rejection, platform-matched
-  process ABI, malformed payloads, failures and sanitized one-line fact logs.
-  The existing `mknoon/gemma_preview` channel supplies only total RAM and typed
-  OS facts; Dart owns the policy. `TRANSLATION_CAPABILITY` logs numeric RAM/OS,
-  ABI and decision without identifiers so the device owner can calibrate actual
-  iPhone 11/13 and Pixel values. Swift source parsing passed; native compilation,
-  actual device readings and signed-artifact behavior remain separate proof.
+  Static translation capability uses OS-reported physical/kernel-visible total
+  RAM, typed OS version/API level and the running process ABI, never advertised
+  supported ABIs. Kayan approval m-f6b9b7b0 supersedes the Android 5.5 GiB policy:
+  iOS remains 15+ ARM64 with at least 3.5 GiB; Android remains API 30+ ARM64 with
+  a 4.5 GiB inclusive floor so nominal 6 GB phones reporting 5.3/5.4 GiB qualify,
+  while nominal 4 GB phones reporting 3.7 GiB do not. These are owner-approved
+  policy thresholds, not calibrated phone totals or an inference/thermal guarantee.
+  The pinned LiteRT-LM 1.19.0 runtime requires Android 30 despite the app/plugin
+  build minimum 24 and does not ship x86_64. Unknown/malformed/missing/failed
+  static reads remain unsupported; API/ABI rejection alone has no RAM notice.
+  Before each queued Translate/Transcribe operation allocates a model, session
+  or decoded audio, a fresh `mknoon/gemma_preview` `memory` snapshot must report
+  at least a provisional 2.5 GiB available headroom, and Android `lowMemory` must
+  be false. Android reports system availability; iOS already uses
+  `os_proc_available_memory()` for process headroom. This threshold is approved
+  but unmeasured, including for a warm cached model; snapshots cannot guarantee
+  subsequent allocation success. Missing, malformed or low snapshots cause a
+  temporary localized message, retaining manual links without a sticky block.
+  A separate backup-excluded `inference_safety.json` beside the model is written
+  with a flushed temporary file and atomic rename before inference allocation.
+  One recovered in-flight marker is cleared silently and records count one;
+  two consecutive interrupted attempts block. Every completed attempt, including
+  an ordinary caught model error after cleanup, resets that streak; a preflight
+  refusal does not. A leftover marker establishes interruption, not OS OOM.
+  Typed LiteRT-LM load resource exhaustion (`nativeCode == 8`, including backend
+  attempt errors) blocks immediately; generic error text is never classified.
+  One mounted app listener consumes the persisted notice; Settings Try again
+  clears safety and rechecks static/current RAM without loading or downloading.
+  Active inference retains its marker, and ordinary model removal preserves
+  safety. Safety writes have their own controller queue so Remove awaiting
+  Gemma's serial queue cannot deadlock inference completion.
+  The previous 54-case static policy/mock-channel result belongs to the
+  superseded floor. On base `a6d9275e5`, the new 57-case floor suite produced
+  causal RED with 53 passes and the four intended acceptance failures; expanded
+  preflight/core/platform/widget tests initially produced missing-API compile
+  RED. The affected translator lane then passed 359 cases with no failures or
+  skips, alongside workflow 330, bootstrap 23, contacts 1 and provider-schema 5;
+  targeted analysis passed. The first GREEN exposed backup-preparation error
+  masking, a widget's premature frame assertion and two app-root source pins;
+  the corrected rerun preserves those original failures. Native Robolectric,
+  actual device behavior and the other selected lanes remain unrun. Evidence:
+  `.codex-test-logs/android-ai-memory-floor-20261101/red-run-results.json`,
+  `green-selected/` and `green-selected-after-fixes/`. The latter binds tested
+  source `be54bfbabf300095f3eba11d518cb826315e5561ce5c5869c128329654c2a0d2`.
+  `TRANSLATION_CAPABILITY` retains numeric RAM/OS, ABI and decision
+  without identifiers. Host policy/mock-channel tests and native source checks
+  do not establish device performance or signed-artifact behavior.
   The preview's sqlite3 package upgrade from 3.1.4 to 3.8.0 changed the actual
   host/desktop FFI SQLite runtime from 3.51.2 to 3.54.1, measured through
   `sqflite_common_ffi` on main `ac6aaa690` and the isolated port. The same 303

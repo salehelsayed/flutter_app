@@ -9,7 +9,9 @@ enum TranslationPlatform { ios, android, other }
 // Approved conservative policy inferences for nominal 4/6 GB phones, pending
 // calibration against OS-reported RAM. These are not plugin requirements.
 const _iosMinimumPhysicalMemoryBytes = 7 * (1 << 29); // 3.5 GiB.
-const _androidMinimumPhysicalMemoryBytes = 11 * (1 << 29); // 5.5 GiB.
+// Nominal 6 GB Android phones can report less than 5.5 GiB to the kernel.
+const _androidMinimumPhysicalMemoryBytes = 9 * (1 << 29); // 4.5 GiB.
+const _minimumAvailableMemoryBytes = 5 * (1 << 29); // Provisional 2.5 GiB.
 
 const _capabilityChannel = MethodChannel('mknoon/gemma_preview');
 
@@ -40,7 +42,18 @@ bool supportsOnDeviceTranslation({
 Future<bool> readTranslationCapability({
   TranslationPlatform? platform,
   Abi? processAbi,
+}) async => (await readTranslationCapabilityFacts(
+  platform: platform,
+  processAbi: processAbi,
+)).supported;
+
+/// Keeps a measured RAM rejection distinct from API/ABI or unavailable facts.
+Future<({bool supported, bool insufficientMemory})>
+readTranslationCapabilityFacts({
+  TranslationPlatform? platform,
+  Abi? processAbi,
 }) async {
+  const unknown = (supported: false, insufficientMemory: false);
   int? observedMemoryBytes;
   int? observedOsMajor;
   Abi? observedAbi;
@@ -54,14 +67,14 @@ Future<bool> readTranslationCapability({
             : Platform.isAndroid
             ? TranslationPlatform.android
             : TranslationPlatform.other);
-    if (actualPlatform == TranslationPlatform.other) return false;
+    if (actualPlatform == TranslationPlatform.other) return unknown;
 
     final actualAbi = processAbi ?? Abi.current();
     observedAbi = actualAbi;
     final requiredAbi = actualPlatform == TranslationPlatform.ios
         ? Abi.iosArm64
         : Abi.androidArm64;
-    if (actualAbi != requiredAbi) return false;
+    if (actualAbi != requiredAbi) return unknown;
 
     final facts = await _capabilityChannel.invokeMapMethod<String, Object?>(
       'deviceCapabilities',
@@ -76,7 +89,7 @@ Future<bool> readTranslationCapability({
     }
     if (osMajor is int && osMajor > 0) observedOsMajor = osMajor;
     if (observedMemoryBytes == null || observedOsMajor == null) {
-      return false;
+      return unknown;
     }
 
     supported = supportsOnDeviceTranslation(
@@ -85,9 +98,17 @@ Future<bool> readTranslationCapability({
       osMajor: observedOsMajor,
       isArm64: true,
     );
-    return supported;
+    final minimumRam = actualPlatform == TranslationPlatform.ios
+        ? _iosMinimumPhysicalMemoryBytes
+        : _androidMinimumPhysicalMemoryBytes;
+    final minimumOs = actualPlatform == TranslationPlatform.ios ? 15 : 30;
+    return (
+      supported: supported,
+      insufficientMemory:
+          observedOsMajor >= minimumOs && observedMemoryBytes < minimumRam,
+    );
   } on Object {
-    return false;
+    return unknown;
   } finally {
     debugPrint(
       'TRANSLATION_CAPABILITY '
@@ -95,5 +116,33 @@ Future<bool> readTranslationCapability({
       '$osKey=${observedOsMajor ?? 'unknown'} '
       'abi=${observedAbi ?? 'unknown'} supported=$supported',
     );
+  }
+}
+
+/// A fresh snapshot before each inference; temporary failures never alter
+/// static eligibility. iOS reports process headroom, Android system RAM.
+Future<bool> readTranslationMemoryAvailability({
+  TranslationPlatform? platform,
+}) async {
+  final actualPlatform =
+      platform ??
+      (Platform.isIOS
+          ? TranslationPlatform.ios
+          : Platform.isAndroid
+          ? TranslationPlatform.android
+          : TranslationPlatform.other);
+  if (actualPlatform == TranslationPlatform.other) return false;
+  try {
+    final facts = await _capabilityChannel.invokeMapMethod<String, Object?>(
+      'memory',
+    );
+    final available = facts?['availableBytes'];
+    if (available is! int || available < _minimumAvailableMemoryBytes) {
+      return false;
+    }
+    return actualPlatform != TranslationPlatform.android ||
+        facts?['lowMemory'] == false;
+  } on Object {
+    return false;
   }
 }

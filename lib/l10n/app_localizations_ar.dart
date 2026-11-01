@@ -4716,6 +4716,14 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_try_again => 'حاول مجددًا';
 
   @override
+  String get translator_memory_temporary =>
+      'لا توجد ذاكرة متاحة كافية الآن. أغلق بعض التطبيقات وحاول مرة أخرى.';
+
+  @override
+  String get translator_memory_unsupported =>
+      'لا يحتوي هذا الهاتف على ذاكرة كافية لتشغيل المترجم الخاص. إذا غيّرت هاتفك أو حدّثت هذا الهاتف، يمكنك المحاولة مرة أخرى من الإعدادات.';
+
+  @override
   String get translator_translating => 'جارٍ الترجمة…';
 
   @override

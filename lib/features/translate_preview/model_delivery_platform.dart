@@ -14,6 +14,7 @@ import 'package:flutter_app/core/storage/exclude_from_backup.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_service.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
+import 'package:flutter_app/features/translate_preview/translation_capability.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -28,7 +29,10 @@ PersistentModelDeliveryController createProductionModelDeliveryController() {
     transport: BackgroundModelDeliveryTransport(),
     appBuild: () async =>
         int.tryParse((await PackageInfo.fromPlatform()).buildNumber) ?? 0,
+    readAvailableMemory: readTranslationMemoryAvailability,
+    readCapability: readTranslationCapabilityFacts,
   );
+  service.setInferenceSafetyController(controller);
   service.setDownloadedModelPathResolver(controller.verifiedModelPath);
   unawaited(controller.initialize());
   return controller;
@@ -93,6 +97,8 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
        _hashFile = hashFile;
 
   static const recordKey = 'mknoon.translator.model_delivery.v1';
+  static const _safetyFileName = 'inference_safety.json';
+  static const _channel = MethodChannel('mknoon/gemma_preview');
   final Future<void> Function(Future<void> Function()) _removeModel;
   final Future<Directory> Function() _supportDirectory;
   final DiskSpaceChannel _diskSpace;
@@ -123,6 +129,26 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
       jsonEncode(record.toJson()),
     );
     if (!saved) throw FileSystemException('Translator state was not saved');
+  }
+
+  @override
+  Future<ModelSafetyRecord?> readSafety() async {
+    final file = File('${(await _directory()).path}/$_safetyFileName');
+    if (!await file.exists()) return null;
+    final json = jsonDecode(await file.readAsString());
+    if (json is! Map<String, dynamic>) {
+      throw const FormatException('Invalid translator safety state');
+    }
+    return ModelSafetyRecord.fromJson(Map<String, Object?>.from(json));
+  }
+
+  @override
+  Future<void> saveSafety(ModelSafetyRecord record) async {
+    await prepare();
+    final path = '${(await _directory()).path}/$_safetyFileName';
+    final temporary = File('$path.tmp');
+    await temporary.writeAsString(jsonEncode(record.toJson()), flush: true);
+    await temporary.rename(path);
   }
 
   @override
@@ -177,7 +203,15 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
   @override
   Future<void> removeOwnedModel() => _removeModel(() async {
     final directory = await _directory();
-    if (await directory.exists()) await directory.delete(recursive: true);
+    if (!await directory.exists()) return;
+    // Safety belongs to this phone, not to the downloaded model's lifecycle.
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity.path == '${directory.path}/$_safetyFileName' ||
+          entity.path == '${directory.path}/$_safetyFileName.tmp') {
+        continue;
+      }
+      await entity.delete(recursive: true);
+    }
   });
 }
 

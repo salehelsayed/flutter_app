@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:background_downloader/background_downloader.dart';
@@ -947,6 +948,95 @@ void main() {
       expect(await sideLoaded.exists(), isTrue);
       expect(await cache.exists(), isTrue);
       expect(await storage.availableBytes(), 300);
+    },
+  );
+
+  test(
+    'inference safety is a separate backup-excluded file that survives fresh storage and model removal',
+    () async {
+      final protectedPaths = <String>[];
+      AppSupportModelDeliveryStorage storage() =>
+          AppSupportModelDeliveryStorage(
+            supportDirectory: () async => destinations,
+            preferences: () async =>
+                throw StateError('prefs are not a durable inference marker'),
+            excludeFromBackup: (path) async {
+              protectedPaths.add(path);
+              return true;
+            },
+            removeModel: (delete) => delete(),
+          );
+      final original = storage();
+      const safety = ModelSafetyRecord(
+        blockedReason: ModelBlockedReason.resourceExhausted,
+        inferenceInProgress: true,
+        consecutiveInterruptions: 1,
+        noticePending: true,
+      );
+      await original.saveSafety(safety);
+      final model = File(await original.modelPath());
+      final safetyFile = File('${model.parent.path}/inference_safety.json');
+      expect(await safetyFile.exists(), isTrue);
+      expect(jsonDecode(await safetyFile.readAsString()), safety.toJson());
+      expect(protectedPaths, contains(model.parent.path));
+      final restarted = storage();
+      final loaded = (await restarted.readSafety())!;
+      expect(loaded.toJson(), safety.toJson());
+      await model.writeAsString('owned model');
+      await restarted.removeOwnedModel();
+      expect(await model.exists(), isFalse);
+      expect(await safetyFile.exists(), isTrue);
+      expect((await storage().readSafety())!.toJson(), safety.toJson());
+    },
+  );
+
+  test(
+    'incomplete safety temporary file cannot replace the last committed marker',
+    () async {
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        excludeFromBackup: (_) async => true,
+        removeModel: (delete) => delete(),
+      );
+      const committed = ModelSafetyRecord(consecutiveInterruptions: 1);
+      await storage.saveSafety(committed);
+      final directory = File(await storage.modelPath()).parent;
+      await File(
+        '${directory.path}/inference_safety.json.tmp',
+      ).writeAsString('{"inferenceInProgress":true');
+      expect((await storage.readSafety())!.toJson(), committed.toJson());
+      const next = ModelSafetyRecord(
+        inferenceInProgress: true,
+        consecutiveInterruptions: 1,
+      );
+      await storage.saveSafety(next);
+      expect(
+        jsonDecode(
+          await File('${directory.path}/inference_safety.json').readAsString(),
+        ),
+        next.toJson(),
+      );
+      expect((await storage.readSafety())!.toJson(), next.toJson());
+    },
+  );
+
+  test(
+    'safety marker cannot be committed without confirmed backup exclusion',
+    () async {
+      final storage = AppSupportModelDeliveryStorage(
+        supportDirectory: () async => destinations,
+        excludeFromBackup: (_) async => false,
+        removeModel: (delete) => delete(),
+      );
+      await expectLater(
+        storage.saveSafety(const ModelSafetyRecord(inferenceInProgress: true)),
+        throwsA(isA<FileSystemException>()),
+      );
+      final directory = File(await storage.modelPath()).parent;
+      expect(
+        await File('${directory.path}/inference_safety.json').exists(),
+        isFalse,
+      );
     },
   );
 

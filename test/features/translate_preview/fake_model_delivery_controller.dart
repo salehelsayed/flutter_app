@@ -13,6 +13,22 @@ class FakeModelDeliveryController implements ModelDeliveryController {
   @override
   final ValueNotifier<bool> allowMobileData = ValueNotifier(false);
 
+  @override
+  final ValueNotifier<bool> memoryNoticePending = ValueNotifier(false);
+
+  int memoryNoticesConsumed = 0;
+
+  @override
+  Future<bool> consumeMemoryNotice() async {
+    if (!memoryNoticePending.value) return false;
+    memoryNoticePending.value = false;
+    memoryNoticesConsumed++;
+    return true;
+  }
+
+  @override
+  Future<void> retryMemorySafety() async => calls.add('retryMemorySafety');
+
   final calls = <String>[];
   int refreshCalls = 0;
   Future<void> Function()? onRefresh;

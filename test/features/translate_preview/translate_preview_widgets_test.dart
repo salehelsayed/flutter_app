@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +35,173 @@ Widget _host(Widget child, {Locale locale = const Locale('en')}) =>
 // Each test makes its own fake: a Completer made in setUp lives outside the
 // test's fake-async zone, so completing it never reaches tester.pump().
 void main() {
+  const memoryWords = <({String locale, String temporary, String unsupported})>[
+    (
+      locale: 'en',
+      temporary:
+          'Not enough free memory right now. Close a few apps and try again.',
+      unsupported:
+          "This phone doesn't have enough memory to run the private translator. If you switch phones or update this one, you can try again in Settings.",
+    ),
+    (
+      locale: 'de',
+      temporary:
+          'Gerade ist nicht genug freier Speicher verfügbar. Schließe ein paar Apps und versuche es erneut.',
+      unsupported:
+          'Dieses Telefon hat nicht genug Arbeitsspeicher für den privaten Übersetzer. Wenn du das Telefon wechselst oder dieses aktualisierst, kannst du es in den Einstellungen erneut versuchen.',
+    ),
+    (
+      locale: 'ar',
+      temporary:
+          'لا توجد ذاكرة متاحة كافية الآن. أغلق بعض التطبيقات وحاول مرة أخرى.',
+      unsupported:
+          'لا يحتوي هذا الهاتف على ذاكرة كافية لتشغيل المترجم الخاص. إذا غيّرت هاتفك أو حدّثت هذا الهاتف، يمكنك المحاولة مرة أخرى من الإعدادات.',
+    ),
+  ];
+
+  for (final words in memoryWords) {
+    for (final transcribe in [false, true]) {
+      testWidgets(
+        '${words.locale} temporary memory message retains the '
+        '${transcribe ? 'Transcribe' : 'Translate'} link for a manual retry',
+        (tester) async {
+          final ai = _FakeAi();
+          final delivery = FakeModelDeliveryController(
+            const ModelReady(sizeBytes: 100),
+          );
+          await tester.pumpWidget(
+            _host(
+              transcribe
+                  ? TranscribePreview(
+                      audioPath: '/voice.m4a',
+                      ai: ai,
+                      delivery: delivery,
+                    )
+                  : TranslatePreview(
+                      text: 'Bonjour tout le monde',
+                      ai: ai,
+                      delivery: delivery,
+                    ),
+              locale: Locale(words.locale),
+            ),
+          );
+          final link = find.byType(InkWell).first;
+          await tester.tap(link);
+          await tester.pump();
+          ai.next.completeError(const TranslatorMemoryTemporarilyUnavailable());
+          await tester.pump();
+          expect(find.text(words.temporary), findsOneWidget);
+          expect(delivery.state.value, isA<ModelReady>());
+          expect(find.byType(InkWell), findsWidgets);
+          expect(find.byType(CircularProgressIndicator), findsNothing);
+          ai.next = Completer<String>();
+          await tester.tap(find.byType(InkWell).first);
+          await tester.pump();
+          expect(
+            transcribe ? ai.transcriptions : ai.translations,
+            hasLength(2),
+          );
+          ai.next.complete('Result');
+          await tester.pump();
+        },
+      );
+    }
+
+    testWidgets('${words.locale} mounted app listener shows a startup block '
+        'notice once outside Settings', (tester) async {
+      final delivery = FakeModelDeliveryController(const ModelUnsupported())
+        ..memoryNoticePending.value = true;
+      Widget host() => _host(
+        TranslatorMemoryNoticeListener(
+          controller: delivery,
+          child: const Text('conversation stays mounted'),
+        ),
+        locale: Locale(words.locale),
+      );
+      await tester.pumpWidget(host());
+      await tester.pump();
+      expect(find.text(words.unsupported), findsOneWidget);
+      expect(delivery.memoryNoticesConsumed, 1);
+      ScaffoldMessenger.of(
+        tester.element(find.text('conversation stays mounted')),
+      ).removeCurrentSnackBar();
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(host());
+      await tester.pump();
+      expect(find.text(words.unsupported), findsNothing);
+      expect(delivery.memoryNoticesConsumed, 1);
+    });
+  }
+
+  testWidgets(
+    'one app listener consumes a runtime block before all shared links disappear',
+    (tester) async {
+      final ai = _FakeAi();
+      final delivery = FakeModelDeliveryController(
+        const ModelReady(sizeBytes: 100),
+      );
+      await tester.pumpWidget(
+        _host(
+          TranslatorMemoryNoticeListener(
+            controller: delivery,
+            child: Column(
+              children: [
+                TranslatePreview(
+                  text: 'مرحبا كيف حالك',
+                  ai: ai,
+                  delivery: delivery,
+                ),
+                TranscribePreview(
+                  audioPath: '/voice.m4a',
+                  ai: ai,
+                  delivery: delivery,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('See translation'));
+      await tester.pump();
+      delivery.memoryNoticePending.value = true;
+      delivery.state.value = const ModelUnsupported();
+      ai.next.completeError(const TranslatorMemoryUnsupported());
+      await tester.pumpAndSettle();
+      expect(find.text(memoryWords.first.unsupported), findsOneWidget);
+      expect(find.text('See translation'), findsNothing);
+      expect(find.text('Transcribe'), findsNothing);
+      expect(delivery.memoryNoticesConsumed, 1);
+    },
+  );
+
+  testWidgets(
+    'a first interruption or generic unsupported state has no memory notice',
+    (tester) async {
+      final delivery = FakeModelDeliveryController(
+        const ModelReady(sizeBytes: 100),
+      );
+      await tester.pumpWidget(
+        _host(
+          TranslatorMemoryNoticeListener(
+            controller: delivery,
+            child: TranslatePreview(
+              text: 'مرحبا كيف حالك',
+              ai: _FakeAi(),
+              delivery: delivery,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('See translation'), findsOneWidget);
+      expect(find.text(memoryWords.first.unsupported), findsNothing);
+      delivery.state.value = const ModelUnsupported();
+      await tester.pump();
+      expect(find.text(memoryWords.first.unsupported), findsNothing);
+      expect(delivery.memoryNoticesConsumed, 0);
+    },
+  );
+
   testWidgets(
     'Translate: loading, then the translation without a result footer, '
     'in the Mknoon language',

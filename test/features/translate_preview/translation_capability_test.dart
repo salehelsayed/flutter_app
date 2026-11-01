@@ -11,7 +11,7 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   const iosFloor = 3758096384; // Approved 3.5 GiB, not a measured phone value.
-  const androidFloor = 5905580032; // Approved 5.5 GiB, not measured.
+  const androidFloor = 4831838208; // Approved 4.5 GiB, not measured.
   const ampleRam = 8 * 1024 * 1024 * 1024;
   final logs = <String>[];
   final originalDebugPrint = debugPrint;
@@ -76,7 +76,7 @@ void main() {
           expected: false,
         ),
         (
-          name: 'Android accepts its RAM and API boundaries',
+          name: 'Android accepts exactly 4.5 GiB on API 30',
           platform: TranslationPlatform.android,
           ram: androidFloor,
           os: 30,
@@ -84,9 +84,33 @@ void main() {
           expected: true,
         ),
         (
-          name: 'Android rejects one byte below its RAM boundary',
+          name: 'Android rejects one byte below 4.5 GiB',
           platform: TranslationPlatform.android,
           ram: androidFloor - 1,
+          os: 30,
+          arm64: true,
+          expected: false,
+        ),
+        (
+          name: 'Android supports nominal 6 GB reporting 5.3 GiB',
+          platform: TranslationPlatform.android,
+          ram: 53 * (1 << 30) ~/ 10,
+          os: 30,
+          arm64: true,
+          expected: true,
+        ),
+        (
+          name: 'Android supports Pixel 6a-class RAM reporting 5.4 GiB',
+          platform: TranslationPlatform.android,
+          ram: 54 * (1 << 30) ~/ 10,
+          os: 30,
+          arm64: true,
+          expected: true,
+        ),
+        (
+          name: 'Android excludes nominal 4 GB reporting 3.7 GiB',
+          platform: TranslationPlatform.android,
+          ram: 37 * (1 << 30) ~/ 10,
           os: 30,
           arm64: true,
           expected: false,

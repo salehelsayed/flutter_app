@@ -13,6 +13,103 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 /// Orbit screen registers it because it owns the storage manager and scopes.
 VoidCallback? translatePreviewOpenStorage;
 
+/// One app-mounted owner presents durable memory notices even with no preview
+/// link or Settings route mounted. The controller persists once-only consumption.
+class TranslatorMemoryNoticeListener extends StatefulWidget {
+  const TranslatorMemoryNoticeListener({
+    super.key,
+    required this.controller,
+    required this.child,
+    this.messengerKey,
+  });
+
+  final ModelDeliveryController controller;
+  final Widget child;
+  final GlobalKey<ScaffoldMessengerState>? messengerKey;
+
+  @override
+  State<TranslatorMemoryNoticeListener> createState() =>
+      _TranslatorMemoryNoticeListenerState();
+}
+
+class _TranslatorMemoryNoticeListenerState
+    extends State<TranslatorMemoryNoticeListener> {
+  bool _scheduled = false;
+  bool _consuming = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.memoryNoticePending.addListener(_schedule);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _schedule();
+  }
+
+  @override
+  void didUpdateWidget(covariant TranslatorMemoryNoticeListener oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.memoryNoticePending.removeListener(_schedule);
+      widget.controller.memoryNoticePending.addListener(_schedule);
+    }
+    _schedule();
+  }
+
+  void _schedule() {
+    if (!mounted ||
+        _scheduled ||
+        _consuming ||
+        !widget.controller.memoryNoticePending.value) {
+      return;
+    }
+    _scheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      _scheduled = false;
+      if (!mounted ||
+          _consuming ||
+          !widget.controller.memoryNoticePending.value) {
+        return;
+      }
+      final messenger =
+          widget.messengerKey?.currentState ??
+          ScaffoldMessenger.maybeOf(context);
+      if (messenger == null) return;
+      _consuming = true;
+      try {
+        if (await widget.controller.consumeMemoryNotice() &&
+            mounted &&
+            messenger.mounted) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.translator_memory_unsupported,
+              ),
+            ),
+          );
+        }
+      } on Object {
+        // A failed durable consumption leaves the notice pending for recovery.
+      } finally {
+        _consuming = false;
+      }
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.memoryNoticePending.removeListener(_schedule);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 /// A small "See translation" link under [text]. Shows nothing when [text] is
 /// already in the user's Mknoon language, is Arabizi, or the language has no
 /// prompt name. The original stays where it is; the translation appears below
@@ -414,6 +511,21 @@ class _AiActionState extends State<_AiAction> {
       }
       if (mounted && generation == _generation) {
         setState(() => _phase = _Done(result));
+      }
+    } on TranslatorMemoryTemporarilyUnavailable {
+      if (mounted && generation == _generation) {
+        setState(() => _phase = const _Idle());
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text(
+              AppLocalizations.of(context)!.translator_memory_temporary,
+            ),
+          ),
+        );
+      }
+    } on TranslatorMemoryUnsupported {
+      if (mounted && generation == _generation) {
+        setState(() => _phase = const _Idle());
       }
     } on Object {
       if (mounted && generation == _generation) {

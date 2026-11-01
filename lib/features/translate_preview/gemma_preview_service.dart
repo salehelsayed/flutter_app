@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/features/translate_preview/gemma_preview_prompts.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_core.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/wav_16k_mono.dart';
 import 'package:flutter_edge_ai/flutter_edge_ai.dart';
@@ -15,7 +17,14 @@ import 'package:flutter_edge_ai_litertlm/flutter_edge_ai_litertlm.dart';
 /// verified delivery path on first use, keeps it, and runs one request at a time.
 /// Each request is a fresh session, as in the benchmark.
 final class GemmaPreviewService implements OnDeviceAi {
-  GemmaPreviewService._();
+  GemmaPreviewService._() : _testLoad = null;
+
+  @visibleForTesting
+  GemmaPreviewService.forTesting({
+    required PersistentModelDeliveryController controller,
+    required Future<InferenceModel> Function() loadModel,
+  }) : _controller = controller,
+       _testLoad = loadModel;
 
   static final instance = GemmaPreviewService._();
 
@@ -27,6 +36,14 @@ final class GemmaPreviewService implements OnDeviceAi {
   bool _engineRegistered = false;
   Future<void> _tail = Future.value();
   Future<String> Function()? _downloadedModelPath;
+  PersistentModelDeliveryController? _controller;
+  final Future<InferenceModel> Function()? _testLoad;
+
+  void setInferenceSafetyController(
+    PersistentModelDeliveryController controller,
+  ) {
+    _controller = controller;
+  }
 
   void setDownloadedModelPathResolver(Future<String> Function() resolve) {
     _downloadedModelPath = resolve;
@@ -50,8 +67,7 @@ final class GemmaPreviewService implements OnDeviceAi {
 
   @override
   Future<String> translate(String text, {required String languageName}) =>
-      _serial(() async {
-        final model = await _loadedModel();
+      _inference((model) async {
         return _measure('text', () async {
           final session = await model.createSession(
             systemInstruction: gemmaTranslateInstruction(languageName),
@@ -71,8 +87,7 @@ final class GemmaPreviewService implements OnDeviceAi {
       });
 
   @override
-  Future<String> transcribe(String audioPath) => _serial(() async {
-    final model = await _loadedModel();
+  Future<String> transcribe(String audioPath) => _inference((model) async {
     return _measure('audio', () async {
       final decoded = await _channel.invokeMapMethod<String, Object?>(
         'decodePcm',
@@ -129,9 +144,52 @@ final class GemmaPreviewService implements OnDeviceAi {
     return run;
   }
 
+  Future<T> _inference<T>(Future<T> Function(InferenceModel) work) =>
+      _serial(() async {
+        final controller = _controller;
+        if (controller == null) {
+          throw StateError('Translator delivery is not configured');
+        }
+        // The durable marker is flushed before model/session/audio allocation.
+        await controller.beginInference();
+        var succeeded = false;
+        var resourceExhausted = false;
+        try {
+          final InferenceModel model;
+          try {
+            model = await _loadedModel();
+          } on Object catch (error) {
+            resourceExhausted = _isTypedLoadExhaustion(error);
+            if (resourceExhausted) throw const TranslatorMemoryUnsupported();
+            rethrow;
+          }
+          final result = await work(model);
+          succeeded = true;
+          return result;
+        } finally {
+          // Per-request session finally blocks have completed before this.
+          // A healthy model stays cached; sticky load failure discards it.
+          if (resourceExhausted) {
+            final held = _model;
+            _model = null;
+            if (held != null) await (await held).close();
+          }
+          await controller.finishInference(
+            succeeded: succeeded,
+            resourceExhausted: resourceExhausted,
+          );
+        }
+      });
+
+  bool _isTypedLoadExhaustion(Object error) {
+    if (error is LiteRtLmEngineCreateException) return error.nativeCode == 8;
+    return error is BackendInitException &&
+        error.attempts.any((attempt) => _isTypedLoadExhaustion(attempt.error));
+  }
+
   /// A failed load is forgotten, so Try again loads afresh.
   Future<InferenceModel> _loadedModel() {
-    final loading = _model ??= _measure('load', _load);
+    final loading = _model ??= _measure('load', _testLoad ?? _load);
     return loading.catchError((Object error, StackTrace stack) {
       if (identical(_model, loading)) _model = null;
       Error.throwWithStackTrace(error, stack);
