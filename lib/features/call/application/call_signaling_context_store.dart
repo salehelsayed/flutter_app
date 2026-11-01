@@ -32,6 +32,7 @@ abstract interface class AuthenticatedCallSignalingContextObserver {
   void captureAuthenticated({
     required CallSignal signal,
     required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
   });
 
   void purge(CallId callId);
@@ -66,6 +67,7 @@ final class CallSignalingContext {
     required this.localDevicePeerId,
     required this.remoteAccountPeerId,
     required this.remoteDevicePeerId,
+    required this.admissionAuthority,
     required this.nextSenderSequence,
     required this.remoteSenderSequence,
     required this.iceGeneration,
@@ -79,6 +81,7 @@ final class CallSignalingContext {
   final String localDevicePeerId;
   final String remoteAccountPeerId;
   final String remoteDevicePeerId;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
   final int nextSenderSequence;
   final int remoteSenderSequence;
   final int iceGeneration;
@@ -140,6 +143,7 @@ final class CallSignalingContextStore
     required String localDevicePeerId,
     required String remoteAccountPeerId,
     required String remoteDevicePeerId,
+    CallAdmissionAuthorityWitness? admissionAuthority,
     int nextSenderSequence = 1,
     int iceGeneration = 0,
     Map<String, Object?> invitePayload = const <String, Object?>{},
@@ -179,6 +183,7 @@ final class CallSignalingContextStore
       localDevicePeerId: localDevicePeerId,
       remoteAccountPeerId: remoteAccountPeerId,
       remoteDevicePeerId: remoteDevicePeerId,
+      admissionAuthority: admissionAuthority,
       nextSenderSequence: nextSenderSequence,
       remoteSenderSequence: 0,
       remoteHighWaterEvent: null,
@@ -202,6 +207,7 @@ final class CallSignalingContextStore
   void captureAuthenticated({
     required CallSignal signal,
     required String callHandle,
+    CallAdmissionAuthorityWitness? admissionAuthority,
   }) {
     _validateBindings(
       callHandle: callHandle,
@@ -272,6 +278,7 @@ final class CallSignalingContextStore
       localDevicePeerId: signal.recipientDevicePeerId,
       remoteAccountPeerId: signal.senderAccountPeerId,
       remoteDevicePeerId: signal.senderDevicePeerId,
+      admissionAuthority: admissionAuthority,
       nextSenderSequence: 1,
       remoteSenderSequence: signal.senderSequence,
       remoteHighWaterEvent: signal.event,
@@ -434,6 +441,7 @@ final class _StoredCallSignalingContext {
     required this.localDevicePeerId,
     required this.remoteAccountPeerId,
     required this.remoteDevicePeerId,
+    required this.admissionAuthority,
     required this.nextSenderSequence,
     required this.remoteSenderSequence,
     required this.remoteHighWaterEvent,
@@ -448,6 +456,7 @@ final class _StoredCallSignalingContext {
   final String localDevicePeerId;
   final String remoteAccountPeerId;
   final String remoteDevicePeerId;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
   int nextSenderSequence;
   int remoteSenderSequence;
   CallSignalType? remoteHighWaterEvent;
@@ -462,6 +471,7 @@ final class _StoredCallSignalingContext {
     localDevicePeerId: localDevicePeerId,
     remoteAccountPeerId: remoteAccountPeerId,
     remoteDevicePeerId: remoteDevicePeerId,
+    admissionAuthority: admissionAuthority,
     nextSenderSequence: nextSenderSequence,
     remoteSenderSequence: remoteSenderSequence,
     iceGeneration: iceGeneration,

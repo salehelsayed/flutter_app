@@ -9,6 +9,7 @@ import '../domain/call_session_snapshot.dart';
 import '../domain/call_signal.dart';
 import '../domain/call_state.dart';
 import 'call_coordinator.dart';
+import 'call_endpoint_resolver.dart' show CallAdmissionAuthorityWitness;
 import 'call_signaling_context_store.dart';
 
 export 'composite_call_effect_executor.dart';
@@ -69,6 +70,7 @@ final class OutgoingCallSignalingPreparation {
     required this.callHandle,
     required this.remoteAccountPeerId,
     required this.remoteDevicePeerId,
+    this.admissionAuthority,
     this.nextSenderSequence = 1,
     this.iceGeneration = 0,
     this.invitePayload = const <String, Object?>{},
@@ -77,6 +79,7 @@ final class OutgoingCallSignalingPreparation {
   final String callHandle;
   final String remoteAccountPeerId;
   final String remoteDevicePeerId;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
   final int nextSenderSequence;
   final int iceGeneration;
   final Map<String, Object?> invitePayload;
@@ -388,6 +391,7 @@ final class CallControlEffectExecutor implements CallEffectExecutor {
         localDevicePeerId: snapshot.callerDeviceId!,
         remoteAccountPeerId: prepared.remoteAccountPeerId,
         remoteDevicePeerId: prepared.remoteDevicePeerId,
+        admissionAuthority: prepared.admissionAuthority,
         nextSenderSequence: prepared.nextSenderSequence,
         iceGeneration: prepared.iceGeneration,
         invitePayload: prepared.invitePayload,

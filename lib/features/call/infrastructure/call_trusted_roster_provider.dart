@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
@@ -67,6 +68,20 @@ final class DatabaseCallTrustedRosterProvider
   @override
   Future<CallTrustedRosterSnapshot> loadForContact(
     String contactAccountPeerId,
+  ) {
+    final database = _database;
+    if (database is Database) {
+      return dbWriteTransaction(
+        database,
+        (tx) => _loadForContact(tx, contactAccountPeerId),
+      );
+    }
+    return _loadForContact(database, contactAccountPeerId);
+  }
+
+  Future<CallTrustedRosterSnapshot> _loadForContact(
+    DatabaseExecutor database,
+    String contactAccountPeerId,
   ) async {
     final normalizedAccount = contactAccountPeerId.trim();
     if (normalizedAccount.isEmpty) {
@@ -78,7 +93,7 @@ final class DatabaseCallTrustedRosterProvider
       );
     }
 
-    final contactRows = await _database.query(
+    final contactRows = await database.query(
       'contacts',
       columns: const <String>['peer_id', 'is_blocked'],
       where: 'peer_id = ?',
@@ -107,7 +122,7 @@ final class DatabaseCallTrustedRosterProvider
     }
 
     final snapshot = await dbReadDirectContactFanoutSnapshot(
-      _database,
+      database,
       contactAccountPeerId: normalizedAccount,
     );
     if (snapshot == null) {
@@ -117,6 +132,28 @@ final class DatabaseCallTrustedRosterProvider
         contactBlocked: false,
         devices: const <TrustedCallDeviceAuthority>[],
       );
+    }
+
+    int? relationshipRevision;
+    final consentTables = await database.rawQuery(
+      "SELECT name FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'contact_relationship_consent'",
+    );
+    if (consentTables.isNotEmpty) {
+      final consents = await database.query(
+        'contact_relationship_consent',
+        columns: const ['state', 'revision'],
+        where: 'peer_id = ?',
+        whereArgs: [normalizedAccount],
+        limit: 1,
+      );
+      final revision = consents.isEmpty ? null : consents.single['revision'];
+      if (consents.length == 1 &&
+          consents.single['state'] == 'active' &&
+          revision is int &&
+          revision > 0) {
+        relationshipRevision = revision;
+      }
     }
 
     final devices = <TrustedCallDeviceAuthority>[];
@@ -138,6 +175,12 @@ final class DatabaseCallTrustedRosterProvider
           deviceKeyEpoch: callDeviceKeyEpochFromFingerprint(target.fingerprint),
           signingPublicKey: signingPublicKey,
           mlKemPublicKey: target.mlKemPublicKey,
+          admissionAuthority: relationshipRevision == null
+              ? null
+              : (
+                  fingerprint: target.fingerprint,
+                  relationshipRevision: relationshipRevision,
+                ),
         ),
       );
     }
@@ -163,8 +206,7 @@ final class DatabaseCallTrustedRosterProvider
     if (resolution.contactIsBlocked) {
       throw const CallSenderBlockedException();
     }
-    if (!resolution.authorized ||
-        accountPeerId == null) {
+    if (!resolution.authorized || accountPeerId == null) {
       return null;
     }
     final roster = await loadForContact(accountPeerId);

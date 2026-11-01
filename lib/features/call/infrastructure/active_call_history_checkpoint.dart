@@ -90,7 +90,12 @@ final class ActiveCallHistoryCheckpoint {
         context.remoteDevicePeerId,
       ),
     );
-    if (authority == null) {
+    final admissionAuthority = context.admissionAuthority;
+    if (authority == null ||
+        admissionAuthority == null ||
+        authority['remote_fingerprint'] != admissionAuthority.fingerprint ||
+        authority['relationship_revision'] !=
+            admissionAuthority.relationshipRevision) {
       throw StateError('call checkpoint authority revoked');
     }
     final prior = await _read();

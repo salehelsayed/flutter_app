@@ -87,13 +87,14 @@ final class IncomingCallPrePresentationAdmissionException implements Exception {
 /// Callers must explicitly commit a terminal decision or roll back a
 /// pre-presentation handoff that foreground canonical handling must replay.
 final class AuthenticatedIncomingCallAdmission {
-  AuthenticatedIncomingCallAdmission._(this._decoded)
+  AuthenticatedIncomingCallAdmission._(this._decoded, {this.admissionAuthority})
     : signal = _decoded.signal,
       callHandle = _decoded.callHandle;
 
   final DecodedSecureCallEnvelope _decoded;
   final CallSignal signal;
   final String callHandle;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
 
   void commitReplay() => _decoded.commitReplay();
 
@@ -266,7 +267,10 @@ final class IncomingCallPrePresentationAdmission {
           gate: IncomingCallPrePresentationAdmissionGate.expectationMismatch,
         );
       }
-      return AuthenticatedIncomingCallAdmission._(decoded);
+      return AuthenticatedIncomingCallAdmission._(
+        decoded,
+        admissionAuthority: sender.admissionAuthority,
+      );
     } on IncomingCallPrePresentationAdmissionException {
       rethrow;
     } on CallEnvelopeException catch (error) {

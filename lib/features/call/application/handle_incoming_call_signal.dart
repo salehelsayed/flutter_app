@@ -493,6 +493,7 @@ final class HandleIncomingCallSignal {
       _signalingContextObserver?.captureAuthenticated(
         signal: signal,
         callHandle: admitted.callHandle,
+        admissionAuthority: admitted.admissionAuthority,
       );
       capturedSignal = signal;
       // A PushKit-first call already has a native descriptor, so the verified

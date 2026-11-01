@@ -7882,23 +7882,35 @@ visible and cannot become an ordinary first-attempt PASS.
   graph settles that checkpoint before native attach or signaling intake.
   Current identity keys, contact/device keys and the original relationship
   consent revision are rechecked in the same SQL write transaction as the
-  existing terminal projection. A block, rekey or same-key delete/re-add cannot
+  existing terminal projection. The trusted roster lookup freezes the device
+  fingerprint and consent revision together, before asynchronous authentication
+  and native presentation work. Incoming and outgoing contexts retain that
+  original witness; the first checkpoint cannot adopt replacement authority.
+  A block, rekey or same-key delete/re-add cannot
   recreate the old row. Normal terminal projection clears only its own record;
   a repeated recovery keeps the existing call-ID row and status. Recovered rows
   announce through the existing projection listener after SQL commit, before
   native attach; repeated start/resume does not announce another row. The native
   orphan/receipt policy below is unchanged. Recovered duration ends at the last
   persisted observation, rather than including unobserved time after process
-  loss; the call, microphone and signaling are not resumed.
+  loss; the call, microphone and signaling are not resumed. Checkpoint admission
+  uses the existing coordinator effect timeout so stalled storage cannot hold
+  the serial hangup/disposal lane indefinitely. A timeout leaves the original
+  serialized store operation and call-ID-conditional clear ordered.
   `call_signaling_composition_test.dart` captures full production SQLite with
   `VACUUM INTO` and copies persisted secure-store bytes before graceful test
   cleanup, then constructs a fresh production graph with expired original
   signaling and no new invite. At RED commit `1ae4a78c5`, ringing and connected
   cases both fail with missing history while four revocation controls pass.
-  The fixed selection passes seven cases, including Android with no native
-  journal and history committed before iOS native attach. The eight-file
-  history/lifecycle/race preservation selection passes 340 cases; focused
-  analysis reports no issues. This is host durable-snapshot restart proof,
+  The initial fixed selection passes seven cases, including Android with no
+  native journal and history committed before iOS native attach. Review RED
+  commit `51c4868c7` adds two authenticated incoming-message races that replace
+  keys or delete/re-add consent while the native name update is held, plus
+  secure-store read/write stalls under a fake clock. All four reproduce on the
+  original history fix; the repaired focused selection passes all eleven cases.
+  The initial eight-file history/lifecycle/race preservation selection passes
+  340 cases; its focused analysis reports no issues. This is host durable-snapshot
+  restart proof,
   not an executed OS process-kill or audible-media campaign. First setup and
   lint failures remain with the RED/GREEN receipts under
   `.codex-test-logs/vc026-20261101/`. Existing native/device evidence below

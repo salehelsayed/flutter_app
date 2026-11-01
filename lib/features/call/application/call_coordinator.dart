@@ -435,7 +435,7 @@ final class CallCoordinator {
     final persist = persistActiveCall;
     if (!snapshot.isTerminal && persist != null) {
       try {
-        await persist(snapshot);
+        await persist(snapshot).timeout(effectTimeout);
       } catch (_) {
         await _dispatchNow(
           CallEvent(

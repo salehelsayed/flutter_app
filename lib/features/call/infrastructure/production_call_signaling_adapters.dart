@@ -102,6 +102,7 @@ final class ProductionCallControlSignalingAdapter
         callHandle: callHandle,
         remoteAccountPeerId: endpoint.accountPeerId,
         remoteDevicePeerId: endpoint.devicePeerId,
+        admissionAuthority: endpoint.admissionAuthority,
         nextSenderSequence: 1,
         iceGeneration: 0,
         invitePayload: _audioOnlyInvitePayload,

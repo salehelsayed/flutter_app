@@ -22,6 +22,12 @@ final class CallEndpointResolutionException implements Exception {
   String toString() => 'Call endpoint unavailable: ${code.name}';
 }
 
+/// Contact authority frozen at the trusted lookup used for admission.
+typedef CallAdmissionAuthorityWitness = ({
+  String fingerprint,
+  int relationshipRevision,
+});
+
 final class TrustedCallDeviceAuthority {
   const TrustedCallDeviceAuthority({
     required this.accountPeerId,
@@ -30,6 +36,7 @@ final class TrustedCallDeviceAuthority {
     required this.deviceKeyEpoch,
     required this.signingPublicKey,
     required this.mlKemPublicKey,
+    this.admissionAuthority,
   });
 
   final String accountPeerId;
@@ -38,6 +45,7 @@ final class TrustedCallDeviceAuthority {
   final int deviceKeyEpoch;
   final String signingPublicKey;
   final String mlKemPublicKey;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
 }
 
 typedef VerifyCallEndpointSignature =
@@ -52,6 +60,7 @@ final class ResolvedCallEndpoint {
     required this.devicePeerId,
     required this.signingPublicKey,
     required this.mlKemPublicKey,
+    this.admissionAuthority,
     required this.deviceKeyEpoch,
     required this.preferenceEpoch,
     required this.platform,
@@ -64,6 +73,7 @@ final class ResolvedCallEndpoint {
   final String devicePeerId;
   final String signingPublicKey;
   final String mlKemPublicKey;
+  final CallAdmissionAuthorityWitness? admissionAuthority;
   final int deviceKeyEpoch;
   final int preferenceEpoch;
   final CallEndpointPlatform platform;
@@ -228,6 +238,7 @@ final class CallEndpointResolver {
       devicePeerId: match.trusted.devicePeerId,
       signingPublicKey: match.trusted.signingPublicKey,
       mlKemPublicKey: match.trusted.mlKemPublicKey,
+      admissionAuthority: match.trusted.admissionAuthority,
       deviceKeyEpoch: match.trusted.deviceKeyEpoch,
       preferenceEpoch: match.record.preferenceEpoch,
       platform: match.record.platform,
