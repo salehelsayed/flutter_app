@@ -532,8 +532,13 @@ void main() {
           expect(prompts, isEmpty);
           expect(recoveredStatuses.length, 1);
         } else {
-          expect(prompts.length, 1);
-          expect(prompts.single.username, 'Sender');
+          if (scenario == 'deleted') {
+            expect(result, HandleMessageResult.invalidMessage);
+            expect(prompts, isEmpty);
+          } else {
+            expect(prompts.length, 1);
+            expect(prompts.single.username, 'Sender');
+          }
           expect(await contacts.getContact(sender.peerId), isNull);
           expect(await contacts.getContactCount(), 1);
           expect(after.status, IntroductionOverallStatus.pending);
@@ -543,7 +548,7 @@ void main() {
           expect(await messages.getMessageCountForContact(sender.peerId), 0);
           expect(
             (await requests.getRequest(sender.peerId))?.status,
-            ContactRequestStatus.pending,
+            scenario == 'deleted' ? isNull : ContactRequestStatus.pending,
           );
           expect(
             recoveryCalls,

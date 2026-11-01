@@ -3356,14 +3356,38 @@ decisions and actual contact deletion preserve a precise, nondecreasing cutoff
 in the existing consent record. Deletion retains the latest terminal request
 identity, including canonical signature-alias rejection for an accepted request
 signed within the allowed future-clock window. A distinct request signed after
-the last decision still requires a new manual decision. No migration or extra
-envelope ledger is introduced; historical decision times are not reconstructed.
+a decline still requires a new manual decision. Owner option A supersedes that
+fresh-request behavior after local deletion: while the contact is absent and
+consent remains withdrawn, authenticated requests are ignored regardless of
+unsigned intent or signed new-request/repair marker. They create no pending row
+or presentation. A local QR scan or mutual introduction acceptance can insert
+the contact and reactivate consent through the existing INSERT trigger. No
+migration or extra envelope ledger is introduced; historical decision times
+are not reconstructed.
 The corrected cold-reopen cases fail causally before the fix (four failures,
 three passing controls), then all 197 cases across eleven focused Dart files
 pass with zero failures/skips; targeted analysis reports no issues. The first
 GREEN attempt exposed three helper-fixture failures because its hand-built
 schema omitted v121; that fixture now applies the existing migration. The first
 analysis warning and both initial test attempts remain in the evidence.
+The option-A regression uses real Ed25519 verification, production-schema SQL,
+the deletion use case and listener to cover fresh automatic/signed request
+suppression, unchanged declined consent, QR parse/re-add and mutual introduction
+acceptance. The introduction fixture uses the existing plaintext compatibility
+path; it does not establish encrypted introduction transport. Automatic acceptance
+reciprocals and the legacy call-grant reciprocal now emit the silent
+`key_exchange_retry` intent with an optional outer `reciprocalReply: true` hint.
+The hint suppresses only the optional legacy reciprocal callback, never signature,
+identity, consent, grant storage or exact-receipt ACK checks. Reply and retry
+emission keys differ so a recent reply cannot coalesce away a later solicitation.
+Real QR requests retain `new_request`. The sender emission and two-listener
+callback-chain tests require a request, one reply and no third-send callback;
+the latter uses fixture envelopes, not native transport. Older clients may ignore
+the new hint and reply with their old visible intent, so mixed-version OS push
+silence is not established. Evidence, including the initial swap-aborted GREEN
+attempt, is retained in `.codex-test-logs/deleted-contact-option-a-20261101/`.
+Device notification/UI behavior and signed-candidate acceptance remain separate.
+
 The linked-device addressing foundation's historical v112 fixture also applies
 v121 when exercising current deletion helpers, alongside its existing v117
 call-history dependency. Foreground and headless production open the current

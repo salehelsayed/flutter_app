@@ -783,6 +783,36 @@ void main() {
     );
   });
 
+  test(
+    'QUIET-REPLY does not coalesce away a later retry solicitation',
+    () async {
+      expect(
+        await sendEquivalent(intent: ContactRequestSendIntent.keyExchangeReply),
+        SendContactRequestResult.success,
+      );
+      final reply = jsonDecode(p2pService.lastSentMessage!) as Map;
+      expect(reply['intent'], 'key_exchange_retry');
+      expect(reply['reciprocalReply'], isTrue);
+      expect(
+        await sendEquivalent(intent: ContactRequestSendIntent.keyExchangeRetry),
+        SendContactRequestResult.success,
+      );
+      expect(p2pService.sendWithReplyCalls, 2);
+      final retry = jsonDecode(p2pService.lastSentMessage!) as Map;
+      expect(retry['intent'], 'key_exchange_retry');
+      expect(retry.containsKey('reciprocalReply'), isFalse);
+      expect(
+        await sendEquivalent(intent: ContactRequestSendIntent.keyExchangeRetry),
+        SendContactRequestResult.success,
+      );
+      expect(
+        p2pService.sendWithReplyCalls,
+        2,
+        reason: 'ordinary equivalent retries still coalesce',
+      );
+    },
+  );
+
   test('v2: envelope contains valid UUID msgId', () async {
     await sendContactRequest(
       p2pService: p2pService,

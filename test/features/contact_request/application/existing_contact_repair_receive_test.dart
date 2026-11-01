@@ -508,7 +508,7 @@ void main() {
       expect(await a.claims(), isEmpty);
     });
 
-    test('deleted: a new request goes to the manual dialog with no '
+    test('deleted: a new request is suppressed with no '
         'authority writes; a late signed reply creates nothing', () async {
       await a.contacts.deleteContact(_peer.peerId);
       final result = await a.receive(
@@ -519,13 +519,13 @@ void main() {
         ),
         withIntroHook: true,
       );
-      expect(result, HandleMessageResult.contactRequest);
+      expect(result, HandleMessageResult.invalidMessage);
       expect(a.tokens.tokens, isEmpty);
       expect(await a.grants.readForIssuer(_peer.peerId), isNull);
       expect(a.introCalls, 0);
       expect(await a.claims(), isEmpty);
 
-      final requestsBefore = await a.requests.getPendingRequests();
+      expect(await a.requests.getPendingRequests(), isEmpty);
       final late = await a.receive(
         await _request(
           control: repairReplyControl(
@@ -534,12 +534,9 @@ void main() {
           ),
         ),
       );
-      expect(late, HandleMessageResult.repairReplyIgnored);
+      expect(late, HandleMessageResult.invalidMessage);
       expect(await a.contacts.getContact(_peer.peerId), isNull);
-      expect(
-        await a.requests.getPendingRequests(),
-        hasLength(requestsBefore.length),
-      );
+      expect(await a.requests.getPendingRequests(), isEmpty);
     });
 
     test(

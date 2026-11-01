@@ -356,7 +356,7 @@ void main() {
   });
 
   test(
-    'A deleted B: B\'s marked request reaches A\'s manual dialog only',
+    'A deleted B: B\'s marked request creates no pending request or dialog',
     () async {
       final dialogs = <String>[];
       a.listener.requestStream.listen((r) => dialogs.add(r.peerId));
@@ -364,7 +364,8 @@ void main() {
       await b.contacts.deleteContact(_aId.peerId);
       await b.reAddPeerFromQr(a);
       await _settle();
-      expect(dialogs, [_bId.peerId]);
+      expect(dialogs, isEmpty);
+      expect(await a.requests.getPendingRequests(), isEmpty);
       expect(await a.contacts.getContact(_bId.peerId), isNull);
       expect(a.sentKinds(), isEmpty);
       expect(await b.mlKemOfPeer(), isNull);

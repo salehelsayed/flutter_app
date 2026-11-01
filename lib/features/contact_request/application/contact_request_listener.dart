@@ -599,7 +599,10 @@ class ContactRequestListener {
       final envelope = jsonDecode(message.content) as Map<String, dynamic>;
       return envelope['type'] == 'contact_request' &&
           envelope['version'] == '2' &&
-          envelope['intent'] == 'key_exchange_retry';
+          envelope['intent'] == 'key_exchange_retry' &&
+          // Unsigned hint suppresses only this optional reciprocal response.
+          // Authentication, storage and exact ACKs are handled above.
+          envelope['reciprocalReply'] != true;
     } catch (_) {
       return false;
     }

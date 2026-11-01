@@ -6733,7 +6733,7 @@ final class ProductionApplicationBootstrap
           bridge: bridge,
           targetPeerId: contactAccountPeerId,
           recipientPublicKey: contact.publicKey,
-          intent: ContactRequestSendIntent.newRequest,
+          intent: ContactRequestSendIntent.keyExchangeReply,
           resolveCallWakeHandle: callSignalingComposition.resolveCallWakeHandle,
           onCallWakeHandleDistributed:
               callSignalingComposition.onCallWakeHandleDistributed,

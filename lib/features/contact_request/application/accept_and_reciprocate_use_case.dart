@@ -96,6 +96,7 @@ Future<AcceptContactRequestResult> acceptAndReciprocateContactRequest({
           bridge: bridge,
           targetPeerId: peerId,
           recipientPublicKey: recipientPublicKey,
+          intent: ContactRequestSendIntent.keyExchangeReply,
           resolveWakeToken: resolveWakeToken,
           resolveCallWakeHandle: resolveCallWakeHandle,
           onCallWakeHandleDistributed: onCallWakeHandleDistributed,

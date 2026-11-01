@@ -44,7 +44,10 @@ enum ContactRequestSendIntent {
   newRequest('new_request'),
 
   /// A silent retry to repair an incomplete ML-KEM key exchange.
-  keyExchangeRetry('key_exchange_retry');
+  keyExchangeRetry('key_exchange_retry'),
+
+  /// A silent automatic reply that must not solicit another reciprocal reply.
+  keyExchangeReply('key_exchange_retry');
 
   const ContactRequestSendIntent(this.wireValue);
 
@@ -429,7 +432,12 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
   final equivalenceKey = sha256
       .convert(
         utf8.encode(
-          jsonEncode([targetPeerId, recipientPublicKey, equivalentPayload]),
+          jsonEncode([
+            targetPeerId,
+            recipientPublicKey,
+            equivalentPayload,
+            intent == ContactRequestSendIntent.keyExchangeReply,
+          ]),
         ),
       )
       .toString();
@@ -476,6 +484,8 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
       'type': 'contact_request',
       'version': '1',
       'intent': intent.wireValue,
+      if (intent == ContactRequestSendIntent.keyExchangeReply)
+        'reciprocalReply': true,
       'payload': signedPayload,
     };
     return ContactRequestEnvelopeBuild.built(
@@ -548,6 +558,8 @@ Future<ContactRequestEnvelopeBuild> buildContactRequestEnvelope({
     'type': 'contact_request',
     'version': '2',
     'intent': intent.wireValue,
+    if (intent == ContactRequestSendIntent.keyExchangeReply)
+      'reciprocalReply': true,
     'msgId': msgId,
     'ts': ts,
     if (sanitizedUsername.isNotEmpty) 'senderUsername': sanitizedUsername,

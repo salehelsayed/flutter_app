@@ -340,6 +340,9 @@ const _applicationRootNormalizedSha256 =
 // Wrote-back adds only the reviewed two-line database lookup at this app owner.
 // Endpoint repair adds callbacks at the existing call and contact-reply owners;
 // the historical notification callback and DTR-18 ownership stay unchanged.
+// Deleted-contact option A makes the existing automatic reciprocal callback
+// use quiet keyExchangeReply intent. Only that argument changes both pins;
+// the historical callback stays exact and no responsibility changes owner.
 const _productionBootstrapNormalizedSha256 =
     // Plan 365 wires the existing strict group-media lifecycle owner into the
     // local cold-start cleanup sequence; no bootstrap responsibility moves.

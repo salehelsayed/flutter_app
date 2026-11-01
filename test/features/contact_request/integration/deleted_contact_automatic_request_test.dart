@@ -17,6 +17,17 @@ import 'package:flutter_app/features/contacts/data/repositories/contact_reposito
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_introduction_responses_db_helpers.dart';
+import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
+import 'package:flutter_app/features/introduction/application/accept_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/application/handle_incoming_introduction_use_case.dart';
+import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
+import 'package:flutter_app/features/introduction/domain/models/introduction_payload.dart';
+import 'package:flutter_app/features/qr_code/application/build_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -77,6 +88,86 @@ MessageRepositoryImpl _deletionMessageRepository(Database db) {
         dbLoadDirectPrivateMediaRecoveryCandidates(db, limit: limit),
   );
 }
+
+IntroductionRepositoryImpl _buildIntroRepo(Database db) =>
+    IntroductionRepositoryImpl(
+      dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
+      dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
+      dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),
+      dbLoadIntroductionsByRecipient: (id) =>
+          dbLoadIntroductionsByRecipient(db, id),
+      dbLoadIntroductionsByIntroduced: (id) =>
+          dbLoadIntroductionsByIntroduced(db, id),
+      dbLoadIntroductionsByIntroducer: (id) =>
+          dbLoadIntroductionsByIntroducer(db, id),
+      dbLoadIntroductionsForRecipientAndIntroducer: (recipient, introducer) =>
+          dbLoadIntroductionsForRecipientAndIntroducer(
+            db,
+            recipient,
+            introducer,
+          ),
+      dbUpdateRecipientStatus: (id, status, respondedAt) =>
+          dbUpdateRecipientStatus(db, id, status, respondedAt),
+      dbUpdateIntroducedStatus: (id, status, respondedAt) =>
+          dbUpdateIntroducedStatus(db, id, status, respondedAt),
+      dbUpdateOverallStatus: (id, status) =>
+          dbUpdateOverallStatus(db, id, status),
+      dbLoadPendingIntroductionsForUser: (peerId) =>
+          dbLoadPendingIntroductionsForUser(db, peerId),
+      dbCountPendingIntroductions: (peerId) =>
+          dbCountPendingIntroductions(db, peerId),
+      dbUpsertPendingIntroductionResponse: (row) =>
+          dbUpsertPendingIntroductionResponse(db, row),
+      dbLoadPendingIntroductionResponses: (id) =>
+          dbLoadPendingIntroductionResponses(db, id),
+      dbDeletePendingIntroductionResponse: (key) =>
+          dbDeletePendingIntroductionResponse(db, key),
+      dbUpsertIntroductionOutboxDelivery: (row) =>
+          dbUpsertIntroductionOutboxDelivery(db, row),
+      dbSaveIntroductionWithOutboxDeliveries: (intro, deliveries) =>
+          dbSaveIntroductionWithOutboxDeliveries(db, intro, deliveries),
+      dbReplaceIntroductionWithPendingResponseMigration:
+          ({
+            required introductionRow,
+            required deliveryRows,
+            required replacedIntroductionIds,
+          }) => dbReplaceIntroductionWithPendingResponseMigration(
+            db,
+            introductionRow: introductionRow,
+            deliveryRows: deliveryRows,
+            replacedIntroductionIds: replacedIntroductionIds,
+          ),
+      dbSaveIntroductionResponseWithOutboxDeliveries:
+          ({
+            required introductionId,
+            required isRecipient,
+            required responseStatus,
+            required respondedAt,
+            required overallStatus,
+            required deliveryRows,
+          }) => dbSaveIntroductionResponseWithOutboxDeliveries(
+            db,
+            introductionId: introductionId,
+            isRecipient: isRecipient,
+            responseStatus: responseStatus,
+            respondedAt: respondedAt,
+            overallStatus: overallStatus,
+            deliveryRows: deliveryRows,
+          ),
+      dbLoadIntroductionOutboxDeliveriesForIntroduction: (id) =>
+          dbLoadIntroductionOutboxDeliveriesForIntroduction(db, id),
+      dbLoadRetryableIntroductionOutboxDeliveries:
+          ({required olderThan, limit = 100}) =>
+              dbLoadRetryableIntroductionOutboxDeliveries(
+                db,
+                olderThan: olderThan,
+                limit: limit,
+              ),
+      dbDeleteIntroductionOutboxDelivery: (id) =>
+          dbDeleteIntroductionOutboxDelivery(db, id),
+      dbDeleteIntroductionOutboxDeliveriesForIntroduction: (id) =>
+          dbDeleteIntroductionOutboxDeliveriesForIntroduction(db, id),
+    );
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -285,6 +376,88 @@ void main() {
     expect(await contacts.getContact(sender.peerId), isNull);
   });
 
+  for (final kind in ['unmarked', 'new_request', 'repair_reply']) {
+    test(
+      'withdrawn peer fresh $kind with visible intent stays suppressed',
+      () async {
+        final withdrawn = await deleteFriend();
+        final ts = DateTime.fromMillisecondsSinceEpoch(
+          withdrawn.updatedAtMs + 1,
+          isUtc: true,
+        ).toIso8601String();
+        final control = switch (kind) {
+          'new_request' => newRequestControl(to: receiver.peerId),
+          'repair_reply' => repairReplyControl(
+            to: receiver.peerId,
+            replyTo: nextControlId(),
+          ),
+          _ => null,
+        };
+        final wire = await buildRepairWire(
+          bus: crypto,
+          signer: sender,
+          recipientPublicKey: receiver.publicKey,
+          signedControl: control,
+          ts: ts,
+          outerTs: ts,
+        );
+        expect(await deliver(wire), HandleMessageResult.invalidMessage);
+        expect(receiverBridge.verifiedData, hasLength(1));
+        expect(await contacts.getContact(sender.peerId), isNull);
+        final after = (await repairs.readConsent(sender.peerId))!;
+        expect(after.state, withdrawn.state);
+        expect(after.revision, withdrawn.revision);
+        expect(after.updatedAtMs, withdrawn.updatedAtMs);
+        await expectNoPendingOrPrompt();
+      },
+    );
+  }
+
+  test('fresh request after decline still requires manual consent', () async {
+    final initial = await buildRepairWire(
+      bus: crypto,
+      signer: sender,
+      recipientPublicKey: receiver.publicKey,
+    );
+    expect(await deliver(initial), HandleMessageResult.contactAutoAdded);
+    final pending = (await requests.getPendingRequests()).single;
+    expect(
+      await declineContactRequest(
+        requestRepo: requests,
+        peerId: sender.peerId,
+        expectedRequest: pending,
+      ),
+      DeclineContactRequestResult.success,
+    );
+    final declined = (await repairs.readConsent(sender.peerId))!;
+    expect(declined.state, ContactRelationshipState.declined);
+    prompts.clear();
+    final ts = DateTime.fromMillisecondsSinceEpoch(
+      declined.updatedAtMs + 1,
+      isUtc: true,
+    ).toIso8601String();
+    final fresh = await buildRepairWire(
+      bus: crypto,
+      signer: sender,
+      recipientPublicKey: receiver.publicKey,
+      signedControl: newRequestControl(to: receiver.peerId),
+      ts: ts,
+      outerTs: ts,
+    );
+    expect(await deliver(fresh), HandleMessageResult.contactRequest);
+    expect(receiverBridge.verifiedData, hasLength(2));
+    expect(prompts, hasLength(1));
+    expect(
+      (await requests.getPendingRequests()).single.signature,
+      prompts.single.signature,
+    );
+    expect(await contacts.getContact(sender.peerId), isNull);
+    expect(
+      (await repairs.readConsent(sender.peerId))!.state,
+      ContactRelationshipState.declined,
+    );
+  });
+
   test(
     'blocked contact automatic retry creates no pending or prompt',
     () async {
@@ -330,11 +503,36 @@ void main() {
   });
 
   test(
-    'explicit local re-add still permits automatic key completion',
+    'explicit local QR parse and re-add permits automatic key completion',
     () async {
       final withdrawn = await deleteFriend();
+      final senderIdentity = buildWidgetIdentityRepository(
+        senderDb,
+        FakeSecureKeyStore(),
+      );
+      await senderIdentity.saveIdentity(
+        testIdentityModel(
+          sender,
+          username: 'Sender',
+          mlKemPublicKey: 'sender-key',
+        ),
+      );
+      final (built, qr) = await buildQRPayload(
+        repo: senderIdentity,
+        callSign: (data, _) async => {
+          'ok': true,
+          'signature': sender.signBase64(data),
+        },
+      );
+      expect(built, BuildQRPayloadResult.success);
+      final (parsed, scanned) = await parseQRPayload(
+        qrString: qr!,
+        bridge: receiverBridge,
+        ownPeerId: receiver.peerId,
+      );
+      expect(parsed, ParseQRResult.success);
       expect(
-        await addContact(repository: contacts, contact: contactFor(sender)),
+        await addContact(repository: contacts, contact: scanned!),
         AddContactResult.success,
       );
       final active = (await repairs.readConsent(sender.peerId))!;
@@ -342,7 +540,8 @@ void main() {
       expect(active.revision, greaterThan(withdrawn.revision));
       final wire = await automaticRetry(marked: false);
       expect(await deliver(wire), HandleMessageResult.contactKeyUpdated);
-      expect(receiverBridge.verifiedData, hasLength(1));
+      // Both the QR and the key-completion packet passed real Ed25519 checks.
+      expect(receiverBridge.verifiedData, hasLength(2));
       expect(
         (await contacts.getContact(sender.peerId))!.mlKemPublicKey,
         'sender-key',
@@ -350,4 +549,96 @@ void main() {
       await expectNoPendingOrPrompt();
     },
   );
+
+  test('explicit introduction acceptance restores a deleted relationship '
+      'only after both parties accept', () async {
+    final withdrawn = await deleteFriend();
+    final introducer = TestEd25519Identity.fromSeedByte(0x64);
+    await contacts.addContact(contactFor(introducer));
+    final intros = _buildIntroRepo(receiverDb);
+    final now = DateTime.now().toUtc().toIso8601String();
+    const introId = 'deleted-contact-explicit-intro';
+    // An offer from a current introducer is still independent of the target's
+    // withdrawn relationship. No contact-request packet creates this consent.
+    final (offered, offer) = await handleIncomingIntroduction(
+      payload: IntroductionPayload(
+        action: 'send',
+        introductionId: introId,
+        introducerId: introducer.peerId,
+        introducerUsername: 'Introducer',
+        recipientId: receiver.peerId,
+        recipientUsername: 'Receiver',
+        introducedId: sender.peerId,
+        introducedUsername: 'Sender',
+        introducedPublicKey: sender.publicKey,
+        recipientPublicKey: receiver.publicKey,
+        timestamp: now,
+      ),
+      introRepo: intros,
+      contactRepo: contacts,
+      ownPeerId: receiver.peerId,
+      transportSenderPeerId: introducer.peerId,
+    );
+    expect(offered, HandleIntroductionResult.success);
+    expect(offer!.status, IntroductionOverallStatus.pending);
+    expect(await contacts.getContact(sender.peerId), isNull);
+    expect(
+      (await repairs.readConsent(sender.peerId))!.state,
+      ContactRelationshipState.withdrawn,
+    );
+
+    final ownAccepted = await acceptIntroduction(
+      introRepo: intros,
+      contactRepo: contacts,
+      p2pService: receiverTransport,
+      bridge: receiverBridge,
+      introductionId: introId,
+      ownPeerId: receiver.peerId,
+      ownUsername: 'Receiver',
+    );
+    expect(ownAccepted!.recipientStatus, IntroductionStatus.accepted);
+    expect(ownAccepted.introducedStatus, IntroductionStatus.pending);
+    expect(await contacts.getContact(sender.peerId), isNull);
+    expect(
+      (await repairs.readConsent(sender.peerId))!.state,
+      ContactRelationshipState.withdrawn,
+    );
+
+    final (completed, mutual) = await handleIncomingIntroduction(
+      payload: IntroductionPayload(
+        action: 'accept',
+        introductionId: introId,
+        responderId: sender.peerId,
+        responderUsername: 'Sender',
+        timestamp: DateTime.now().toUtc().toIso8601String(),
+      ),
+      introRepo: intros,
+      contactRepo: contacts,
+      ownPeerId: receiver.peerId,
+      transportSenderPeerId: sender.peerId,
+    );
+    expect(completed, HandleIntroductionResult.success);
+    expect(mutual!.status, IntroductionOverallStatus.mutualAccepted);
+    expect(
+      (await intros.getIntroduction(introId))!.status,
+      IntroductionOverallStatus.mutualAccepted,
+    );
+    expect(
+      (await contacts.getContact(sender.peerId))!.publicKey,
+      sender.publicKey,
+    );
+    final active = (await repairs.readConsent(sender.peerId))!;
+    expect(active.state, ContactRelationshipState.active);
+    expect(active.revision, greaterThan(withdrawn.revision));
+    await expectNoPendingOrPrompt();
+
+    final retry = await automaticRetry(marked: false);
+    expect(await deliver(retry), HandleMessageResult.contactKeyUpdated);
+    expect(receiverBridge.verifiedData, hasLength(1));
+    expect(
+      (await contacts.getContact(sender.peerId))!.mlKemPublicKey,
+      'sender-key',
+    );
+    await expectNoPendingOrPrompt();
+  });
 }

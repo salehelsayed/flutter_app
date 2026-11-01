@@ -529,7 +529,7 @@ handleIncomingMessage({
   // The stored signing identity survives the in-memory replay cache. Ignore
   // an exact declined request or a deleted contact's accepted request before
   // it can change request or wake authority;
-  // a fresh signed request still follows the manual-consent path below.
+  // a fresh signed request still follows the relationship policy below.
   final priorRequest = await requestRepo.getRequest(peerId);
   if (priorRequest != null &&
       (priorRequest.status == ContactRequestStatus.declined ||
@@ -560,6 +560,16 @@ handleIncomingMessage({
       emitFlowEvent(
         layer: 'FL',
         event: 'CONTACT_REQUEST_BEFORE_RELATIONSHIP_DECISION_IGNORED',
+        details: {},
+      );
+      return (HandleMessageResult.invalidMessage, null, null);
+    }
+    // Deletion requires a new local consent action. Neither a fresh timestamp,
+    // the unsigned intent nor a signed repair solicitation proves that action.
+    if (consent.state == ContactRelationshipState.withdrawn) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONTACT_REQUEST_WITHDRAWN_RELATIONSHIP_IGNORED',
         details: {},
       );
       return (HandleMessageResult.invalidMessage, null, null);
@@ -957,8 +967,8 @@ handleIncomingMessage({
   // verified request from a non-declined, non-blocked peer is added tap-free
   // (the listener performs the add + reciprocal). v1 plaintext requests (no
   // recipient binding), any previously-declined peer and (Task 12b) any peer
-  // whose deletion or decline we remember stay on the manual dialog (INV-2 /
-  // INV-3): there is no passive re-add.
+  // whose decline we remember stay on the manual dialog (INV-2 / INV-3).
+  // Withdrawn peers were rejected above: there is no passive re-add.
   final priorWasDeclined =
       existingRequest != null &&
       existingRequest.status == ContactRequestStatus.declined;

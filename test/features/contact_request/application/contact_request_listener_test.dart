@@ -1445,6 +1445,8 @@ void main() {
       String? from,
       String intent = 'new_request',
       bool reciprocalReply = false,
+      String to = _testOwnPeerId,
+      _MockBridge? receiverBridge,
       CallWakeHandleGrant? callWakeHandle,
       String? callWakeReceiptChallenge,
     }) {
@@ -1459,10 +1461,13 @@ void main() {
         if (callWakeHandle != null) 'cwh': callWakeHandle.toCanonicalMap(),
         'cwr': ?callWakeReceiptChallenge,
       });
-      bridge.decryptResponse = {'ok': true, 'plaintext': jsonEncode(payload)};
+      (receiverBridge ?? bridge).decryptResponse = {
+        'ok': true,
+        'plaintext': jsonEncode(payload),
+      };
       return ChatMessage(
         from: from ?? peerId,
-        to: _testOwnPeerId,
+        to: to,
         content: jsonEncode({
           'type': 'contact_request',
           'version': '2',
@@ -1488,13 +1493,14 @@ void main() {
       ReceivedCallWakeHandleStore? receivedCallWakeHandleStore,
       Future<void> Function(String peerId)? requestReciprocalCallWakeRecovery,
       Future<void> Function()? prepareCallWakeReply,
+      String ownPeerId = _testOwnPeerId,
     }) {
       return ContactRequestListener(
         contactRequestStream: streamController.stream,
         requestRepo: requestRepo,
         contactRepo: contactRepo,
         bridge: bridge,
-        getOwnPeerId: () => _testOwnPeerId,
+        getOwnPeerId: () => ownPeerId,
         getOwnPrivateKey: () async => 'ownPrivKeyBase64',
         autoAcceptAndReciprocate: autoAccept,
         autoAddRateLimiter: limiter,
@@ -1579,61 +1585,179 @@ void main() {
     // Owner decision A: an authenticated, unmarked legacy key-exchange retry
     // is ACKed with its exact receipt first, then gets exactly one reciprocal.
     for (final reciprocalReply in [false, true]) {
-    test(
-      'QUIET-REPLY ACKs an unmarked key-exchange retry with its receipt '
-      '${reciprocalReply ? 'without replying to a reply' : 'then reciprocates once'}',
-      () async {
-        const challenge = '123e4567-e89b-42d3-a456-426614174000';
-        contactRepo.addTestContact(
-          ContactModel(
-            peerId: _testPeerId,
-            publicKey: _testPublicKey,
-            rendezvous: '/addr',
-            username: 'TestUser',
-            signature: 'sig',
-            scannedAt: '2024-01-01T00:00:00Z',
-          ),
-        );
-        final order = <String>[];
-        bridge.onSend = (request) {
-          if (request['cmd'] == 'message:confirm') order.add('ack');
-        };
-        final store = _FakeReceivedCallWakeHandleStore();
-        final grant = wakeGrant();
-        final l = makeListener(
-          receivedCallWakeHandleStore: store,
-          prepareCallWakeReply: () async => order.add('prepare'),
-          requestReciprocalCallWakeRecovery: (peerId) async {
-            order.add('recover:$peerId');
-          },
-        );
-        addTearDown(l.dispose);
+      test(
+        'QUIET-REPLY ACKs an unmarked key-exchange retry with its receipt '
+        '${reciprocalReply ? 'without replying to a reply' : 'then reciprocates once'}',
+        () async {
+          const challenge = '123e4567-e89b-42d3-a456-426614174000';
+          contactRepo.addTestContact(
+            ContactModel(
+              peerId: _testPeerId,
+              publicKey: _testPublicKey,
+              rendezvous: '/addr',
+              username: 'TestUser',
+              signature: 'sig',
+              scannedAt: '2024-01-01T00:00:00Z',
+            ),
+          );
+          final order = <String>[];
+          bridge.onSend = (request) {
+            if (request['cmd'] == 'message:confirm') order.add('ack');
+          };
+          final store = _FakeReceivedCallWakeHandleStore();
+          final grant = wakeGrant();
+          final l = makeListener(
+            receivedCallWakeHandleStore: store,
+            prepareCallWakeReply: () async => order.add('prepare'),
+            requestReciprocalCallWakeRecovery: (peerId) async {
+              order.add('recover:$peerId');
+            },
+          );
+          addTearDown(l.dispose);
 
-        final result = await l.processIncomingMessage(
-          makeV2(
-            confirmNonce: 'nonce-recovery',
-            from: 'unknown',
-            intent: 'key_exchange_retry',
-            reciprocalReply: reciprocalReply,
-            callWakeHandle: grant,
-            callWakeReceiptChallenge: challenge,
-          ),
-        );
+          final result = await l.processIncomingMessage(
+            makeV2(
+              confirmNonce: 'nonce-recovery',
+              from: 'unknown',
+              intent: 'key_exchange_retry',
+              reciprocalReply: reciprocalReply,
+              callWakeHandle: grant,
+              callWakeReceiptChallenge: challenge,
+            ),
+          );
 
-        expect(result, HandleMessageResult.alreadyContact);
-        expect(await store.readForIssuer(_testPeerId), grant);
-        expect(order, [
-          'ack',
-          if (!reciprocalReply) ...['prepare', 'recover:$_testPeerId'],
-        ]);
-        expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
-          'nonce': 'nonce-recovery',
-          'ok': true,
-          'callWakeReceipt': challenge,
-        });
-      },
-    );
+          expect(result, HandleMessageResult.alreadyContact);
+          expect(await store.readForIssuer(_testPeerId), grant);
+          expect(order, [
+            'ack',
+            if (!reciprocalReply) ...['prepare', 'recover:$_testPeerId'],
+          ]);
+          expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
+            'nonce': 'nonce-recovery',
+            'ok': true,
+            'callWakeReceipt': challenge,
+          });
+        },
+      );
     }
+
+    test('QUIET-REPLY two listeners exchange one request and one reply '
+        'without a third send', () async {
+      final requester = _testSender;
+      final responder = TestEd25519Identity.fromSeedByte(0x83);
+      const requestChallenge = '123e4567-e89b-42d3-a456-426614174000';
+      const replyChallenge = '123e4567-e89b-42d3-a456-426614174001';
+      final requestGrant = wakeGrant();
+      final replyGrant = wakeGrant(generation: 2);
+      final requesterBridge = _MockBridge();
+      final requesterContacts = _FakeContactRepository();
+      final requesterRequests = _FakeContactRequestRepository()
+        ..contactRepository = requesterContacts;
+      final requesterStore = _FakeReceivedCallWakeHandleStore();
+      final responderStore = _FakeReceivedCallWakeHandleStore();
+      ContactModel contact(TestEd25519Identity identity) => ContactModel(
+        peerId: identity.peerId,
+        publicKey: identity.publicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+      );
+      requesterContacts.addTestContact(contact(responder));
+      contactRepo.addTestContact(contact(requester));
+      final order = <String>[];
+      final sends = <String>[];
+      bridge.onSend = (request) {
+        if (request['cmd'] == 'message:confirm') order.add('ack:request');
+      };
+      requesterBridge.onSend = (request) {
+        if (request['cmd'] == 'message:confirm') order.add('ack:reply');
+      };
+      final requesterListener = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: requesterRequests,
+        contactRepo: requesterContacts,
+        bridge: requesterBridge,
+        getOwnPeerId: () => requester.peerId,
+        getOwnPrivateKey: () async => 'requester-test-private-key',
+        receivedCallWakeHandleStore: requesterStore,
+        prepareCallWakeReply: () async => order.add('prepare:unexpected-third'),
+        requestReciprocalCallWakeRecovery: (_) async {
+          // Bound a regression: record the third send without recursing.
+          sends.add('unexpected-third');
+          order.add('send:unexpected-third');
+        },
+      );
+      addTearDown(requesterListener.dispose);
+      HandleMessageResult? receivedReplyResult;
+      final responderListener = makeListener(
+        ownPeerId: responder.peerId,
+        receivedCallWakeHandleStore: responderStore,
+        prepareCallWakeReply: () async => order.add('prepare:reply'),
+        requestReciprocalCallWakeRecovery: (peerId) async {
+          expect(peerId, requester.peerId);
+          sends.add('reply');
+          order.add('send:reply');
+          receivedReplyResult = await requesterListener.processIncomingMessage(
+            makeV2(
+              identity: responder,
+              to: requester.peerId,
+              receiverBridge: requesterBridge,
+              msgId: 'quiet-loop-reply',
+              confirmNonce: 'quiet-loop-reply-nonce',
+              intent: 'key_exchange_retry',
+              reciprocalReply: true,
+              callWakeHandle: replyGrant,
+              callWakeReceiptChallenge: replyChallenge,
+            ),
+          );
+        },
+      );
+      addTearDown(responderListener.dispose);
+
+      sends.add('request');
+      order.add('send:request');
+      final result = await responderListener.processIncomingMessage(
+        makeV2(
+          identity: requester,
+          to: responder.peerId,
+          msgId: 'quiet-loop-request',
+          confirmNonce: 'quiet-loop-request-nonce',
+          intent: 'key_exchange_retry',
+          callWakeHandle: requestGrant,
+          callWakeReceiptChallenge: requestChallenge,
+        ),
+      );
+
+      expect(result, HandleMessageResult.alreadyContact);
+      expect(receivedReplyResult, HandleMessageResult.alreadyContact);
+      expect(sends, ['request', 'reply']);
+      expect(order, [
+        'send:request',
+        'ack:request',
+        'prepare:reply',
+        'send:reply',
+        'ack:reply',
+      ]);
+      expect(
+        await responderStore.readForIssuer(requester.peerId),
+        requestGrant,
+      );
+      expect(await requesterStore.readForIssuer(responder.peerId), replyGrant);
+      expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
+        'nonce': 'quiet-loop-request-nonce',
+        'ok': true,
+        'callWakeReceipt': requestChallenge,
+      });
+      expect(
+        requesterBridge.confirmRequests.single['payload'],
+        <String, dynamic>{
+          'nonce': 'quiet-loop-reply-nonce',
+          'ok': true,
+          'callWakeReceipt': replyChallenge,
+        },
+      );
+    });
 
     for (final changedAuthority in ['none', 'blocked', 'key_changed']) {
       test('legacy endpoint repair ACK precedes advertisement and reply '
