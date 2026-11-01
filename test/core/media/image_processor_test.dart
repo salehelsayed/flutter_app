@@ -18,63 +18,66 @@ void main() {
   group('MEDIA-005 invalid photo input', () {
     for (final quality in ImageQualityPreference.values) {
       for (final invalidKind in ['truncated', 'malformed']) {
-        test('${quality.name} refuses $invalidKind JPEG before encoding', () async {
-          final directory = await Directory.systemTemp.createTemp(
-            'invalid-photo-input-',
-          );
-          addTearDown(() => directory.delete(recursive: true));
-          final image = img.Image(width: 128, height: 128);
-          final random = math.Random(42);
-          for (var y = 0; y < image.height; y++) {
-            for (var x = 0; x < image.width; x++) {
-              image.setPixelRgb(
-                x,
-                y,
-                random.nextInt(256),
-                random.nextInt(256),
-                random.nextInt(256),
-              );
+        test(
+          '${quality.name} refuses $invalidKind JPEG before encoding',
+          () async {
+            final directory = await Directory.systemTemp.createTemp(
+              'invalid-photo-input-',
+            );
+            addTearDown(() => directory.delete(recursive: true));
+            final image = img.Image(width: 128, height: 128);
+            final random = math.Random(42);
+            for (var y = 0; y < image.height; y++) {
+              for (var x = 0; x < image.width; x++) {
+                image.setPixelRgb(
+                  x,
+                  y,
+                  random.nextInt(256),
+                  random.nextInt(256),
+                  random.nextInt(256),
+                );
+              }
             }
-          }
-          final complete = img.encodeJpg(image, quality: 90);
-          expect(complete.length, greaterThan(4000));
-          final invalid = invalidKind == 'truncated'
-              ? complete.sublist(0, 4000)
-              : <int>[0xff, 0xd8, 0xff, 0xd9];
-          final input = File('${directory.path}/broken.jpg');
-          await input.writeAsBytes(invalid);
-          final output = File('${directory.path}/native.jpg');
-          await output.writeAsBytes(complete);
-          var nativeCalls = 0;
-          final processor = ImageProcessor(
-            compressFile:
-                ({
-                  required path,
-                  required quality,
-                  required keepExif,
-                  minWidth = 1920,
-                  minHeight = 1080,
-                }) async {
-                  // Native JPEG decoders may repair an incomplete source and
-                  // still produce a file; that cannot make its input valid.
-                  nativeCalls++;
-                  return XFile(output.path);
-                },
-          );
+            final complete = img.encodeJpg(image, quality: 90);
+            expect(complete.length, greaterThan(4000));
+            final invalid = invalidKind == 'truncated'
+                ? complete.sublist(0, 4000)
+                : <int>[0xff, 0xd8, 0xff, 0xd9];
+            final input = File('${directory.path}/broken.jpg');
+            await input.writeAsBytes(invalid);
+            final output = File('${directory.path}/native.jpg');
+            await output.writeAsBytes(complete);
+            var nativeCalls = 0;
+            final processor = ImageProcessor(
+              compressFile:
+                  ({
+                    required path,
+                    required quality,
+                    required keepExif,
+                    minWidth = 1920,
+                    minHeight = 1080,
+                  }) async {
+                    // Native JPEG decoders may repair an incomplete source and
+                    // still produce a file; that cannot make its input valid.
+                    nativeCalls++;
+                    return XFile(output.path);
+                  },
+            );
 
-          await expectLater(
-            processor.processImage(inputPath: input.path, quality: quality),
-            throwsA(
-              isA<StateError>().having(
-                (error) => error.message,
-                'message',
-                'Photo processing failed',
+            await expectLater(
+              processor.processImage(inputPath: input.path, quality: quality),
+              throwsA(
+                isA<StateError>().having(
+                  (error) => error.message,
+                  'message',
+                  'Photo processing failed',
+                ),
               ),
-            ),
-          );
-          expect(nativeCalls, 0);
-          expect(await input.readAsBytes(), invalid);
-        });
+            );
+            expect(nativeCalls, 0);
+            expect(await input.readAsBytes(), invalid);
+          },
+        );
       }
     }
   });
@@ -202,6 +205,8 @@ void main() {
   });
 
   group('live stored quality', () {
+    late String nativeInput;
+    setUp(() async => nativeInput = await _nativePhotoInput());
     test(
       'next image uses changed stored quality despite a stale route value',
       () async {
@@ -222,17 +227,17 @@ void main() {
               },
         );
         await processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.compressed,
         );
         stored = ImageQualityPreference.original;
         await processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.compressed,
         );
         stored = ImageQualityPreference.compressed;
         await processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.original,
         );
         expect(qualities, [85, 100, 85]);
@@ -260,7 +265,7 @@ void main() {
             },
       );
       await processor.processImage(
-        inputPath: '/tmp/photo.jpg',
+        inputPath: nativeInput,
         quality: ImageQualityPreference.compressed,
         useStoredPreference: false,
       );
@@ -397,6 +402,8 @@ void main() {
   });
 
   group('processImage', () {
+    late String nativeInput;
+    setUp(() async => nativeInput = await _nativePhotoInput());
     test('returns original path unchanged for non-image file (.mp4)', () async {
       final processor = ImageProcessor(compressFile: _noOpCompress);
 
@@ -427,7 +434,7 @@ void main() {
         );
 
         await processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.compressed,
         );
 
@@ -454,7 +461,7 @@ void main() {
         );
 
         await processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.original,
         );
 
@@ -479,7 +486,7 @@ void main() {
       );
 
       await processor.processImage(
-        inputPath: '/tmp/photo.jpg',
+        inputPath: nativeInput,
         quality: ImageQualityPreference.compressed,
       );
 
@@ -503,7 +510,7 @@ void main() {
       );
 
       await processor.processImage(
-        inputPath: '/tmp/photo.png',
+        inputPath: nativeInput,
         quality: ImageQualityPreference.original,
       );
 
@@ -526,7 +533,7 @@ void main() {
 
       await expectLater(
         processor.processImage(
-          inputPath: '/tmp/photo.jpg',
+          inputPath: nativeInput,
           quality: ImageQualityPreference.compressed,
         ),
         throwsStateError,
@@ -1220,6 +1227,17 @@ void main() {
       expect(result.path, '/tmp/video.mp4_out.mp4');
     });
   });
+}
+
+Future<String> _nativePhotoInput() async {
+  final directory = await Directory.systemTemp.createTemp(
+    'native-photo-input-',
+  );
+  addTearDown(() => directory.delete(recursive: true));
+  // PNG keeps these native encoder contract tests off Original's JPEG bypass.
+  final input = File('${directory.path}/source.png');
+  await input.writeAsBytes(img.encodePng(img.Image(width: 2, height: 2)));
+  return input.path;
 }
 
 /// A no-op compress function for tests that don't care about compression.
