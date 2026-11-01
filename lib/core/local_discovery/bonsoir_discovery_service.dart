@@ -91,6 +91,9 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   BonsoirBroadcast? _broadcast;
   BonsoirDiscovery? _discovery;
   bool _discoveryFailed = false;
+  int _browserEpoch = 0;
+  Completer<void>? _resolveRecovery;
+  Timer? _resolveRecoveryTimer;
   StreamSubscription<BonsoirDiscoveryEvent>? _discoverySub;
   Timer? _refreshTimer;
 
@@ -120,6 +123,8 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
   // resolver work bounded.
   // Cleared on the resolved or lost event for that peer.
   final _resolvingPeerIds = <String>{};
+  // A replacement must find a native service before resolving its old handle.
+  final _browserServiceKeys = <String>{};
   // B1.3/B1.4: set once teardown begins so no new resolves are issued while or
   // after discovery is being stopped.
   bool _stopping = false;
@@ -249,19 +254,22 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
 
     // Refresh only the broadcast when already browsing: peers, pending
     // resolves, timers and the Android native resolver retain the same epoch.
+    final recovery = _resolveRecovery;
+    if (recovery != null) {
+      await recovery.future;
+    }
     if (_stopping || _discovery != null) return;
 
     // Browsing also starts while broadcast is gated, so a resolved peer can
     // still clear the suspected-denial latch.
     final discovery = _createDiscovery(_serviceType);
+    _browserEpoch++;
+    _browserServiceKeys.clear();
     _discovery = discovery;
     try {
       await discovery.ready;
       if (_stopping || !identical(_discovery, discovery)) return;
-      _discoverySub = discovery.eventStream!.listen(
-        _handleDiscoveryEvent,
-        onError: _handleDiscoveryError,
-      );
+      _listenToDiscovery(discovery);
       await discovery.start();
       if (_stopping || !identical(_discovery, discovery)) return;
     } catch (_) {
@@ -316,6 +324,141 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       });
       unawaited(native.start(_serviceType));
     }
+  }
+
+  void _listenToDiscovery(BonsoirDiscovery discovery) {
+    final epoch = _browserEpoch;
+    bool isCurrent() =>
+        !_stopping &&
+        epoch == _browserEpoch &&
+        identical(_discovery, discovery);
+    _discoverySub = discovery.eventStream!.listen(
+      (event) {
+        if (isCurrent()) {
+          _handleDiscoveryEvent(event);
+        }
+      },
+      onError: (Object error) {
+        if (isCurrent()) {
+          _handleDiscoveryError(error);
+        }
+      },
+    );
+  }
+
+  void _finishResolveRecovery(
+    Completer<void> recovery, {
+    Object? error,
+    bool invalidate = false,
+  }) {
+    if (!identical(_resolveRecovery, recovery)) {
+      return;
+    }
+    _resolveRecovery = null;
+    _resolveRecoveryTimer?.cancel();
+    _resolveRecoveryTimer = null;
+    if (invalidate) {
+      _browserEpoch++;
+      _discoveryFailed = true;
+    }
+    if (error == null) {
+      recovery.complete();
+    } else {
+      recovery.completeError(error);
+    }
+  }
+
+  Future<void> _recoverPendingResolves(
+    BonsoirDiscovery expected, {
+    required Duration timeout,
+  }) {
+    final pending = _resolveRecovery;
+    if (pending != null) {
+      return pending.future;
+    }
+    if (_stopping || !identical(_discovery, expected)) {
+      return Future<void>.value();
+    }
+
+    // Dispose clears Bonsoir's Android serial queue, not its active NSD call.
+    // Keep demand waiters and the broadcast alive while replacing only browse.
+    final epoch = ++_browserEpoch;
+    final subscription = _discoverySub;
+    _discoverySub = null;
+    final recovery = Completer<void>();
+    _resolveRecovery = recovery;
+    _resolveRecoveryTimer = Timer(timeout, () {
+      _finishResolveRecovery(
+        recovery,
+        invalidate: true,
+        error: TimeoutException('Local discovery recovery expired'),
+      );
+    });
+    unawaited(() async {
+      try {
+        await subscription?.cancel();
+        await expected.stop();
+        if (_stopping || epoch != _browserEpoch) {
+          return;
+        }
+        _resolvingPeerIds.clear();
+        _resolvingUnidentifiedServices.clear();
+        _browserServiceKeys.clear();
+        final replacement = _createDiscovery(_serviceType);
+        _discovery = replacement;
+        await replacement.ready;
+        if (_stopping || epoch != _browserEpoch) {
+          await replacement.stop();
+          return;
+        }
+        _listenToDiscovery(replacement);
+        // Native resolution requires this replacement browser to find each
+        // service first. Keep demand priority until its fresh results arrive.
+        final targets = _pendingResolves.entries
+            .where((entry) => _resolvable.containsKey(entry.key))
+            .map((entry) => entry.value.future)
+            .toList();
+        await replacement.start();
+        await Future.any<void>([
+          Future.wait(targets).then((_) {}),
+          recovery.future,
+        ]);
+        if (_stopping || epoch != _browserEpoch) {
+          await replacement.stop();
+          return;
+        }
+        _discoveryFailed = false;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MDNS_RESOLVE_RECOVERY',
+          details: {},
+        );
+        _finishResolveRecovery(recovery);
+        // Release services found while demand targets had queue priority.
+        for (final entry in _resolvable.entries.toList()) {
+          if (getLocalPeer(entry.key) == null) {
+            _issueResolve(entry.key, entry.value, replacement);
+          }
+        }
+        for (final service in _unidentifiedServices.values.toList()) {
+          _issueResolve(null, service, replacement);
+        }
+      } catch (error) {
+        if (_stopping || epoch != _browserEpoch) {
+          return;
+        }
+        _discoveryFailed = true;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LOCAL_MDNS_RESOLVE_RECOVERY_FAILED',
+          details: {},
+        );
+        // Only the fixed reason is logged; the coalesced caller still observes
+        // its original failure rather than silently marking browse healthy.
+        _finishResolveRecovery(recovery, error: error);
+      }
+    }());
+    return recovery.future;
   }
 
   /// (Re)arms the one-shot suspected-Local-Network-denial probe. If advertising
@@ -375,7 +518,18 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final service = event.service;
         if (discovery == null || service == null) return;
         // Retain the handle so periodic re-resolution can refresh host:port.
-        final foundPeerId = service.attributes['peerId'];
+        var foundPeerId = service.attributes['peerId'];
+        final foundKey = _serviceKey(service);
+        _browserServiceKeys.add(foundKey);
+        if (foundPeerId == null && _resolveRecovery != null) {
+          for (final entry in _resolvable.entries) {
+            if (_pendingResolves.containsKey(entry.key) &&
+                _serviceKey(entry.value) == foundKey) {
+              foundPeerId = entry.key;
+              break;
+            }
+          }
+        }
         // B1.1: never resolve our OWN advertised service. (The own-peer skip
         // used to happen only on the resolved event, AFTER the resolve had
         // already been issued — wasted DNS-SD work, doubled when
@@ -396,6 +550,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       case BonsoirDiscoveryEventType.discoveryServiceResolved:
         final service = event.service as ResolvedBonsoirService;
         final key = _serviceKey(service);
+        _browserServiceKeys.add(key);
         _resolvingUnidentifiedServices.remove(key);
         final peerId = service.attributes['peerId'];
         if (peerId == null) return;
@@ -418,6 +573,7 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final service = event.service;
         if (service == null) return;
         final key = _serviceKey(service);
+        _browserServiceKeys.remove(key);
         _unidentifiedServices.remove(key);
         _resolvingUnidentifiedServices.remove(key);
         final peerId = service.attributes['peerId'];
@@ -429,7 +585,12 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
         final service = event.service;
         if (service == null) return;
         _resolvingUnidentifiedServices.remove(_serviceKey(service));
-        _resolvingPeerIds.remove(service.attributes['peerId']);
+        _resolvingPeerIds.removeWhere((peerId) {
+          final retained = _resolvable[peerId];
+          return peerId == service.attributes['peerId'] ||
+              (retained != null &&
+                  _serviceKey(retained) == _serviceKey(service));
+        });
         // Keep the handle for resolve-on-send or the existing refresh timer.
         break;
       default:
@@ -528,8 +689,16 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     BonsoirService service,
     BonsoirDiscovery discovery,
   ) {
-    if (_stopping || _discovery == null) return;
+    if (_stopping || !identical(_discovery, discovery) || !discovery.isReady) {
+      return;
+    }
     final key = _serviceKey(service);
+    if (!_browserServiceKeys.contains(key)) return;
+    if (_resolveRecovery != null &&
+        _pendingResolves.keys.any(_resolvable.containsKey) &&
+        (peerId == null || !_pendingResolves.containsKey(peerId))) {
+      return;
+    }
     if (_resolvingUnidentifiedServices.contains(key)) return;
     if (peerId == null) {
       _resolvingUnidentifiedServices.add(key);
@@ -544,8 +713,14 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
     // B1.3: stop issuing resolves before tearing discovery down, so no new
     // native resolve dispatch source is created during or after teardown.
     _stopping = true;
+    _browserEpoch++;
+    final recovery = _resolveRecovery;
+    if (recovery != null) {
+      _finishResolveRecovery(recovery);
+    }
     _resolvingPeerIds.clear();
     _resolvingUnidentifiedServices.clear();
+    _browserServiceKeys.clear();
     _refreshTimer?.cancel();
     _refreshTimer = null;
     // Cancel the session-scoped denial probe, but PRESERVE [_suspectedDeniedUntil]
@@ -676,9 +851,46 @@ class BonsoirDiscoveryService implements LocalDiscoveryService {
       }
     }
 
+    // A native Android resolve can acknowledge dispatch but never complete,
+    // leaving a different target behind its serial queue. Spend half this SAME
+    // caller budget before one browser replacement; the outer timeout remains
+    // the total deadline. Other platforms and unknown handles retain their path.
+    final recoveryDelay = Duration(microseconds: timeout.inMicroseconds ~/ 2);
+    Completer<void>? ownedRecovery;
+    final recoveryTimer =
+        defaultTargetPlatform == TargetPlatform.android &&
+            svc != null &&
+            disc != null &&
+            timeout > Duration.zero
+        ? Timer(recoveryDelay, () {
+            if (!completer.isCompleted &&
+                identical(_pendingResolves[peerId], completer)) {
+              final previous = _resolveRecovery;
+              final future = _recoverPendingResolves(
+                disc,
+                timeout: timeout - recoveryDelay,
+              );
+              if (previous == null) {
+                ownedRecovery = _resolveRecovery;
+              }
+              unawaited(future.catchError((Object _) {}));
+            }
+          })
+        : null;
     try {
       return await completer.future.timeout(timeout, onTimeout: () => null);
     } finally {
+      recoveryTimer?.cancel();
+      final recovery = ownedRecovery;
+      if (!completer.isCompleted && recovery != null) {
+        // The native phase may have begun late. The initiating demand's actual
+        // deadline still invalidates it, so another demand can retry promptly.
+        _finishResolveRecovery(
+          recovery,
+          invalidate: true,
+          error: TimeoutException('Local discovery recovery expired'),
+        );
+      }
       // Clean up so we never leak completers across send attempts.
       _pendingResolves.remove(peerId);
       _resolvingPeerIds.remove(peerId);

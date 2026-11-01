@@ -7319,6 +7319,28 @@ visible and cannot become an ordinary first-attempt PASS.
   was not retained, so the exact branch behind that relaunch sample remains
   unproved. Native plugin code and the default native-resolver flag are unchanged;
   a fresh Pixel relaunch remains the separate device proof.
+  The pinned Android Bonsoir 5.1.6 resolver acknowledges queue admission before
+  native completion. A hung unrelated resolve can therefore leave an expired
+  migration peer queued for the entire existing 12-second lookup budget. Its
+  browser disposal removes that browser's logical queue entries without
+  cancelling the old NSD listener. A replacement browser also requires its own
+  native found event before it can resolve a service; a retained Dart handle
+  alone does not satisfy its instance-local `findService` guard. Host recovery
+  fakes must preserve both constraints and distinguish a fresh native dispatch
+  from a merely queued target. Android demand now shares one bounded browser
+  recovery after half the original caller budget, retains the advertiser and
+  waiters, and gives freshly found target handles priority over unrelated
+  services. Browser epochs reject late callbacks and abandoned initialization;
+  missing-TXT failure events release inferred per-peer flight guards by service
+  name/type. Nine A1 regressions and 37 existing discovery contracts pass, with
+  no failures or skips. Separate-call native acceptance remains a device
+  property. A1 baseline RED, retained test-driver failures and proof criteria are
+  under `.codex-test-logs/a1-20261101/` in the
+  `a1-migration-discovery-queue-20261101` worktree. Device verification reruns the
+  original natural two-emulator Wi-Fi scenario: at least three Start actions
+  more than 30 seconds after the last lookup, plus one less-than-20-second
+  control, with the original discovery deadline. This proof is still pending
+  the device owner's fixed-build run; no extra native fixture is required.
 
 - **iOS discovery errors during resume:** physical iPhone13 / iOS 26.5 emitted
   an unhandled Bonsoir `PlatformException(discoveryError)` with native code
