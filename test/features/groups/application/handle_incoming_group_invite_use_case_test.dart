@@ -1019,7 +1019,7 @@ void main() {
     );
 
     test(
-      'accepted re-invite atomically restores group self and key under a newer local watermark',
+      'A5 accepted re-invite retains the signed membership version with later issuance',
       () async {
         final removedAt = DateTime.utc(2026, 7, 20, 10);
         await groupRepo.saveGroup(
@@ -1072,8 +1072,8 @@ void main() {
         expect(groupId, 'grp-atomic-reentry');
         final accepted = await groupRepo.getGroup('grp-atomic-reentry');
         expect(accepted?.selfRemovedAt, isNull);
-        expect(accepted?.lastMembershipEventAt, issuedAt);
-        expect(accepted?.lastMembershipEventId, isNull);
+        expect(accepted?.lastMembershipEventAt, removedAt);
+        expect(accepted?.lastMembershipEventId, 'remove-atomic');
         expect(
           await groupRepo.getMember('grp-atomic-reentry', '12D3KooWBob'),
           isNotNull,

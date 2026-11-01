@@ -1131,6 +1131,112 @@ void main() {
     },
   );
 
+  for (final absentPrior in [false, true]) {
+    test(
+      'A5 SQL accepted reentry preserves signed membership version with later '
+      'issuance from ${absentPrior ? "absent" : "marked"} authority',
+      () async {
+        final groupId = 'a5-canonical-${absentPrior ? "absent" : "marked"}';
+        const watermark = '2026-07-07T00:00:00.000Z';
+        const issuedAt = '2026-07-08T00:00:00.000Z';
+        const membershipEventId = 'members-added-a5';
+        await _insertGroup(db, groupId);
+        await _insertMember(db, groupId: groupId, peerId: 'self-peer');
+        final active = await dbLoadSelfRemovedGroupShellAuthoritySnapshot(
+          db,
+          groupId: groupId,
+          selfPeerId: 'self-peer',
+        );
+        final removal = await dbCommitSelfRemovalAuthority(
+          db,
+          expected: active,
+          removalAt: DateTime.parse(_removedAt),
+          removalEventId: 'removed-a5',
+        );
+        expect(removal.committed, isTrue);
+        if (absentPrior) {
+          final floor = await dbAppendSelfRemovedGroupFreshnessFloor(
+            db,
+            expected: removal.authority,
+          );
+          final purge = await dbPurgeSelfRemovedGroupShell(
+            db,
+            expected: removal.authority,
+            floor: floor.floor,
+            deletedAt: DateTime.utc(2026, 7, 5),
+          );
+          expect(purge.committed, isTrue);
+        }
+        final committed = await _commitAcceptedReentry(
+          db,
+          groupRow: {
+            ..._acceptedGroupRow(groupId),
+            'last_membership_event_at': watermark,
+            'last_membership_event_id': membershipEventId,
+          },
+          rosterRows: _acceptedRoster(groupId),
+          stagedKeyRow: _acceptedKeyRow(groupId),
+          selfPeerId: 'self-peer',
+          authorizationId: 'invite-a5',
+          signedMembershipWatermark: watermark,
+          signedIssuedAt: issuedAt,
+          bindingNonce: 'nonce-a5',
+        );
+        expect(committed.committed, isTrue);
+        // The local authorization/binding instant remains newer; it must not
+        // replace the shared state that another peer signed into its audit.
+        expect(committed.acceptedAt, DateTime.parse(issuedAt));
+        expect(committed.binding!.acceptedAt, DateTime.parse(issuedAt));
+        expect(
+          committed.authority.lastMembershipEventAt,
+          DateTime.parse(watermark),
+        );
+        expect(committed.authority.lastMembershipEventId, membershipEventId);
+        final row = (await db.query(
+          'groups',
+          where: 'id = ?',
+          whereArgs: [groupId],
+        )).single;
+        expect(row['last_membership_event_at'], watermark);
+        expect(row['last_membership_event_id'], membershipEventId);
+        expect(
+          await dbAuthorizeSelfRemovedGroupAcceptedReentryRetry(
+            db,
+            groupId: groupId,
+            selfPeerId: 'self-peer',
+            authorizationId: 'invite-a5',
+            signedMembershipWatermark: watermark,
+            signedIssuedAt: issuedAt,
+            keyGeneration: 9,
+          ),
+          SelfRemovedGroupAcceptedRetryAuthorizationDisposition.authorized,
+        );
+        final qualified = await dbQualifySelfRemovedGroupAcceptedRollback(
+          db,
+          groupId: groupId,
+          selfPeerId: 'self-peer',
+          authorizationId: 'invite-a5',
+        );
+        expect(qualified.qualified, isTrue);
+        final rolledBack = await dbRollbackSelfRemovedGroupAcceptedReentry(
+          db,
+          groupId: groupId,
+          selfPeerId: 'self-peer',
+          authorizationId: 'invite-a5',
+          qualification: qualified.qualification,
+        );
+        expect(rolledBack.rolledBack, isTrue);
+        expect(
+          rolledBack.authority.shape,
+          absentPrior
+              ? SelfRemovedGroupShellAuthorityShape.absent
+              : SelfRemovedGroupShellAuthorityShape.markedSelfAbsent,
+        );
+        expect(await _countForGroup(db, 'group_keys', groupId), 0);
+      },
+    );
+  }
+
   test(
     'accepted re-entry atomically binds marked and absent floor materialization with canonical authority',
     () async {
