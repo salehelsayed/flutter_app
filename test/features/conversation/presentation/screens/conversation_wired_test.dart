@@ -1755,6 +1755,7 @@ final class _RecordingOutgoingCallCapability
     implements
         OutgoingCallCapability,
         OutgoingCallReadinessRecovery,
+        OutgoingCallContactReadinessRecovery,
         OutgoingCallStartDiagnostics {
   _RecordingOutgoingCallCapability({
     required this.isOutgoingCallAvailable,
@@ -1762,6 +1763,7 @@ final class _RecordingOutgoingCallCapability
     this.contactOutgoingAvailable = true,
     this.error,
     this.onRecover,
+    this.onRecoverContact,
     this.startDiagnostics = const <String, Object?>{},
   });
 
@@ -1776,7 +1778,21 @@ final class _RecordingOutgoingCallCapability
   bool contactOutgoingAvailable;
   final Object? error;
   final Future<bool> Function()? onRecover;
+  final Future<bool> Function(OutgoingCallStartRequest request)?
+  onRecoverContact;
   int recoveryCalls = 0;
+  int contactRecoveryCalls = 0;
+
+  @override
+  Future<bool> recoverOutgoingCallAvailabilityFor(
+    String contactAccountPeerId, {
+    required OutgoingCallStartRequest request,
+  }) async {
+    contactRecoveryCalls++;
+    final recover = onRecoverContact;
+    if (recover != null) return recover(request);
+    return isOutgoingCallAvailableFor(contactAccountPeerId);
+  }
 
   @override
   Future<bool> recoverOutgoingCallReadiness() async {
@@ -2457,6 +2473,44 @@ void main() {
       expect(capability.peerIds, isEmpty);
     },
   );
+
+  testWidgets('explicit call tap repairs contact after passive refusal', (
+    tester,
+  ) async {
+    final messageRepo = FakeMessageRepository();
+    OutgoingCallStartRequest? repairRequest;
+    final capability = _RecordingOutgoingCallCapability(
+      isOutgoingCallAvailable: true,
+      contactOutgoingAvailable: false,
+      result: OutgoingCallStartResult.started,
+      onRecoverContact: (request) async {
+        repairRequest = request;
+        return true;
+      },
+    );
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+      messageRepo: messageRepo,
+      chatListener: ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      ),
+      sendFn: _instantSuccessSendFn,
+      outgoingCallCapability: capability,
+    );
+    expect(capability.contactRecoveryCalls, 0);
+    expect(capability.availabilityPeerIds, [makeContact().peerId]);
+    await tester.tap(find.byTooltip('Voice calling is unavailable right now'));
+    await tester.pump();
+    expect(capability.contactRecoveryCalls, 1);
+    expect(repairRequest, isNotNull);
+    expect(capability.peerIds, [makeContact().peerId]);
+    expect(identical(repairRequest, capability.startRequests.single), isTrue);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await capability.close();
+  });
 
   for (final completion in [
     'ready',

@@ -33,6 +33,7 @@ final class ContactRepairOutboxWorker {
     required Bridge bridge,
     required ContactRepository contactRepo,
     ResolveCallWakeHandle? resolveCallWakeHandle,
+    Future<void> Function()? prepareCallWakeReply,
     OnCallWakeHandleDistributed? onCallWakeHandleDistributed,
     Future<String?> Function(String peerId)? resolveWakeToken,
     int Function()? nowMs,
@@ -45,6 +46,7 @@ final class ContactRepairOutboxWorker {
        _bridge = bridge,
        _contactRepo = contactRepo,
        _resolveCallWakeHandle = resolveCallWakeHandle,
+       _prepareCallWakeReply = prepareCallWakeReply,
        _onCallWakeHandleDistributed = onCallWakeHandleDistributed,
        _resolveWakeToken = resolveWakeToken,
        _nowMs = nowMs ?? (() => DateTime.now().toUtc().millisecondsSinceEpoch),
@@ -60,6 +62,7 @@ final class ContactRepairOutboxWorker {
   final Bridge _bridge;
   final ContactRepository _contactRepo;
   final ResolveCallWakeHandle? _resolveCallWakeHandle;
+  final Future<void> Function()? _prepareCallWakeReply;
   final OnCallWakeHandleDistributed? _onCallWakeHandleDistributed;
   final Future<String?> Function(String peerId)? _resolveWakeToken;
   final int Function() _nowMs;

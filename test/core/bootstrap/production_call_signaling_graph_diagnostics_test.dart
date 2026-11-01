@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
+import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/call/application/call_endpoint_resolver.dart';
+import 'package:flutter_app/features/call/application/outgoing_call_capability.dart';
 import 'package:flutter_app/features/call/domain/call_wake_handle_grant.dart';
 import 'package:flutter_app/features/call/domain/received_call_wake_handle_store.dart';
 import 'package:flutter_app/features/call/infrastructure/android_call_lifecycle_adapter.dart';
@@ -34,13 +36,13 @@ CallTrustedRosterSnapshot _roster({bool accepted = true}) =>
       devices: <TrustedCallDeviceAuthority>[_trustedDevice()],
     );
 
-SignedCallEndpointRecord _endpoint() {
-  const record = CallEndpointRecord(
+SignedCallEndpointRecord _endpoint({int expiresAtMs = _nowMs + 60_000}) {
+  final record = CallEndpointRecord(
     accountPeerId: _accountPeerId,
     devicePeerId: _devicePeerId,
     capabilities: <String>{CallEndpointResolver.voiceCapability},
     platform: CallEndpointPlatform.ios,
-    expiresAtMs: _nowMs + 60_000,
+    expiresAtMs: expiresAtMs,
     preferenceEpoch: 3,
     deviceKeyEpoch: 7,
     routingHandle: _routingHandle,
@@ -107,7 +109,7 @@ final class _ReceivedStore implements ReceivedCallWakeHandleStore {
 final class _Authority implements CallAuthorityClient {
   _Authority({required this.endpoint, this.error});
 
-  final SignedCallEndpointRecord? endpoint;
+  SignedCallEndpointRecord? endpoint;
   final Object? error;
 
   @override
@@ -127,6 +129,8 @@ Future<({bool available, List<Map<String, dynamic>> results})> _probe({
   CallAuthorityClient? authority,
   Future<bool> Function(String contactAccountPeerId)?
   ensureReceivedCallWakeHandle,
+  Future<bool> Function(String contactAccountPeerId)? repairMissingEndpoint,
+  OutgoingCallStartRequest? request,
 }) async {
   final events = <Map<String, dynamic>>[];
   debugSetFlowEventSink(events.add);
@@ -140,6 +144,8 @@ Future<({bool available, List<Map<String, dynamic>> results})> _probe({
       receivedCallWakeHandleStore:
           receivedStore ?? _ReceivedStore(grant: _grant()),
       ensureReceivedCallWakeHandle: ensureReceivedCallWakeHandle,
+      repairMissingEndpoint: repairMissingEndpoint,
+      request: request,
     );
     return (
       available: available,
@@ -270,6 +276,7 @@ void main() {
     var recoveryCalls = 0;
 
     final actual = await _probe(
+      request: OutgoingCallStartRequest(),
       receivedStore: receivedStore,
       ensureReceivedCallWakeHandle: (contactAccountPeerId) async {
         expect(contactAccountPeerId, _accountPeerId);
@@ -288,6 +295,61 @@ void main() {
       reason: 'none',
     );
   });
+
+  for (final initialEndpoint in ['missing', 'expired']) {
+    test(
+      'explicit endpoint repair with current grant recovers $initialEndpoint endpoint',
+      () async {
+        final receivedStore = _ReceivedStore(grant: _grant());
+        final authority = _Authority(
+          endpoint: initialEndpoint == 'missing'
+              ? null
+              : _endpoint(expiresAtMs: _nowMs),
+        );
+        var repairSends = 0;
+        final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
+          receivedCallWakeHandleStore: receivedStore,
+          nowMs: () => _nowMs,
+          requestRecovery: ({required contactAccountPeerId}) async {
+            expect(contactAccountPeerId, _accountPeerId);
+            repairSends++;
+            authority.endpoint = _endpoint();
+          },
+        );
+        final actual = await _probe(
+          authority: authority,
+          receivedStore: receivedStore,
+          ensureReceivedCallWakeHandle: recovery.ensureCurrentGrantFor,
+          repairMissingEndpoint: recovery.requestEndpointRepairFor,
+          request: OutgoingCallStartRequest(),
+        );
+        expect(repairSends, 1);
+        expect(actual.available, isTrue);
+      },
+    );
+  }
+
+  for (final hasGrant in [false, true]) {
+    test('passive endpoint probe sends nothing with grant=$hasGrant', () async {
+      final receivedStore = _ReceivedStore(grant: hasGrant ? _grant() : null);
+      var repairSends = 0;
+      final recovery = ReceivedCallWakeHandleRecoveryCoordinator(
+        receivedCallWakeHandleStore: receivedStore,
+        nowMs: () => _nowMs,
+        requestRecovery: ({required contactAccountPeerId}) async {
+          repairSends++;
+        },
+      );
+      final actual = await _probe(
+        authority: _Authority(endpoint: null),
+        receivedStore: receivedStore,
+        ensureReceivedCallWakeHandle: recovery.ensureCurrentGrantFor,
+        repairMissingEndpoint: recovery.requestEndpointRepairFor,
+      );
+      expect(repairSends, 0);
+      expect(actual.available, isFalse);
+    });
+  }
 
   test('availability emits one identifier-free ready result', () async {
     final actual = await _probe();

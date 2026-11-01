@@ -50,6 +50,14 @@ abstract interface class OutgoingCallReadinessRecovery {
   Future<bool> recoverOutgoingCallReadiness();
 }
 
+/// Contact repair is owned by an explicit call action, never a passive probe.
+abstract interface class OutgoingCallContactReadinessRecovery {
+  Future<bool> recoverOutgoingCallAvailabilityFor(
+    String contactAccountPeerId, {
+    required OutgoingCallStartRequest request,
+  });
+}
+
 /// Closed-vocabulary call diagnostic values that explain why the outgoing
 /// call graph is not ready: the last start stage and outcome, whether the P2P
 /// transport is started, and whether a failed withdrawal blocks restarts.

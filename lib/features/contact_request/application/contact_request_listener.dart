@@ -100,6 +100,7 @@ class ContactRequestListener {
   /// Best-effort presentation refresh after a verified call wake handle is
   /// durably accepted as strictly newer.
   final Future<void> Function()? onCallWakeHandleStored;
+  final Future<void> Function()? prepareCallWakeReply;
 
   /// Legacy (unmarked) explicit key-exchange retry: after the sender's exact
   /// signed call-wake grant is durably current and its direct ACK has been
@@ -174,6 +175,7 @@ class ContactRequestListener {
     this.receivedWakeTokenStore,
     this.receivedCallWakeHandleStore,
     this.onCallWakeHandleStored,
+    this.prepareCallWakeReply,
     this.requestReciprocalCallWakeRecovery,
     this.repairRepository,
     this.getOwnPublicKey,

@@ -621,6 +621,44 @@ void main() {
   );
 
   test(
+    'explicit endpoint repair coalesces despite an already current grant',
+    () async {
+      final store = _MemoryReceivedCallWakeHandleStore(
+        grants: <String, CallWakeHandleGrant>{
+          _contactAccountPeerId: _receivedGrant(),
+        },
+      );
+      final release = Completer<void>();
+      var recoveryCount = 0;
+      final coordinator = ReceivedCallWakeHandleRecoveryCoordinator(
+        receivedCallWakeHandleStore: store,
+        nowMs: () => _validNowMs,
+        requestRecovery: ({required contactAccountPeerId}) async {
+          recoveryCount++;
+          await release.future;
+        },
+      );
+      final first = coordinator.requestEndpointRepairFor(_contactAccountPeerId);
+      final second = coordinator.requestEndpointRepairFor(
+        _contactAccountPeerId,
+      );
+      // Allow the durable store reads to reach the single authenticated send.
+      await Future<void>.delayed(Duration.zero);
+      final sendsWhileHeld = recoveryCount;
+      release.complete();
+      expect(await first, isTrue);
+      expect(await second, isTrue);
+      expect(sendsWhileHeld, 1);
+      expect(recoveryCount, 1);
+      expect(
+        await coordinator.ensureCurrentGrantFor(_contactAccountPeerId),
+        isTrue,
+      );
+      expect(recoveryCount, 1);
+    },
+  );
+
+  test(
     'received wake recovery requests missing expired and not-yet-valid grants',
     () async {
       final cases = <CallWakeHandleGrant?>[

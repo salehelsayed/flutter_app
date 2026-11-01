@@ -74,6 +74,7 @@ final class _Replier {
     String? token,
     Future<void> Function(ContactRepairWorkerStage)? hook,
     bool withGrants = true,
+    Future<void> Function()? prepareCallWakeReply,
   }) => ContactRepairOutboxWorker(
     repository: repo,
     p2pService: p2p,
@@ -81,6 +82,7 @@ final class _Replier {
     bridge: bridge,
     contactRepo: contacts,
     resolveCallWakeHandle: withGrants ? grants.resolve : null,
+    prepareCallWakeReply: prepareCallWakeReply,
     onCallWakeHandleDistributed: (_, grant) async =>
         distributed.add(grant.generation),
     nowMs: now,
@@ -144,6 +146,72 @@ void main() {
     await a.contacts.addContact(contactFor(_b, mlKem: 'b-mlkem'));
   });
   tearDown(() => a.db.close());
+
+  for (final blockDuringPreparation in [false, true]) {
+    test('endpoint repair reply awaits advertisement and rechecks authority '
+        'block=$blockDuringPreparation', () async {
+      final requestId = await a.claim();
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var preparations = 0;
+      final worker = a.worker(
+        prepareCallWakeReply: () async {
+          preparations++;
+          entered.complete();
+          await release.future;
+        },
+      );
+      final drain = worker.drain();
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        await drain;
+      });
+      await Future.any([entered.future, drain]);
+      expect(preparations, 1);
+      expect(a.bridge.encrypts, isEmpty);
+      expect(a.inbox(), isEmpty);
+      if (blockDuringPreparation) {
+        await a.contacts.blockContact(_b.peerId);
+      }
+      release.complete();
+      await drain;
+      expect(preparations, 1);
+      if (blockDuringPreparation) {
+        expect(a.inbox(), isEmpty);
+        expect(a.bridge.encrypts, isEmpty);
+        expect((await a.row(requestId))['state'], 'cancelled');
+      } else {
+        expect(a.inbox(), hasLength(1));
+        expect((await a.row(requestId))['state'], 'completed');
+      }
+    });
+  }
+
+  test(
+    'endpoint repair retry advertises before resending committed bytes',
+    () async {
+      var now = _t0;
+      a = _Replier(a.db, now: () => now);
+      a.network.inboxDisabled = true;
+      final requestId = await a.claim();
+      var preparations = 0;
+      final worker = a.worker(
+        prepareCallWakeReply: () async {
+          preparations++;
+        },
+      );
+      await worker.drain();
+      expect(preparations, 1);
+      final committed = (await a.row(requestId))['envelope_json'];
+      now += const Duration(minutes: 1).inMilliseconds;
+      a.network.inboxDisabled = false;
+      await worker.drain();
+      expect(preparations, 2);
+      expect(a.bridge.encrypts, hasLength(1));
+      expect((await a.row(requestId))['envelope_json'], committed);
+      expect(a.inbox(), hasLength(1));
+    },
+  );
 
   test(
     'builds one signed repair reply to the stored key and completes',

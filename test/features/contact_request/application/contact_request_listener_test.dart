@@ -1471,6 +1471,7 @@ void main() {
       ContactAutoAddRateLimiter? limiter,
       ReceivedCallWakeHandleStore? receivedCallWakeHandleStore,
       Future<void> Function(String peerId)? requestReciprocalCallWakeRecovery,
+      Future<void> Function()? prepareCallWakeReply,
     }) {
       return ContactRequestListener(
         contactRequestStream: streamController.stream,
@@ -1483,6 +1484,7 @@ void main() {
         autoAddRateLimiter: limiter,
         receivedCallWakeHandleStore: receivedCallWakeHandleStore,
         requestReciprocalCallWakeRecovery: requestReciprocalCallWakeRecovery,
+        prepareCallWakeReply: prepareCallWakeReply,
       );
     }
 
@@ -1605,6 +1607,66 @@ void main() {
         });
       },
     );
+
+    for (final changedAuthority in ['none', 'blocked', 'key_changed']) {
+      test('legacy endpoint repair ACK precedes advertisement and reply '
+          'authority=$changedAuthority', () async {
+        const challenge = '123e4567-e89b-42d3-a456-426614174000';
+        final contact = ContactModel(
+          peerId: _testPeerId,
+          publicKey: _testPublicKey,
+          rendezvous: '/addr',
+          username: 'TestUser',
+          signature: 'sig',
+          scannedAt: '2024-01-01T00:00:00Z',
+        );
+        contactRepo.addTestContact(contact);
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        final order = <String>[];
+        bridge.onSend = (request) {
+          if (request['cmd'] == 'message:confirm') order.add('ack');
+        };
+        final l = makeListener(
+          receivedCallWakeHandleStore: _FakeReceivedCallWakeHandleStore(),
+          prepareCallWakeReply: () async {
+            order.add('advertise');
+            entered.complete();
+            await release.future;
+          },
+          requestReciprocalCallWakeRecovery: (_) async => order.add('reply'),
+        );
+        addTearDown(l.dispose);
+        final processing = l.processIncomingMessage(
+          makeV2(
+            confirmNonce: 'nonce-endpoint-repair',
+            intent: 'key_exchange_retry',
+            callWakeHandle: wakeGrant(),
+            callWakeReceiptChallenge: challenge,
+          ),
+        );
+        addTearDown(() async {
+          if (!release.isCompleted) release.complete();
+          await processing;
+        });
+        await Future.any<void>([entered.future, processing.then<void>((_) {})]);
+        expect(order, ['ack', 'advertise']);
+        if (changedAuthority == 'blocked') {
+          contactRepo.addTestContact(contact.copyWith(isBlocked: true));
+        } else if (changedAuthority == 'key_changed') {
+          contactRepo.addTestContact(
+            contact.copyWith(publicKey: 'replacement-key'),
+          );
+        }
+        release.complete();
+        expect(await processing, HandleMessageResult.alreadyContact);
+        expect(order, [
+          'ack',
+          'advertise',
+          if (changedAuthority == 'none') 'reply',
+        ]);
+      });
+    }
 
     // TC-03: a message with no confirmNonce must NOT trigger a confirm.
     test('does not confirm when confirmNonce is null', () async {

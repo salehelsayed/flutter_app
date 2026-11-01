@@ -2468,6 +2468,8 @@ Future<bool> probeProductionCallEndpointAvailability({
   required CallAuthorityClient authorityClient,
   required ReceivedCallWakeHandleStore receivedCallWakeHandleStore,
   EnsureReceivedCallWakeHandle? ensureReceivedCallWakeHandle,
+  EnsureReceivedCallWakeHandle? repairMissingEndpoint,
+  OutgoingCallStartRequest? request,
 }) async {
   var resolutionStarted = false;
   try {

@@ -85,6 +85,24 @@ class _Capability implements OutgoingCallCapability {
   }
 }
 
+class _RecoveringContactCapability extends _Capability
+    implements OutgoingCallContactReadinessRecovery {
+  int contactRecoveries = 0;
+  OutgoingCallStartRequest? recoveryRequest;
+
+  @override
+  Future<bool> recoverOutgoingCallAvailabilityFor(
+    String peerId, {
+    required OutgoingCallStartRequest request,
+  }) async {
+    contactRecoveries++;
+    recoveryRequest = request;
+    request.checkPending();
+    contactAvailable = true;
+    return true;
+  }
+}
+
 class _TerminalRepository implements CallHistoryRepository {
   final rows = <CallId, CallHistoryEntry>{};
   @override
@@ -195,6 +213,17 @@ void main() {
       expect(results, [OutgoingCallStartResult.started]);
     },
   );
+  test('explicit redial recovers contact endpoint before admission', () async {
+    final recovering = _RecoveringContactCapability()..contactAvailable = false;
+    owner = recovering;
+    await actions.submit(_id);
+    expect(recovering.contactRecoveries, 1);
+    expect(recovering.recoveryRequest, isNotNull);
+    expect(recovering.recoveryRequest!.isCanceled, isFalse);
+    expect(owner.starts, ['synthetic-contact']);
+    expect(results, [OutgoingCallStartResult.started]);
+  });
+
   for (final policy in ['deleted', 'blocked']) {
     test(
       '$policy contact refuses redial before authenticated lookup',

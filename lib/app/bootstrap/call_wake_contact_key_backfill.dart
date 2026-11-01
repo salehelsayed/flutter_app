@@ -41,6 +41,10 @@ final class ReceivedCallWakeHandleRecoveryCoordinator {
   final RequestReceivedCallWakeHandleRecovery _requestRecovery;
   final Map<String, Future<bool>> _inFlightByContact = <String, Future<bool>>{};
 
+  /// Explicit endpoint recovery can reuse the authenticated grant exchange.
+  Future<bool> requestEndpointRepairFor(String contactAccountPeerId) =>
+      ensureCurrentGrantFor(contactAccountPeerId);
+
   /// Returns whether a current grant is available after any coalesced repair.
   Future<bool> ensureCurrentGrantFor(String contactAccountPeerId) async {
     if (!CallWakeHandleGrant.hasValidPeerIdGrammar(contactAccountPeerId)) {

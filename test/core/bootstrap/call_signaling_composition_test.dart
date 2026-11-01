@@ -501,6 +501,52 @@ final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
 }
 
 void main() {
+  for (final publicationAccepted in [true, false]) {
+    test('endpoint repair advertisement exports outcome with FLOW off '
+        'accepted=$publicationAccepted', () async {
+      final previousFlow = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = false;
+      addTearDown(() => flowEventLoggingEnabled = previousFlow);
+      final diagnostics = await CallDiagnostics.installForTesting();
+      addTearDown(() async {
+        await diagnostics.setEnabled(false);
+        await diagnostics.dispose();
+      });
+      final fixture = await _createProductionIosFixture(
+        endpointSetResponse: {'ok': publicationAccepted},
+      );
+      await fixture.composition.start();
+      final exported = await diagnostics.exportPreview();
+      final decoded = jsonDecode(exported) as Map<String, dynamic>;
+      final publications = (decoded['events'] as List)
+          .where(
+            (event) =>
+                event['stage'] == 'authority' &&
+                event['action'] == 'publish' &&
+                (event['values'] as Map)['authorityKind'] == 'endpoint',
+          )
+          .toList();
+      expect(publications, hasLength(1));
+      expect(
+        publications.single['outcome'],
+        publicationAccepted ? 'ok' : 'failed',
+      );
+      expect(
+        publications.single['reason'],
+        publicationAccepted ? 'none' : 'capability_publish_failed',
+      );
+      for (final sensitive in [
+        'local-account',
+        'local-private-key',
+        'local-mlkem-secret-key',
+        'com.mknoon.app.voip',
+        List<String>.filled(64, 'c').join(),
+      ]) {
+        expect(exported, isNot(contains(sensitive)));
+      }
+    });
+  }
+
   for (final change in ['rekey', 'delete and re-add']) {
     test(
       'VC-026 admission witness survives $change during authenticated native name wait',
