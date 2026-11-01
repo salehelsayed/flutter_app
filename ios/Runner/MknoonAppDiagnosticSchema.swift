@@ -22,6 +22,8 @@ internal enum MknoonAppDiagnosticSchema {
     "requestSource": ["live", "stored_replay", "local_action"],
     "consentClass": ["active", "withdrawn", "declined", "none", "unknown"],
     "requestAction": ["withdraw", "local_add", "mutual_intro_add", "admit", "replay"],
-    "requestDisposition": ["ignored", "pending", "automatic", "committed", "failed"]
+    "requestDisposition": ["ignored", "pending", "automatic", "committed", "failed"],
+    "bridgeCommandFamily": ["identity", "crypto", "migration", "network", "call_control", "messaging", "inbox", "media", "profile", "group", "background", "diagnostics", "unknown"],
+    "bridgeRejectionKind": ["timeout", "not_ready", "invalid_argument", "not_found", "permission", "internal", "malformed_response", "unsupported", "capacity", "unknown"]
   ]
 }

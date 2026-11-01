@@ -260,6 +260,33 @@
       "automatic",
       "committed",
       "failed"
+    ],
+    "bridgeCommandFamily": [
+      "identity",
+      "crypto",
+      "migration",
+      "network",
+      "call_control",
+      "messaging",
+      "inbox",
+      "media",
+      "profile",
+      "group",
+      "background",
+      "diagnostics",
+      "unknown"
+    ],
+    "bridgeRejectionKind": [
+      "timeout",
+      "not_ready",
+      "invalid_argument",
+      "not_found",
+      "permission",
+      "internal",
+      "malformed_response",
+      "unsupported",
+      "capacity",
+      "unknown"
     ]
   },
   "hashValues": [

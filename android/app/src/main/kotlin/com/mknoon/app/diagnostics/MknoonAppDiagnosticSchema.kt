@@ -22,6 +22,8 @@ internal object MknoonAppDiagnosticSchema {
         "requestSource" to setOf("live", "stored_replay", "local_action"),
         "consentClass" to setOf("active", "withdrawn", "declined", "none", "unknown"),
         "requestAction" to setOf("withdraw", "local_add", "mutual_intro_add", "admit", "replay"),
-        "requestDisposition" to setOf("ignored", "pending", "automatic", "committed", "failed")
+        "requestDisposition" to setOf("ignored", "pending", "automatic", "committed", "failed"),
+        "bridgeCommandFamily" to setOf("identity", "crypto", "migration", "network", "call_control", "messaging", "inbox", "media", "profile", "group", "background", "diagnostics", "unknown"),
+        "bridgeRejectionKind" to setOf("timeout", "not_ready", "invalid_argument", "not_found", "permission", "internal", "malformed_response", "unsupported", "capacity", "unknown")
     )
 }

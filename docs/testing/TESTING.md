@@ -10880,6 +10880,24 @@ existing sender-custody/duplicate-receive retry contract. This observation
 change does not fix or establish a delivery failure on an exported trace.
 Evidence is in `.codex-test-logs/delivery-recovery-20261101/`.
 
+Bridge failure records use closed `bridgeCommandFamily` and
+`bridgeRejectionKind` values. The command family is required in the existing
+dispatch registry; rejection kinds come only from explicit native error codes,
+with `unknown` for broad or unclassified failures. Raw command strings, payloads,
+peer identifiers and error text are not diagnostic values. Preserve ordinary
+return envelopes, the six network operation reasons, raw background responses,
+and diagnostic-upload recursion suppression. The bridge-label tests exercise
+native-boundary results through collection, export and upload; relay/Python
+fixtures preserve old records and reject free-form enum values. Evidence is
+retained in `.codex-test-logs/bridge-labels-20261101/`.
+
+Unlike the local-only incident detail above, these two optional schema-v1 fields
+remain on relay uploads. Deployment order is required: the owner-approved relay
+update goes to Hetzner, then AWS, before an app carrying the labels reaches
+testers. There is no capability negotiation. An older receiver can reject a
+labeled event if that order is violated; old-shape records remain valid on the
+updated receiver. Host schema tests do not establish deployment or device proof.
+
 Eight build128/129 incoming-domain CallKit code3 traces were OS Do Not Disturb filtering.
 The released report/completion path stays unchanged; duplicate UUID is code2.
 
