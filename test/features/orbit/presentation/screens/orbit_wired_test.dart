@@ -493,6 +493,122 @@ void main() {
     }
   }
 
+  group('IN-DISMISS already-connected Orbit card', () {
+    IntroductionModel connectedIntro(String id, String createdAt) =>
+        IntroductionModel(
+          id: id,
+          introducerId: 'peer-A',
+          recipientId: testIdentity.peerId,
+          introducedId: testContact.peerId,
+          introducerUsername: 'Noor',
+          introducedUsername: testContact.username,
+          createdAt: createdAt,
+          status: IntroductionOverallStatus.alreadyConnected,
+        );
+
+    testWidgets(
+      'IN-DISMISS X hides folded predecessors without confirmation or sends',
+      (tester) async {
+        setLargeTestSurface(tester);
+        suppressNavAssetErrors();
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        await secureKeyStore.write('orbit_intro_seen_v1', '1');
+        final repo = _DismissalRecordingIntroductionRepository();
+        await repo.saveIntroduction(
+          connectedIntro('older-connected', '2026-11-01T15:00:00Z'),
+        );
+        await repo.saveIntroduction(
+          connectedIntro('newer-connected', '2026-11-01T16:00:00Z'),
+        );
+        await repo.saveIntroduction(
+          pendingIntroduction(
+            ownPeerId: testIdentity.peerId,
+            otherPeerId: 'still-pending-peer',
+            id: 'still-pending',
+            createdAt: freshPendingIntroductionCreatedAt(),
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: repo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.byType(IntroRow), findsNWidgets(2));
+        expect(find.byTooltip('Dismiss'), findsOneWidget);
+        await tester.tap(find.byTooltip('Dismiss'));
+        await pumpOrbitFrames(tester, count: 6);
+
+        expect(find.text('Delete introduction?'), findsNothing);
+        expect(repo.dismissedCalls.single.toSet(), {
+          'older-connected',
+          'newer-connected',
+        });
+        expect(find.byType(IntroRow), findsOneWidget);
+        expect(find.text('Already connected'), findsNothing);
+        expect(find.text('Accept'), findsOneWidget);
+        expect(await repo.getIntroduction('older-connected'), isNotNull);
+        expect(await repo.getIntroduction('newer-connected'), isNotNull);
+        expect(
+          (await repo.getIntroduction('still-pending'))!.status,
+          IntroductionOverallStatus.pending,
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(await contactRepo.getAllContacts(), hasLength(1));
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpWidget(
+          buildOrbitWired(
+            introductionRepository: repo,
+            initialFilterTab: 'intros',
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 6);
+        expect(find.text('Already connected'), findsNothing);
+        expect(find.byType(IntroRow), findsOneWidget);
+      },
+    );
+
+    testWidgets('IN-DISMISS persistence failure keeps the card visible', (
+      tester,
+    ) async {
+      setLargeTestSurface(tester);
+      suppressNavAssetErrors();
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      await secureKeyStore.write('orbit_intro_seen_v1', '1');
+      final repo = _DismissalRecordingIntroductionRepository()
+        ..failDismissal = true;
+      await repo.saveIntroduction(
+        connectedIntro('keep-visible', '2026-11-01T16:00:00Z'),
+      );
+      await tester.pumpWidget(
+        buildOrbitWired(
+          introductionRepository: repo,
+          initialFilterTab: 'intros',
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 6);
+      expect(find.byTooltip('Dismiss'), findsOneWidget);
+      await tester.tap(find.byTooltip('Dismiss'));
+      await pumpOrbitFrames(tester, count: 6);
+
+      expect(repo.dismissedCalls, hasLength(1));
+      expect(find.text('Already connected'), findsOneWidget);
+      expect(find.byTooltip('Dismiss'), findsOneWidget);
+      expect(find.text('Delete introduction?'), findsNothing);
+      expect(
+        await repo.getPendingIntroductionsForUser(testIdentity.peerId),
+        hasLength(1),
+      );
+      expect(p2pService.sendMessageCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+    });
+  });
+
   testWidgets(
     'live Settings quality changes the next Orbit photo preparation without restart',
     (tester) async {
@@ -12799,4 +12915,23 @@ class _WroteBackMessageRepository extends InMemoryMessageRepository
   @override
   Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
       wroteBack;
+}
+
+class _DismissalRecordingIntroductionRepository
+    extends InMemoryIntroductionRepository {
+  final List<List<String>> dismissedCalls = [];
+  bool failDismissal = false;
+
+  @override
+  Future<bool> dismissAlreadyConnectedIntroductions({
+    required List<String> introductionIds,
+    required String ownPeerId,
+  }) async {
+    dismissedCalls.add(List.of(introductionIds));
+    if (failDismissal) throw StateError('local storage unavailable');
+    return super.dismissAlreadyConnectedIntroductions(
+      introductionIds: introductionIds,
+      ownPeerId: ownPeerId,
+    );
+  }
 }

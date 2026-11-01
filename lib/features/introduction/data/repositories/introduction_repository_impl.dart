@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../../domain/models/introduction_model.dart';
 import '../../domain/models/introduction_outbox_delivery.dart';
@@ -7,6 +8,7 @@ import '../../domain/repositories/introduction_repository.dart';
 
 /// Implementation of IntroductionRepository using database helper functions.
 class IntroductionRepositoryImpl implements IntroductionRepository {
+  final SecureKeyStore secureKeyStore;
   final Future<void> Function(Map<String, Object?> row) dbInsertIntroduction;
   final Future<Map<String, Object?>?> Function(String id) dbLoadIntroduction;
   final Future<void> Function(String id) dbDeleteIntroduction;
@@ -71,6 +73,7 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
   final Future<void> Function(String introductionId)? onResponseSaved;
 
   IntroductionRepositoryImpl({
+    required this.secureKeyStore,
     required this.dbInsertIntroduction,
     required this.dbLoadIntroduction,
     required this.dbDeleteIntroduction,
@@ -192,6 +195,12 @@ class IntroductionRepositoryImpl implements IntroductionRepository {
     if (row == null) return null;
     return IntroductionModel.fromMap(row);
   }
+
+  @override
+  Future<bool> dismissAlreadyConnectedIntroductions({
+    required List<String> introductionIds,
+    required String ownPeerId,
+  }) async => false;
 
   @override
   Future<void> deleteIntroduction(String id) async {

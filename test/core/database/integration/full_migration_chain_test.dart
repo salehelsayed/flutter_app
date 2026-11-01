@@ -409,6 +409,7 @@ void main() {
 
   IntroductionRepositoryImpl buildIntroductionRepository(Database db) {
     return IntroductionRepositoryImpl(
+      secureKeyStore: FakeSecureKeyStore(),
       dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
       dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
       dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),

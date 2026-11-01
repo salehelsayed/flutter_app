@@ -243,7 +243,10 @@ buildProductionCanonicalInboxProjectionComposition({
       secureKeyStore,
     );
     final reactionRepository = _buildReactionRepository(database);
-    final introductionRepository = _buildIntroductionRepository(database);
+    final introductionRepository = _buildIntroductionRepository(
+      database,
+      secureKeyStore,
+    );
     final stagingRepository = _buildInboxStagingRepository(database);
     final groupRepository = _buildGroupRepository(database, secureKeyStore);
     final groupMediaKeyAccess = GroupMediaKeyAccess(
@@ -1300,85 +1303,88 @@ ReactionRepositoryImpl _buildReactionRepository(
       dbDeleteReactionsForContact(database, peerId),
 );
 
-IntroductionRepositoryImpl _buildIntroductionRepository(Database database) =>
-    IntroductionRepositoryImpl(
-      dbInsertIntroduction: (row) => dbInsertIntroduction(database, row),
-      dbLoadIntroduction: (id) => dbLoadIntroduction(database, id),
-      dbDeleteIntroduction: (id) => dbDeleteIntroduction(database, id),
-      dbLoadIntroductionsByRecipient: (id) =>
-          dbLoadIntroductionsByRecipient(database, id),
-      dbLoadIntroductionsByIntroduced: (id) =>
-          dbLoadIntroductionsByIntroduced(database, id),
-      dbLoadIntroductionsByIntroducer: (id) =>
-          dbLoadIntroductionsByIntroducer(database, id),
-      dbLoadIntroductionsForRecipientAndIntroducer: (recipient, introducer) =>
-          dbLoadIntroductionsForRecipientAndIntroducer(
+IntroductionRepositoryImpl _buildIntroductionRepository(
+  Database database,
+  SecureKeyStore secureKeyStore,
+) => IntroductionRepositoryImpl(
+  secureKeyStore: secureKeyStore,
+  dbInsertIntroduction: (row) => dbInsertIntroduction(database, row),
+  dbLoadIntroduction: (id) => dbLoadIntroduction(database, id),
+  dbDeleteIntroduction: (id) => dbDeleteIntroduction(database, id),
+  dbLoadIntroductionsByRecipient: (id) =>
+      dbLoadIntroductionsByRecipient(database, id),
+  dbLoadIntroductionsByIntroduced: (id) =>
+      dbLoadIntroductionsByIntroduced(database, id),
+  dbLoadIntroductionsByIntroducer: (id) =>
+      dbLoadIntroductionsByIntroducer(database, id),
+  dbLoadIntroductionsForRecipientAndIntroducer: (recipient, introducer) =>
+      dbLoadIntroductionsForRecipientAndIntroducer(
+        database,
+        recipient,
+        introducer,
+      ),
+  dbUpdateRecipientStatus: (id, status, respondedAt) =>
+      dbUpdateRecipientStatus(database, id, status, respondedAt),
+  dbUpdateIntroducedStatus: (id, status, respondedAt) =>
+      dbUpdateIntroducedStatus(database, id, status, respondedAt),
+  dbUpdateOverallStatus: (id, status) =>
+      dbUpdateOverallStatus(database, id, status),
+  dbLoadPendingIntroductionsForUser: (peerId) =>
+      dbLoadPendingIntroductionsForUser(database, peerId),
+  dbCountPendingIntroductions: (peerId) =>
+      dbCountPendingIntroductions(database, peerId),
+  dbUpsertPendingIntroductionResponse: (row) =>
+      dbUpsertPendingIntroductionResponse(database, row),
+  dbLoadPendingIntroductionResponses: (id) =>
+      dbLoadPendingIntroductionResponses(database, id),
+  dbDeletePendingIntroductionResponse: (key) =>
+      dbDeletePendingIntroductionResponse(database, key),
+  dbUpsertIntroductionOutboxDelivery: (row) =>
+      dbUpsertIntroductionOutboxDelivery(database, row),
+  dbSaveIntroductionWithOutboxDeliveries: (intro, deliveries) =>
+      dbSaveIntroductionWithOutboxDeliveries(database, intro, deliveries),
+  dbReplaceIntroductionWithPendingResponseMigration:
+      ({
+        required introductionRow,
+        required deliveryRows,
+        required replacedIntroductionIds,
+      }) => dbReplaceIntroductionWithPendingResponseMigration(
+        database,
+        introductionRow: introductionRow,
+        deliveryRows: deliveryRows,
+        replacedIntroductionIds: replacedIntroductionIds,
+      ),
+  dbSaveIntroductionResponseWithOutboxDeliveries:
+      ({
+        required introductionId,
+        required isRecipient,
+        required responseStatus,
+        required respondedAt,
+        required overallStatus,
+        required deliveryRows,
+      }) => dbSaveIntroductionResponseWithOutboxDeliveries(
+        database,
+        introductionId: introductionId,
+        isRecipient: isRecipient,
+        responseStatus: responseStatus,
+        respondedAt: respondedAt,
+        overallStatus: overallStatus,
+        deliveryRows: deliveryRows,
+      ),
+  dbLoadIntroductionOutboxDeliveriesForIntroduction: (id) =>
+      dbLoadIntroductionOutboxDeliveriesForIntroduction(database, id),
+  dbLoadRetryableIntroductionOutboxDeliveries:
+      ({required olderThan, limit = 100}) =>
+          dbLoadRetryableIntroductionOutboxDeliveries(
             database,
-            recipient,
-            introducer,
+            olderThan: olderThan,
+            limit: limit,
           ),
-      dbUpdateRecipientStatus: (id, status, respondedAt) =>
-          dbUpdateRecipientStatus(database, id, status, respondedAt),
-      dbUpdateIntroducedStatus: (id, status, respondedAt) =>
-          dbUpdateIntroducedStatus(database, id, status, respondedAt),
-      dbUpdateOverallStatus: (id, status) =>
-          dbUpdateOverallStatus(database, id, status),
-      dbLoadPendingIntroductionsForUser: (peerId) =>
-          dbLoadPendingIntroductionsForUser(database, peerId),
-      dbCountPendingIntroductions: (peerId) =>
-          dbCountPendingIntroductions(database, peerId),
-      dbUpsertPendingIntroductionResponse: (row) =>
-          dbUpsertPendingIntroductionResponse(database, row),
-      dbLoadPendingIntroductionResponses: (id) =>
-          dbLoadPendingIntroductionResponses(database, id),
-      dbDeletePendingIntroductionResponse: (key) =>
-          dbDeletePendingIntroductionResponse(database, key),
-      dbUpsertIntroductionOutboxDelivery: (row) =>
-          dbUpsertIntroductionOutboxDelivery(database, row),
-      dbSaveIntroductionWithOutboxDeliveries: (intro, deliveries) =>
-          dbSaveIntroductionWithOutboxDeliveries(database, intro, deliveries),
-      dbReplaceIntroductionWithPendingResponseMigration:
-          ({
-            required introductionRow,
-            required deliveryRows,
-            required replacedIntroductionIds,
-          }) => dbReplaceIntroductionWithPendingResponseMigration(
-            database,
-            introductionRow: introductionRow,
-            deliveryRows: deliveryRows,
-            replacedIntroductionIds: replacedIntroductionIds,
-          ),
-      dbSaveIntroductionResponseWithOutboxDeliveries:
-          ({
-            required introductionId,
-            required isRecipient,
-            required responseStatus,
-            required respondedAt,
-            required overallStatus,
-            required deliveryRows,
-          }) => dbSaveIntroductionResponseWithOutboxDeliveries(
-            database,
-            introductionId: introductionId,
-            isRecipient: isRecipient,
-            responseStatus: responseStatus,
-            respondedAt: respondedAt,
-            overallStatus: overallStatus,
-            deliveryRows: deliveryRows,
-          ),
-      dbLoadIntroductionOutboxDeliveriesForIntroduction: (id) =>
-          dbLoadIntroductionOutboxDeliveriesForIntroduction(database, id),
-      dbLoadRetryableIntroductionOutboxDeliveries:
-          ({required olderThan, limit = 100}) =>
-              dbLoadRetryableIntroductionOutboxDeliveries(
-                database,
-                olderThan: olderThan,
-                limit: limit,
-              ),
-      dbDeleteIntroductionOutboxDelivery: (id) =>
-          dbDeleteIntroductionOutboxDelivery(database, id),
-      dbDeleteIntroductionOutboxDeliveriesForIntroduction: (id) =>
-          dbDeleteIntroductionOutboxDeliveriesForIntroduction(database, id),
-    );
+  dbDeleteIntroductionOutboxDelivery: (id) =>
+      dbDeleteIntroductionOutboxDelivery(database, id),
+  dbDeleteIntroductionOutboxDeliveriesForIntroduction: (id) =>
+      dbDeleteIntroductionOutboxDeliveriesForIntroduction(database, id),
+);
 
 InboxStagingRepositoryImpl _buildInboxStagingRepository(
   Database database,

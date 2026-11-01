@@ -41,6 +41,12 @@ abstract class IntroductionRepository {
   /// Deletes an introduction by its ID.
   Future<void> deleteIntroduction(String id);
 
+  /// Locally dismisses already-connected introductions for the current participant.
+  Future<bool> dismissAlreadyConnectedIntroductions({
+    required List<String> introductionIds,
+    required String ownPeerId,
+  });
+
   /// Retrieves all introductions where the user is the recipient.
   Future<List<IntroductionModel>> getIntroductionsByRecipient(
     String recipientId,

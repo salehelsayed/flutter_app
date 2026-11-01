@@ -36,6 +36,7 @@ void main() {
     String? displayUsername,
     VoidCallback? onAccept,
     VoidCallback? onPass,
+    VoidCallback? onDismiss,
     VoidCallback? onSendMessage,
     IntroductionStatus? ownPartyStatus,
     String? waitingForUsername,
@@ -53,6 +54,7 @@ void main() {
       isProcessing: isProcessing,
       onAccept: onAccept,
       onPass: onPass,
+      onDismiss: onDismiss,
       onSendMessage: onSendMessage,
       ownPartyStatus: ownPartyStatus,
       waitingForUsername: waitingForUsername,
@@ -73,6 +75,63 @@ void main() {
   }
 
   group('IntroRow', () {
+    testWidgets(
+      'IN-DISMISS already-connected card exposes a localized close action',
+      (tester) async {
+        var dismissals = 0;
+        await tester.pumpWidget(
+          buildWidget(
+            introduction: makeIntro(
+              status: IntroductionOverallStatus.alreadyConnected,
+            ),
+            showActions: false,
+            onDismiss: () => dismissals++,
+          ),
+        );
+
+        expect(find.byTooltip('Dismiss'), findsOneWidget);
+        expect(find.byIcon(Icons.close), findsOneWidget);
+        await tester.tap(find.byTooltip('Dismiss'));
+        expect(dismissals, 1);
+        expect(find.text('Accept'), findsNothing);
+        expect(find.text('Pass'), findsNothing);
+      },
+    );
+
+    testWidgets('IN-DISMISS processing keeps the close action disabled', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildWidget(
+          introduction: makeIntro(
+            status: IntroductionOverallStatus.alreadyConnected,
+          ),
+          showActions: false,
+          isProcessing: true,
+          onDismiss: () => fail('Dismissal must not run twice.'),
+        ),
+      );
+      final button = tester.widget<IconButton>(find.byTooltip('Dismiss'));
+      expect(button.onPressed, isNull);
+    });
+
+    for (final status in IntroductionOverallStatus.values.where(
+      (status) => status != IntroductionOverallStatus.alreadyConnected,
+    )) {
+      testWidgets('IN-DISMISS ${status.name} has no close action', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          buildWidget(
+            introduction: makeIntro(status: status),
+            showActions: status == IntroductionOverallStatus.pending,
+            onDismiss: () => fail('Other intro states must not dismiss.'),
+          ),
+        );
+        expect(find.byTooltip('Dismiss'), findsNothing);
+      });
+    }
+
     testWidgets('pending state shows Accept and Pass buttons', (tester) async {
       await tester.pumpWidget(
         buildWidget(

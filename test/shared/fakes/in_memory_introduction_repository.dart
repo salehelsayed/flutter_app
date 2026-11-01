@@ -10,6 +10,12 @@ class InMemoryIntroductionRepository implements IntroductionRepository {
   final Map<String, IntroductionOutboxDelivery> _outboxDeliveries = {};
 
   @override
+  Future<bool> dismissAlreadyConnectedIntroductions({
+    required List<String> introductionIds,
+    required String ownPeerId,
+  }) async => false;
+
+  @override
   Future<void> saveIntroduction(IntroductionModel intro) async {
     _store[intro.id] = intro;
   }

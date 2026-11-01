@@ -5273,6 +5273,7 @@ final class ProductionApplicationBootstrap
 
     // Create introduction repository
     final introductionRepository = IntroductionRepositoryImpl(
+      secureKeyStore: secureKeyStore,
       dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
       dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
       dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),

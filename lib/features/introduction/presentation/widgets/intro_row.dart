@@ -17,6 +17,7 @@ class IntroRow extends StatelessWidget {
   final bool isProcessing;
   final VoidCallback? onAccept;
   final VoidCallback? onPass;
+  final VoidCallback? onDismiss;
   final IntroductionStatus? ownPartyStatus;
   final String? waitingForUsername;
   final VoidCallback? onSendMessage;
@@ -33,6 +34,7 @@ class IntroRow extends StatelessWidget {
     this.isProcessing = false,
     this.onAccept,
     this.onPass,
+    this.onDismiss,
     this.ownPartyStatus,
     this.waitingForUsername,
     this.onSendMessage,

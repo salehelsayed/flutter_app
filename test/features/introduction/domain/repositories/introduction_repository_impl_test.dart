@@ -1,3 +1,4 @@
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/introduction/domain/models/pending_introduction_response.dart';
 import 'package:flutter_app/features/introduction/domain/models/introduction_model.dart';
@@ -91,6 +92,7 @@ void main() {
       final operations = <String>[];
 
       final repo = IntroductionRepositoryImpl(
+        secureKeyStore: FakeSecureKeyStore(),
         dbInsertIntroduction: (_) async {},
         dbLoadIntroduction: (_) async => null,
         dbDeleteIntroduction: (id) async {
@@ -174,6 +176,7 @@ IntroductionRepositoryImpl _responseRepository({
   required Future<bool> Function() saveResponse,
   required Future<void> Function(String) onResponseSaved,
 }) => IntroductionRepositoryImpl(
+  secureKeyStore: FakeSecureKeyStore(),
   dbInsertIntroduction: (_) async {},
   dbLoadIntroduction: (_) async => null,
   dbDeleteIntroduction: (_) async {},

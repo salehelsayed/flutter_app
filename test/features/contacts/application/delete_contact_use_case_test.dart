@@ -447,6 +447,12 @@ class FakeIntroductionRepository implements IntroductionRepository {
   FakeIntroductionRepository({required this.introductions, this.operations});
 
   @override
+  Future<bool> dismissAlreadyConnectedIntroductions({
+    required List<String> introductionIds,
+    required String ownPeerId,
+  }) async => false;
+
+  @override
   Future<void> saveIntroduction(IntroductionModel intro) async {}
 
   @override

@@ -1,3 +1,4 @@
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
@@ -59,6 +60,7 @@ ContactRepositoryImpl _buildContactRepo(Database db) => ContactRepositoryImpl(
 
 IntroductionRepositoryImpl _buildIntroRepo(Database db) =>
     IntroductionRepositoryImpl(
+      secureKeyStore: FakeSecureKeyStore(),
       dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
       dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
       dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),
@@ -732,8 +734,9 @@ void main() {
           IntroductionMessageProcessState.stored,
         );
         expect(
-          (await nodeA.introRepo.getIntroduction(existingIntroId))
-              ?.introducedStatus,
+          (await nodeA.introRepo.getIntroduction(
+            existingIntroId,
+          ))?.introducedStatus,
           IntroductionStatus.accepted,
         );
         await nodeA.contactRepo.unblockContact(nodeC.peerId);
@@ -815,7 +818,10 @@ void main() {
         final afterDeferredReplay = await nodeB.introRepo.getIntroduction(
           deferredIntroId,
         );
-        expect(afterDeferredReplay!.introducedStatus, IntroductionStatus.pending);
+        expect(
+          afterDeferredReplay!.introducedStatus,
+          IntroductionStatus.pending,
+        );
         expect(afterDeferredReplay.status, IntroductionOverallStatus.pending);
         expect(
           await nodeB.introRepo.loadPendingResponses(deferredIntroId),
