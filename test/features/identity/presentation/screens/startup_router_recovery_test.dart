@@ -505,6 +505,90 @@ void main() {
     );
   }
 
+  for (final state in [
+    AccountMigrationAuthorityState.migratedOut,
+    AccountMigrationAuthorityState.migrationCutoverPendingBlocked,
+    AccountMigrationAuthorityState.migrationImportStaging,
+    AccountMigrationAuthorityState.migrationFailedCleanupRequired,
+  ]) {
+    testWidgets(
+      'LL-36 migration preservation ${state.wireName} keeps recovery actions with missing keys',
+      (tester) async {
+        await seedActiveReturningAccount('peer-retained');
+        await saveAuthority(state, accountPeerId: 'peer-retained');
+        final identity = FakeIdentityRepository.makeIdentity(
+          peerId: 'peer-retained',
+        );
+        final row = <String, Object?>{
+          'peer_id': identity.peerId,
+          'public_key': identity.publicKey,
+          'username': identity.username,
+          'created_at': identity.createdAt,
+          'updated_at': identity.updatedAt,
+        };
+        final originalRow = Map<String, Object?>.of(row);
+        await secureKeyStore.write('ll36_retained_marker', 'kept');
+        final originalKeys = await secureKeyStore.readAll();
+        var identityWrites = 0;
+        var eraseCalls = 0;
+        var runtimeRequests = 0;
+        final repository = IdentityRepositoryImpl(
+          dbLoadIdentityRow: () async => row,
+          dbUpsertIdentityRow: (_) async {
+            identityWrites++;
+          },
+          secureKeyStore: secureKeyStore,
+        );
+        await tester.pumpWidget(
+          buildRouterApp(
+            repository: repository,
+            eraseLocalAccountDatabase: () async {
+              eraseCalls++;
+            },
+            ensureRuntimeServicesReady: () async {
+              runtimeRequests++;
+            },
+          ),
+        );
+        await pumpFrames(tester);
+
+        final blocked = find.byType(AccountMigrationBlockedScreen);
+        expect(blocked, findsOneWidget);
+        final screen = tester.widget<AccountMigrationBlockedScreen>(blocked);
+        expect(screen.record?.state, state);
+        expect(screen.record?.accountPeerId, identity.peerId);
+        expect(screen.onEraseAccount, isNotNull);
+        expect(find.text('Failed to initialize'), findsNothing);
+        expect(find.byType(IdentityChoiceWired), findsNothing);
+        expect(find.byType(FirstTimeExperienceWired), findsNothing);
+        expect(find.byType(FeedWired), findsNothing);
+        expect(p2pService.startNodeCallCount, 0);
+        expect(runtimeRequests, 0);
+        expect(identityWrites, 0);
+        expect(eraseCalls, 0);
+        expect(row, originalRow);
+        expect(await secureKeyStore.readAll(), originalKeys);
+
+        await tester.tap(
+          find.byKey(const ValueKey('account-migration-erase-action')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('account-migration-erase-confirm')),
+          findsOneWidget,
+        );
+        await tester.tap(find.text('Cancel'));
+        await tester.pumpAndSettle();
+        expect(blocked, findsOneWidget);
+        expect(eraseCalls, 0);
+        expect(identityWrites, 0);
+        expect(row, originalRow);
+        expect(await secureKeyStore.readAll(), originalKeys);
+        expect(await contactRepository.getContactCount(), 1);
+      },
+    );
+  }
+
   testWidgets(
     'qualified call runtime starts with no further frame while the home route waits',
     (tester) async {

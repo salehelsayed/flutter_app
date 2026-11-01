@@ -16,9 +16,14 @@ import '../../../core/secure_storage/fake_secure_key_store.dart';
 // ---------------------------------------------------------------------------
 class _FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identityResult;
+  Object? loadError;
 
   @override
-  Future<IdentityModel?> loadIdentity() async => identityResult;
+  Future<IdentityModel?> loadIdentity() async {
+    final error = loadError;
+    if (error != null) throw error;
+    return identityResult;
+  }
 
   @override
   Future<void> saveIdentity(IdentityModel identity) async {}
@@ -74,15 +79,20 @@ class _FakeAccountMigrationAuthorityRepository
     implements AccountMigrationAuthorityRepository {
   AccountMigrationAuthorityRecord? authority;
   int loadAuthorityCallCount = 0;
+  int saveAuthorityCallCount = 0;
+  Object? loadError;
 
   @override
   Future<AccountMigrationAuthorityRecord?> loadAuthority() async {
     loadAuthorityCallCount++;
+    final error = loadError;
+    if (error != null) throw error;
     return authority;
   }
 
   @override
   Future<void> saveAuthority(AccountMigrationAuthorityRecord record) async {
+    saveAuthorityCallCount++;
     authority = record;
   }
 
@@ -178,6 +188,167 @@ void main() {
         expect(identityWrites, 0);
       });
     }
+  });
+
+  group('LL-36 migration preservation', () {
+    final blockedStates = AccountMigrationAuthorityState.values.where(
+      (state) =>
+          state.blocksNormalStartup &&
+          state !=
+              AccountMigrationAuthorityState.migrationExportingNetworkPaused,
+    );
+    for (final state in blockedStates) {
+      for (final secrets in [
+        'intact',
+        'missing private key',
+        'missing mnemonic',
+      ]) {
+        test(
+          '${state.wireName} with $secrets keeps the blocked route',
+          () async {
+            final identity = _makeIdentity();
+            final row = <String, Object?>{
+              'peer_id': identity.peerId,
+              'public_key': identity.publicKey,
+              'created_at': identity.createdAt,
+              'updated_at': identity.updatedAt,
+            };
+            final keys = FakeSecureKeyStore();
+            if (secrets != 'missing private key') {
+              await keys.write(
+                identityPrivateKeyStorageKey,
+                identity.privateKey,
+              );
+            }
+            if (secrets != 'missing mnemonic') {
+              await keys.write(
+                identityMnemonic12StorageKey,
+                identity.mnemonic12,
+              );
+            }
+            final originalKeys = await keys.readAll();
+            var identityWrites = 0;
+            final repository = IdentityRepositoryImpl(
+              dbLoadIdentityRow: () async => row,
+              dbUpsertIdentityRow: (_) async {
+                identityWrites++;
+              },
+              secureKeyStore: keys,
+            );
+            final record = AccountMigrationAuthorityRecord(
+              state: state,
+              accountPeerId: identity.peerId,
+            );
+            authorityRepo.authority = record;
+
+            await expectLater(
+              decideStartupRoute(
+                identityRepo: repository,
+                contactRepo: contactRepo,
+                migrationAuthorityRepository: authorityRepo,
+              ),
+              completion(StartupDecision.accountMigrationBlocked),
+            );
+            expect(authorityRepo.loadAuthorityCallCount, 1);
+            expect(authorityRepo.saveAuthorityCallCount, 0);
+            expect(authorityRepo.authority, record);
+            expect(contactRepo.getContactCountCallCount, 0);
+            expect(identityWrites, 0);
+            expect(await keys.readAll(), originalKeys);
+          },
+        );
+      }
+    }
+
+    for (final state in <AccountMigrationAuthorityState?>[
+      null,
+      AccountMigrationAuthorityState.noAccount,
+      AccountMigrationAuthorityState.active,
+      AccountMigrationAuthorityState.migrationFailedActiveRestored,
+      AccountMigrationAuthorityState.migrationExportingNetworkPaused,
+    ]) {
+      test(
+        'unavailable keys with ${state?.wireName} preserve safe Retry without writes',
+        () async {
+          const failure = IdentitySecretsUnavailableException();
+          identityRepo.loadError = failure;
+          final record = state == null
+              ? null
+              : AccountMigrationAuthorityRecord(
+                  state: state,
+                  accountPeerId: '12D3KooWTestPeerId',
+                );
+          authorityRepo.authority = record;
+
+          await expectLater(
+            decideStartupRoute(
+              identityRepo: identityRepo,
+              contactRepo: contactRepo,
+              migrationAuthorityRepository: authorityRepo,
+            ),
+            throwsA(same(failure)),
+          );
+          expect(authorityRepo.authority, record);
+          expect(authorityRepo.saveAuthorityCallCount, 0);
+          expect(contactRepo.getContactCountCallCount, 0);
+        },
+      );
+    }
+
+    test(
+      'unreadable authority preserves the original safe missing-key error',
+      () async {
+        const failure = IdentitySecretsUnavailableException();
+        identityRepo.loadError = failure;
+        authorityRepo.loadError = StateError('LL-36 authority storage detail');
+        await expectLater(
+          decideStartupRoute(
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            migrationAuthorityRepository: authorityRepo,
+          ),
+          throwsA(same(failure)),
+        );
+        expect(authorityRepo.saveAuthorityCallCount, 0);
+      },
+    );
+
+    test(
+      'unavailable keys still honor fail-closed migration authority',
+      () async {
+        identityRepo.loadError = const IdentitySecretsUnavailableException();
+        authorityRepo.authority = AccountMigrationAuthorityRecord.failClosed();
+        await expectLater(
+          decideStartupRoute(
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            migrationAuthorityRepository: authorityRepo,
+          ),
+          completion(StartupDecision.accountMigrationBlocked),
+        );
+        expect(authorityRepo.saveAuthorityCallCount, 0);
+      },
+    );
+
+    test(
+      'unrelated identity load failures retain their existing precedence',
+      () async {
+        final failure = StateError('LL-36 database unavailable');
+        identityRepo.loadError = failure;
+        authorityRepo.authority = const AccountMigrationAuthorityRecord(
+          state: AccountMigrationAuthorityState.migratedOut,
+        );
+        await expectLater(
+          decideStartupRoute(
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            migrationAuthorityRepository: authorityRepo,
+          ),
+          throwsA(same(failure)),
+        );
+        expect(authorityRepo.loadAuthorityCallCount, 0);
+      },
+    );
   });
 
   group('decideStartupRoute', () {
