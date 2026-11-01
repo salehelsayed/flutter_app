@@ -16,6 +16,8 @@ import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
+import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
+import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
@@ -398,6 +400,54 @@ void main() {
     await hold.up();
     await pumpFrames(tester);
     expect(find.byType(SettingsWired), findsNothing);
+  });
+
+  testWidgets('You page off: the center avatar has no tap detector', (
+    tester,
+  ) async {
+    debugYouPageEnabledOverride = false;
+    addTearDown(() => debugYouPageEnabledOverride = null);
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
+
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+
+    expect(centerAvatar(), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('orbit-center-self-avatar')),
+      findsNothing,
+    );
+    await tester.tap(centerAvatar(), warnIfMissed: false);
+    await pumpFrames(tester);
+    expect(find.byType(YouPageScreen), findsNothing);
+  });
+
+  testWidgets('You page on: tapping the center avatar opens the You page', (
+    tester,
+  ) async {
+    debugYouPageEnabledOverride = true;
+    addTearDown(() => debugYouPageEnabledOverride = null);
+    setLargeSurface(tester);
+    suppressOverflowErrors();
+    identityRepo.seed(identityWith());
+
+    await tester.pumpWidget(buildOrbit(appShellController: freshController()));
+    await pumpFrames(tester);
+
+    await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+    await pumpFrames(tester);
+
+    expect(find.byType(YouPageScreen), findsOneWidget);
+    expect(find.text('you/ @Alice'), findsOneWidget);
+    expect(find.text('0 friends'), findsOneWidget);
+    expect(find.text('Nothing shared right now'), findsOneWidget);
+    expect(find.byType(SettingsWired), findsNothing);
+
+    await tester.tap(find.byTooltip('Back'));
+    await pumpFrames(tester);
+    expect(find.byType(YouPageScreen), findsNothing);
   });
 
   testWidgets('settings button sits in the bottom-left corner', (tester) async {
