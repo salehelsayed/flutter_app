@@ -34,6 +34,7 @@ void main() {
     late BonsoirDiscoveryService service;
     Object? discoveryStartError;
     Future<void>? broadcastStartGate;
+    _AndroidSerialResolveQueue? androidResolveQueue;
 
     _FakeBonsoirBroadcast broadcast() => broadcasts.last;
     _FakeBonsoirDiscovery discovery() => discoveries.last;
@@ -43,6 +44,7 @@ void main() {
       discoveries = <_FakeBonsoirDiscovery>[];
       discoveryStartError = null;
       broadcastStartGate = null;
+      androidResolveQueue = null;
       service = BonsoirDiscoveryService(
         createBroadcast: (bonsoirService) {
           final fake = _FakeBonsoirBroadcast(bonsoirService)
@@ -51,8 +53,20 @@ void main() {
           return fake;
         },
         createDiscovery: (type) {
-          final fake = _FakeBonsoirDiscovery(type)
-            ..startError = discoveryStartError;
+          final queue = androidResolveQueue;
+          final owner = Object();
+          late _FakeBonsoirDiscovery fake;
+          fake = _FakeBonsoirDiscovery(
+            type,
+            resolver: queue == null
+                ? null
+                : _AndroidSerialResolver(
+                    queue,
+                    owner,
+                    (event) => fake.emit(event),
+                  ),
+            onStop: queue == null ? null : () => queue.dispose(owner),
+          )..startError = discoveryStartError;
           discoveries.add(fake);
           return fake;
         },
@@ -537,6 +551,178 @@ void main() {
         }
       },
     );
+
+    for (final scenario in [
+      (
+        name:
+            'A1 expired migration cache obtains a fresh target behind a wedged '
+            'unrelated native resolve within one 12s budget',
+        cacheAge: const Duration(seconds: 31),
+        releaseHead: false,
+      ),
+      (
+        name:
+            'A1 fresh 20s migration cache returns before an unrelated '
+            'wedged native resolve',
+        cacheAge: const Duration(seconds: 20),
+        releaseHead: false,
+      ),
+      (
+        name:
+            'A1 expired migration cache refreshes when the unrelated '
+            'native head completes before the 12s deadline',
+        cacheAge: const Duration(seconds: 31),
+        releaseHead: true,
+      ),
+    ]) {
+      test(scenario.name, () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        const targetId = 'account-migration-0123456789abcdef0123456789abcdef';
+        const targetName = 'mknoon-456789abcdef';
+        const unrelatedName = 'mknoon-unrelated';
+        const budget = Duration(
+          seconds: 12,
+        ); // Runtime's existing resolve budget.
+        final queue = _AndroidSerialResolveQueue(targetName);
+        androidResolveQueue = queue;
+        LocalPeer? result;
+        var completed = false;
+        Duration? completedAt;
+        late LocalPeer cached;
+        late List<String> queuedAtDeadline;
+        late List<String> startedAtDeadline;
+        late String? activeAtDeadline;
+
+        fakeAsync((clock) {
+          unawaited(service.startAdvertising('me-peer', 54321));
+          clock.flushMicrotasks();
+          discovery().emit(
+            BonsoirDiscoveryEvent(
+              type: BonsoirDiscoveryEventType.discoveryServiceFound,
+              service: BonsoirService(
+                name: targetName,
+                type: '_mknoon._tcp',
+                port: 51234,
+                attributes: const {'peerId': targetId},
+              ),
+            ),
+          );
+          clock.flushMicrotasks();
+          queue.resolveActive(targetName, host: '192.168.0.7', port: 51234);
+          clock.flushMicrotasks();
+          expect(service.getLocalPeer(targetId), isNotNull);
+
+          // Android can find a different service before its TXT/identity arrives.
+          // Its dispatch ACK succeeds; its native ResolveListener never calls back.
+          discovery().emit(
+            BonsoirDiscoveryEvent(
+              type: BonsoirDiscoveryEventType.discoveryServiceFound,
+              service: BonsoirService(
+                name: unrelatedName,
+                type: '_mknoon._tcp',
+                port: 0,
+              ),
+            ),
+          );
+          clock.flushMicrotasks();
+          expect(queue.activeName, unrelatedName);
+          expect(queue.nativeStarted, [targetName, unrelatedName]);
+
+          // DateTime.now is not advanced by fake_async. Back-date the actual
+          // cached endpoint to exercise production's real TTL predicate.
+          cached = LocalPeer(
+            peerId: targetId,
+            host: '192.168.0.7',
+            port: 51234,
+            discoveredAt: DateTime.now().toUtc().subtract(scenario.cacheAge),
+          );
+          service.debugSeedPeer(cached);
+          unawaited(
+            service.resolvePeer(targetId, timeout: budget).then((peer) {
+              result = peer;
+              completed = true;
+              completedAt = clock.elapsed;
+            }),
+          );
+          clock.flushMicrotasks();
+
+          if (scenario.cacheAge < LocalPeer.ttl) {
+            expect(completed, isTrue);
+            expect(result, same(cached));
+            expect(queue.queuedNames, isEmpty);
+          } else {
+            if (scenario.releaseHead) {
+              clock.elapse(const Duration(seconds: 4));
+              if (queue.activeName == unrelatedName) {
+                queue.failActive(unrelatedName);
+              }
+              clock.flushMicrotasks();
+            } else {
+              // Permit a real recovery to complete early; do not require the
+              // implementation to remain queued until its final deadline.
+              clock.elapse(budget);
+              clock.flushMicrotasks();
+            }
+          }
+          queuedAtDeadline = queue.queuedNames;
+          startedAtDeadline = List<String>.of(queue.nativeStarted);
+          activeAtDeadline = queue.activeName;
+        });
+
+        // Dispose mirrors the plugin queue cleanup, not NSD cancellation. Finish
+        // cleanup before the intentional RED assertion so failure leaks no timer.
+        await service.stopAdvertising();
+        expect(queue.queuedNames, isEmpty);
+        expect(
+          queue.activeName,
+          activeAtDeadline,
+          reason: 'Stopping browse does not cancel an active native resolve',
+        );
+        final evidence = {
+          'cacheAgeSeconds': scenario.cacheAge.inSeconds,
+          'completedAtMs': completedAt?.inMilliseconds,
+          'activeNativeService': activeAtDeadline,
+          'queuedServices': queuedAtDeadline,
+          'nativeStarted': startedAtDeadline,
+        }.toString();
+        expect(
+          completed,
+          isTrue,
+          reason:
+              'The complete app lookup must stay inside one 12s budget: $evidence',
+        );
+        expect(
+          completedAt!.inMicroseconds,
+          lessThanOrEqualTo(budget.inMicroseconds),
+        );
+        if (scenario.cacheAge < LocalPeer.ttl) {
+          expect(result, same(cached));
+          expect(completedAt, Duration.zero);
+        } else {
+          // Causal app-waiter regression, intentionally RED on unchanged source.
+          // A fresh native target dispatch receives a response, conditional on
+          // the platform accepting that separate request. The old hung listener
+          // survives disposal; this host test does not prove Android acceptance,
+          // cancellation, or end-to-end restart recovery.
+          expect(
+            result,
+            isNotNull,
+            reason:
+                'A1 must obtain a freshly resolved target within 12s: $evidence',
+          );
+          expect(
+            startedAtDeadline.where((name) => name == targetName).length,
+            greaterThanOrEqualTo(2),
+            reason: 'Fresh endpoint must follow a new native target dispatch',
+          );
+          expect(result!.host, '192.168.0.8');
+          expect(result!.port, 51235);
+          expect(result, isNot(same(cached)));
+          expect(result!.isStale(DateTime.now().toUtc()), isFalse);
+        }
+      });
+    }
 
     test(
       'early migration resolve accepts an HTTP peer without libp2p ports',
@@ -1569,16 +1755,150 @@ class _RecordingResolver with ServiceResolver {
   }
 }
 
+typedef _AndroidResolveRequest = ({
+  Object owner,
+  BonsoirService service,
+  void Function(BonsoirDiscoveryEvent) emit,
+});
+
+// Bounded A1 fault injection for bonsoir_android 5.1.6's companion queue.
+// Shared across replacement browser instances, with the plugin's logical busy
+// flag distinct from the still-active NsdManager ResolveListener. No target
+// result can be emitted unless that exact service reached native dispatch. A
+// separate newly dispatched call is conditionally accepted; neither rejection
+// nor cancellation of the old operation is inferred from the pinned source.
+class _AndroidSerialResolveQueue {
+  _AndroidSerialResolveQueue(this.targetName);
+
+  final String targetName;
+  final _queued = <_AndroidResolveRequest>[];
+  final nativeStarted = <String>[];
+  _AndroidResolveRequest? _nativeActive;
+  _AndroidResolveRequest? _retainedHungNative;
+  bool _busy = false;
+  int _targetDispatches = 0;
+
+  String? get activeName =>
+      _nativeActive?.service.name ?? _retainedHungNative?.service.name;
+  List<String> get queuedNames =>
+      _queued.map((request) => request.service.name).toList();
+
+  void admit(_AndroidResolveRequest request) {
+    if (_busy) {
+      _queued.add(request);
+    } else {
+      _busy = true;
+      _dispatch(request);
+    }
+  }
+
+  void _dispatch(_AndroidResolveRequest request) {
+    if (_nativeActive != null) {
+      // Disposing the old browser can clear the plugin busy bit without ending
+      // its active NSD operation. Retain that listener without assuming it makes
+      // the platform reject a genuinely new call. This bounded fixture has one
+      // hung unrelated operation plus the target's separate fresh attempt.
+      _retainedHungNative ??= _nativeActive;
+    }
+    _nativeActive = request;
+    nativeStarted.add(request.service.name);
+    if (request.service.name == targetName && ++_targetDispatches > 1) {
+      // The external target is reachable. Its NEW request can respond only
+      // after native dispatch, never while merely queued behind the hung head.
+      // Acceptance of that separate call is a host condition, not Android proof.
+      scheduleMicrotask(() {
+        if (_nativeActive == request) _nativeActive = null;
+        request.emit(
+          BonsoirDiscoveryEvent(
+            type: BonsoirDiscoveryEventType.discoveryServiceResolved,
+            service: request.service.copyWith(host: '192.168.0.8', port: 51235),
+          ),
+        );
+        _advance();
+      });
+    }
+  }
+
+  _AndroidResolveRequest _takeActive(String expectedName) {
+    final request = _nativeActive;
+    if (request != null && request.service.name == expectedName) {
+      _nativeActive = null;
+      return request;
+    }
+    final retained = _retainedHungNative;
+    if (retained != null && retained.service.name == expectedName) {
+      _retainedHungNative = null;
+      return retained;
+    }
+    throw StateError('Cannot complete $expectedName before native dispatch');
+  }
+
+  void resolveActive(String name, {required String host, required int port}) {
+    final request = _takeActive(name);
+    request.emit(
+      BonsoirDiscoveryEvent(
+        type: BonsoirDiscoveryEventType.discoveryServiceResolved,
+        service: request.service.copyWith(host: host, port: port),
+      ),
+    );
+    _advance();
+  }
+
+  void failActive(String name) {
+    final request = _takeActive(name);
+    request.emit(
+      BonsoirDiscoveryEvent(
+        type: BonsoirDiscoveryEventType.discoveryServiceResolveFailed,
+        service: request.service,
+      ),
+    );
+    _advance();
+  }
+
+  void _advance() {
+    if (_queued.isEmpty) {
+      _busy = false;
+    } else {
+      _dispatch(_queued.removeAt(0));
+    }
+  }
+
+  void dispose(Object owner) {
+    _queued.removeWhere((request) => identical(request.owner, owner));
+    if (_queued.isEmpty) _busy = false;
+    // Native source never calls a resolve-cancellation API here.
+  }
+}
+
+class _AndroidSerialResolver extends _RecordingResolver {
+  _AndroidSerialResolver(this.queue, this.owner, this.emit);
+
+  final _AndroidSerialResolveQueue queue;
+  final Object owner;
+  final void Function(BonsoirDiscoveryEvent) emit;
+
+  @override
+  Future<void> resolveService(BonsoirService service) {
+    resolved.add(service);
+    queue.admit((owner: owner, service: service, emit: emit));
+    // The method channel ACKs admission immediately; native completion is an
+    // independent event, not a future that a Dart .timeout can cancel.
+    return Future<void>.value();
+  }
+}
+
 class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   @override
   final String type;
-  final resolver = _RecordingResolver();
+  final _RecordingResolver resolver;
+  final void Function()? onStop;
   final _controller = StreamController<BonsoirDiscoveryEvent>.broadcast();
   int startCalls = 0;
   int stopCalls = 0;
   Object? startError;
 
-  _FakeBonsoirDiscovery(this.type);
+  _FakeBonsoirDiscovery(this.type, {_RecordingResolver? resolver, this.onStop})
+    : resolver = resolver ?? _RecordingResolver();
 
   void emit(BonsoirDiscoveryEvent event) {
     if (!_controller.isClosed) {
@@ -1614,6 +1934,7 @@ class _FakeBonsoirDiscovery implements BonsoirDiscovery {
   @override
   Future<void> stop() async {
     stopCalls++;
+    onStop?.call();
     await _controller.close();
   }
 }
