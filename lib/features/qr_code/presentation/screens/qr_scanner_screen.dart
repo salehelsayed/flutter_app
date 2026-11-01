@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -65,7 +67,8 @@ class QRScannerScreen extends StatefulWidget {
   State<QRScannerScreen> createState() => _QRScannerScreenState();
 }
 
-class _QRScannerScreenState extends State<QRScannerScreen> {
+class _QRScannerScreenState extends State<QRScannerScreen>
+    with WidgetsBindingObserver {
   final MobileScannerController _controller = MobileScannerController(
     cameraResolution: const Size(1280, 720),
     detectionSpeed: DetectionSpeed.noDuplicates,
@@ -80,14 +83,45 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_onScannerState);
+  }
+
+  // Coming back from Settings: retry once the OS reports access.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _cameraDenied) {
+      unawaited(_retryAfterSettings());
+    }
+  }
+
+  Future<void> _retryAfterSettings() async {
+    final denied = await widget.isCameraDenied().catchError((_) => true);
+    if (denied || !mounted || !_cameraDenied) return;
+    setState(() {
+      _cameraDenied = false;
+      _cameraDeniedChecked = false;
+    });
+    try {
+      await _controller.start();
+    } on MobileScannerException {
+      // The listener reads the new error state.
+    }
   }
 
   // iOS can report a refused camera as a generic start error, so any start
   // error asks the OS once.
   Future<void> _onScannerState() async {
-    final error = _controller.value.error;
-    if (error == null || _cameraDenied || _cameraDeniedChecked) return;
+    final value = _controller.value;
+    final error = value.error;
+    if (error == null) {
+      _cameraDeniedChecked = false;
+      if (_cameraDenied && value.isRunning && mounted) {
+        setState(() => _cameraDenied = false);
+      }
+      return;
+    }
+    if (_cameraDenied || _cameraDeniedChecked) return;
     _cameraDeniedChecked = true;
     final denied =
         error.errorCode == MobileScannerErrorCode.permissionDenied ||
@@ -97,6 +131,7 @@ class _QRScannerScreenState extends State<QRScannerScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onScannerState);
     _controller.dispose();
     super.dispose();
