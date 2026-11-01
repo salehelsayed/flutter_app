@@ -188,6 +188,8 @@ final class CallCoordinator {
   Future<void>? _disposeInFlight;
   Completer<void>? _shutdownDeadline;
   Timer? _shutdownDeadlineTimer;
+  CallTimerHandle? _checkpointRefreshTimer;
+  Future<void>? _checkpointRefreshWrite;
   final Set<Future<void>> _inFlightTerminalDeliveries = <Future<void>>{};
   int _internalFailureCount = 0;
   _CallPreparationInterruption? _preparationInterruption;
@@ -430,6 +432,9 @@ final class CallCoordinator {
   }) async {
     if (reduction.decision != CallEventDecision.applied) return reduction;
     final snapshot = reduction.snapshot;
+    if (snapshot.state != CallState.connected) {
+      _cancelCheckpointRefresh();
+    }
     _active = snapshot;
     _last = snapshot;
     final persist = persistActiveCall;
@@ -572,6 +577,7 @@ final class CallCoordinator {
     if (terminalDeliveries.isNotEmpty) {
       await Future.wait<void>(terminalDeliveries);
     }
+    _armCheckpointRefresh();
     if (firstEffectError != null) {
       Error.throwWithStackTrace(firstEffectError!, firstEffectStack!);
     }
@@ -817,7 +823,81 @@ final class CallCoordinator {
     }
   }
 
+  void _armCheckpointRefresh() {
+    final snapshot = _active;
+    final persist = persistActiveCall;
+    if (_disposed ||
+        _disposing ||
+        snapshot == null ||
+        snapshot.state != CallState.connected ||
+        persist == null ||
+        _checkpointRefreshTimer != null ||
+        _checkpointRefreshWrite != null) {
+      return;
+    }
+    final callId = snapshot.callId!;
+    late final CallTimerHandle timer;
+    timer = _timerScheduler.schedule(const Duration(seconds: 10), () {
+      if (!identical(_checkpointRefreshTimer, timer)) {
+        return Future<void>.value();
+      }
+      final scheduled = _tail.then<void>((_) async {
+        if (!identical(_checkpointRefreshTimer, timer)) return;
+        _checkpointRefreshTimer = null;
+        final current = _active;
+        if (_disposed ||
+            _disposing ||
+            current?.callId != callId ||
+            current?.state != CallState.connected) {
+          return;
+        }
+        try {
+          final now = clock().toUtc();
+          final write = persist(
+            current!.copyWith(
+              observedAt: now.isBefore(current.observedAt)
+                  ? current.observedAt
+                  : now,
+            ),
+          );
+          _checkpointRefreshWrite = write;
+          void completed() {
+            if (!identical(_checkpointRefreshWrite, write)) return;
+            _checkpointRefreshWrite = null;
+            _armCheckpointRefresh();
+          }
+
+          // Timeout releases the lane, but only actual I/O completion releases
+          // the write guard and permits the current connected owner to refresh.
+          unawaited(
+            write.then<void>(
+              (_) => completed(),
+              onError: (Object _, StackTrace _) => completed(),
+            ),
+          );
+          await write.timeout(effectTimeout);
+        } catch (_) {
+          _reportInternalFailure(
+            CallCoordinatorInternalFailure.timerDispatchFailed,
+          );
+          // A synchronous failure has no pending I/O; a timed-out operation
+          // keeps its guard until the actual future completes.
+          _armCheckpointRefresh();
+        }
+      });
+      _tail = scheduled;
+      return scheduled;
+    });
+    _checkpointRefreshTimer = timer;
+  }
+
+  void _cancelCheckpointRefresh() {
+    _checkpointRefreshTimer?.cancel();
+    _checkpointRefreshTimer = null;
+  }
+
   void _cancelTimers() {
+    _cancelCheckpointRefresh();
     for (final timer in _timers.values) {
       timer.cancel();
     }
@@ -847,6 +927,7 @@ final class CallCoordinator {
     final inFlight = _disposeInFlight;
     if (inFlight != null) return inFlight;
     _disposing = true;
+    _cancelCheckpointRefresh();
     final deadline = Completer<void>();
     _shutdownDeadline = deadline;
     _shutdownDeadlineTimer = Timer(_shutdownTerminalBudget, () {

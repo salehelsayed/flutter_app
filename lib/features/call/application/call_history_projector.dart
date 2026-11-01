@@ -88,6 +88,7 @@ final class CallHistoryProjector {
   }
 
   static CallHistoryStatus _status(CallSessionSnapshot snapshot) {
+    if (snapshot.connectedAt != null) return CallHistoryStatus.completed;
     switch (snapshot.endReason!) {
       case CallEndReason.expired:
         return CallHistoryStatus.missed;

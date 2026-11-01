@@ -99,6 +99,7 @@ final class ActiveCallHistoryCheckpoint {
       throw StateError('call checkpoint authority revoked');
     }
     final prior = await _read();
+    var observedAt = snapshot.observedAt;
     if (prior != null) {
       if (prior['call_id'] != snapshot.callId!.value) {
         await _settle(prior);
@@ -107,6 +108,14 @@ final class ActiveCallHistoryCheckpoint {
           prior['contact'] != context.remoteAccountPeerId ||
           prior['remote_device'] != context.remoteDevicePeerId) {
         throw StateError('call checkpoint authority changed');
+      } else {
+        // A delayed state event cannot shorten a newer live observation.
+        final priorObservation = DateTime.parse(
+          prior['observed_at']! as String,
+        );
+        if (priorObservation.isAfter(observedAt)) {
+          observedAt = priorObservation;
+        }
       }
     }
     await secureKeyStore.write(
@@ -121,7 +130,7 @@ final class ActiveCallHistoryCheckpoint {
         'direction': snapshot.direction!.name,
         'started_at': snapshot.startedAt!.toIso8601String(),
         'connected_at': snapshot.connectedAt?.toIso8601String(),
-        'observed_at': snapshot.observedAt.toIso8601String(),
+        'observed_at': observedAt.toIso8601String(),
       }),
     );
   });

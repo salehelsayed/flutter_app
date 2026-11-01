@@ -8075,6 +8075,34 @@ visible and cannot become an ordinary first-attempt PASS.
   lint failures remain with the RED/GREEN receipts under
   `.codex-test-logs/vc026-20261101/`. Existing native/device evidence below
   proves its own recovery boundaries and does not certify this new history fix.
+  Quiet connected calls now refresh only their history checkpoint every ten
+  seconds through the existing coordinator timer and serialized lane. The
+  canonical snapshot and UI stream stay unchanged. A timed-out refresh keeps
+  ownership of its actual storage future, so more ticks cannot queue writes;
+  terminal/disposal stops the timer and late completion cannot restart that call.
+  Same-call authority-validated saves preserve the newer stored observation
+  when an older state event arrives. A connected terminal projects completed
+  before interpreting `noAnswer` or `expired`; never-connected statuses retain
+  their existing meaning. The focused follow-up baseline passes fifteen cases
+  and fails seven; all twenty-two pass after the fix, including real SQLite
+  recovery of a 30-second cutoff, authority revocation and stalled I/O controls.
+  This remains a last-observation duration: unobserved process-dead time and the
+  survivor's reconnect timeout do not belong to the killed side's talk duration.
+  Fresh device proof for this follow-up is pending. Evidence is under
+  `.codex-test-logs/vc026-connected-20261101/` in the
+  `vc026-connected-checkpoint-20261101` worktree.
+  **Later — headless-intake ordering:** source inspection for build 193's
+  intermittent killed-caller “Missed voice call” found that an authenticated
+  terminal-only headless page can first-write an incoming, never-connected
+  history row before foreground checkpoint recovery. Insert-only projection
+  then retains that row. The A4 database fields were not retained, so this is
+  a source-supported candidate for that device result. This follow-up is
+  deferred by coordinator decision `m-cfe472ec`; the current change is limited
+  to connected checkpoint refresh and connected-status precedence. The smallest
+  later option settles only the authenticated terminal's exact call-ID, handle,
+  account and device checkpoint before headless fallback, reusing transactional
+  authority checks. Revocation or I/O failure must not fall through into a new
+  incoming row; unrelated checkpoints and existing rows keep their protections.
   **VC-026 process-loss candidate:** owner-approved task `m-ea6ea1ed`, based
   on RCA SHA256 `66974a7ebb2156d7466a46d4877b0acb12f382a6d6f06cbb3175cc368b35b4de`,
   adds fresh-native-controller reconciliation for a persisted ADOPTED journal.
