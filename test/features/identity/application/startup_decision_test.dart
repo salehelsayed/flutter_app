@@ -5,8 +5,11 @@ import 'package:flutter_app/features/account_migration/domain/repositories/accou
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
+import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -114,6 +117,66 @@ void main() {
     identityRepo = _FakeIdentityRepository();
     contactRepo = _FakeContactRepository();
     authorityRepo = _FakeAccountMigrationAuthorityRepository();
+  });
+
+  group('LL-36 persisted account startup', () {
+    for (final state in ['empty', 'intact', 'missing secrets']) {
+      test('$state cannot be confused with a different account state', () async {
+        final identity = _makeIdentity();
+        final keyStore = FakeSecureKeyStore();
+        final Map<String, Object?>? row = state == 'empty'
+            ? null
+            : {
+                'peer_id': identity.peerId,
+                'public_key': identity.publicKey,
+                'created_at': identity.createdAt,
+                'updated_at': identity.updatedAt,
+              };
+        if (state == 'intact') {
+          await keyStore.write(
+            identityPrivateKeyStorageKey,
+            identity.privateKey,
+          );
+          await keyStore.write(
+            identityMnemonic12StorageKey,
+            identity.mnemonic12,
+          );
+        }
+        var identityWrites = 0;
+        final repository = IdentityRepositoryImpl(
+          dbLoadIdentityRow: () async => row,
+          dbUpsertIdentityRow: (_) async {
+            identityWrites++;
+          },
+          secureKeyStore: keyStore,
+        );
+        contactRepo.contactCountResult = state == 'empty' ? 0 : 1;
+
+        final decision = await decideStartupRoute(
+          identityRepo: repository,
+          contactRepo: contactRepo,
+        );
+
+        expect(identityWrites, 0);
+        if (state == 'missing secrets') {
+          expect(row?['peer_id'], identity.peerId);
+          expect(
+            decision,
+            isNot(StartupDecision.needsIdentity),
+            reason:
+                'an existing account whose keys are unavailable must not offer '
+                'fresh onboarding over its retained account data',
+          );
+        } else {
+          expect(
+            decision,
+            state == 'empty'
+                ? StartupDecision.needsIdentity
+                : StartupDecision.hasIdentityWithContacts,
+          );
+        }
+      });
+    }
   });
 
   group('decideStartupRoute', () {
