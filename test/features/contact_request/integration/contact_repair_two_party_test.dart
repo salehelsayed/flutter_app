@@ -1,3 +1,8 @@
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import '../../../core/bridge/fake_bridge.dart' show PassthroughCryptoBridge;
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
 import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
 import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
@@ -118,7 +123,17 @@ final class _Phone {
     TestEd25519Identity peer,
     FakeP2PNetwork network,
     _Clock clock,
-  ) async => _Phone._(me, peer, await openRepairTestDatabase(), network, clock);
+  ) async {
+    // Reuse the established production-SQL message fixture so the key repair
+    // and its original failed message share one database and real mutations.
+    final fixture = await MediaRepositoryRealDbFixture.create(
+      databaseFactoryOverride: databaseFactoryFfiNoIsolate,
+      singleInstance: false,
+    );
+    final phone = _Phone._(me, peer, fixture.db, network, clock);
+    phone.messages = fixture.messageRepo;
+    return phone;
+  }
 
   final TestEd25519Identity me;
   final TestEd25519Identity peer;
@@ -127,6 +142,7 @@ final class _Phone {
   final _Clock clock;
   final ContactRepositoryImpl contacts;
   final SqlContactRepairRepository repair;
+  late final MessageRepositoryImpl messages;
   final requests = InMemoryContactRequestRepository();
   final grants = InMemoryReceivedCallWakeHandleStore();
   final identities = FakeIdentityRepository();
@@ -264,6 +280,38 @@ void main() {
       await b.contacts.addContact(contactFor(_aId));
       expect(await a.mlKemOfPeer(), 'mlkem-${_bId.peerId}');
       expect(await b.mlKemOfPeer(), isNull);
+      const originalMessageId = 'missing-key-original-message';
+      final originalTimestamp = DateTime.now().toUtc().toIso8601String();
+      await b.messages.saveMessage(
+        ConversationMessage(
+          id: originalMessageId,
+          contactPeerId: _aId.peerId,
+          senderPeerId: _bId.peerId,
+          text: 'original pending text',
+          timestamp: originalTimestamp,
+          createdAt: originalTimestamp,
+          status: 'failed',
+          isIncoming: false,
+        ),
+      );
+      final chatCrypto = PassthroughCryptoBridge();
+      Future<int> retryOriginalMessage() => retryFailedMessages(
+        messageRepo: b.messages,
+        identityRepo: b.identities,
+        contactRepo: b.contacts,
+        p2pService: b.p2p,
+        bridge: chatCrypto,
+      );
+      final deliveriesBefore = network.deliverCallCount;
+      final storesBefore = network.storeInInboxCallCount;
+      expect(await retryOriginalMessage(), 0);
+      expect(chatCrypto.sentMessages, isEmpty);
+      expect(network.deliverCallCount, deliveriesBefore);
+      expect(network.storeInInboxCallCount, storesBefore);
+      expect(
+        (await b.messages.getMessage(originalMessageId))?.status,
+        'failed',
+      );
       final bRoster = DatabaseCallTrustedRosterProvider(b.db);
       final roster = await bRoster.loadForContact(_aId.peerId);
       expect(roster.contactAccepted, isTrue);
@@ -402,6 +450,53 @@ void main() {
         expect(a.bridge.encrypts, hasLength(1));
         expect(b.bridge.encrypts, hasLength(1));
         expect(await b.db.query('contact_requests'), isEmpty);
+
+        // The contact-request ACK helper expects a cwr-bearing envelope. For
+        // ordinary text use the existing fake's explicit live delivery ACK.
+        // This proves sender settlement, not a production receiver commit.
+        b.p2p.directReplyBuilder = null;
+        b.p2p.connectedPeers.add(_aId.peerId);
+        b.p2p.transportMode = 'direct';
+        b.p2p.reportTransportMode = true;
+        final storesAfterRepair = network.storeInInboxCallCount;
+        expect(await retryOriginalMessage(), 1);
+        final encrypts = chatCrypto.sentMessages
+            .map((wire) => jsonDecode(wire) as Map)
+            .where((request) => request['cmd'] == 'message.encrypt')
+            .toList();
+        expect(encrypts, hasLength(1));
+        final encryption = encrypts.single['payload'] as Map;
+        expect(
+          encryption['recipientPublicKey'],
+          'mlkem-${_aId.peerId}',
+          reason:
+              'the retry must reread the key installed by the real listener',
+        );
+        expect(
+          (jsonDecode(encryption['plaintext'] as String) as Map)['id'],
+          originalMessageId,
+        );
+        final delivered = await b.messages.getMessage(originalMessageId);
+        expect(delivered?.id, originalMessageId);
+        expect(delivered?.timestamp, originalTimestamp);
+        expect(delivered?.status, 'delivered');
+        expect(delivered?.transport, 'direct');
+        expect(delivered?.wireEnvelope, isNull);
+        expect(network.storeInInboxCallCount, storesAfterRepair);
+        expect(await b.messages.getFailedOutgoingMessages(), isEmpty);
+        final deliveriesAfter = network.deliverCallCount;
+        expect(await retryOriginalMessage(), 0);
+        expect(network.deliverCallCount, deliveriesAfter);
+        expect(
+          chatCrypto.sentMessages.where(
+            (wire) => (jsonDecode(wire) as Map)['cmd'] == 'message.encrypt',
+          ),
+          hasLength(1),
+        );
+        expect(
+          (await b.db.query('messages', columns: ['id'])).single['id'],
+          originalMessageId,
+        );
       } finally {
         await replySubscription.cancel();
         receiver.dispose();

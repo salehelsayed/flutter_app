@@ -485,7 +485,13 @@ authenticated receive facts, not the receipt-challenge flag: a request may
 carry a grant without a challenge and must retain the exact-receipt gate.
 The two-party regression uses the production empty-roster condition and
 unmarked rollout path; the grant-without-challenge sentinel preserves ACK and
-storage while forbidding reciprocity. Blocked/withdrawn policy and marked
+storage while forbidding reciprocity. Its composed retry also proves that the
+same failed SQL message remains untouched without the key, then rereads the
+installed key and settles as delivered after an explicit fake live ACK, with
+no duplicate message or second send. This is sender settlement with fake
+crypto/transport, not a production receiver commit. Each peer must have an
+independent SQL database: the shared media fixture's default single-instance
+in-memory connection otherwise aliases both peers. Blocked/withdrawn policy and marked
 repair remain unchanged. This proof covers direct authenticated retries, not
 inbox-only recovery or the affected store device's unknown consent state.
 First failures and preservation evidence are retained in

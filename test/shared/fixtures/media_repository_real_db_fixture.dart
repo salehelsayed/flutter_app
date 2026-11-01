@@ -56,6 +56,7 @@ class MediaRepositoryRealDbFixture {
 
   static Future<MediaRepositoryRealDbFixture> create({
     String databasePath = inMemoryDatabasePath,
+    bool singleInstance = true,
     DatabaseFactory? databaseFactoryOverride,
     Future<int> Function(String peerId)? projectConversationRead,
     RecordingSecureKeyStore? secureKeyStore,
@@ -108,6 +109,7 @@ class MediaRepositoryRealDbFixture {
           databasePath,
           options: OpenDatabaseOptions(
             version: currentIdentityDatabaseVersion,
+            singleInstance: singleInstance,
             onCreate: runProductionOnCreate,
             onUpgrade: runProductionOnUpgrade,
           ),
