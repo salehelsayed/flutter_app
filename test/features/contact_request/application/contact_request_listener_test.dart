@@ -1582,6 +1582,44 @@ void main() {
       },
     );
 
+    test('carried wake grant without receipt challenge never solicits reciprocity', () async {
+      contactRepo.addTestContact(ContactModel(
+        peerId: _testPeerId,
+        publicKey: _testPublicKey,
+        rendezvous: '/addr',
+        username: 'TestUser',
+        signature: 'sig',
+        scannedAt: '2024-01-01T00:00:00Z',
+      ));
+      final order = <String>[];
+      bridge.onSend = (request) {
+        if (request['cmd'] == 'message:confirm') order.add('ack');
+      };
+      final store = _FakeReceivedCallWakeHandleStore();
+      final grant = wakeGrant();
+      final l = makeListener(
+        receivedCallWakeHandleStore: store,
+        prepareCallWakeReply: () async => order.add('prepare'),
+        requestReciprocalCallWakeRecovery: (_) async => order.add('recover'),
+      );
+      addTearDown(l.dispose);
+      final result = await l.processIncomingMessage(makeV2(
+        confirmNonce: 'nonce-grant-without-challenge',
+        intent: 'key_exchange_retry',
+        callWakeHandle: grant,
+        // An authenticated cwh is allowed without cwr for compatibility,
+        // but its absent receipt must not be mistaken for an absent grant.
+      ));
+      expect(result, HandleMessageResult.alreadyContact);
+      expect(await store.readForIssuer(_testPeerId), grant);
+      expect(bridge.confirmRequests.single['payload'], <String, dynamic>{
+        'nonce': 'nonce-grant-without-challenge',
+        'ok': true,
+      });
+      expect(order, ['ack'],
+          reason: 'carried grants retain the exact-receipt prerequisite');
+    });
+
     // Owner decision A: an authenticated, unmarked legacy key-exchange retry
     // is ACKed with its exact receipt first, then gets exactly one reciprocal.
     for (final reciprocalReply in [false, true]) {
