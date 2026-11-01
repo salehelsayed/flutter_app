@@ -15,6 +15,7 @@ import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
@@ -44,6 +45,7 @@ import 'package:flutter_app/features/call/application/voice_call_feature_flags.d
 import 'package:flutter_app/features/call/data/call_history_repository.dart';
 import 'package:flutter_app/features/call/domain/call_engine.dart';
 import 'package:flutter_app/features/call/domain/call_id.dart';
+import 'package:flutter_app/features/call/domain/call_signal.dart';
 import 'package:flutter_app/features/call/domain/call_event.dart';
 import 'package:flutter_app/features/call/domain/call_session_snapshot.dart';
 import 'package:flutter_app/features/call/domain/call_end_reason.dart';
@@ -458,7 +460,338 @@ Future<void> _pumpCallLifecycle(
   }
 }
 
+final class _StalledCallCheckpointStore extends FakeSecureKeyStore {
+  _StalledCallCheckpointStore(this.operation);
+
+  final String operation;
+  final entered = Completer<void>();
+  final release = Completer<void>();
+
+  Future<void> _hold(String current) async {
+    if (operation != current || entered.isCompleted) return;
+    entered.complete();
+    await release.future;
+  }
+
+  @override
+  Future<String?> read(String key) async {
+    await _hold('read');
+    return super.read(key);
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    await _hold('write');
+    await super.write(key, value);
+  }
+}
+
+final class _CapturedFirstCallCheckpointStore extends FakeSecureKeyStore {
+  final written = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> write(String key, String value) async {
+    await super.write(key, value);
+    if (key == 'vc2_active_call_history_v1' && !written.isCompleted) {
+      written.complete();
+      await release.future;
+    }
+  }
+}
+
 void main() {
+  for (final change in ['rekey', 'delete and re-add']) {
+    test(
+      'VC-026 admission witness survives $change during authenticated native name wait',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'vc026-admission-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final database = await _openKilledCallDatabase(
+          '${directory.path}/original.sqlite',
+        );
+        addTearDown(() async {
+          if (database.isOpen) await database.close();
+        });
+        await database.insert('identity', <String, Object?>{
+          'id': 1,
+          'peer_id': 'local-account',
+          'public_key': 'local-public-key',
+          'username': 'Local',
+          'private_key': null,
+          'mnemonic12': null,
+          'ml_kem_public_key': 'local-mlkem-public-key',
+          'ml_kem_secret_key': null,
+          'created_at': '2026-08-30T00:00:00.000Z',
+          'updated_at': '2026-08-30T00:00:00.000Z',
+        });
+        await database.insert('contacts', <String, Object?>{
+          'peer_id': 'remote-account',
+          'public_key': 'remote-public-key',
+          'ml_kem_public_key': 'remote-mlkem-public-key',
+          'rendezvous': 'fixture-rendezvous',
+          'username': 'Remote contact',
+          'signature': 'fixture-signature',
+          'scanned_at': '2026-08-30T00:00:00.000Z',
+          'is_blocked': 0,
+        });
+        final originalConsent = (await database.query(
+          'contact_relationship_consent',
+          where: 'peer_id = ?',
+          whereArgs: ['remote-account'],
+        )).single['revision'];
+        final originalFingerprint = computeDirectContactLegacyTargetFingerprint(
+          contactAccountPeerId: 'remote-account',
+          accountSigningPublicKey: 'remote-public-key',
+          legacyMlKemPublicKey: 'remote-mlkem-public-key',
+        );
+        final keys = _CapturedFirstCallCheckpointStore();
+        final authenticated = Completer<void>();
+        final releaseNative = Completer<void>();
+        final terminal = Completer<void>();
+        final fixture = await _createProductionIosFixture(
+          databaseOverride: database,
+          privacyStore: keys,
+          callEngineFactory: (_) => _ProcessLossEngine(),
+          lifecycleOverride: (method, _) async {
+            if (method == 'updateAuthenticatedContact' &&
+                !authenticated.isCompleted) {
+              authenticated.complete();
+              await releaseNative.future;
+            }
+            return null;
+          },
+        );
+        await fixture.composition.start();
+        final graph = fixture.graphs.single;
+        final subscription = graph.coordinator.snapshots.listen((snapshot) {
+          if (snapshot.callId == _callA &&
+              snapshot.isTerminal &&
+              !terminal.isCompleted) {
+            terminal.complete();
+          }
+        });
+        try {
+          final signal = CallSignal.create(
+            callId: _callA,
+            messageId: '00000000-0000-4000-8000-000000000023',
+            event: CallSignalType.invite,
+            senderAccountPeerId: 'remote-account',
+            senderDevicePeerId: 'remote-account',
+            recipientAccountPeerId: 'local-account',
+            recipientDevicePeerId: 'local-account',
+            senderSequence: 1,
+            iceGeneration: 0,
+            createdAtMs: 2_000_000,
+            expiresAtMs: 2_045_000,
+          );
+          fixture.bridge.responses['payload.verify'] = {
+            'ok': true,
+            'valid': true,
+          };
+          fixture.bridge.responses['message.decrypt'] = {
+            'ok': true,
+            'plaintext': jsonEncode(signal.toMap()),
+          };
+          fixture.p2p.messages.add(
+            ChatMessage(
+              from: 'remote-account',
+              to: 'local-account',
+              content: jsonEncode({
+                'type': 'call_signal',
+                'version': '1',
+                'message_id': signal.messageId,
+                'call_handle': '33333333-3333-4333-8333-333333333333',
+                'expires_at_ms': signal.expiresAtMs,
+                'kem': base64Encode([1]),
+                'ciphertext': base64Encode([2]),
+                'nonce': base64Encode([3]),
+                'signature': base64Encode([4]),
+              }),
+              timestamp: _callNow.toIso8601String(),
+              isIncoming: true,
+              transport: 'direct',
+            ),
+          );
+          await authenticated.future.timeout(const Duration(seconds: 2));
+          expect(await keys.read('vc2_active_call_history_v1'), isNull);
+          if (change == 'rekey') {
+            await database.update(
+              'contacts',
+              {'public_key': 'replacement-remote-key'},
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            );
+          } else {
+            final contact = (await database.query(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            )).single;
+            await database.delete(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: ['remote-account'],
+            );
+            await database.insert('contacts', contact);
+          }
+          releaseNative.complete();
+          await Future.any<void>([
+            keys.written.future,
+            terminal.future,
+          ]).timeout(const Duration(seconds: 2));
+          final raw = await keys.read('vc2_active_call_history_v1');
+          if (raw != null) {
+            final record = jsonDecode(raw) as Map<String, dynamic>;
+            expect(
+              record['remote_fingerprint'],
+              originalFingerprint,
+              reason:
+                  'the first checkpoint cannot adopt keys that did not authenticate this invite',
+            );
+            expect(
+              record['relationship_revision'],
+              originalConsent,
+              reason:
+                  'the first checkpoint cannot renew a deleted relationship',
+            );
+          }
+
+          final captured = FakeSecureKeyStore();
+          for (final entry in (await keys.readAll()).entries) {
+            await captured.write(entry.key, entry.value);
+          }
+          final snapshotPath = '${directory.path}/at-kill.sqlite';
+          await database.execute('VACUUM INTO ?', [snapshotPath]);
+          keys.release.complete();
+          await fixture.composition.shutdown();
+          final restoredDatabase = await _openKilledCallDatabase(snapshotPath);
+          try {
+            final existingRows = await restoredDatabase.query('call_history');
+            final restored = await _createProductionIosFixture(
+              databaseOverride: restoredDatabase,
+              privacyStore: captured,
+              clockMs: () => 2_120_000,
+            );
+            try {
+              await restored.composition.start();
+              expect(
+                await restoredDatabase.query('call_history'),
+                existingRows,
+                reason:
+                    'restart cannot recover this invite under replacement authority',
+              );
+              expect(restored.graphs.single.coordinator.activeSession, isNull);
+            } finally {
+              await restored.composition.shutdown();
+            }
+          } finally {
+            if (restoredDatabase.isOpen) await restoredDatabase.close();
+          }
+        } finally {
+          if (!releaseNative.isCompleted) releaseNative.complete();
+          if (!keys.release.isCompleted) keys.release.complete();
+          await subscription.cancel();
+          await fixture.composition.shutdown();
+        }
+      },
+    );
+  }
+
+  for (final operation in ['read', 'write']) {
+    test(
+      'VC-026 stalled checkpoint $operation cannot block hangup or dispose',
+      () {
+        fakeAsync((time) {
+          final store = _StalledCallCheckpointStore(operation);
+          var cleanupCalls = 0;
+          Object? admissionFailure;
+          var admissionSettled = false;
+          var hangupSettled = false;
+          var disposed = false;
+          final coordinator = CallCoordinator(
+            reducer: const CallReducer(),
+            cleanupCoordinator: CallCleanupCoordinator([
+              CallCleanupStep('release_media', (_) async => cleanupCalls++),
+            ]),
+            historyProjector: CallHistoryProjector(
+              _UnusedCallHistoryRepository(),
+            ),
+            clock: () => _callNow,
+            idSource: () => _callA,
+            effectTimeout: const Duration(milliseconds: 10),
+            terminalHistoryTimeout: const Duration(milliseconds: 10),
+            persistActiveCall: (snapshot) async {
+              await store.read('vc2_active_call_history_v1');
+              await store.write(
+                'vc2_active_call_history_v1',
+                snapshot.callId!.value,
+              );
+            },
+          );
+          unawaited(
+            coordinator
+                .placeCall(
+                  contactPeerId: 'remote-account',
+                  localAccountPeerId: 'local-account',
+                  localDeviceId: 'local-account',
+                )
+                .then<void>(
+                  (_) {
+                    admissionSettled = true;
+                  },
+                  onError: (Object error) {
+                    admissionFailure = error;
+                    admissionSettled = true;
+                  },
+                ),
+          );
+          time.flushMicrotasks();
+          expect(store.entered.isCompleted, isTrue);
+          unawaited(
+            coordinator
+                .dispatch(
+                  CallEvent(
+                    type: CallEventType.end,
+                    eventId: 'vc026-hangup-during-checkpoint-$operation',
+                    occurredAt: _callNow,
+                    callId: _callA,
+                  ),
+                )
+                .then<void>((_) {
+                  hangupSettled = true;
+                }),
+          );
+          unawaited(
+            coordinator.dispose().then<void>((_) {
+              disposed = true;
+            }),
+          );
+          try {
+            time.elapse(const Duration(milliseconds: 11));
+            time.flushMicrotasks();
+            expect(
+              disposed,
+              isTrue,
+              reason:
+                  'checkpoint I/O must obey the existing effect budget so terminal cleanup can advance',
+            );
+            expect(cleanupCalls, 1);
+            expect(coordinator.activeSession, isNull);
+            expect(admissionFailure, isA<TimeoutException>());
+            expect(admissionSettled, isTrue);
+            expect(hangupSettled, isTrue);
+          } finally {
+            store.release.complete();
+            time.flushMicrotasks();
+          }
+        });
+      },
+    );
+  }
+
   for (final scenario in [
     'ringing',
     'connected',
@@ -7056,6 +7389,7 @@ final class _ProductionIosFixture {
     required this.graphs,
     required this.issuedCallWakeHandleStore,
     required this.receivedCallWakeHandleStore,
+    required this.p2p,
   });
 
   final CallSignalingComposition composition;
@@ -7066,6 +7400,7 @@ final class _ProductionIosFixture {
   final List<ProductionCallSignalingGraph> graphs;
   final IssuedCallWakeHandleStore issuedCallWakeHandleStore;
   final ReceivedCallWakeHandleStoreImpl receivedCallWakeHandleStore;
+  final _P2P p2p;
 }
 
 Future<_ProductionIosFixture> _createProductionIosFixture({
@@ -7280,6 +7615,7 @@ Future<_ProductionIosFixture> _createProductionIosFixture({
     graphs: graphs,
     issuedCallWakeHandleStore: issuedStore ?? callWakeStores.issued,
     receivedCallWakeHandleStore: callWakeStores.received,
+    p2p: p2p,
   );
 }
 
