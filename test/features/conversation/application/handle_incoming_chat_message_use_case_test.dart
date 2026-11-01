@@ -20,6 +20,8 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
+    as receipt_sender;
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -28,7 +30,9 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
+import '../../../core/services/fake_p2p_service.dart' as receipt_transport;
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
@@ -721,6 +725,111 @@ void main() {
     contactRepo = FakeContactRepository(existingPeerIds: {senderPeerId});
     messageRepo = FakeMessageRepository();
   });
+
+  for (final receiptOutcome in ['failed', 'stored', 'live_ack']) {
+    test('RECEIPT-CONVERGENCE actual receipt $receiptOutcome is reported '
+        'without changing durable receive', () async {
+      final diagnostics = await AppDiagnostics.installForTesting();
+      addTearDown(diagnostics.dispose);
+      const trace = '07cdbd8a-ae03-42de-8dbb-3e688e107968';
+      const id = 'private-receipt-diagnostic-message';
+      final inner = MessagePayload(
+        id: id,
+        text: 'private-receipt-text',
+        senderPeerId: senderPeerId,
+        senderUsername: 'Alice',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        diagnosticTraceId: trace,
+      );
+      final bridge = FakeDecryptBridge()
+        ..decryptResponse = {'ok': true, 'plaintext': inner.toInnerJson()};
+      final transport = receipt_transport.FakeP2PService(
+        sendMessageWithReplyResult: SendMessageResult(
+          sent: true,
+          acked: receiptOutcome == 'live_ack',
+        ),
+        storeInInboxResult: receiptOutcome == 'stored',
+      );
+      addTearDown(transport.dispose);
+      final receiptCompleted = Completer<bool>();
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          MessagePayload.buildEncryptedEnvelope(
+            id: id,
+            senderPeerId: senderPeerId,
+            senderUsername: 'Alice',
+            kem: 'private-receipt-kem',
+            ciphertext: 'private-receipt-cipher',
+            nonce: 'private-receipt-nonce',
+          ),
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: 'private-receipt-secret',
+        transport: 'inbox',
+        stagedEntryId: 'private-receipt-entry',
+        // The production adapter also exposes Future<void>, discarding the
+        // bool. Completion alone therefore cannot prove the receipt was sent.
+        sendDeliveryReceipt: (messageId) async {
+          expect(messageRepo.saved, isNotEmpty);
+          final sent = await receipt_sender.sendDeliveryReceipt(
+            p2pService: transport,
+            targetPeerId: senderPeerId,
+            messageIds: [messageId],
+          );
+          receiptCompleted.complete(sent);
+        },
+      );
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(await receiptCompleted.future, receiptOutcome != 'failed');
+      // Drain the detached receipt callback's completion continuation.
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.sendMessageWithReplyCallCount, 1);
+      expect(
+        transport.storeInInboxCallCount,
+        receiptOutcome == 'live_ack' ? 0 : 1,
+      );
+      final events = (await diagnostics.eventsForTesting())
+          .where((event) => event['traceId'] == trace)
+          .toList();
+      expect(
+        events.any(
+          (event) => event['stage'] == 'commit' && event['outcome'] == 'ok',
+        ),
+        isTrue,
+      );
+      expect(
+        events.singleWhere((event) => event['stage'] == 'finish')['outcome'],
+        'success',
+      );
+      final observations = events
+          .where(
+            (event) =>
+                event['stage'] == 'receipt' && event['outcome'] != 'started',
+          )
+          .toList();
+      expect(observations, hasLength(1));
+      expect(observations.single['outcome'], switch (receiptOutcome) {
+        'live_ack' => 'ok',
+        'stored' => 'pending',
+        _ => 'failed',
+      });
+      expect(
+        (observations.single['values'] as Map)['acknowledged'],
+        receiptOutcome == 'live_ack',
+      );
+      for (final canary in [
+        id,
+        senderPeerId,
+        'private-receipt-text',
+        'private-receipt-secret',
+        'private-receipt-cipher',
+      ]) {
+        expect(jsonEncode(events), isNot(contains(canary)));
+      }
+    });
+  }
 
   test(
     'diagnostics joins incoming decrypt commit and actual receipt completion',

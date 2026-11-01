@@ -1,7 +1,10 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/diagnostics/app_diagnostics.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,6 +60,37 @@ class _ReceiptDuringSend extends send_fixtures.FakeP2PService {
   }
 }
 
+class _ReceiptSettlementRepository extends FakeMessageRepository {
+  bool refuseReceipt = false;
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) async {
+    if (refuseReceipt && mode == OutgoingOrdinarySettlementMode.receipt) {
+      return OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: await getMessage(messageId),
+      );
+    }
+    return super.settleOutgoingOrdinaryTransport(
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    );
+  }
+}
+
 Future<void> _send(
   FakeMessageRepository repository,
   _ReceiptDuringSend service,
@@ -73,6 +107,132 @@ Future<void> _send(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('RECEIPT-CONVERGENCE late applied receipt observes the original '
+      'trace without rewriting its pending final', () async {
+    final diagnostics = await AppDiagnostics.installForTesting();
+    addTearDown(diagnostics.dispose);
+    final repository = _ReceiptSettlementRepository();
+    await _send(
+      repository,
+      _ReceiptDuringSend(
+        repository,
+        nativeAck: false,
+        receiptDuringSend: false,
+      ),
+    );
+    final trace = diagnostics.traceForOperation('message:$_messageId');
+    final before = await diagnostics.eventsForTesting();
+    final originalFinal = before.singleWhere(
+      (event) => event['traceId'] == trace && event['stage'] == 'finish',
+    );
+    final originalFinalBytes = jsonEncode(originalFinal);
+    expect(originalFinal['outcome'], 'pending');
+    expect((await repository.getMessage(_messageId))!.status, 'sent');
+    bool appliedObservation(Map<String, Object?> event) =>
+        event['stage'] == 'receipt' &&
+        (event['values'] as Map)['direction'] == 'outgoing';
+
+    await handleDeliveryReceipt(
+      message: _receipt(from: 'another-peer'),
+      messageRepo: repository,
+    );
+    repository.refuseReceipt = true;
+    await handleDeliveryReceipt(message: _receipt(), messageRepo: repository);
+    expect((await repository.getMessage(_messageId))!.status, 'sent');
+    expect(
+      (await diagnostics.eventsForTesting()).where(appliedObservation),
+      isEmpty,
+    );
+
+    repository.refuseReceipt = false;
+    String? unrelatedTrace;
+    await diagnostics.runWithAttempt(
+      feature: 'message',
+      body: (current) async {
+        unrelatedTrace = current;
+        await handleDeliveryReceipt(
+          message: _receipt(),
+          messageRepo: repository,
+        );
+      },
+    );
+    final row = (await repository.getMessage(_messageId))!;
+    expect(row.status, 'delivered');
+    expect(row.wireEnvelope, isNull);
+    final after = await diagnostics.eventsForTesting();
+    final observations = after.where(appliedObservation).toList();
+    expect(observations, hasLength(1));
+    expect(observations.single['traceId'], trace);
+    expect(observations.single['traceId'], isNot(unrelatedTrace));
+    expect(observations.single['outcome'], 'ok');
+    expect(observations.single['values'], containsPair('committed', true));
+    expect(observations.single['values'], containsPair('acknowledged', true));
+    expect(
+      jsonEncode(
+        after.singleWhere(
+          (event) => event['eventId'] == originalFinal['eventId'],
+        ),
+      ),
+      originalFinalBytes,
+    );
+    expect(
+      after.where(
+        (event) => event['traceId'] == trace && event['stage'] == 'finish',
+      ),
+      hasLength(1),
+    );
+    await handleDeliveryReceipt(message: _receipt(), messageRepo: repository);
+    expect(
+      (await diagnostics.eventsForTesting()).where(appliedObservation),
+      hasLength(1),
+    );
+    final export = await diagnostics.exportPreview();
+    for (final privateValue in [
+      _messageId,
+      'target-peer',
+      'my-peer',
+      "that's cool",
+    ]) {
+      expect(export, isNot(contains(privateValue)));
+    }
+  });
+
+  test(
+    'RECEIPT-CONVERGENCE unbound receipt cannot borrow an unrelated trace',
+    () async {
+      final diagnostics = await AppDiagnostics.installForTesting(
+        enabled: false,
+      );
+      addTearDown(diagnostics.dispose);
+      final repository = FakeMessageRepository();
+      await _send(
+        repository,
+        _ReceiptDuringSend(
+          repository,
+          nativeAck: false,
+          receiptDuringSend: false,
+        ),
+      );
+      await diagnostics.setEnabled(true);
+      await diagnostics.runWithAttempt(
+        feature: 'message',
+        body: (_) =>
+            handleDeliveryReceipt(message: _receipt(), messageRepo: repository),
+      );
+      expect((await repository.getMessage(_messageId))!.status, 'delivered');
+      expect(
+        (await diagnostics.eventsForTesting()).where(
+          (event) =>
+              event['stage'] == 'receipt' &&
+              (event['values'] as Map)['direction'] == 'outgoing',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
   test(
     'early valid receipt survives a lost native ACK and stops ordinary retry',
     () async {

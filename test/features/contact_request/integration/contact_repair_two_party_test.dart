@@ -1,3 +1,7 @@
+import 'package:flutter_app/features/call/infrastructure/call_trusted_roster_provider.dart';
+import 'package:flutter_app/features/contact_request/application/contact_repair_rollout.dart';
+import 'package:flutter_app/features/contact_request/application/retry_incomplete_key_exchanges_use_case.dart';
+import '../presentation/support/contact_request_sql_fixture.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -251,6 +255,134 @@ void main() {
     await a.dispose();
     await b.dispose();
   });
+
+  test(
+    'unmarked missing-key retry repairs an existing contact without a call-wake grant',
+    () async {
+      // Pin the production asymmetry: A already knows B's key, while B's
+      // accepted contact A has no ML-KEM key. No deletion/consent policy changes.
+      await b.contacts.addContact(contactFor(_aId));
+      expect(await a.mlKemOfPeer(), 'mlkem-${_bId.peerId}');
+      expect(await b.mlKemOfPeer(), isNull);
+      final bRoster = DatabaseCallTrustedRosterProvider(b.db);
+      final roster = await bRoster.loadForContact(_aId.peerId);
+      expect(roster.contactAccepted, isTrue);
+      expect(roster.contactBlocked, isFalse);
+      expect(
+        roster.devices,
+        isEmpty,
+        reason:
+            'production call eligibility cannot issue a grant without the recipient key',
+      );
+      final eligible = contactRepairEligibility(
+        repository: b.repair,
+        rolloutEnabled: false,
+      );
+      expect(await eligible(_aId.peerId), isFalse);
+
+      // Stop only these fixture listeners. Explicitly awaited production receive
+      // calls below separate handler completion from fake transport ACK timing.
+      a.listener.stop();
+      b.listener.stop();
+      var reciprocalReplies = 0;
+      final receiver = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: buildWidgetRequestRepository(a.db),
+        contactRepo: a.contacts,
+        bridge: a.bridge,
+        getOwnPeerId: () => _aId.peerId,
+        getOwnPrivateKey: () async => _aId.privateKey,
+        getOwnPublicKey: () async => _aId.publicKey,
+        repairRepository: a.repair,
+        receivedCallWakeHandleStore: a.grants,
+        downloadProfilePictureFn: _noAvatar,
+        requestReciprocalCallWakeRecovery: (target) async {
+          reciprocalReplies++;
+          // Current15715 composition uses newRequest here. Integration with the
+          // separately approved quiet-reply patch must retain its suppression.
+          expect(
+            await sendContactRequest(
+              p2pService: a.p2p,
+              identityRepo: a.identities,
+              bridge: a.bridge,
+              targetPeerId: target,
+              recipientPublicKey: _bId.publicKey,
+              intent: ContactRequestSendIntent.newRequest,
+            ),
+            SendContactRequestResult.success,
+          );
+        },
+      );
+      final scanner = ContactRequestListener(
+        contactRequestStream: const Stream<ChatMessage>.empty(),
+        requestRepo: buildWidgetRequestRepository(b.db),
+        contactRepo: b.contacts,
+        bridge: b.bridge,
+        getOwnPeerId: () => _bId.peerId,
+        getOwnPrivateKey: () async => _bId.privateKey,
+        getOwnPublicKey: () async => _bId.publicKey,
+        repairRepository: b.repair,
+        downloadProfilePictureFn: _noAvatar,
+      );
+      final replies = <ChatMessage>[];
+      final replySubscription = b.p2p.messageStream.listen(replies.add);
+      try {
+        final delivery = a.p2p.messageStream.first;
+        var grantChecks = 0;
+        expect(
+          await retryIncompleteKeyExchanges(
+            contactRepo: b.contacts,
+            identityRepo: b.identities,
+            p2pService: b.p2p,
+            bridge: b.bridge,
+            shouldMarkAsNewRequest: eligible,
+            resolveCallWakeHandle: (target) async {
+              grantChecks++;
+              final current = await bRoster.loadForContact(target);
+              expect(current.devices, isEmpty);
+              // This is the production eligibility result, not a synthetic grant
+              // from the older marked-repair fixture's grantFor callback.
+              return null;
+            },
+          ),
+          1,
+        );
+        expect(grantChecks, 1);
+        final packet = await delivery.timeout(const Duration(seconds: 5));
+        final signedPayload = b.bridge.encrypts.last.payload;
+        expect(signedPayload.containsKey('cr'), isFalse);
+        expect(signedPayload.containsKey('cwh'), isFalse);
+        expect(signedPayload.containsKey('cwr'), isFalse);
+        // Supply the native direct-delivery annotation so missing nonce cannot
+        // be the reason a reciprocal ML-KEM response was skipped.
+        await receiver.processIncomingMessage(
+          ChatMessage(
+            from: packet.from,
+            to: packet.to,
+            content: packet.content,
+            timestamp: packet.timestamp,
+            isIncoming: true,
+            confirmNonce: 'fixture-direct-key-repair',
+          ),
+        );
+        for (final reply in replies) {
+          await scanner.processIncomingMessage(reply);
+        }
+        expect(
+          await b.mlKemOfPeer(),
+          'mlkem-${_aId.peerId}',
+          reason:
+              'authenticated active-contact key repair must not depend on already possessing the missing key to mint a call-wake grant',
+        );
+        expect(reciprocalReplies, 1);
+        expect(await b.db.query('contact_requests'), isEmpty);
+      } finally {
+        await replySubscription.cancel();
+        receiver.dispose();
+        scanner.dispose();
+      }
+    },
+  );
 
   test('B deletes and re-adds A from A\'s compact QR twice; each time one '
       'signed request earns one reply that repairs B', () async {
