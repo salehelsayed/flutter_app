@@ -61,6 +61,8 @@ class MessageRepositoryImpl
         ThoughtReactionMessageRepository {
   final Future<List<Map<String, Object?>>> Function(String postId)?
   dbLoadThoughtReactionMessages;
+  final Future<List<Map<String, Object?>>> Function(String postId)?
+  dbLoadThoughtWroteBackMessages;
   final Future<void> Function(Map<String, Object?> row) dbInsertMessage;
   final Future<List<Map<String, Object?>>> Function(String contactPeerId)
   dbLoadMessagesForContact;
@@ -480,6 +482,7 @@ class MessageRepositoryImpl
 
   MessageRepositoryImpl({
     this.dbLoadThoughtReactionMessages,
+    this.dbLoadThoughtWroteBackMessages,
     required this.dbInsertMessage,
     required this.dbLoadMessagesForContact,
     required this.dbLoadLatestMessageForContact,
@@ -902,6 +905,10 @@ class MessageRepositoryImpl
       postId,
     )).map(ConversationMessage.fromMap).toList(growable: false);
   }
+
+  @override
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
+      const <ThoughtWroteBack>[];
 
   @override
   Future<ConversationMessage?> getLatestMessageForContact(

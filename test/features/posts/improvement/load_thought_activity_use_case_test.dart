@@ -180,6 +180,10 @@ class _Replies extends InMemoryMessageRepository
     requested.add(postId);
     return replies;
   }
+
+  @override
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId) async =>
+      const <ThoughtWroteBack>[];
 }
 
 class _Views extends InMemoryPostRepository implements ThoughtViewRepository {

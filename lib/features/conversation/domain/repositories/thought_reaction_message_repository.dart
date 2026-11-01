@@ -1,6 +1,10 @@
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
+typedef ThoughtWroteBack = ({String peerId, bool hasUnread});
+
 /// Ordinary replies to one Thought, across its recipients' conversations.
 abstract interface class ThoughtReactionMessageRepository {
   Future<List<ConversationMessage>> loadThoughtReactionMessages(String postId);
+
+  Future<List<ThoughtWroteBack>> loadThoughtWroteBack(String postId);
 }

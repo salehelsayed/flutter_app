@@ -98,3 +98,8 @@ Future<List<Map<String, Object?>>> dbLoadThoughtReactionMessages(
      ORDER BY m.timestamp ASC, m.id ASC''',
   ['thought:$postId'],
 );
+
+Future<List<Map<String, Object?>>> dbLoadThoughtWroteBackMessages(
+  Database db,
+  String postId,
+) async => const <Map<String, Object?>>[];
