@@ -97,8 +97,9 @@ void main() {
 
   Future<void> pumpPage(
     WidgetTester tester,
-    Future<YouPageData> Function() load,
-  ) async {
+    Future<YouPageData> Function() load, {
+    DateTime Function()? now,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('en'),
@@ -106,7 +107,7 @@ void main() {
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
           load: load,
-          now: () => _now,
+          now: now ?? () => _now,
           onBack: () => backCalls++,
           onOpenChat: (peerId) async => openedChats.add(peerId),
           onCompose: () async => composeCalls++,
@@ -294,5 +295,36 @@ void main() {
       'blob-p1',
       'blob-p2',
     ]);
+  });
+
+  testWidgets('at expiry the thought and its viewer go even if reload fails', (
+    tester,
+  ) async {
+    var clock = _now;
+    var loads = 0;
+    final thought = _thought(left: const Duration(minutes: 30));
+    await pumpPage(tester, () async {
+      if (loads++ > 0) throw StateError('store unavailable');
+      return _data(
+        thought: YouThought(
+          post: thought.post.copyWith(media: [_media('p1', 'image', 0)]),
+          reactions: thought.reactions,
+          wroteBack: thought.wroteBack,
+        ),
+      );
+    }, now: () => clock);
+    await tester.tap(find.byKey(const ValueKey('you-media-p1')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byKey(const ValueKey('you-media-viewer')), findsOneWidget);
+
+    clock = _now.add(const Duration(minutes: 30, seconds: 1));
+    await tester.pump(const Duration(minutes: 30, seconds: 1));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(loads, greaterThan(1));
+    expect(find.byKey(const ValueKey('you-media-viewer')), findsNothing);
+    expect(find.text('first coffee on the balcony'), findsNothing);
+    expect(find.text('Nothing shared right now'), findsOneWidget);
   });
 }
