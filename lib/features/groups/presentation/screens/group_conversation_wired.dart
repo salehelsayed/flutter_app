@@ -3057,7 +3057,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       privateMediaPolicy: privateMediaPolicy,
     );
 
+    var stickerSendRecorded = false;
     void showOptimisticMessage() {
+      // The send outlives the route, so the once-only tally must not depend
+      // on the screen still being mounted.
+      if (sticker != null && !stickerSendRecorded) {
+        stickerSendRecorded = true;
+        _recordStickerSent(sticker.id);
+      }
       if (!_isCurrentSendLane(sendLane) || optimisticDisplayed) {
         return;
       }
@@ -3069,7 +3076,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
       });
       optimisticDisplayed = true;
-      if (sticker != null) _recordStickerSent(sticker.id);
       _scrollToLiveEdge();
     }
 

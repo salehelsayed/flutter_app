@@ -214,6 +214,7 @@ MediaAttachment? completeDirectMediaCustodyRetryAttachment({
     isBookmarked: prepared.isBookmarked,
     lastPlaybackPositionMs: prepared.lastPlaybackPositionMs,
     fileName: prepared.fileName,
+    stickerId: prepared.stickerId,
   );
   return _isExactCompletedDirectMediaRetryAttachment(
         completed,

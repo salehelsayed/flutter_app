@@ -3948,7 +3948,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     setState(() {
-      _clearRestoredFailedDraftTracking();
+      if (sticker == null) _clearRestoredFailedDraftTracking();
       _isSending = true;
     });
 
