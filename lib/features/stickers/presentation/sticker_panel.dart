@@ -181,6 +181,7 @@ class _StickerPanelState extends State<StickerPanel> {
                 button: true,
                 selected: group.id == selection.group.id,
                 label: stickerGroupLabel(l10n, group.id),
+                onTap: () => _select(PackGroupSelection(selection.pack, group)),
                 excludeSemantics: true,
                 child: InkResponse(
                   key: ValueKey('sticker-group-${group.id}'),
@@ -232,6 +233,7 @@ class _TabButton extends StatelessWidget {
       button: true,
       selected: selected,
       label: label,
+      onTap: onTap,
       excludeSemantics: true,
       child: InkWell(
         onTap: onTap,
@@ -271,6 +273,7 @@ class _StickerCell extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
+      onTap: onTap,
       excludeSemantics: true,
       child: InkWell(
         onTap: onTap,
@@ -319,6 +322,15 @@ class _BundledStickerPanelState extends State<BundledStickerPanel> {
     loadBundledStickerCatalog(),
     _recents.load(),
   ).wait;
+  List<String>? _recentIds;
+
+  void _onSend(StickerEntry sticker) {
+    setState(
+      () => _recentIds = withRecentSticker(_recentIds ?? const [], sticker.id),
+    );
+    unawaited(_recents.recordSent(sticker.id));
+    widget.onSend(sticker);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -334,14 +346,11 @@ class _BundledStickerPanelState extends State<BundledStickerPanel> {
             ),
           );
         }
-        final (catalog, recentIds) = data;
+        final (catalog, loadedRecentIds) = data;
         return StickerPanel(
           catalog: catalog,
-          recentIds: recentIds,
-          onSend: (sticker) {
-            unawaited(_recents.recordSent(sticker.id));
-            widget.onSend(sticker);
-          },
+          recentIds: _recentIds ??= loadedRecentIds,
+          onSend: _onSend,
         );
       },
     );

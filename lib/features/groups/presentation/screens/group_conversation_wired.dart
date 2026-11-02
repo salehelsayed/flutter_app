@@ -2895,13 +2895,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// draft, quote and staged media untouched.
   Future<void> _onSend(
     String text, {
-    ({String id, PendingComposerMedia media})? sticker,
+    ({String id, PendingComposerMedia media, int bindingGeneration})? sticker,
   }) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (!_hasCompleteSenderIdentity) return;
     final sendLane = _captureSendLane();
     final sendGroupId = sendLane.groupId;
+    if (sticker != null &&
+        sticker.bindingGeneration != sendLane.bindingGeneration) {
+      _discardStaleStickerMedia(sticker.media);
+      return;
+    }
 
     final mediaToUpload = sticker != null
         ? [sticker.media]
@@ -2969,12 +2974,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (restoredContinuation != null) {
       _clearRestoredMediaContinuationTracking();
     }
-    final composerSnapshot = _composerController.snapshot(
-      draftText: sticker != null ? _draftText : draftText,
-      quotedMessageId: sticker != null
-          ? _activeQuoteMessageId
-          : quotedMessageId,
-    );
+    final composerSnapshot = sticker != null
+        ? const ConversationComposerSnapshot.untouched()
+        : _composerController.snapshot(
+            draftText: draftText,
+            quotedMessageId: quotedMessageId,
+          );
 
     // 1. Generate IDs upfront for optimistic display
     final messageId = restoredContinuation?.messageId ?? _uuid.v4();
@@ -3983,6 +3988,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     String? snackText,
     bool showSnackBar = false,
   }) async {
+    if (!snapshot.restoresComposer) {
+      _updateLocalMessageStatus(messageId, 'failed');
+      await _persistMessageStatus(messageId, 'failed');
+      if (showSnackBar && snackText != null) {
+        _showFloatingSnackBar(snackText);
+      }
+      return;
+    }
     if (snapshot.pendingAttachments.isEmpty) {
       await _markFailedTextMessageWithoutComposerRestore(
         messageId,
@@ -4031,6 +4044,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required String messageId,
     required bool terminal,
   }) async {
+    if (!snapshot.restoresComposer) {
+      _updateLocalMessageStatus(
+        messageId,
+        terminal ? 'failed' : 'queued_offline',
+      );
+      return;
+    }
     if (terminal) {
       _draftText = snapshot.draftText;
       _updateLocalMessageStatus(messageId, 'failed');
@@ -4066,21 +4086,26 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     String? snackText,
     bool showSnackBar = false,
   }) async {
+    final restoresComposer = snapshot.restoresComposer;
     if (mounted) {
       setState(() {
-        _draftText = snapshot.draftText;
-        _activeQuoteMessageId = snapshot.quotedMessageId;
+        if (restoresComposer) {
+          _draftText = snapshot.draftText;
+          _activeQuoteMessageId = snapshot.quotedMessageId;
+        }
         _removeLocalMessage(messageId);
       });
-      _updateComposerState(
-        pendingAttachments: snapshot.pendingAttachments,
-        isUploading: false,
-      );
+      if (restoresComposer) {
+        _updateComposerState(
+          pendingAttachments: snapshot.pendingAttachments,
+          isUploading: false,
+        );
+      }
     }
     if (snapshot.pendingAttachments.isNotEmpty) {
       await _cleanupRestoredComposerRetryState(messageId);
     }
-    _clearRestoredMediaContinuationTracking();
+    if (restoresComposer) _clearRestoredMediaContinuationTracking();
     try {
       await widget.msgRepo.deleteMessage(messageId);
     } catch (_) {}
@@ -4804,6 +4829,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _sendSticker(StickerEntry sticker) async {
+    final bindingGeneration = _sendLaneBindingGeneration;
     final PendingComposerMedia media;
     try {
       media = await prepareStickerMedia(sticker);
@@ -4815,8 +4841,23 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       );
       return;
     }
-    if (!mounted) return;
-    await _onSend('', sticker: (id: sticker.id, media: media));
+    if (!mounted || bindingGeneration != _sendLaneBindingGeneration) {
+      _discardStaleStickerMedia(media);
+      return;
+    }
+    await _onSend(
+      '',
+      sticker: (
+        id: sticker.id,
+        media: media,
+        bindingGeneration: bindingGeneration,
+      ),
+    );
+  }
+
+  /// A sticker tapped in a chat the screen has since left is never sent.
+  void _discardStaleStickerMedia(PendingComposerMedia media) {
+    unawaited(media.file.delete().then((_) {}, onError: (Object _) {}));
   }
 
   void _recordStickerSent(String stickerId) {

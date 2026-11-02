@@ -16,6 +16,9 @@ class StickerRecentsStore {
 
   final SecureKeyStore _store;
 
+  /// Writes run one at a time, so overlapping sends never drop each other.
+  Future<void> _writes = Future<void>.value();
+
   Future<List<String>> load() async {
     try {
       final decoded = jsonDecode(await _store.read(storageKey) ?? '[]');
@@ -27,13 +30,17 @@ class StickerRecentsStore {
     }
   }
 
-  Future<List<String>> recordSent(String stickerId) async {
-    final next = withRecentSticker(await load(), stickerId);
-    try {
-      await _store.write(storageKey, jsonEncode(next));
-    } catch (_) {
-      // Recent is a convenience; a failed write must never affect the send.
-    }
-    return next;
+  Future<List<String>> recordSent(String stickerId) {
+    final written = _writes.then((_) async {
+      final next = withRecentSticker(await load(), stickerId);
+      try {
+        await _store.write(storageKey, jsonEncode(next));
+      } catch (_) {
+        // Recent is a convenience; a failed write must never affect the send.
+      }
+      return next;
+    });
+    _writes = written;
+    return written;
   }
 }

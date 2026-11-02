@@ -5229,6 +5229,24 @@
         "lib/features/orbit/presentation/widgets/orbit_depth_surface.dart"
       ],
       "inspected": true
+    },
+    "affected-stickers": {
+      "kind": "flutter",
+      "paths": [
+        "test/features/stickers/"
+      ],
+      "boundary": "Bundled sticker catalog parsing and test-only gating, picker tabs, group faces, grid, swipe, RTL, screen-reader activation and Recent ordering/persistence, the sticker attachment wire key, and received-sticker rendering",
+      "limitations": "Host widget tests with an in-memory key store and fake send callbacks; the 1:1 and group send paths are covered by the stickers v1 tests in the affected-conversation and affected-groups lanes",
+      "timeout_seconds": 900,
+      "estimated_seconds": null,
+      "requirements": [
+        "flutter"
+      ],
+      "investigate": [
+        "lib/features/stickers/",
+        "assets/stickers/"
+      ],
+      "inspected": true
     }
   },
   "areas": [
@@ -6962,6 +6980,18 @@
         "affected-translate-preview"
       ],
       "why": "The preview module, persisted-result composition and exact Thought/Orbit/direct-voice entrypoints require preview and existing widget/audio preservation tests"
+    },
+    {
+      "id": "stickers",
+      "patterns": [
+        "lib/features/stickers/*",
+        "assets/stickers/*",
+        "test/features/stickers/*"
+      ],
+      "checks": [
+        "affected-stickers"
+      ],
+      "why": "The sticker catalog, picker, Recent store and bundled art have their own host suite"
     }
   ],
   "documentation_only": [

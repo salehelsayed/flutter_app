@@ -4032,7 +4032,7 @@ class _ConversationWiredState extends State<ConversationWired>
           if (mounted) {
             setState(() {
               _isSending = false;
-              _draftText = sanitizedText;
+              if (sticker == null) _draftText = sanitizedText;
             });
           }
           return;
@@ -4042,12 +4042,12 @@ class _ConversationWiredState extends State<ConversationWired>
       final draftText = sanitizedText;
       final quotedMessageId = sticker != null ? null : _activeQuoteMessageId;
       final composerSnapshot = _DirectComposerSnapshot(
-        common: _composerController.snapshot(
-          draftText: sticker != null ? _draftText : draftText,
-          quotedMessageId: sticker != null
-              ? _activeQuoteMessageId
-              : quotedMessageId,
-        ),
+        common: sticker != null
+            ? const ConversationComposerSnapshot.untouched()
+            : _composerController.snapshot(
+                draftText: draftText,
+                quotedMessageId: quotedMessageId,
+              ),
         privateMediaPolicy: privateMediaPolicy,
       );
 
@@ -5699,12 +5699,15 @@ class _ConversationWiredState extends State<ConversationWired>
     bool transitionMessageToFailed = true,
   }) async {
     final commonSnapshot = snapshot.common;
-    final restoreDraftText = _draftText.isEmpty;
+    final restoresComposer = commonSnapshot.restoresComposer;
+    final restoreDraftText = restoresComposer && _draftText.isEmpty;
     if (restoreDraftText) {
       _draftText = commonSnapshot.draftText;
     }
-    _privateMediaPolicy = snapshot.privateMediaPolicy;
-    _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
+    if (restoresComposer) {
+      _privateMediaPolicy = snapshot.privateMediaPolicy;
+      _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
+    }
     final authoritativeMessage = transitionMessageToFailed
         ? await _transitionSendingMessageToFailed(optimisticMessageId)
         : await widget.messageRepo.getMessage(optimisticMessageId);
@@ -5727,10 +5730,10 @@ class _ConversationWiredState extends State<ConversationWired>
       _restoredFailedMessageId = optimisticMessageId;
       _restoredFailedDraftText = commonSnapshot.draftText;
       _restoredFailedQuotedMessageId = commonSnapshot.quotedMessageId;
-    } else {
+    } else if (restoresComposer) {
       _clearRestoredFailedDraftTracking();
     }
-    if (mounted) {
+    if (restoresComposer && mounted) {
       setState(() => _activeQuoteMessageId = commonSnapshot.quotedMessageId);
     }
     if (showSnackBar) {
@@ -5752,21 +5755,26 @@ class _ConversationWiredState extends State<ConversationWired>
     required String snackText,
   }) async {
     final commonSnapshot = snapshot.common;
-    _draftText = commonSnapshot.draftText;
-    _privateMediaPolicy = snapshot.privateMediaPolicy;
-    _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
+    final restoresComposer = commonSnapshot.restoresComposer;
+    if (restoresComposer) {
+      _draftText = commonSnapshot.draftText;
+      _privateMediaPolicy = snapshot.privateMediaPolicy;
+      _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
+    }
     _updateLocalMessageStatus(optimisticMessageId, 'failed');
     await _refreshMessageWithHydratedMedia(optimisticMessageId);
-    if (commonSnapshot.pendingAttachments.isEmpty &&
-        commonSnapshot.draftText.isNotEmpty) {
-      _restoredFailedMessageId = optimisticMessageId;
-      _restoredFailedDraftText = commonSnapshot.draftText;
-      _restoredFailedQuotedMessageId = commonSnapshot.quotedMessageId;
-    } else {
-      _clearRestoredFailedDraftTracking();
-    }
-    if (mounted) {
-      setState(() => _activeQuoteMessageId = commonSnapshot.quotedMessageId);
+    if (restoresComposer) {
+      if (commonSnapshot.pendingAttachments.isEmpty &&
+          commonSnapshot.draftText.isNotEmpty) {
+        _restoredFailedMessageId = optimisticMessageId;
+        _restoredFailedDraftText = commonSnapshot.draftText;
+        _restoredFailedQuotedMessageId = commonSnapshot.quotedMessageId;
+      } else {
+        _clearRestoredFailedDraftTracking();
+      }
+      if (mounted) {
+        setState(() => _activeQuoteMessageId = commonSnapshot.quotedMessageId);
+      }
     }
     messenger?.showSnackBar(
       SnackBar(

@@ -18,8 +18,18 @@ class ConversationComposerSnapshot {
     required Iterable<PendingComposerMedia> pendingAttachments,
   }) : pendingAttachments = List<PendingComposerMedia>.unmodifiable(
          pendingAttachments,
-       );
+       ),
+       restoresComposer = true;
 
+  /// For a send that never took the composer, such as a sticker: its failure
+  /// fails only its own row and leaves the live composer as it is.
+  const ConversationComposerSnapshot.untouched()
+    : draftText = '',
+      quotedMessageId = null,
+      pendingAttachments = const <PendingComposerMedia>[],
+      restoresComposer = false;
+
+  final bool restoresComposer;
   final String draftText;
   final String? quotedMessageId;
   final List<PendingComposerMedia> pendingAttachments;
