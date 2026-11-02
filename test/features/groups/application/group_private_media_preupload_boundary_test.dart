@@ -222,7 +222,7 @@ void main() {
         '_buildStableUploadedAttachmentFromPlan({',
         uploadStart,
       );
-      final onSendStart = source.indexOf('Future<void> _onSend(String text)');
+      final onSendStart = source.indexOf('Future<void> _onSend(\n    String text,');
       final onSendEnd = source.indexOf(
         'Future<void> _onRetryUnavailableMedia(',
         onSendStart,
