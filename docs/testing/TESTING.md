@@ -11468,7 +11468,8 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   static reads remain unsupported; API/ABI rejection alone has no RAM notice.
   Cold Translate/Transcribe loads require a fresh `mknoon/gemma_preview` `memory`
   snapshot: Android at least 1.75 GiB available with `lowMemory == false`; iOS
-  retains 2.5 GiB process headroom from `os_proc_available_memory()`. Approval
+  requires 1,744,830,464 bytes (1.625 GiB) of process headroom from
+  `os_proc_available_memory()`. Approval
   m-4c3460c7 follows Kayan's m-246d9ceb build-197 measurement on a 6 GB Android
   AVD: kernel total 5.86 GiB, peak app PSS about 2.57 GB for Translate / 2.75 GB
   for Transcribe, RSS about 2.73/2.91 GB, and system availability about 3.69 GB
@@ -11478,7 +11479,8 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   run survived while Android swapped about 1.34 GB of Mknoon and killed other
   apps; that observation does not establish physical-phone behavior. A physical
   Pixel 6a reports about 0.4 GiB less total RAM than this AVD; its available RAM
-  and behavior remain uncertain. Android calibration does not lower iOS's floor.
+  and behavior remain uncertain. Android calibration does not establish the
+  separate iOS floor.
   A healthy cached model skips current-headroom admission on subsequent queued
   operations; every operation still checks static eligibility/blocking and
   persists its inference marker. Failed or removed loads become cold again.
@@ -11538,9 +11540,26 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   are in `.codex-test-logs/android-ai-memory-floor-round9-20261102/`, including
   `focused-selected/results.json`, `analyze/result.json` and
   `native-junit-summary.json`. This is focused host/native evidence; broader
-  selected lanes and physical-device behavior remain separate. The iOS 2.5 GiB
-  cold-load floor is unchanged and still awaits iPhone 11 process-headroom
-  calibration; Android measurements do not establish that iOS limit.
+  selected lanes and physical-device behavior remain separate.
+  Owner decision `m-b30f17ad` supersedes the uncalibrated iOS 2.5 GiB floor with
+  1.625 GiB after Flutter's iPhone 11 (`iPhone12,1`, iOS 27.0.1) calibration on
+  main `0e3d34447` plus an uncommitted numeric-only observer, build 206. Seven
+  cold loads succeeded; four complete successful operations (three Transcribe,
+  one Translate) supply the budget. A lost operation capture and two failed
+  transcription operations remain excluded. The largest peak-footprint growth was
+  1,108,380,672 bytes, larger than the sampled headroom drop in every successful
+  run; the spread was 69,402,768 bytes. Adding a policy reserve of 536,870,912
+  bytes and rounding upward to 128 MiB gives 1,744,830,464 bytes. Before-load
+  headroom was 2.085–2.112 GiB, so the old floor would refuse every trial.
+  This is one device and OS, development-signed release configuration with the
+  increased-memory entitlement, cached Gemma model, CPU backends and short
+  8–17 second audio. Distribution-signed store behavior and thermal state were
+  not measured; absence of warnings is weak evidence because the app does not
+  instrument them. These observations calibrate an advisory admission policy,
+  not an allocation guarantee or general iOS performance claim. Raw evidence:
+  `.codex-test-logs/gemma-mem-20261102/{results.csv,results.md,observer.diff}` on
+  the main checkout; independently checked arithmetic/source hashes:
+  `ios-calibration-proof.json` in the Round 9 evidence directory above.
   `TRANSLATION_CAPABILITY` retains numeric RAM/OS, ABI and decision
   without identifiers. Host policy/mock-channel tests and native source checks
   do not establish device performance or signed-artifact behavior.

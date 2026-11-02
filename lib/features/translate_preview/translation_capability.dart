@@ -13,7 +13,7 @@ const _iosMinimumPhysicalMemoryBytes = 7 * (1 << 29); // 3.5 GiB.
 const _androidMinimumPhysicalMemoryBytes = 9 * (1 << 29); // 4.5 GiB.
 const _androidMinimumAvailableMemoryBytes =
     7 * (1 << 28); // 1.75 GiB cold load.
-const _iosMinimumAvailableMemoryBytes = 5 * (1 << 29); // 2.5 GiB cold load.
+const _iosMinimumAvailableMemoryBytes = 1744830464; // 1.625 GiB cold load.
 
 const _capabilityChannel = MethodChannel('mknoon/gemma_preview');
 

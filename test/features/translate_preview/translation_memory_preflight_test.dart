@@ -6,7 +6,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('mknoon/gemma_preview');
   const androidFloor = 7 * (1 << 28); // Android cold-load 1.75 GiB.
-  const iosFloor = 5 * (1 << 29); // Unchanged iOS cold-load 2.5 GiB.
+  const iosFloor = 1744830464; // iOS cold-load 1.625 GiB.
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
@@ -20,7 +20,7 @@ void main() {
     (
       platform: TranslationPlatform.ios,
       floor: iosFloor,
-      name: 'iOS 2.5 GiB cold-load',
+      name: 'iOS 1.625 GiB cold-load',
     ),
   ]) {
     for (final boundary in [
