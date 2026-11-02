@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -140,6 +142,58 @@ void main() {
   });
 
   group('registerPushToken', () {
+    for (final blockedProvider in ['APNs', 'FCM']) {
+      test('preference resend avoids a pending fresh iOS $blockedProvider read', () {
+        fakeAsync((async) {
+          final cache = PushRegistrationTokenCache();
+          final resume = Completer<String?>();
+          var apnsReads = 0;
+          var fcmReads = 0;
+          Future<RegisterPushTokenResult> register({bool preferences = false}) =>
+              registerPushToken(
+                p2pService: p2pService,
+                pushTokenStore: pushTokenStore,
+                registrationTokenCache: cache,
+                reuseRegisteredToken: preferences,
+                logicalAuthorityPeerId: 'account-peer',
+                isIOSFn: () => true,
+                getPlatformFn: () => 'ios',
+                getApnsTokenFn: () {
+                  apnsReads++;
+                  return apnsReads > 1 && blockedProvider == 'APNs'
+                      ? resume.future
+                      : Future.value('apns-token');
+                },
+                getTokenFn: () {
+                  fcmReads++;
+                  return fcmReads > 1 && blockedProvider == 'FCM'
+                      ? resume.future
+                      : Future.value('current-device-token');
+                },
+              );
+          RegisterPushTokenResult? startup;
+          register().then((value) => startup = value);
+          async.flushMicrotasks();
+          expect(startup, RegisterPushTokenResult.success);
+          expect(p2pService.registerCalls, 1);
+          RegisterPushTokenResult? preferenceResult;
+          register(preferences: true).then((value) => preferenceResult = value);
+          async.flushMicrotasks();
+          try {
+            expect(preferenceResult, RegisterPushTokenResult.success,
+                reason: 'OFF must reach the relay without lifecycle resume');
+            expect(p2pService.registerCalls, 2);
+            expect(apnsReads, 1);
+            expect(fcmReads, 1);
+            expect(pushTokenStore.writeCallCount, 1);
+          } finally {
+            resume.complete('current-device-token');
+            async.flushMicrotasks();
+          }
+        });
+      });
+    }
+
     test(
       'success: returns success when token exists and registration succeeds',
       () async {

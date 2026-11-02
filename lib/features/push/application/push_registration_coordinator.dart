@@ -21,6 +21,9 @@ class PushRegistrationCoordinator {
   /// [requestPermission].
   final Future<bool> Function()? readPermission;
   final Future<RegisterPushTokenResult> Function() registerPushToken;
+  final Future<RegisterPushTokenResult> Function()?
+  registerThoughtNotificationPreferences;
+  final void Function()? onRegistrationInvalidated;
   final Stream<String> tokenRefreshStream;
 
   /// Initializes the push runtime before touching its permission/token APIs.
@@ -54,6 +57,8 @@ class PushRegistrationCoordinator {
     required this.requestPermission,
     this.readPermission,
     required this.registerPushToken,
+    this.registerThoughtNotificationPreferences,
+    this.onRegistrationInvalidated,
     required this.tokenRefreshStream,
     this.ensureReady,
     this.retryDelay = const Duration(seconds: 15),
@@ -130,6 +135,8 @@ class PushRegistrationCoordinator {
 
     await _attemptRegistration(checkPermission: true, trigger: 'resume');
   }
+
+  Future<void> refreshThoughtNotificationPreferences() => retryNow();
 
   /// Synchronously fences all registration-health work owned by the account
   /// being replaced.

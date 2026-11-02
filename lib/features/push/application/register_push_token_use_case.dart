@@ -18,6 +18,38 @@ enum RegisterPushTokenResult {
   accountMigrationBlocked,
 }
 
+/// A token acknowledged in this runtime, scoped to its account and installation.
+/// Never restores a persisted token in place of a live provider registration.
+class PushRegistrationTokenCache {
+  int _generation = 0;
+  ({String token, String platform, String account, String transport})? _entry;
+
+  bool hasTokenFor({required String? account, required String? transport}) =>
+      _entry != null &&
+      account != null &&
+      transport != null &&
+      _entry!.account == account &&
+      _entry!.transport == transport;
+
+  void clear() {
+    _generation++;
+    _entry = null;
+  }
+
+  void _remember({
+    required int generation,
+    required String token,
+    required String platform,
+    required String? account,
+    required String? transport,
+  }) {
+    if (generation != _generation ||
+        account == null || account.isEmpty ||
+        transport == null || transport.isEmpty) return;
+    _entry = (token: token, platform: platform, account: account, transport: transport);
+  }
+}
+
 /// Timeout for waiting on [FirebaseMessaging.getAPNSToken] on iOS.
 ///
 /// TestFlight / release builds can take noticeably longer than debug builds to
@@ -37,6 +69,8 @@ const _getTokenTimeout = Duration(seconds: 15);
 Future<RegisterPushTokenResult> registerPushToken({
   required P2PService p2pService,
   PushTokenStore? pushTokenStore,
+  PushRegistrationTokenCache? registrationTokenCache,
+  bool reuseRegisteredToken = false,
 
   /// The LOGICAL account peer for migration/account authority. An
   /// active-linked installation must supply its account peer here; the
@@ -68,6 +102,7 @@ Future<RegisterPushTokenResult> registerPushToken({
   emitFlowEvent(layer: 'FL', event: 'PUSH_REGISTER_TOKEN_BEGIN', details: {});
 
   final localPeerId = p2pService.currentState.peerId;
+  final tokenCacheGeneration = registrationTokenCache?._generation;
   final authorityPeerId = logicalAuthorityPeerId?.trim().isNotEmpty == true
       ? logicalAuthorityPeerId!.trim()
       : localPeerId;
@@ -318,6 +353,15 @@ Future<RegisterPushTokenResult> registerPushToken({
     }
   }
 
+  if (tokenCacheGeneration != null) {
+    registrationTokenCache!._remember(
+      generation: tokenCacheGeneration,
+      token: token,
+      platform: registeredPlatform,
+      account: logicalAuthorityPeerId,
+      transport: localPeerId,
+    );
+  }
   return RegisterPushTokenResult.success;
 }
 

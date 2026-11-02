@@ -179,6 +179,225 @@ void main() {
       });
     });
 
+    for (final heldStage in ['preparation', 'APNs lookup', 'FCM lookup']) {
+      test(
+        'Thought preference resend bypasses held iOS $heldStage after success',
+        () {
+          fakeAsync((async) {
+            final held = Completer<void>();
+            final frames = <({String token, bool enabled})>[];
+            var holdFullRegistration = false;
+            var enabled = true;
+            var providerToken = 'initial-ios-token';
+            String? successfulToken;
+            var preparationCalls = 0;
+            var apnsCalls = 0;
+            var fcmCalls = 0;
+            var preferenceCalls = 0;
+            final coordinator = PushRegistrationCoordinator(
+              requestPermission: () async => true,
+              readPermission: () async => true,
+              registerPushToken: () async {
+                // Model the production callback's preparation followed by the
+                // two iOS provider reads. Each dependency can stall separately.
+                preparationCalls++;
+                if (holdFullRegistration && heldStage == 'preparation') {
+                  await held.future;
+                }
+                apnsCalls++;
+                if (holdFullRegistration && heldStage == 'APNs lookup') {
+                  await held.future;
+                }
+                fcmCalls++;
+                if (holdFullRegistration && heldStage == 'FCM lookup') {
+                  await held.future;
+                }
+                successfulToken = providerToken;
+                frames.add((token: providerToken, enabled: enabled));
+                return RegisterPushTokenResult.success;
+              },
+              registerThoughtNotificationPreferences: () async {
+                preferenceCalls++;
+                frames.add((token: successfulToken!, enabled: enabled));
+                return RegisterPushTokenResult.success;
+              },
+              tokenRefreshStream: const Stream<String>.empty(),
+            );
+            coordinator.ensureStarted();
+            async.flushMicrotasks();
+            expect(frames, [(token: 'initial-ios-token', enabled: true)]);
+
+            enabled = false;
+            holdFullRegistration = true;
+            var preferenceCompleted = false;
+            coordinator.refreshThoughtNotificationPreferences().then(
+              (_) => preferenceCompleted = true,
+            );
+            async.flushMicrotasks();
+            final completedBeforeRelease = preferenceCompleted;
+            final preferenceCallsBeforeRelease = preferenceCalls;
+            final readsBeforeRelease = (
+              preparation: preparationCalls,
+              apns: apnsCalls,
+              fcm: fcmCalls,
+            );
+            final framesBeforeRelease = List.of(frames);
+
+            // Release owned work before asserting, including on the RED path.
+            holdFullRegistration = false;
+            held.complete();
+            async.flushMicrotasks();
+            providerToken = 'fresh-ios-token';
+            coordinator.retryNow();
+            async.flushMicrotasks();
+            coordinator.dispose();
+
+            expect(
+              completedBeforeRelease,
+              isTrue,
+              reason: 'a preference-only resend must not await $heldStage',
+            );
+            expect(preferenceCallsBeforeRelease, 1);
+            expect(readsBeforeRelease, (preparation: 1, apns: 1, fcm: 1));
+            expect(framesBeforeRelease, [
+              (token: 'initial-ios-token', enabled: true),
+              (token: 'initial-ios-token', enabled: false),
+            ]);
+            expect(
+              frames.last,
+              (token: 'fresh-ios-token', enabled: false),
+              reason: 'ordinary retry must still read the live provider token',
+            );
+            expect((preparationCalls, apnsCalls, fcmCalls), (2, 2, 2));
+            expect(async.pendingTimers, isEmpty);
+          });
+        },
+      );
+    }
+
+    test('Thought preference resend falls back to ordinary registration', () {
+      fakeAsync((async) {
+        var registerCalls = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async => true,
+          registerPushToken: () async {
+            registerCalls++;
+            return RegisterPushTokenResult.success;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+        coordinator.ensureStarted();
+        async.flushMicrotasks();
+        var completed = false;
+        coordinator.refreshThoughtNotificationPreferences().then(
+          (_) => completed = true,
+        );
+        async.flushMicrotasks();
+        coordinator.dispose();
+        expect(completed, isTrue);
+        expect(registerCalls, 2);
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('queued Thought choices resend the newest choice without overlap', () {
+      fakeAsync((async) {
+        final firstPreferenceAck = Completer<RegisterPushTokenResult>();
+        final preferences = <bool>[];
+        var enabled = true;
+        var ordinaryCalls = 0;
+        var activeWrites = 0;
+        var maxActiveWrites = 0;
+        Future<RegisterPushTokenResult> track(
+          Future<RegisterPushTokenResult> result,
+        ) {
+          activeWrites++;
+          if (activeWrites > maxActiveWrites) maxActiveWrites = activeWrites;
+          return result.whenComplete(() => activeWrites--);
+        }
+
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async => true,
+          registerPushToken: () {
+            ordinaryCalls++;
+            return track(Future.value(RegisterPushTokenResult.success));
+          },
+          registerThoughtNotificationPreferences: () {
+            preferences.add(enabled);
+            return track(
+              preferences.length == 1
+                  ? firstPreferenceAck.future
+                  : Future.value(RegisterPushTokenResult.success),
+            );
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+        coordinator.ensureStarted();
+        async.flushMicrotasks();
+        enabled = false;
+        coordinator.refreshThoughtNotificationPreferences();
+        async.flushMicrotasks();
+        enabled = true;
+        var newestCompleted = false;
+        coordinator.refreshThoughtNotificationPreferences().then(
+          (_) => newestCompleted = true,
+        );
+        async.flushMicrotasks();
+        final completedBeforeAck = newestCompleted;
+        final preferencesBeforeAck = List.of(preferences);
+        firstPreferenceAck.complete(RegisterPushTokenResult.success);
+        async.flushMicrotasks();
+        coordinator.dispose();
+
+        expect(completedBeforeAck, isFalse);
+        expect(preferencesBeforeAck, [false]);
+        expect(preferences, [false, true]);
+        expect(newestCompleted, isTrue);
+        expect(ordinaryCalls, 1);
+        expect(maxActiveWrites, 1);
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('ordinary retry after a preference resend still runs the full path', () {
+      fakeAsync((async) {
+        final preferenceAck = Completer<RegisterPushTokenResult>();
+        var ordinaryCalls = 0;
+        var preferenceCalls = 0;
+        final coordinator = PushRegistrationCoordinator(
+          requestPermission: () async => true,
+          registerPushToken: () async {
+            ordinaryCalls++;
+            return RegisterPushTokenResult.success;
+          },
+          registerThoughtNotificationPreferences: () {
+            preferenceCalls++;
+            return preferenceAck.future;
+          },
+          tokenRefreshStream: const Stream<String>.empty(),
+        );
+        coordinator.ensureStarted();
+        async.flushMicrotasks();
+        coordinator.refreshThoughtNotificationPreferences();
+        async.flushMicrotasks();
+        var ordinaryCompleted = false;
+        coordinator.retryNow().then((_) => ordinaryCompleted = true);
+        async.flushMicrotasks();
+        final ordinaryCallsBeforeAck = ordinaryCalls;
+        final ordinaryCompletedBeforeAck = ordinaryCompleted;
+        preferenceAck.complete(RegisterPushTokenResult.success);
+        async.flushMicrotasks();
+        coordinator.dispose();
+
+        expect(ordinaryCallsBeforeAck, 1);
+        expect(ordinaryCompletedBeforeAck, isFalse);
+        expect(preferenceCalls, 1);
+        expect(ordinaryCalls, 2);
+        expect(ordinaryCompleted, isTrue);
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
     test(
       'explicit retry refreshes revoked permission and later restoration',
       () {
