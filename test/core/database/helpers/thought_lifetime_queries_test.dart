@@ -22,6 +22,7 @@ void main() {
     String id,
     DateTime created, {
     bool keep = false,
+    bool incoming = false,
     String status = 'partial',
   }) => dbInsertPost(db, <String, Object?>{
     'post_id': id,
@@ -34,10 +35,25 @@ void main() {
     'post_created_at': created.toIso8601String(),
     'visible_at': created.toIso8601String(),
     'expires_at': created.add(const Duration(hours: 24)).toIso8601String(),
-    'is_incoming': 0,
+    'is_incoming': incoming ? 1 : 0,
     'delivery_status': status,
     'keep_available': keep ? 1 : 0,
   });
+  test(
+    'next expiry ignores retained own history and keeps incoming deadline',
+    () async {
+      await seed('own-history', now.subtract(const Duration(hours: 48)));
+      await seed('own-live', now.subtract(const Duration(minutes: 1410)));
+      await seed(
+        'incoming-deadline',
+        now.subtract(const Duration(hours: 23)),
+        incoming: true,
+      );
+
+      expect(await dbLoadNextPostExpiry(db), now.add(const Duration(hours: 1)));
+    },
+  );
+
   test(
     'read helpers exclude expiry before any sweep, including keep-available',
     () async {

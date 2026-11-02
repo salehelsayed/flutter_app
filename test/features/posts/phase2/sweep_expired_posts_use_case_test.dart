@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/sweep_expired_posts_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
+import '../../contacts/domain/repositories/fake_contact_repository.dart';
 
 PostModel _post({required String id, required String expiresAt}) {
   return PostModel(
@@ -36,6 +38,57 @@ void main() {
   tearDown(() {
     posts.dispose();
   });
+
+  test(
+    'expiry keeps own history and media while removing friends and hiding own Orbit',
+    () async {
+      final now = DateTime.parse('2026-03-16T09:00:00.000Z');
+      await posts.savePost(
+        _post(
+          id: 'own-history',
+          expiresAt: now.toIso8601String(),
+        ).copyWith(isIncoming: false),
+      );
+      await posts.savePost(
+        _post(id: 'friend-expired', expiresAt: now.toIso8601String()),
+      );
+      for (final id in ['own-history', 'friend-expired']) {
+        await posts.savePostMediaAttachment(
+          PostMediaAttachmentModel(
+            mediaId: 'media-$id',
+            postId: id,
+            blobId: 'blob-$id',
+            kind: 'image',
+            mime: 'image/jpeg',
+            sizeBytes: 128,
+            localPath: 'post_media/$id/image.jpg',
+            downloadStatus: 'done',
+            createdAt: '2026-03-15T10:20:00.000Z',
+          ),
+        );
+      }
+      final orbit = LoadOrbitThoughtsUseCase(
+        postRepo: posts,
+        contactRepo: FakeContactRepository(),
+        nowProvider: () => now,
+      );
+      expect(await orbit.executeOwn(localPeerId: 'peer-bob'), isNull);
+
+      final deleted = await sweepExpiredPosts(
+        postRepo: posts,
+        mediaFileManager: mediaFileManager,
+        nowProvider: () => now,
+      );
+
+      expect(await posts.getPost('friend-expired'), isNull);
+      expect(await posts.loadPostMediaAttachments('friend-expired'), isEmpty);
+      expect(await orbit.executeOwn(localPeerId: 'peer-bob'), isNull);
+      expect(await posts.getPost('own-history'), isNotNull);
+      expect(await posts.loadPostMediaAttachments('own-history'), hasLength(1));
+      expect(deleted, ['friend-expired']);
+      expect(mediaFileManager.deletedPostIds, ['friend-expired']);
+    },
+  );
 
   test('sweeps expired posts and removes hydrated attachment state', () async {
     await posts.savePost(
