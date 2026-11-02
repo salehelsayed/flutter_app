@@ -754,6 +754,46 @@ void main() {
   });
 
   test(
+    'LL-39 rotation follows accepted remote key time despite a later local scan',
+    () async {
+      final now = DateTime.now().toUtc();
+      final lastRemoteKeyTime = now.subtract(const Duration(hours: 2));
+      final rotatedKeyTime = now.subtract(const Duration(hours: 1));
+      contactRepo._contacts[_senderPeerId] = ContactModel(
+        peerId: _senderPeerId,
+        publicKey: _senderPublicKey,
+        rendezvous: '/dns4/mknoun.xyz/tcp/4001/wss/p2p/relay',
+        username: 'Alice',
+        signature: 'sig',
+        scannedAt: now.add(const Duration(days: 1)).toIso8601String(),
+        mlKemPublicKey: 'existingKey',
+        mlKemKeyUpdatedTs: lastRemoteKeyTime.toIso8601String(),
+      );
+      final payload = _validPayload()
+        ..['mlkem'] = 'rotatedKey'
+        ..['ts'] = rotatedKeyTime.toIso8601String();
+
+      final (result, request, _) = await handleIncomingMessage(
+        message: _makeChatMessage(_contactRequestMessage(payload)),
+        bridge: bridge,
+        requestRepo: requestRepo,
+        contactRepo: contactRepo,
+        ownPeerId: _ownPeerId,
+      );
+
+      expect(result, HandleMessageResult.contactKeyUpdated);
+      expect(request, isNull);
+      final updated = await contactRepo.getContact(_senderPeerId);
+      expect(updated!.mlKemPublicKey, 'rotatedKey');
+      expect(updated.mlKemKeyUpdatedTs, rotatedKeyTime.toIso8601String());
+      expect(
+        updated.scannedAt,
+        now.add(const Duration(days: 1)).toIso8601String(),
+      );
+    },
+  );
+
+  test(
     'ignores key change when payload ts is not newer than last key update',
     () async {
       // Anti-rollback: a replayed OLD signed contact_request must not roll
