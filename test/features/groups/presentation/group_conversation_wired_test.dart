@@ -2160,13 +2160,20 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
       );
-      for (var i = 0; i < 300 && groupPublishPayloads(bridge).isEmpty; i++) {
+      for (
+        var i = 0;
+        i < 300 &&
+            (groupPublishPayloads(bridge).isEmpty ||
+                mediaUploadInFlightTracker.inFlightCount > 0);
+        i++
+      ) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
         await tester.pump(const Duration(milliseconds: 10));
       }
       await pumpFrames(tester, count: 10);
+      expect(mediaUploadInFlightTracker.inFlightCount, 0);
 
       final payload = groupPublishPayloads(bridge).single;
       final media = (payload['media'] as List).cast<Map<String, dynamic>>();
@@ -2275,6 +2282,7 @@ void main() {
       );
       addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
       final strictMedia = _StrictStickerCustodyRepository();
+      final strictMessages = _StrictPreparedGroupMessageRepository();
       final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
         artifactStore: GroupMediaBlobArtifactStore(
           documentsDirectoryProvider: () async => tempDir,
@@ -2321,6 +2329,7 @@ void main() {
       await tester.pumpWidget(
         buildWidget(
           group: group,
+          messageRepo: strictMessages,
           mediaRepo: strictMedia,
           mediaFileManager: _CopyingMediaFileManager(),
           preparedGroupMediaBlobCustodyCoordinator: coordinator,
@@ -2350,13 +2359,20 @@ void main() {
       await tester.tap(
         find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
       );
-      for (var i = 0; i < 300 && _sentMediaManifests(bridge).isEmpty; i++) {
+      for (
+        var i = 0;
+        i < 300 &&
+            (_sentMediaManifests(bridge).isEmpty ||
+                mediaUploadInFlightTracker.inFlightCount > 0);
+        i++
+      ) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
         await tester.pump(const Duration(milliseconds: 10));
       }
       await pumpFrames(tester, count: 10);
+      expect(mediaUploadInFlightTracker.inFlightCount, 0);
 
       expect(groupPublishPayloads(bridge), isEmpty);
       final manifestJson = _sentMediaManifests(bridge).first;
@@ -12019,7 +12035,7 @@ void main() {
         }
 
         final composer = ownerSlice(
-          'Future<void> _onSend(String text) async',
+          'Future<void> _onSend(',
           'Future<void> _onRetryUnavailableMedia(',
         );
         final composerAdmission = composer.indexOf(
@@ -12092,7 +12108,7 @@ void main() {
         'lib/features/groups/presentation/screens/'
         'group_conversation_wired.dart',
       ).readAsStringSync();
-      final start = source.indexOf('Future<void> _onSend(String text) async');
+      final start = source.indexOf('Future<void> _onSend(');
       final end = source.indexOf(
         'Future<void> _onRetryUnavailableMedia(',
         start,
@@ -24523,6 +24539,22 @@ final class _StoredStrictInbox
     custodyContract: ackOrExpiryInboxCustodyContract,
     expiresAtMs: custodyExpiresAtOrBeforeMs,
   );
+}
+
+final class _StrictPreparedGroupMessageRepository
+    extends CountingGroupMessageRepository
+    implements GroupMessageStrictPreparedRepository {
+  @override
+  Future<bool> stageStrictContentPrepared(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  }) async {
+    await saveMessage(message);
+    return true;
+  }
 }
 
 final class _StrictStickerCustodyRepository

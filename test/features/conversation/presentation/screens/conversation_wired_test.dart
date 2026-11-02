@@ -4032,6 +4032,11 @@ void main() {
           () => sentJson.isNotEmpty && recorder.ids.isNotEmpty,
           timeout: const Duration(seconds: 10),
         );
+        await pumpUntilAsyncIo(
+          tester,
+          () => mediaUploadInFlightTracker.inFlightCount == 0,
+          timeout: const Duration(seconds: 10),
+        );
 
         final attachment = sentJson.single;
         expect(attachment['sticker'], {'id': 'orbit_crew.planet.angry'});
