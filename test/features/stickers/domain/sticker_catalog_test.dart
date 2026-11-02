@@ -71,11 +71,32 @@ void main() {
       );
       expect(
         catalog.packs
-            .where((p) => p.id != 'big_mood')
+            .where((p) => p.id == 'orbit_crew')
             .expand((p) => p.groups)
             .expand((g) => g.stickers)
             .where((s) => s.printedText != null),
         isEmpty,
+      );
+    });
+
+    test('every Nujoom sticker carries its printed words, with the two '
+        'misprints labelled as meant', () {
+      final catalog = StickerCatalog.parse(packsJson, includeTestOnly: true);
+      final nujoom = catalog.packs
+          .singleWhere((p) => p.id == 'nujoom')
+          .groups
+          .expand((g) => g.stickers)
+          .toList();
+
+      expect(nujoom, hasLength(32));
+      expect(
+        nujoom.where((s) => (s.printedText ?? '').trim().isEmpty),
+        isEmpty,
+      );
+      expect(catalog.byId('nujoom.arab.ayman_rida')!.printedText, 'حلّ عني!');
+      expect(
+        catalog.byId('nujoom.arab.mohamed_henedy')!.printedText,
+        'دي آراء!',
       );
     });
 
