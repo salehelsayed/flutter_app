@@ -7588,14 +7588,36 @@ visible and cannot become an ordinary first-attempt PASS.
   repository ownership. Keep the exact fingerprints and repository behavior
   tests together; older fingerprints failed the combined sweep despite the
   retained data-layer placement.
-  The non-main source manifest at base `4187f0f2c` has an unresolved,
-  separate inventory drift: 77 stale JSON relationships, 78 unreviewed external
+  The non-main source manifest at base `4187f0f2c` had a separate inventory
+  drift: 77 stale JSON relationships, 78 unreviewed external
   entrypoints and one unreviewed model-delivery VM entrypoint across 79 sources.
   A read-only baseline CLI audit reproduced the same 156 diagnostics as the
   current repository-inventory test case; all flagged source and inventory
   inputs were byte-identical. This is not a passing runtime-roots gate.
   Evidence: `translate-persist-129-20261030/baseline-equality-proof.json` and
   `runtime-inventory-baseline-audit.txt` under `.codex-test-logs/`.
+  Maintain derived manifest facts with
+  `dart tool/runtime_roots/regenerate_runtime_roots.dart` (read-only preview),
+  then `--write` after inspecting its `needsDecision` report. It reuses the
+  existing scanner, repairs moved SIMS command indexes only when the exact
+  reviewed value still exists, and preserves existing ownership, rationale,
+  removal conditions and root classifications. New `integration_test/` and
+  `scripts/` mains use the existing conservative QA policy with
+  `seedsTooling: false`; this does not prove release invocation. Other new
+  entrypoints, VM callbacks and changed evidence values still require review.
+  At `da16867d1`, 77 stale indexes also invalidated the same 77 external rows:
+  the 111 external diagnostics represented only 34 new integration wrappers.
+  The preview derived those repairs and left one explicit model-delivery
+  callback decision. Its reviewed annotation and `TaskOptions` registration
+  now have a matching restricted-root record and required-root identity.
+  The named callback argument uses existing comment-aware `source-call-token`
+  evidence: the AST argument encoding includes its label, while the VM root
+  relation requires the bare annotated symbol. The first rejected AST evidence
+  is retained. The focused lane passes all 21 inventory cases plus six
+  regenerator cases; a second `--write` leaves the manifest byte-identical.
+  Evidence is retained under
+  `.codex-test-logs/runtime-roots-refresh-20261102/`; the original baseline
+  report remains visible rather than being replaced by the regenerated result.
 
 - **Group media proof schema:** endpoint admission, Android receipts, shared
   criteria and iOS boundary validation must require exactly

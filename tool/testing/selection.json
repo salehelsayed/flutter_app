@@ -1633,7 +1633,8 @@
     "runtime-roots": {
       "kind": "flutter",
       "paths": [
-        "test/unit/runtime_root_inventory_test.dart"
+        "test/unit/runtime_root_inventory_test.dart",
+        "test/unit/runtime_roots_regenerator_test.dart"
       ],
       "boundary": "Explicit non-main entrypoint ownership, runtime-root evidence validation and conservative source inventory drift detection",
       "limitations": "Host source inventory and parser contracts; does not execute device entrypoints or establish production reachability",
@@ -6301,7 +6302,8 @@
       "id": "runtime-roots",
       "patterns": [
         "tool/runtime_roots/*",
-        "test/unit/runtime_root_inventory_test.dart"
+        "test/unit/runtime_root_inventory_test.dart",
+        "test/unit/runtime_roots_regenerator_test.dart"
       ],
       "checks": [
         "runtime-roots"

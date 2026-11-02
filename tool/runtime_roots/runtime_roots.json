@@ -690,7 +690,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.48.command.2",
+          "keyPath": "capabilities.49.command.2",
           "value": "integration_test/scripts/run_production_foreground_group_push.dart"
         }
       ]
@@ -705,7 +705,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.49.command.2",
+          "keyPath": "capabilities.50.command.2",
           "value": "integration_test/scripts/run_production_notification_open.dart"
         }
       ]
@@ -720,7 +720,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.50.command.2",
+          "keyPath": "capabilities.51.command.2",
           "value": "integration_test/scripts/run_production_notification_sound.dart"
         }
       ]
@@ -735,7 +735,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.51.command.2",
+          "keyPath": "capabilities.52.command.2",
           "value": "integration_test/scripts/run_production_routing.dart"
         }
       ]
@@ -750,7 +750,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.115.command.2",
+          "keyPath": "capabilities.116.command.2",
           "value": "integration_test/scripts/run_production_message_latency.dart"
         }
       ]
@@ -765,7 +765,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.114.command.2",
+          "keyPath": "capabilities.115.command.2",
           "value": "integration_test/scripts/run_production_shared_xctest.dart"
         }
       ]
@@ -780,7 +780,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.113.command.2",
+          "keyPath": "capabilities.114.command.2",
           "value": "integration_test/scripts/run_production_transport_census.dart"
         }
       ]
@@ -795,7 +795,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.52.command.2",
+          "keyPath": "capabilities.53.command.2",
           "value": "integration_test/scripts/run_production_private_media_local.dart"
         }
       ]
@@ -810,7 +810,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.53.command.2",
+          "keyPath": "capabilities.54.command.2",
           "value": "integration_test/scripts/run_production_group_invite_reliability.dart"
         }
       ]
@@ -825,7 +825,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.61.command.2",
+          "keyPath": "capabilities.62.command.2",
           "value": "integration_test/scripts/run_production_group_invite_status_matrix.dart"
         }
       ]
@@ -840,7 +840,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.62.command.2",
+          "keyPath": "capabilities.63.command.2",
           "value": "integration_test/scripts/run_production_group_delete_preserves_friends.dart"
         }
       ]
@@ -855,7 +855,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.63.command.2",
+          "keyPath": "capabilities.64.command.2",
           "value": "integration_test/scripts/run_production_group_invite_accept_spinner.dart"
         }
       ]
@@ -870,7 +870,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.64.command.2",
+          "keyPath": "capabilities.65.command.2",
           "value": "integration_test/scripts/run_production_group_new_member_media.dart"
         }
       ]
@@ -885,7 +885,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.65.command.2",
+          "keyPath": "capabilities.66.command.2",
           "value": "integration_test/scripts/run_production_group_online_remove.dart"
         }
       ]
@@ -900,7 +900,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.66.command.2",
+          "keyPath": "capabilities.67.command.2",
           "value": "integration_test/scripts/run_production_group_relay_only.dart"
         }
       ]
@@ -915,7 +915,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.67.command.2",
+          "keyPath": "capabilities.68.command.2",
           "value": "integration_test/scripts/run_production_group_process_death.dart"
         }
       ]
@@ -930,7 +930,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.68.command.2",
+          "keyPath": "capabilities.69.command.2",
           "value": "integration_test/scripts/run_production_group_gm004.dart"
         }
       ]
@@ -945,7 +945,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.69.command.2",
+          "keyPath": "capabilities.70.command.2",
           "value": "integration_test/scripts/run_production_group_gm005.dart"
         }
       ]
@@ -960,7 +960,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.70.command.2",
+          "keyPath": "capabilities.71.command.2",
           "value": "integration_test/scripts/run_production_group_offline_remove.dart"
         }
       ]
@@ -975,7 +975,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.71.command.2",
+          "keyPath": "capabilities.72.command.2",
           "value": "integration_test/scripts/run_production_group_gm006.dart"
         }
       ]
@@ -990,7 +990,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.72.command.2",
+          "keyPath": "capabilities.73.command.2",
           "value": "integration_test/scripts/run_production_group_offline_readd.dart"
         }
       ]
@@ -1005,7 +1005,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.73.command.2",
+          "keyPath": "capabilities.74.command.2",
           "value": "integration_test/scripts/run_production_group_gm001.dart"
         }
       ]
@@ -1020,7 +1020,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.74.command.2",
+          "keyPath": "capabilities.75.command.2",
           "value": "integration_test/scripts/run_production_group_ge001.dart"
         }
       ]
@@ -1035,7 +1035,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.75.command.2",
+          "keyPath": "capabilities.76.command.2",
           "value": "integration_test/scripts/run_production_group_de003.dart"
         }
       ]
@@ -1050,7 +1050,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.76.command.2",
+          "keyPath": "capabilities.77.command.2",
           "value": "integration_test/scripts/run_production_group_ge002.dart"
         }
       ]
@@ -1065,7 +1065,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.77.command.2",
+          "keyPath": "capabilities.78.command.2",
           "value": "integration_test/scripts/run_production_group_ge003.dart"
         }
       ]
@@ -1080,7 +1080,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.78.command.2",
+          "keyPath": "capabilities.79.command.2",
           "value": "integration_test/scripts/run_production_group_gm020.dart"
         }
       ]
@@ -1095,7 +1095,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.79.command.2",
+          "keyPath": "capabilities.80.command.2",
           "value": "integration_test/scripts/run_production_group_gm034.dart"
         }
       ]
@@ -1110,7 +1110,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.80.command.2",
+          "keyPath": "capabilities.81.command.2",
           "value": "integration_test/scripts/run_production_group_gm016.dart"
         }
       ]
@@ -1125,7 +1125,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.81.command.2",
+          "keyPath": "capabilities.82.command.2",
           "value": "integration_test/scripts/run_production_group_ge004.dart"
         }
       ]
@@ -1140,7 +1140,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.82.command.2",
+          "keyPath": "capabilities.83.command.2",
           "value": "integration_test/scripts/run_production_group_gm007.dart"
         }
       ]
@@ -1155,7 +1155,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.83.command.2",
+          "keyPath": "capabilities.84.command.2",
           "value": "integration_test/scripts/run_production_group_gm019.dart"
         }
       ]
@@ -1170,7 +1170,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.84.command.2",
+          "keyPath": "capabilities.85.command.2",
           "value": "integration_test/scripts/run_production_group_ge009.dart"
         }
       ]
@@ -1185,7 +1185,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.85.command.2",
+          "keyPath": "capabilities.86.command.2",
           "value": "integration_test/scripts/run_production_group_rapid_readd.dart"
         }
       ]
@@ -1200,7 +1200,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.86.command.2",
+          "keyPath": "capabilities.87.command.2",
           "value": "integration_test/scripts/run_production_group_ir001.dart"
         }
       ]
@@ -1215,7 +1215,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.87.command.2",
+          "keyPath": "capabilities.88.command.2",
           "value": "integration_test/scripts/run_production_group_gm008.dart"
         }
       ]
@@ -1230,7 +1230,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.88.command.2",
+          "keyPath": "capabilities.89.command.2",
           "value": "integration_test/scripts/run_production_group_ge007.dart"
         }
       ]
@@ -1245,7 +1245,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.89.command.2",
+          "keyPath": "capabilities.90.command.2",
           "value": "integration_test/scripts/run_production_group_ge008.dart"
         }
       ]
@@ -1260,7 +1260,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.90.command.2",
+          "keyPath": "capabilities.91.command.2",
           "value": "integration_test/scripts/run_production_group_ge005.dart"
         }
       ]
@@ -1275,7 +1275,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.91.command.2",
+          "keyPath": "capabilities.92.command.2",
           "value": "integration_test/scripts/run_production_group_readd_cycles.dart"
         }
       ]
@@ -1290,7 +1290,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.92.command.2",
+          "keyPath": "capabilities.93.command.2",
           "value": "integration_test/scripts/run_production_group_ge010.dart"
         }
       ]
@@ -1305,7 +1305,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.93.command.2",
+          "keyPath": "capabilities.94.command.2",
           "value": "integration_test/scripts/run_production_group_go001.dart"
         }
       ]
@@ -1320,7 +1320,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.94.command.2",
+          "keyPath": "capabilities.95.command.2",
           "value": "integration_test/scripts/run_production_group_ge011.dart"
         }
       ]
@@ -1335,7 +1335,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.95.command.2",
+          "keyPath": "capabilities.96.command.2",
           "value": "integration_test/scripts/run_production_group_full_mesh.dart"
         }
       ]
@@ -1350,7 +1350,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.96.command.2",
+          "keyPath": "capabilities.97.command.2",
           "value": "integration_test/scripts/run_production_group_de002.dart"
         }
       ]
@@ -1365,7 +1365,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.97.command.2",
+          "keyPath": "capabilities.98.command.2",
           "value": "integration_test/scripts/run_production_group_ge006.dart"
         }
       ]
@@ -1380,7 +1380,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.98.command.2",
+          "keyPath": "capabilities.99.command.2",
           "value": "integration_test/scripts/run_production_group_de007.dart"
         }
       ]
@@ -1395,7 +1395,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.99.command.2",
+          "keyPath": "capabilities.100.command.2",
           "value": "integration_test/scripts/run_production_group_voluntary_leave.dart"
         }
       ]
@@ -1410,7 +1410,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.100.command.2",
+          "keyPath": "capabilities.101.command.2",
           "value": "integration_test/scripts/run_production_group_gm015.dart"
         }
       ]
@@ -1425,7 +1425,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.101.command.2",
+          "keyPath": "capabilities.102.command.2",
           "value": "integration_test/scripts/run_production_group_ge024.dart"
         }
       ]
@@ -1440,7 +1440,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.102.command.2",
+          "keyPath": "capabilities.103.command.2",
           "value": "integration_test/scripts/run_production_group_media_reaction.dart"
         }
       ]
@@ -1455,7 +1455,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.103.command.2",
+          "keyPath": "capabilities.104.command.2",
           "value": "integration_test/scripts/run_production_group_gm002.dart"
         }
       ]
@@ -1470,7 +1470,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.104.command.2",
+          "keyPath": "capabilities.105.command.2",
           "value": "integration_test/scripts/run_production_group_ml002.dart"
         }
       ]
@@ -1485,7 +1485,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.105.command.2",
+          "keyPath": "capabilities.106.command.2",
           "value": "integration_test/scripts/run_production_group_gm003.dart"
         }
       ]
@@ -1500,7 +1500,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.106.command.2",
+          "keyPath": "capabilities.107.command.2",
           "value": "integration_test/scripts/run_production_group_ml003.dart"
         }
       ]
@@ -1515,7 +1515,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.108.command.2",
+          "keyPath": "capabilities.109.command.2",
           "value": "integration_test/scripts/run_production_group_nw006.dart"
         }
       ]
@@ -1530,7 +1530,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.109.command.2",
+          "keyPath": "capabilities.110.command.2",
           "value": "integration_test/scripts/run_production_group_ml020.dart"
         }
       ]
@@ -1545,7 +1545,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.110.command.2",
+          "keyPath": "capabilities.111.command.2",
           "value": "integration_test/scripts/run_production_group_nw003.dart"
         }
       ]
@@ -1560,7 +1560,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.111.command.2",
+          "keyPath": "capabilities.112.command.2",
           "value": "integration_test/scripts/run_production_group_nw010.dart"
         }
       ]
@@ -1575,7 +1575,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.112.command.2",
+          "keyPath": "capabilities.113.command.2",
           "value": "integration_test/scripts/run_production_group_up012.dart"
         }
       ]
@@ -1590,7 +1590,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.54.command.2",
+          "keyPath": "capabilities.55.command.2",
           "value": "integration_test/scripts/run_production_startup_resume_performance.dart"
         }
       ]
@@ -1605,7 +1605,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.56.command.2",
+          "keyPath": "capabilities.57.command.2",
           "value": "integration_test/scripts/run_production_group_create.dart"
         }
       ]
@@ -1620,7 +1620,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.57.command.2",
+          "keyPath": "capabilities.58.command.2",
           "value": "integration_test/scripts/run_production_group_reaction.dart"
         }
       ]
@@ -1635,7 +1635,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.58.command.2",
+          "keyPath": "capabilities.59.command.2",
           "value": "integration_test/scripts/run_production_group_reaction_toggle.dart"
         }
       ]
@@ -1650,7 +1650,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.59.command.2",
+          "keyPath": "capabilities.60.command.2",
           "value": "integration_test/scripts/run_production_group_removed_reaction.dart"
         }
       ]
@@ -1665,7 +1665,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.137.command.2",
+          "keyPath": "capabilities.138.command.2",
           "value": "integration_test/scripts/run_production_call_back.dart"
         }
       ]
@@ -1680,7 +1680,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.141.command.2",
+          "keyPath": "capabilities.142.command.2",
           "value": "integration_test/scripts/run_production_call_regression.dart"
         }
       ]
@@ -1695,7 +1695,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.132.command.2",
+          "keyPath": "capabilities.133.command.2",
           "value": "integration_test/scripts/run_production_contact_delete.dart"
         }
       ]
@@ -1710,7 +1710,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.123.command.2",
+          "keyPath": "capabilities.124.command.2",
           "value": "integration_test/scripts/run_production_update_check.dart"
         }
       ]
@@ -1738,7 +1738,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.149.command.2",
+          "keyPath": "capabilities.150.command.2",
           "value": "integration_test/scripts/run_production_direct_ordered_replay.dart"
         }
       ]
@@ -1753,7 +1753,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.150.command.2",
+          "keyPath": "capabilities.151.command.2",
           "value": "integration_test/scripts/run_production_group_ordered_recovery.dart"
         }
       ]
@@ -1768,7 +1768,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.151.command.2",
+          "keyPath": "capabilities.152.command.2",
           "value": "integration_test/scripts/run_production_direct_send_cut.dart"
         }
       ]
@@ -1783,7 +1783,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.152.command.2",
+          "keyPath": "capabilities.153.command.2",
           "value": "integration_test/scripts/run_production_direct_actions.dart"
         }
       ]
@@ -1798,7 +1798,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.153.command.2",
+          "keyPath": "capabilities.154.command.2",
           "value": "integration_test/scripts/run_production_direct_sender_offline.dart"
         }
       ]
@@ -1813,7 +1813,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.154.command.2",
+          "keyPath": "capabilities.155.command.2",
           "value": "integration_test/scripts/run_production_introduction_mutual.dart"
         }
       ]
@@ -1828,7 +1828,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.155.command.2",
+          "keyPath": "capabilities.156.command.2",
           "value": "integration_test/scripts/run_production_introduction_offline.dart"
         }
       ]
@@ -1843,8 +1843,450 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.156.command.2",
+          "keyPath": "capabilities.157.command.2",
           "value": "integration_test/scripts/run_production_group_local_media_delete.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/evaluate_production_journey_gap_receipt.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/evaluate_production_journey_gap_receipt.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_account_transfer_continuity.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_account_transfer_continuity.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_account_transfer_local_only.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_account_transfer_local_only.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_account_transfer_media_open.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_account_transfer_media_open.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_account_transfer_pairing.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_account_transfer_pairing.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_bidirectional_direct_media_decode.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_bidirectional_direct_media_decode.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_camera_caption_roundtrip.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_camera_caption_roundtrip.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_candidate_platform_contract.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_candidate_platform_contract.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_contact_request_notification_lifecycle.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_contact_request_notification_lifecycle.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_cross_platform_camera_caption.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_cross_platform_camera_caption.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_cross_platform_contact_add.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_cross_platform_contact_add.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_cross_platform_direct_media.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_cross_platform_direct_media.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_cross_platform_group_journey.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_cross_platform_group_journey.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_document_open_roundtrip.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_document_open_roundtrip.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_fresh_onboarding_first_messages.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_fresh_onboarding_first_messages.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_group_camera_full_decode.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_group_camera_full_decode.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_group_full_media_decode.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_group_full_media_decode.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_group_media_membership_entitlement.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_group_media_membership_entitlement.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_introduction_notification_lifecycle.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_introduction_notification_lifecycle.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_local_only_media_roundtrip.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_local_only_media_roundtrip.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_media_egress_permission_journey.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_media_egress_permission_journey.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_media_permission_recovery.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_media_permission_recovery.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_mixed_network_media_agreement.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_mixed_network_media_agreement.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_native_image_format_acceptance.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_native_image_format_acceptance.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_native_video_caption_roundtrip.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_native_video_caption_roundtrip.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_native_video_playback_lifecycle.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_native_video_playback_lifecycle.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_notification_permission_channel_recovery.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_notification_permission_channel_recovery.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_ordinary_media_process_cuts.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_ordinary_media_process_cuts.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_private_media_remote_delivery.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_private_media_remote_delivery.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_qr_camera_permission_journey.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_qr_camera_permission_journey.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_signed_upgrade_preservation.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_signed_upgrade_preservation.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_voice_permission_call_takeover.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_voice_permission_call_takeover.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_voice_playback_interruption.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_voice_playback_interruption.dart"
+        }
+      ]
+    },
+    {
+      "path": "integration_test/scripts/run_voice_record_lock_review.dart",
+      "owner": "QA / release",
+      "reason": "Non-convention Dart main remains visible pending exact invocation ownership.",
+      "condition": "Remove or reclassify only after its caller and replacement proof are reviewed.",
+      "seedsTooling": false,
+      "evidence": [
+        {
+          "kind": "dart-main",
+          "source": "integration_test/scripts/run_voice_record_lock_review.dart"
         }
       ]
     }
@@ -3030,6 +3472,10 @@
     {
       "id": "callback.android.update-check-minimal",
       "rootKind": "vm-callback"
+    },
+    {
+      "id": "callback.android.model-delivery-before-start",
+      "rootKind": "vm-callback"
     }
   ],
   "restrictedRoots": [
@@ -3511,6 +3957,29 @@
           "callee": "DartExecutor.DartEntrypoint",
           "argument": "androidUpdateCheckMinimalMain",
           "argumentToken": "UpdateCheckBackgroundWork.MINIMAL_ENTRYPOINT"
+        }
+      ]
+    },
+    {
+      "id": "callback.android.model-delivery-before-start",
+      "path": "lib/features/translate_preview/model_delivery_platform.dart",
+      "rootKind": "vm-callback",
+      "owner": "translate-preview / model delivery",
+      "reason": "The Android background download SDK uses this pragma-protected headless pre-start network gate when starting or resuming model delivery.",
+      "condition": "Remove only when Android model delivery retires this callback or registers equivalent replacement network-gate evidence.",
+      "evidence": [
+        {
+          "kind": "dart-annotation",
+          "source": "lib/features/translate_preview/model_delivery_platform.dart",
+          "symbol": "_beforeAndroidModelDeliveryStart",
+          "annotation": "pragma",
+          "value": "vm:entry-point"
+        },
+        {
+          "kind": "source-call-token",
+          "source": "lib/features/translate_preview/model_delivery_platform.dart",
+          "callee": "TaskOptions",
+          "argument": "_beforeAndroidModelDeliveryStart"
         }
       ]
     }
