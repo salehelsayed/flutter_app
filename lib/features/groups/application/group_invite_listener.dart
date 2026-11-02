@@ -10,6 +10,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
+import 'package:flutter_app/features/groups/application/group_key_repair_responder_listener.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_decline_ack.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
@@ -66,6 +67,7 @@ class GroupInviteListener {
   final P2PService? p2pService;
   final Future<IdentityModel?> Function()? loadOwnIdentity;
   final DownloadGroupAvatarFn? downloadGroupAvatarFn;
+  final DistributeGroupKeyAtEpochToPeer? distributeGroupKeyAtEpochToPeer;
   final bool onJoinMetadataResyncEnabled;
   final DateTime Function() now;
 
@@ -98,6 +100,7 @@ class GroupInviteListener {
     this.p2pService,
     this.loadOwnIdentity,
     this.downloadGroupAvatarFn,
+    this.distributeGroupKeyAtEpochToPeer,
     this.onJoinMetadataResyncEnabled = kOnJoinMetadataResyncEnabled,
     DateTime Function()? now,
   }) : now = now ?? _defaultNow;
@@ -240,6 +243,7 @@ class GroupInviteListener {
               bridge: bridge,
               ownIdentity: await loadOwnIdentity?.call(),
               ownMlKemSecretKey: ownSecretKey,
+              distributeGroupKeyAtEpochToPeer: distributeGroupKeyAtEpochToPeer,
               now: now().toUtc(),
             );
           }

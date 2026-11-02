@@ -7834,6 +7834,29 @@ visible and cannot become an ordinary first-attempt PASS.
   Host waits retain an allowlisted timeout stage and already-matched endpoint
   observations before reset. Keep polling intervals and deadlines unchanged;
   missing or mismatched endpoint results must not become successful receipts.
+  Group re-invite key catch-up reuses the current-key delivery callback when
+  an admitted member requests post-join configuration resync. Metadata can
+  already be current while the accepted invitation still carries an older key;
+  resend the actual latest epoch independently of metadata newness. The handler
+  retains active-group, current-requester and effective rotation-permission
+  checks, and the existing sender requalifies the target before delivery. The
+  GX-002 host regression delivers key 3 before invite-2 acceptance, observes the
+  legitimate admission refusal, then exercises the actual request/listener and
+  current-key sender to converge on 3. Crypto/transport and group repositories
+  are explicit host fakes, not native delivery or real database restart proof.
+  Bootstrap preservation evidence under
+  `.codex-test-logs/gx002-key-resync-20261102/bootstrap-pin-proof.json`
+  reproduces both old pins, the copied sender body, all 25 URI rewrites and the
+  exact historical notification callback before refreshing only the two
+  affected pins.
+
+  A separate known recovery gap remains: Go emits `group:key_epoch_behind`,
+  but the Dart bridge's raw/diagnostic forwarding and existing key-repair event
+  guard omit it. This post-join fix does not wire that event; a future scoped
+  change must retain the exact requested epoch, current-member entitlement and
+  existing bounded repair owner. Evidence for the timing failure and this
+  source finding is retained in the promoted-admin rotation investigation.
+
   A strict local authority is not proof of convergence to a later creator
   rotation. Before repair, the receiver readiness helper accepted any settled
   epoch without an expected creator epoch or authority argument. The retained

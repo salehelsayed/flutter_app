@@ -4,6 +4,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/apply_on_join_group_config_resync.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_key_repair_responder_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_config_resync_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -48,12 +49,15 @@ Future<SendGroupConfigResyncResult> sendOnJoinGroupConfigRequest({
 /// Handles an inbound `config:request` at a peer that holds the group: verify
 /// the requester is a current member, then (only if WE are an admin so the
 /// joiner can trust us) reply with our authoritative, admin-signed config.
+/// A responder with effective key-rotation permission also re-delivers its
+/// latest key, even when the metadata response is unchanged at the joiner.
 Future<void> handleIncomingGroupConfigRequest({
   required ChatMessage message,
   required GroupRepository groupRepo,
   required P2PService p2pService,
   required Bridge bridge,
   required IdentityModel? ownIdentity,
+  DistributeGroupKeyAtEpochToPeer? distributeGroupKeyAtEpochToPeer,
   String? ownMlKemSecretKey,
   DateTime? now,
 }) async {
@@ -70,7 +74,11 @@ Future<void> handleIncomingGroupConfigRequest({
     parse: GroupConfigRequestBody.fromInnerJson,
     eventPrefix: 'GROUP_CONFIG_REQUEST',
   );
-  if (body == null) return;
+  if (body == null ||
+      body.groupId != envelope['id'] ||
+      body.requesterPeerId != message.from) {
+    return;
+  }
 
   // Only answer current members.
   final requester = await groupRepo.getMember(body.groupId, message.from);
@@ -86,21 +94,16 @@ Future<void> handleIncomingGroupConfigRequest({
   final identity = ownIdentity;
   if (identity == null) return;
   final group = await groupRepo.getGroup(body.groupId);
-  if (group == null) return;
+  if (group == null || group.isDissolved || group.selfRemovedAt != null) return;
   final members = await groupRepo.getMembers(body.groupId);
 
   // Only an admin's reply is trusted by the joiner's applier, so don't bother
   // replying otherwise.
-  final ownMembership = members.firstWhere(
-    (m) => m.peerId == identity.peerId,
-    orElse: () => GroupMember(
-      groupId: body.groupId,
-      peerId: identity.peerId,
-      role: MemberRole.reader,
-      joinedAt: DateTime.now().toUtc(),
-    ),
+  final ownMembership = await groupRepo.getMember(
+    body.groupId,
+    identity.peerId,
   );
-  if (ownMembership.role != MemberRole.admin) {
+  if (ownMembership == null || ownMembership.role != MemberRole.admin) {
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_CONFIG_REQUEST_HANDLE_NOT_ADMIN_RESPONDER',
@@ -152,6 +155,33 @@ Future<void> handleIncomingGroupConfigRequest({
     recipientMlKemPublicKey: requester.mlKemPublicKey,
     plaintext: jsonEncode(systemPayload),
     eventPrefix: 'GROUP_CONFIG_RESPONSE',
+  );
+
+  final resendKey = distributeGroupKeyAtEpochToPeer;
+  if (resendKey == null) return;
+  // An earlier delivery may have been transport-ACKed before invite
+  // acceptance and then rejected by the unadmitted recipient. Recreate the
+  // exact latest-key delivery instead of only draining pending transport rows.
+  final latestKey = await groupRepo.getLatestKey(body.groupId);
+  if (latestKey == null) return;
+  final currentGroup = await groupRepo.getGroup(body.groupId);
+  if (currentGroup == null ||
+      currentGroup.isDissolved ||
+      currentGroup.selfRemovedAt != null) {
+    return;
+  }
+  final responder = await groupRepo.getMember(body.groupId, identity.peerId);
+  if (responder == null ||
+      !responder.permissions.allows(
+        GroupMemberPermission.rotateKeys,
+        responder.role,
+      )) {
+    return;
+  }
+  await resendKey(
+    groupId: body.groupId,
+    peerId: message.from,
+    keyEpoch: latestKey.keyGeneration,
   );
 }
 
@@ -218,7 +248,8 @@ Future<SendGroupConfigResyncResult> _sendEncrypted({
   if (!p2pService.currentState.isStarted) {
     return SendGroupConfigResyncResult.nodeNotRunning;
   }
-  if (recipientMlKemPublicKey == null || recipientMlKemPublicKey.trim().isEmpty) {
+  if (recipientMlKemPublicKey == null ||
+      recipientMlKemPublicKey.trim().isEmpty) {
     emitFlowEvent(
       layer: 'FL',
       event: '${eventPrefix}_SEND_ENCRYPTION_SKIPPED',

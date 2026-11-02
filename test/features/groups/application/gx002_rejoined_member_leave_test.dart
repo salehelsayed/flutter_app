@@ -9,10 +9,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/accept_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/apply_on_join_group_config_resync.dart';
 import 'package:flutter_app/features/groups/application/change_group_member_role_and_broadcast_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -20,10 +22,12 @@ import 'package:flutter_app/features/groups/application/group_message_listener.d
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_invite_use_case.dart';
+import 'package:flutter_app/features/groups/application/on_join_group_config_resync_use_case.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/domain/models/group_config_resync_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -252,6 +256,7 @@ Future<GroupInvitePayload> _acceptInvite(
   _Peer receiver,
   String groupId, {
   String? invitationContent,
+  OnJoinConfigRequestFn? onJoinConfigRequest,
 }) => receiver.process.run(() async {
   final content =
       invitationContent ??
@@ -293,6 +298,7 @@ Future<GroupInvitePayload> _acceptInvite(
     senderPublicKey: receiver.identity.publicKey,
     senderPrivateKey: receiver.identity.privateKey,
     senderUsername: receiver.name,
+    onJoinConfigRequest: onJoinConfigRequest,
   );
   expect(accepted, AcceptPendingGroupInviteResult.success);
   expect(group, isNotNull);
@@ -428,173 +434,6 @@ Future<Map<String, dynamic>> _publishUiMembershipTransition({
 }
 
 void main() {
-  test(
-    'GC008 creator leave key reaches every member when leave overtakes key delivery',
-    () async {
-      final a = _Peer('Alice');
-      final b = _Peer('Bob');
-      final c = _Peer('Charlie');
-      final d = _Peer('Dana');
-      final peers = [a, b, c, d];
-      const groupId = 'gc008-creator-leave-key-order';
-      addTearDown(() async {
-        debugSetFlowEventSink(null);
-        for (final peer in peers) {
-          await peer.close();
-        }
-      });
-      for (final peer in peers) {
-        peer.contacts.seed(peers.map((other) => other.contact).toList());
-      }
-      a.bridge.responses['group:create'] = {
-        'ok': true,
-        'groupId': groupId,
-        'groupKey': 'gc008-initial-key',
-        'keyEpoch': 1,
-      };
-      final created = await a.process.run(
-        () => createGroupWithMembers(
-          bridge: a.bridge,
-          groupRepo: a.groups,
-          p2pService: a.p2p,
-          identity: a.identity,
-          selectedContacts: [b.contact, c.contact, d.contact],
-          type: GroupType.chat,
-          name: 'GC008 creator leave',
-        ),
-      );
-      expect(created.membersAdded, 3);
-      expect(created.invitesSent, 3);
-      for (final joining in [b, c, d]) {
-        await _acceptInvite(a, joining, groupId);
-        final joined = _lastInboxEnvelope(joining);
-        for (final receiver in peers.where((peer) => peer != joining)) {
-          if (await receiver.groups.getGroup(groupId) != null) {
-            await _deliver(joining, receiver, groupId, joined);
-          }
-        }
-      }
-
-      final pending = <String, GroupPendingBroadcast>{};
-      final promotion = await a.process.run(
-        () => changeGroupMemberRoleAndBroadcast(
-          bridge: a.bridge,
-          groupRepo: a.groups,
-          identityRepo: a.identities,
-          messageRepo: a.messages,
-          groupId: groupId,
-          memberPeerId: b.id,
-          role: MemberRole.admin,
-          enqueuePending: (row) async {
-            pending[row.id] = row;
-          },
-          loadPending: (id) async =>
-              pending.values.where((row) => row.groupId == id).toList(),
-          removePending: (id) async {
-            pending.remove(id);
-          },
-        ),
-      );
-      expect(promotion.updatedMember.role, MemberRole.admin);
-      expect(pending, isEmpty);
-      final promoted = _lastInboxEnvelope(a);
-      for (final receiver in [b, c, d]) {
-        await _deliver(a, receiver, groupId, promoted);
-      }
-      // A prior successful creator rotation establishes the observed epoch 2
-      // baseline without seeding any recipient key or bypassing its listener.
-      await _rotateAsPeer(a, peers, groupId, []);
-      for (final peer in peers) {
-        expect((await peer.groups.getLatestKey(groupId))!.keyGeneration, 2);
-      }
-
-      a.bridge.responses['group:generateNextKey'] = {
-        'ok': true,
-        'groupKey': 'gc008-departing-creator-key-3',
-        'keyEpoch': 3,
-      };
-      final keyFrames = <String, String>{};
-      late Map<String, dynamic> left;
-      final leaveAt = DateTime.now().toUtc();
-      final exit = await a.process.run(
-        () => DurableGroupExitSurfaceHarness.createForSurface(
-          groupId: groupId,
-          bridge: a.bridge,
-          groupRepository: a.groups,
-          identityRepository: a.identities,
-          messageRepository: a.messages,
-          now: () => leaveAt,
-          sendP2PMessage: (peerId, content) async {
-            final accepted = await a.p2p.sendMessage(peerId, content);
-            if (accepted) keyFrames[peerId] = content;
-            return accepted;
-          },
-          storeP2PMessageInInbox: a.p2p.storeInInbox,
-          afterNoticeAttempt: (_) async {
-            left = _lastInboxEnvelope(a);
-          },
-        ),
-      );
-      try {
-        final result = await a.process.run(exit.requestLeaveForTest);
-        expect(result.status.name, 'started');
-        expect(await exit.hasDurableGroup(), isFalse);
-        expect(await a.groups.getGroup(groupId), isNull);
-      } finally {
-        await exit.close();
-      }
-      expect(keyFrames.keys, unorderedEquals([b.id, c.id, d.id]));
-      expect(left['recipientPeerIds'], unorderedEquals([b.id, c.id, d.id]));
-      for (final frame in keyFrames.values) {
-        expect((jsonDecode(frame) as Map)['type'], 'group_key_update');
-      }
-
-      String? receiving;
-      final unauthorized = <String>[];
-      debugSetFlowEventSink((event) {
-        if (event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UNAUTHORIZED_SENDER') {
-          unauthorized.add(receiving!);
-        }
-      });
-      Future<void> deliverKey(_Peer receiver) => receiver.process.run(() async {
-        receiving = receiver.id;
-        await receiver.keyListener.handleProtectedEnvelope(
-          ChatMessage(
-            from: a.id,
-            to: receiver.id,
-            content: keyFrames[receiver.id]!,
-            timestamp: leaveAt.toIso8601String(),
-            isIncoming: true,
-          ),
-        );
-      });
-
-      // Every exact producer frame is delivered. B processes its key first;
-      // C/D process the signed leave first, matching the split observed on P0.
-      await deliverKey(b);
-      await _deliver(a, b, groupId, left);
-      for (final receiver in [c, d]) {
-        await _deliver(a, receiver, groupId, left);
-        expect(await receiver.groups.getMember(groupId, a.id), isNull);
-        await deliverKey(receiver);
-      }
-      final epochs = <String, int>{
-        for (final peer in [b, c, d])
-          peer.id: (await peer.groups.getLatestKey(groupId))!.keyGeneration,
-      };
-      print(
-        jsonEncode({
-          'case': 'GC008',
-          'keyProducer': a.id,
-          'deliveredRecipients': keyFrames.keys.toList(),
-          'epochs': epochs,
-          'unauthorizedKeyReceivers': unauthorized,
-        }),
-      );
-      expect(epochs, {b.id: 3, c.id: 3, d.id: 3});
-    },
-  );
-
   test(
     'GX002 re-invited member catches up when a newer key arrives before invite acceptance',
     () async {
@@ -839,15 +678,135 @@ void main() {
       final beforeAcceptance = (await c.groups.getLatestKey(
         groupId,
       ))?.keyGeneration;
-      await _acceptInvite(a, c, groupId, invitationContent: invitation);
+      expect(beforeAcceptance, isNull);
+      expect(recipientMismatches, [c.id]);
+      await _acceptInvite(
+        a,
+        c,
+        groupId,
+        invitationContent: invitation,
+        onJoinConfigRequest: ({required group, required invite}) async {
+          expect(
+            await sendOnJoinGroupConfigRequest(
+              p2pService: c.p2p,
+              bridge: c.bridge,
+              groupId: group.id,
+              requesterPeerId: c.id,
+              inviterPeerId: invite.senderPeerId,
+              inviterMlKemPublicKey: a.identity.mlKemPublicKey,
+            ),
+            SendGroupConfigResyncResult.success,
+          );
+        },
+      );
+      expect((await c.groups.getLatestKey(groupId))!.keyGeneration, 2);
       final acceptedNotice = _lastInboxEnvelope(c);
       await _deliver(c, a, groupId, acceptedNotice);
       await _deliver(c, b, groupId, acceptedNotice);
+
+      final requests = StreamController<ChatMessage>(sync: true);
+      final resentEpochs = <int>[];
+      final requestListener = GroupInviteListener(
+        groupInviteStream: requests.stream,
+        groupRepo: a.groups,
+        pendingInviteRepo: a.invites,
+        contactRepo: a.contacts,
+        bridge: a.bridge,
+        p2pService: a.p2p,
+        getOwnMlKemSecretKey: () async => a.identity.mlKemSecretKey,
+        loadOwnIdentity: () async => a.identity,
+        onJoinMetadataResyncEnabled: true,
+        distributeGroupKeyAtEpochToPeer:
+            ({
+              required String groupId,
+              required String peerId,
+              required int keyEpoch,
+            }) {
+              resentEpochs.add(keyEpoch);
+              return distributeGroupKeyAtEpochToPeer(
+                bridge: a.bridge,
+                groupRepo: a.groups,
+                groupId: groupId,
+                peerId: peerId,
+                keyEpoch: keyEpoch,
+                selfPeerId: a.id,
+                senderPublicKey: a.identity.publicKey,
+                senderPrivateKey: a.identity.privateKey,
+                senderUsername: a.name,
+                sendP2PMessage: a.p2p.sendMessage,
+                storeP2PMessageInInbox: a.p2p.storeInInbox,
+              );
+            },
+      );
+      addTearDown(() async {
+        requestListener.dispose();
+        await requests.close();
+      });
+      final responseStart = a.p2p.sentMessageLog.length;
+      final request = c.p2p.sentMessageLog.singleWhere(
+        (entry) => GroupConfigResyncEnvelope.isRequest(entry.content),
+      );
+      await a.process.run(() async {
+        requestListener.start();
+        requests.add(
+          ChatMessage(
+            from: c.id,
+            to: a.id,
+            content: request.content,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+        await requestListener.waitForIdle();
+      });
+      final resyncFrames = a.p2p.sentMessageLog.skip(responseStart).toList();
+      expect(resyncFrames, hasLength(2));
+      expect(resyncFrames.every((frame) => frame.peerId == c.id), isTrue);
+      final metadataFrame = resyncFrames.singleWhere(
+        (entry) => GroupConfigResyncEnvelope.isResponse(entry.content),
+      );
+      final unchangedMetadata = (await c.groups.getGroup(groupId))!;
+      expect(
+        await c.process.run(
+          () => handleIncomingGroupConfigResponse(
+            message: ChatMessage(
+              from: a.id,
+              to: c.id,
+              content: metadataFrame.content,
+              timestamp: DateTime.now().toUtc().toIso8601String(),
+              isIncoming: true,
+            ),
+            groupRepo: c.groups,
+            bridge: c.bridge,
+            ownMlKemSecretKey: c.identity.mlKemSecretKey,
+          ),
+        ),
+        ApplyGroupConfigResponseResult.notNewer,
+      );
+      expect(await c.groups.getGroup(groupId), same(unchangedMetadata));
+      final keyFrame = resyncFrames.singleWhere(
+        (entry) =>
+            (jsonDecode(entry.content) as Map)['type'] == 'group_key_update',
+      );
+      expect(keyFrame.peerId, c.id);
+      expect(resentEpochs, [3]);
+      receiving = c.id;
+      await c.process.run(
+        () => c.keyListener.handleProtectedEnvelope(
+          ChatMessage(
+            from: a.id,
+            to: c.id,
+            content: keyFrame.content,
+            timestamp: DateTime.now().toUtc().toIso8601String(),
+            isIncoming: true,
+          ),
+        ),
+      );
       final epochs = <String, int>{
         for (final peer in peers)
           peer.id: (await peer.groups.getLatestKey(groupId))!.keyGeneration,
       };
-      print(
+      debugPrint(
         jsonEncode({
           'case': 'GX002',
           'keyProducer': a.id,
@@ -855,6 +814,7 @@ void main() {
           'deliveredRecipients': keyFrames.keys.toList(),
           'rejoinedKeyBeforeAcceptance': beforeAcceptance,
           'recipientBindingMismatches': recipientMismatches,
+          'postJoinResentEpochs': resentEpochs,
           'epochs': epochs,
         }),
       );

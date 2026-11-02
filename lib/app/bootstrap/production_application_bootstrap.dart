@@ -8739,6 +8739,30 @@ final class ProductionApplicationBootstrap
           p2pService.storeInInbox(peerId, message),
     );
 
+    Future<int> redistributeGroupKeyAtEpochToPeer({
+      required String groupId,
+      required String peerId,
+      required int keyEpoch,
+    }) async {
+      final identity = await repository.loadIdentity();
+      if (identity == null) return 0;
+      return distributeGroupKeyAtEpochToPeer(
+        bridge: bridge,
+        groupRepo: groupRepository,
+        groupId: groupId,
+        peerId: peerId,
+        keyEpoch: keyEpoch,
+        selfPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderPrivateKey: identity.privateKey,
+        senderUsername: identity.username,
+        sendP2PMessage: (toPeerId, message) async =>
+            p2pService.sendMessage(toPeerId, message),
+        storeP2PMessageInInbox: (toPeerId, message) async =>
+            p2pService.storeInInbox(toPeerId, message),
+      );
+    }
+
     final groupInviteListener = GroupInviteListener(
       groupInviteStream: messageRouter.groupInviteStream,
       groupRepo: groupRepository,
@@ -8750,6 +8774,7 @@ final class ProductionApplicationBootstrap
       deliveryRepo: groupInviteDeliveryAttemptRepository,
       p2pService: p2pService,
       loadOwnIdentity: () => repository.loadIdentity(),
+      distributeGroupKeyAtEpochToPeer: redistributeGroupKeyAtEpochToPeer,
       loadOwnInviteIdentity: groupIdentityCallbacks.loadOwnInviteIdentity,
       getOwnMlKemSecretKey: groupIdentityCallbacks.getOwnMlKemSecretKey,
       getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
@@ -9127,30 +9152,7 @@ final class ProductionApplicationBootstrap
       groupRepo: groupRepository,
       bridge: bridge,
       getOwnPeerId: groupIdentityCallbacks.getOwnPeerId,
-      distributeGroupKeyAtEpochToPeer:
-          ({
-            required String groupId,
-            required String peerId,
-            required int keyEpoch,
-          }) async {
-            final identity = await repository.loadIdentity();
-            if (identity == null) return 0;
-            return distributeGroupKeyAtEpochToPeer(
-              bridge: bridge,
-              groupRepo: groupRepository,
-              groupId: groupId,
-              peerId: peerId,
-              keyEpoch: keyEpoch,
-              selfPeerId: identity.peerId,
-              senderPublicKey: identity.publicKey,
-              senderPrivateKey: identity.privateKey,
-              senderUsername: identity.username,
-              sendP2PMessage: (toPeerId, message) async =>
-                  p2pService.sendMessage(toPeerId, message),
-              storeP2PMessageInInbox: (toPeerId, message) async =>
-                  p2pService.storeInInbox(toPeerId, message),
-            );
-          },
+      distributeGroupKeyAtEpochToPeer: redistributeGroupKeyAtEpochToPeer,
     );
 
     final groupMembershipUpdateListener = GroupMembershipUpdateListener(

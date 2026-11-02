@@ -6,6 +6,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_invite_identity_callbacks.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/groups/domain/models/group_config_resync_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_decline_ack_payload.dart';
@@ -505,6 +506,8 @@ Future<ChatMessage> _makeConfigResponseMessage({
 ChatMessage _makeConfigRequestMessage({
   String groupId = 'grp-abc123',
   String requesterPeerId = '12D3KooWAlice',
+  String? bodyGroupId,
+  String? bodyRequesterPeerId,
 }) {
   final envelope = GroupConfigResyncEnvelope.build(
     type: groupConfigRequestType,
@@ -512,8 +515,8 @@ ChatMessage _makeConfigRequestMessage({
     groupId: groupId,
     kem: 'fake-kem',
     ciphertext: GroupConfigRequestBody(
-      groupId: groupId,
-      requesterPeerId: requesterPeerId,
+      groupId: bodyGroupId ?? groupId,
+      requesterPeerId: bodyRequesterPeerId ?? requesterPeerId,
     ).toInnerJson(),
     nonce: 'fake-nonce',
   );
@@ -600,6 +603,7 @@ void main() {
   late FakeBridge bridge;
   late GroupInviteListener listener;
   late DateTime listenerNow;
+  late List<({String groupId, String peerId, int keyEpoch})> resentKeys;
 
   setUp(() {
     incomingController = StreamController<ChatMessage>.broadcast();
@@ -610,6 +614,7 @@ void main() {
     contactRepo = FakeContactRepository();
     bridge = PassthroughCryptoBridge();
     listenerNow = DateTime.utc(2026, 3, 2, 12);
+    resentKeys = [];
     contactRepo.seed([_aliceContact()]);
 
     listener = GroupInviteListener(
@@ -790,6 +795,19 @@ void main() {
         bridge: bridge,
         p2pService: p2pService,
         loadOwnIdentity: () async => _bobIdentity(),
+        distributeGroupKeyAtEpochToPeer:
+            ({
+              required String groupId,
+              required String peerId,
+              required int keyEpoch,
+            }) async {
+              resentKeys.add((
+                groupId: groupId,
+                peerId: peerId,
+                keyEpoch: keyEpoch,
+              ));
+              return 1;
+            },
         getOwnMlKemSecretKey: () async => 'mySecretKey',
         getOwnPeerId: () async => '12D3KooWBob',
         onJoinMetadataResyncEnabled: true,
@@ -797,7 +815,10 @@ void main() {
       );
     }
 
-    Future<void> seedBobGroup({required MemberRole bobRole}) async {
+    Future<void> seedBobGroup({
+      required MemberRole bobRole,
+      GroupMemberPermissions permissions = GroupMemberPermissions.empty,
+    }) async {
       await groupRepo.saveGroup(
         GroupModel(
           id: 'grp-abc123',
@@ -818,9 +839,18 @@ void main() {
           peerId: '12D3KooWBob',
           username: 'Bob',
           role: bobRole,
+          permissions: permissions,
           publicKey: 'bobPubKey64',
           mlKemPublicKey: 'bobMlKem64',
           joinedAt: DateTime.utc(2026, 1, 1),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'grp-abc123',
+          keyGeneration: 7,
+          encryptedKey: 'latest-group-key',
+          createdAt: DateTime.utc(2026, 6, 1),
         ),
       );
     }
@@ -866,6 +896,9 @@ void main() {
       );
       // Routing discrimination: a config:request is NOT an invite.
       expect(await pendingInviteRepo.getPendingInvite('grp-abc123'), isNull);
+      expect(resentKeys, [
+        (groupId: 'grp-abc123', peerId: '12D3KooWAlice', keyEpoch: 7),
+      ]);
     });
 
     test(
@@ -892,6 +925,7 @@ void main() {
         await requestListener.waitForIdle();
 
         expect(p2pService.sendMessageCallCount, 0);
+        expect(resentKeys, isEmpty);
         expect(
           events.where(
             (e) => e['event'] == 'GROUP_CONFIG_REQUEST_HANDLE_NOT_MEMBER',
@@ -936,6 +970,7 @@ void main() {
         await requestListener.waitForIdle();
 
         expect(p2pService.sendMessageCallCount, 0);
+        expect(resentKeys, isEmpty);
         expect(
           events.where(
             (e) =>
@@ -945,6 +980,131 @@ void main() {
         );
       },
     );
+
+    test(
+      'GX002 an admin with rotateKeys denied sends metadata without a key',
+      () async {
+        await seedBobGroup(
+          bobRole: MemberRole.admin,
+          permissions: const GroupMemberPermissions(rotateKeys: false),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            role: MemberRole.writer,
+            mlKemPublicKey: 'aliceMlKem64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        final requestListener = buildConfigRequestListener(
+          p2pService: p2pService,
+        );
+        addTearDown(requestListener.dispose);
+        requestListener.start();
+
+        incomingController.add(_makeConfigRequestMessage());
+        await Future<void>.delayed(Duration.zero);
+        await requestListener.waitForIdle();
+
+        expect(p2pService.sendMessageCallCount, 1);
+        expect(
+          GroupConfigResyncEnvelope.isResponse(
+            p2pService.lastSendMessageContent!,
+          ),
+          isTrue,
+        );
+        expect(resentKeys, isEmpty);
+      },
+    );
+
+    for (final inactiveState in ['dissolved', 'self-removed', 'not-member']) {
+      test(
+        'GX002 a $inactiveState responder sends neither metadata nor key',
+        () async {
+          await seedBobGroup(bobRole: MemberRole.admin);
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: 'grp-abc123',
+              peerId: '12D3KooWAlice',
+              role: MemberRole.writer,
+              mlKemPublicKey: 'aliceMlKem64',
+              joinedAt: DateTime.utc(2026, 1, 1),
+            ),
+          );
+          final group = (await groupRepo.getGroup('grp-abc123'))!;
+          switch (inactiveState) {
+            case 'dissolved':
+              await groupRepo.updateGroup(group.copyWith(isDissolved: true));
+            case 'self-removed':
+              await groupRepo.updateGroup(
+                group.copyWith(selfRemovedAt: DateTime.utc(2026, 6, 2)),
+              );
+            case 'not-member':
+              await groupRepo.removeMember('grp-abc123', '12D3KooWBob');
+          }
+          final p2pService = FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+          );
+          final requestListener = buildConfigRequestListener(
+            p2pService: p2pService,
+          );
+          addTearDown(requestListener.dispose);
+          requestListener.start();
+
+          incomingController.add(_makeConfigRequestMessage());
+          await Future<void>.delayed(Duration.zero);
+          await requestListener.waitForIdle();
+
+          expect(p2pService.sendMessageCallCount, 0);
+          expect(resentKeys, isEmpty);
+        },
+      );
+    }
+
+    for (final mismatch in ['group', 'requester']) {
+      test(
+        'GX002 a config request with mismatched $mismatch binding is rejected',
+        () async {
+          await seedBobGroup(bobRole: MemberRole.admin);
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: 'grp-abc123',
+              peerId: '12D3KooWAlice',
+              role: MemberRole.writer,
+              mlKemPublicKey: 'aliceMlKem64',
+              joinedAt: DateTime.utc(2026, 1, 1),
+            ),
+          );
+          final p2pService = FakeP2PService(
+            initialState: const NodeState(isStarted: true),
+          );
+          final requestListener = buildConfigRequestListener(
+            p2pService: p2pService,
+          );
+          addTearDown(requestListener.dispose);
+          requestListener.start();
+
+          incomingController.add(
+            _makeConfigRequestMessage(
+              groupId: mismatch == 'group' ? 'other-group' : 'grp-abc123',
+              bodyGroupId: 'grp-abc123',
+              bodyRequesterPeerId: mismatch == 'requester'
+                  ? 'another-member'
+                  : '12D3KooWAlice',
+            ),
+          );
+          await Future<void>.delayed(Duration.zero);
+          await requestListener.waitForIdle();
+
+          expect(p2pService.sendMessageCallCount, 0);
+          expect(resentKeys, isEmpty);
+        },
+      );
+    }
 
     test(
       'stores a valid v2 invite as pending and does not join immediately',
