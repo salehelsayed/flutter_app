@@ -15,6 +15,8 @@ Current owner decisions (2026-10-22): VC-009/011/014/015/017/018/019 and CALL-00
 
 Group D device evidence: flutter_app reports source `62450cba434f6f718f52472db6807026fed00071`, app base `f14f7d369646b9877bc80c71f517494628f4fe2b`, disposable Android debug package. Saved APK SHA256 `1bb4c9ab0f4141faf6d2d9f9ab5cb0f54a0d1ce5a55d4f5f2ff01f7c6336ac68` was hashed read-only; installation was not inspected by Astra. Evidence: `/Volumes/CrucialX9/flutter_app/build/wt-astra-c/.codex-test-logs/astra-d-20261022/SUMMARY.md:2`. That packet recorded five scoped device_run rows and the TRANSFER-011 blocked_environment attempt; the later 2026-10-23 TRANSFER-011 row now records scoped iOS-simulator receiver PASS with rating partial. All six ratings remain partial: group3-peer, mid-I/O/video, optical/duplicate-scan, confirmed camera-feedback failure and failed migration limits stay explicit. No new source/receiver oracle or release pass is inferred.
 
+P0 phone rerun 2026-11-02, Hetzner build 201, main 15715c849: latest verdicts for eleven journeys are recorded in their open_questions notes and the four matching ranked-gap records. Coverage ratings and older device_result evidence retain their original audit scope. Source: /Volumes/CrucialX9/flutter_app/.codex-test-logs/p0-rerun-20261101/results.tsv. Execution by flutter_app; Astra inspected the saved report only.
+
 ## Interpretation and execution
 
 - Initial source/assertion/fake/registration audit was host-only at the original commit above. Subsequent scoped Group C and D device execution was performed by flutter_app; Astra only inspected saved evidence and changed documentation. No production code or release publication was changed by this update.
@@ -1255,6 +1257,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Open questions**
 
+- PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2.
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
@@ -2272,7 +2275,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Expected:** Android B fully decodes/opens the correct camera image and displays the exact caption for each selected quality over relay-only online delivery.
 
-**Device execution (2026-10-22; flutter_app)**
+**Historical device execution (2026-10-22; flutter_app)**
 
 - Result: **PASS_REPORTED_DEVICE_LEGS**.
 - Actual iPhone camera plus caption reached online Pixel over per-message witnessed relay transport at both selected qualities; full exported JPEG/native viewer and exact caption checked, one row after reopen.
@@ -2297,6 +2300,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Open questions**
 
+- PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12.
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
@@ -2345,7 +2349,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-004 — Gallery JPEG/PNG photo plus caption to the recipient
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -2375,6 +2379,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Real PNG/grid+caption UI assertion exists through fake network/picker; main case never opens the received original. Full native gallery/crypto/remote viewer remains unjoined.
+
+**Open questions**
+
+- PARTIAL 2026-11-02: iPhone gallery JPEG and caption passed to Android, with Android JPEG/PNG to iPhone retained from 2026-10-31. iPhone gallery PNG remains blocked because received images save as JPEG. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:13.
 
 #### MEDIA-005 — Gallery HEIC/HEIF or unsupported image: normalize or reject honestly
 
@@ -2586,6 +2594,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Open questions**
 
+- PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19.
 - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact provenance and scope.
 - Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs above are retained; no rating upgrade.
 
@@ -2716,7 +2725,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Expected:** B receives exactly one complete correct camera image, fully decodes/opens it and shows the exact caption after relay inbox catch-up.
 
-**Device execution (2026-10-22; flutter_app)**
+**Historical device execution (2026-10-22; flutter_app)**
 
 - Result: **PASS_REPORTED_DEVICE_LEGS**.
 - Pixel recipient was offline with Wi-Fi/data off and app stopped. Sender relay custody reached inboxed. Both selected qualities caught up automatically about 21 seconds after recipient relaunch, with one row after cold relaunch.
@@ -2741,6 +2750,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 **Open questions**
 
+- PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14.
 - Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing evidence inspected read-only.
 - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform limitations above are not full-journey passes.
 
@@ -2772,6 +2782,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Actual loopback HTTP/WS bytes persist, but no physical Wi-Fi/mDNS/permission/recipient decoder joined. Synthetic bytes are not a valid camera image.
+
+**Open questions**
+
+- BLOCKED 2026-11-02: Wi-Fi without internet requires a physical network setup with no safe automated route. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:20.
 
 #### MEDIA-016 — No usable local or relay path: honest failed/pending media and later retry
 
@@ -3023,7 +3037,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-023 — Received video pause/seek/resume/rotate and supported picture-in-picture lifecycle
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -3054,9 +3068,13 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 - Native video decoder and Android PiP gateway are fake in these host tests. Real OS PiP/rotation/audio interruption proof needs its separately registered platform campaign; none executed here.
 
+**Open questions**
+
+- PASS 2026-11-02: Android PiP restored playing video with controls, and PiP after playback ended no longer crashed. iOS PASS is retained from 2026-10-31. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:21.
+
 #### MEDIA-024 — Save/share received ordinary media using platform egress permissions and cancellation
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-008.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-008.
 
 **Steps**
 
@@ -3086,6 +3104,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Service/path preservation is causal; native Photos permission, actual share sheet cancellation and destination bytes are mocked/not executed.
+
+**Open questions**
+
+- PARTIAL 2026-11-02: iPhone save and save-cancel passed, with share-cancel retained from 2026-10-31. Android save and denial remain blocked by cloud-backup and granted-permission constraints. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:15.
 
 #### MEDIA-025 — Open direct/group shared-media library; search/filter, paginate and select the correct parent
 
@@ -3172,7 +3194,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-027 — Voice tap-to-start/tap-to-stop then send preserves playable recipient audio
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-009.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-009.
 
 **Backlog:** hold-to-record + lock/review: backlog (owner 10-31)
 
@@ -3204,6 +3226,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Full native Android record/send/play campaign exists, but it bypasses tap-to-start/tap-to-stop UI gestures; host review uses a fake recorder/send callback. No single UI-to-recipient native audio journey.
+
+**Open questions**
+
+- PARTIAL 2026-11-02: Tap record, stop, send and recipient playback passed on build 201. Hold-to-send and lock-review are absent and remain an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:22.
 
 #### MEDIA-028 — Cancel/discard voice recording, deny mic permission or interrupt it with a call
 
@@ -3240,7 +3266,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### MEDIA-029 — Voice playback seek/pause/resume/interruption and competing audio ownership are truthful
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-009.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-009.
 
 **Backlog:** playback speed: backlog (owner 10-31)
 
@@ -3272,6 +3298,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/pause/resume and actual OS competing call/audio route are not joined with that campaign.
+
+**Open questions**
+
+- PARTIAL 2026-11-02: Android seek, pause and resume passed, with interruption proof retained from 2026-10-31. Build 201 has no speed control, which remains an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:23.
 
 #### MEDIA-030 — Protected media delivery: authorized recipient opens while save/share/forward is refused
 
@@ -7623,7 +7653,7 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 
 #### TRANSFER-004 — Establish local transfer on Wi-Fi without internet, separately from internet recovery
 
-**Coverage:** partial. **Execution:** not_run. **Catalog:** DC-019.
+**Coverage:** partial. **Execution:** device_run. **Catalog:** DC-019.
 
 **Steps**
 
@@ -7649,6 +7679,10 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 **Remaining gaps**
 
 - Real HTTP/WS wire and files run on loopback with shared fake discovery, not actual native mDNS/Wi-Fi permission/airplane state.
+
+**Open questions**
+
+- PARTIAL 2026-11-02: Three delayed starts (73-133 seconds) passed without the earlier stuck-resolution trigger. Wi-Fi without internet remains blocked. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:36.
 
 #### TRANSFER-005 — Preflight insufficient space or oversized account and recover without corrupting either phone
 
@@ -9665,12 +9699,12 @@ These 19 folders cover the implementation inventory. UI callback names are navig
 Ranks order the next useful proofs; run only applicable available-target legs. Missing/partial coverage is not an instruction for this host-only agent to execute device work.
 
 <!-- ranked-gap-status:start -->
-Progress as of 2026-10-26T14:45:24Z. `ready` means reviewed preparation waiting for execution; `covered` means the stated existing evidence/runner scope. No status below is a fresh device or signed-candidate PASS. Group B is in preparation. Original requirements and reasons remain below unchanged. Remote test traffic uses Hetzner; owned local fixtures are permitted; AWS is reserved for owner pre-publish lanes.
+Latest scoped P0 update: 2026-11-02, Hetzner build 201, main `15715c849`. `passed` records the reported PASS for the stated leg. `ready` means remaining proof is pending, including a recorded PARTIAL. `covered` marks prior scoped evidence or an existing runner. Individual row dates identify older results. These results do not certify a signed release candidate. Remote test traffic uses Hetzner. Owned local fixtures are permitted. AWS is reserved for owner pre-publish lanes.
 
 | Rank | Journey | Status | Date | Evidence / remaining scope |
 | --- | --- | --- | --- | --- |
-| 1 | MEDIA-002 | covered | 2026-10-26 | 10-22 Original/Compressed camera+caption/full image, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:14; not signed-127 proof. |
-| 2 | MEDIA-014 | covered | 2026-10-26 | 10-22 offline camera/caption and automatic full-image catch-up, 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:16; no new device run. |
+| 1 | MEDIA-002 | ready | 2026-11-02 | PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12. |
+| 2 | MEDIA-014 | passed | 2026-11-02 | PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14. |
 | 3 | RG-001 | blocked | 2026-11-01 | BLOCKED: needs the published-to-store signed upgrade; waits for the store build to be distributed. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [RG-001]. |
 | 4 | VC-014 | blocked | 2026-11-01 | PARTIAL: iOS suspended, terminated, locked and Pixel background (answer from shade) and Pixel process-killed all ring and connect; missed-ring retest 3 of 3 rang; Pixel locked BLOCKED (no lock screen, screen-off key forbidden); audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-014]. |
 | 5 | VC-019 | blocked | 2026-11-01 | PARTIAL: no mic before answer, mute stops and restarts the mic; received audio BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-019]. |
@@ -9679,8 +9713,8 @@ Progress as of 2026-10-26T14:45:24Z. `ready` means reviewed preparation waiting 
 | 8 | GC-005 | covered | 2026-10-26 | Existing ordered/process-death runners documented in 0107badee:docs/testing/priority-e2e-codex-mcp-execution.md; no new native execution. |
 | 9 | TRANSFER-011 | covered | 2026-11-01 | PASS: pre-move photo opens full on the new phone (photo only). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [TRANSFER-011]. Coverage is photo-only; audible migrated voice and missing-original recovery remain open under the broader journey. |
 | 10 | VC-026 | ready | 2026-11-01 | FAIL: minor: process loss ringing and active, remote deadline and fresh call PASS on iOS and Android; the killed side has no call history row for a call that was connected when killed (iOS and Android). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-026]. Fixed, recheck queued on main f8539a599 and 0c438261e; no post-fix device PASS claimed. |
-| 11 | CONTACT-001 | ready | 2026-11-01 | FAIL: camera denied: the QR scanner shows "An unexpected error occurred." with no permission wording and no way to Settings. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [CONTACT-001]. Fixed, recheck queued on main fdd8354b4 and a6b79bed6; no post-fix device PASS claimed. |
-| 12 | MEDIA-010 | ready | 2026-11-01 | FAIL: minor: camera denial shows only "Media unavailable", no permission sheet; recovery after grant fine. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-010]. Fixed, recheck queued on main fdd8354b4; no post-fix device PASS claimed. |
+| 11 | CONTACT-001 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2. |
+| 12 | MEDIA-010 | passed | 2026-11-02 | PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19. |
 | 13 | MEDIA-003 | covered | 2026-10-26 | 10-22 reverse camera/caption/full iPhone viewer, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:18; not signed-127 proof. |
 | 14 | MEDIA-035 | covered | 2026-11-01 | PASS: camera photo with caption opens full on every member. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-035]. |
 | 15 | VC-015 | blocked | 2026-11-01 | PARTIAL: both directions Pixel and iPhone connect and end cleanly; audio content BLOCKED (tooling). Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [VC-015]. |

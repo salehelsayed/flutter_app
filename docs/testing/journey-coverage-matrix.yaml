@@ -45,6 +45,7 @@ header:
     --output .codex-test-logs/astra-matrix/change-plan-v3
   - git diff --check
   limitations:
+  - "P0 phone rerun 2026-11-02, Hetzner build 201, main 15715c849: latest verdicts for eleven journeys are recorded in their open_questions notes and the four matching ranked-gap records. Coverage ratings and older device_result evidence retain their original audit scope. Source: /Volumes/CrucialX9/flutter_app/.codex-test-logs/p0-rerun-20261101/results.tsv. Execution by flutter_app; Astra inspected the saved report only."
   - 'Scoped NAV-006 update (2026-10-30): owner approved automatic circle order by received-message timestamp, not manual membership editing. The 21 new cases produced 19 failures and 2 preservation passes on baseline b523feae9; the final six-file focused run passed 408 cases with zero failures/skips, including all 21 new cases. Analysis passed on 20 Dart files. Actual device/manual execution remains not_run. Evidence: .codex-test-logs/nav006-received-order-20261029/nav006-causal-red/result.json, nav006-green/result.json and nav006-analyze-current/result.json.'
   - "Progress refresh 2026-10-26: only the 23 ranked-gap status fields and refresh metadata changed; original coverage audit a502c06bc7b2a87c66e01495d4d2285f6731be3e and all 295 journey ratings/execution records are retained. ready is reviewed preparation; covered can be scoped historical evidence or an existing runner, never a fresh device/signed-candidate PASS."
   - "Current test routing: remote test relays use Hetzner; owned local fixtures are allowed; production AWS is restricted to owner pre-publish store-build lanes. No remote relay mutation is authorized."
@@ -2199,6 +2200,7 @@ journeys:
   - CR-001
   - CR-021
   open_questions:
+  - "PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2."
   - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
     provenance and scope.
   - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
@@ -4016,6 +4018,7 @@ journeys:
   - DC-011
   - DC-010
   open_questions:
+  - "PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12."
   - 'Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing
     evidence inspected read-only.'
   - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform
@@ -4146,13 +4149,14 @@ journeys:
     proves: 'test/features/conversation/presentation/screens/conversation_shared_media_viewer_test.dart:111: Opening
       second tile selects exact attachment/message, including same-path siblings. Does not prove remote original
       authenticity or zoom/pixel quality. Registered: affected-conversation, host-all.'
-  execution: not_run
+  execution: device_run
   gaps:
   - Real PNG/grid+caption UI assertion exists through fake network/picker; main case never opens the received original.
     Full native gallery/crypto/remote viewer remains unjoined.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - "PARTIAL 2026-11-02: iPhone gallery JPEG and caption passed to Android, with Android JPEG/PNG to iPhone retained from 2026-10-31. iPhone gallery PNG remains blocked because received images save as JPEG. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:13."
 - id: MEDIA-005
   feature: MEDIA
   title: 'Gallery HEIC/HEIF or unsupported image: normalize or reject honestly'
@@ -4529,6 +4533,7 @@ journeys:
   catalog_ids:
   - DC-008
   open_questions:
+  - "PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19."
   - Execution by flutter_app; Astra inspected saved evidence only. See header.group_d_device_run for source/artifact
     provenance and scope.
   - 'Existing handoff: docs/testing/astra-group-d-device-runbook.md. Actual failures, weaker witnesses and unrun legs
@@ -4830,6 +4835,7 @@ journeys:
   - DC-008
   - DC-011
   open_questions:
+  - "PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14."
   - 'Runbook: docs/testing/astra-group-c-device-runbook.md. Execution performed by flutter_app, not Astra; existing
     evidence inspected read-only.'
   - Result scope, candidate and focused host rechecks are recorded in header.group_c_device_run; remaining manual/content/platform
@@ -4884,7 +4890,8 @@ journeys:
     bytes are not a valid camera image.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - "BLOCKED 2026-11-02: Wi-Fi without internet requires a physical network setup with no safe automated route. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:20."
 - id: MEDIA-016
   feature: MEDIA
   title: 'No usable local or relay path: honest failed/pending media and later retry'
@@ -5384,13 +5391,14 @@ journeys:
     proves: 'test/shared/widgets/media/media_picture_in_picture_handoff_test.dart:14: Flutter playback pauses/disposes
       before native start, stale session ignored and normalized position retained; actual Android PiP/OS controls
       require separate proof. Registered: affected-media, host-all.'
-  execution: not_run
+  execution: device_run
   gaps:
   - Native video decoder and Android PiP gateway are fake in these host tests. Real OS PiP/rotation/audio interruption
     proof needs its separately registered platform campaign; none executed here.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - "PASS 2026-11-02: Android PiP restored playing video with controls, and PiP after playback ended no longer crashed. iOS PASS is retained from 2026-10-31. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:21."
 - id: MEDIA-024
   feature: MEDIA
   title: Save/share received ordinary media using platform egress permissions and cancellation
@@ -5439,13 +5447,14 @@ journeys:
     proves: 'test/features/conversation/application/direct_private_media_boundary_test.dart:368: Current private/terminal/unsupported/deleted
       source refuses Forward before token/file side effects; other tests guard egress/PiP independently. Registered:
       affected-conversation, host-all.'
-  execution: not_run
+  execution: device_run
   gaps:
   - Service/path preservation is causal; native Photos permission, actual share sheet cancellation and destination
     bytes are mocked/not executed.
   catalog_ids:
   - DC-008
-  open_questions: []
+  open_questions:
+  - "PARTIAL 2026-11-02: iPhone save and save-cancel passed, with share-cancel retained from 2026-10-31. Android save and denial remain blocked by cloud-backup and granted-permission constraints. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:15."
 - id: MEDIA-025
   feature: MEDIA
   title: Open direct/group shared-media library; search/filter, paginate and select the correct parent
@@ -5660,14 +5669,15 @@ journeys:
       records native audio and calls real sendVoiceMessage; :555 awaits actual player start/progress/completion/stop.
       Evidence validator:128 requires nonempty>=1.5s recording, equal endpoint hashes, real relay/bridge flags and
       playback. Registered full two-peer campaign; not run here. Registered: see cited native runner/manifest.'
-  execution: not_run
+  execution: device_run
   gaps:
   - "hold-to-record + lock/review: backlog (owner 10-31)"
   - Full native Android record/send/play campaign exists, but it bypasses tap-to-start/tap-to-stop UI gestures; host review
     uses a fake recorder/send callback. No single UI-to-recipient native audio journey.
   catalog_ids:
   - DC-009
-  open_questions: []
+  open_questions:
+  - "PARTIAL 2026-11-02: Tap record, stop, send and recipient playback passed on build 201. Hold-to-send and lock-review are absent and remain an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:22."
 - id: MEDIA-028
   feature: MEDIA
   title: Cancel/discard voice recording, deny mic permission or interrupt it with a call
@@ -5777,14 +5787,15 @@ journeys:
       records native audio and calls real sendVoiceMessage; :555 awaits actual player start/progress/completion/stop.
       Evidence validator:128 requires nonempty>=1.5s recording, equal endpoint hashes, real relay/bridge flags and
       playback. Registered full two-peer campaign; not run here. Registered: see cited native runner/manifest.'
-  execution: not_run
+  execution: device_run
   gaps:
   - "playback speed: backlog (owner 10-31)"
   - Native Android voice playback exists in a narrower campaign; interruption handler uses callbacks. Voice seek/pause/resume
     and actual OS competing call/audio route are not joined with that campaign.
   catalog_ids:
   - DC-009
-  open_questions: []
+  open_questions:
+  - "PARTIAL 2026-11-02: Android seek, pause and resume passed, with interruption proof retained from 2026-10-31. Build 201 has no speed control, which remains an owner-scope question. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:23."
 - id: MEDIA-030
   feature: MEDIA
   title: 'Protected media delivery: authorized recipient opens while save/share/forward is refused'
@@ -13196,13 +13207,14 @@ journeys:
     proves: 'test/features/account_migration/application/account_migration_end_to_end_test.dart:675: Many verified
       segments retain all generated files/content hashes and account data; volume tests are not native photo/video/audio
       open tests. Registered: affected-storage, host-all.'
-  execution: not_run
+  execution: device_run
   gaps:
   - Real HTTP/WS wire and files run on loopback with shared fake discovery, not actual native mDNS/Wi-Fi permission/airplane
     state.
   catalog_ids:
   - DC-019
-  open_questions: []
+  open_questions:
+  - "PARTIAL 2026-11-02: Three delayed starts (73-133 seconds) passed without the earlier stuck-resolution trigger. Wi-Fi without internet remains blocked. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:36."
 - id: TRANSFER-005
   feature: TRANSFER
   title: Preflight insufficient space or oversized account and recover without corrupting either phone
@@ -16662,9 +16674,9 @@ gaps:
 - rank: 1
   journey_id: MEDIA-002
   test_type: e2e
-  status: covered
-  status_date: "2026-10-26"
-  status_note: "10-22 Original/Compressed camera+caption/full image, source 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:14; not signed-127 proof."
+  status: ready
+  status_date: "2026-11-02"
+  status_note: "PARTIAL 2026-11-02: Both camera qualities and captions open on Android over direct transport. Relay-only proof is blocked by unavailable cellular internet. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:12."
   must_verify: Reproduce actual iPhone camera Original and compressed image+caption to Android over relay-only online
     path; recipient opens full correct image and exact caption. Record actual MIME/encoded fixture privately, never
     assume HEIC.
@@ -16672,9 +16684,9 @@ gaps:
 - rank: 2
   journey_id: MEDIA-014
   test_type: e2e
-  status: covered
-  status_date: "2026-10-26"
-  status_note: "10-22 offline camera/caption and automatic full-image catch-up, 0ee837d5d; build/wt-astra-c/.codex-test-logs/astra-c-20261022/RESUME.md:16; no new device run."
+  status: passed
+  status_date: "2026-11-02"
+  status_note: "PASS 2026-11-02: Offline Android received exactly one photo with the exact caption through inbox catch-up at both qualities. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:14."
   must_verify: Repeat same camera/quality/caption assertion with Android offline then supported foreground/inbox
     catch-up, preserving accepted identity and full decode after restart.
   why: Offline relay custody/hydration can fail independently from online rendition.
@@ -16755,18 +16767,18 @@ gaps:
 - rank: 11
   journey_id: CONTACT-001
   test_type: e2e
-  status: ready
-  status_date: "2026-11-01"
-  status_note: "FAIL: camera denied: the QR scanner shows \"An unexpected error occurred.\" with no permission wording and no way to Settings. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [CONTACT-001]. Fixed, recheck queued on main fdd8354b4 and a6b79bed6; no post-fix device PASS claimed."
+  status: passed
+  status_date: "2026-11-02"
+  status_note: "PASS 2026-11-02: Camera-denial guidance and Open Settings work, and granting permission restores the flow. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:2."
   must_verify: Cancel native scanner before code/result and deny/grant camera permission; assert zero contact/request/egress
     on refusal and one valid request after retry.
   why: Accepted paste/late callback tests do not exercise camera cancellation before result.
 - rank: 12
   journey_id: MEDIA-010
   test_type: e2e
-  status: ready
-  status_date: "2026-11-01"
-  status_note: "FAIL: minor: camera denial shows only \"Media unavailable\", no permission sheet; recovery after grant fine. Evidence: .codex-test-logs/p0-phone-20261031/FINAL.tsv [MEDIA-010]. Fixed, recheck queued on main fdd8354b4; no post-fix device PASS claimed."
+  status: passed
+  status_date: "2026-11-02"
+  status_note: "PASS 2026-11-02: Camera-denial guidance, Settings recovery, capture and single send passed. iPhone receipt was not rechecked because UI automation timed out. Hetzner build 201. Evidence: .codex-test-logs/p0-rerun-20261101/results.tsv:19."
   must_verify: Deny camera/photo access, grant via supported OS flow and retry without losing draft, duplicate sends
     or false success.
   why: Picker/permission callbacks in host tests bypass OS permission state.
