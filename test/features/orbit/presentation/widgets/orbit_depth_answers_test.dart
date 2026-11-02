@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/semantics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
@@ -609,6 +609,75 @@ void main() {
     expect(tester.getSize(replyButton).height, 44);
     expect(tester.getSize(replyButton).width, greaterThanOrEqualTo(44));
     expect(tester.getBottomLeft(bar(0)).dy, lessThanOrEqualTo(667 - 80));
+    await finish(tester);
+  });
+
+  double shownOpacity(WidgetTester tester, Finder target) {
+    var opacity = 1.0;
+    for (
+      RenderObject? box = tester.renderObject(target);
+      box != null;
+      box = box.parent
+    ) {
+      if (box is RenderOpacity) opacity *= box.opacity;
+    }
+    return opacity;
+  }
+
+  for (final size in const [Size(360, 640), Size(390, 844), Size(412, 915)]) {
+    testWidgets('on a ${size.width.toInt()}x${size.height.toInt()} phone the '
+        'bar sits in the bottom fifth after a swipe up, and between the '
+        'thought and the ring after a swipe down', (tester) async {
+      await mount(tester, reduceMotion: false, size: size);
+      await enter(tester);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(bar(0)).dy,
+        greaterThanOrEqualTo(size.height * .8),
+      );
+      expect(tester.getBottomLeft(bar(0)).dy, lessThanOrEqualTo(size.height));
+      await leave(tester);
+      await tester.pumpAndSettle();
+
+      await tester.timedDrag(
+        find.byType(OrbitDepthSurface),
+        const Offset(0, 220),
+        const Duration(seconds: 1),
+      );
+      await tester.pumpAndSettle();
+      final card = find.byKey(const ValueKey('orbit-depth-card-post-0'));
+      final face = find.byKey(const ValueKey('orbit-depth-face-peer-0'));
+      expect(
+        tester.getBottomLeft(card).dy,
+        lessThanOrEqualTo(tester.getTopLeft(bar(0)).dy),
+      );
+      expect(
+        tester.getBottomLeft(bar(0)).dy,
+        lessThanOrEqualTo(tester.getTopLeft(face).dy),
+      );
+      await finish(tester);
+    });
+  }
+
+  testWidgets('with motion on, the bar fades with the thought on every frame '
+      'of a held turn', (tester) async {
+    await mount(tester, reduceMotion: false);
+    await enter(tester);
+    await tester.pumpAndSettle();
+    final card = find.byKey(const ValueKey('orbit-depth-card-post-0'));
+    final finger = await tester.startGesture(const Offset(195, 500));
+    final seen = <(double, double)>[];
+    for (var step = 0; step < 3; step++) {
+      await finger.moveBy(const Offset(-15, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+      seen.add((shownOpacity(tester, bar(0)), shownOpacity(tester, card)));
+    }
+    for (final (barOpacity, cardOpacity) in seen) {
+      expect(barOpacity, closeTo(cardOpacity, .001));
+    }
+    expect(seen.last.$1, lessThan(.3));
+    await finger.up();
+    await tester.pumpAndSettle();
     await finish(tester);
   });
 }
