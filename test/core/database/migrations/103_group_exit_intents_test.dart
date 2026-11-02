@@ -104,7 +104,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 127);
+      expect(currentIdentityDatabaseVersion, 128);
       expect(
         productionCreateMigrations.last.version,
         currentIdentityDatabaseVersion,
@@ -114,12 +114,12 @@ void main() {
         currentIdentityDatabaseVersion,
       );
       expect(
-        productionCreateMigrations[productionCreateMigrations.length - 16]
+        productionCreateMigrations[productionCreateMigrations.length - 17]
             .version,
         112,
       );
       expect(
-        productionUpgradeMigrations[productionUpgradeMigrations.length - 16]
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 17]
             .version,
         112,
       );
@@ -137,7 +137,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '127_call_history_remote_permission_denied',
+        '128_media_attachment_sticker_id',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

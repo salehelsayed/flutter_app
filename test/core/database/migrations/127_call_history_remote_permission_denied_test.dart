@@ -61,7 +61,7 @@ void main() {
 
       final db = await open(currentIdentityDatabaseVersion);
       addTearDown(db.close);
-      expect(await db.getVersion(), 127);
+      expect(await db.getVersion(), currentIdentityDatabaseVersion);
 
       const newCall = '33333333-3333-4333-8333-333333333333';
       await db.insert(
@@ -122,18 +122,16 @@ void main() {
     });
   }
 
-  test('v127 is the last create and upgrade step', () {
+  test('v127 is the create and upgrade step before v128', () {
     for (final registry in [
       productionCreateMigrations,
       productionUpgradeMigrations,
     ]) {
-      expect(registry.last.version, 127);
-      expect(registry.last.name, '127_call_history_remote_permission_denied');
-      expect(
-        registry.last.run,
-        same(runCallHistoryRemotePermissionDeniedMigration),
-      );
-      expect(registry[registry.length - 2].version, 126);
+      final entry = registry[registry.length - 2];
+      expect(entry.version, 127);
+      expect(entry.name, '127_call_history_remote_permission_denied');
+      expect(entry.run, same(runCallHistoryRemotePermissionDeniedMigration));
+      expect(registry[registry.length - 3].version, 126);
     }
   });
 }

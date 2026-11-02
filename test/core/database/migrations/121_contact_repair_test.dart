@@ -45,7 +45,7 @@ void main() {
   sqfliteFfiInit();
 
   test('current schema version is 127', () {
-    expect(currentIdentityDatabaseVersion, 127);
+    expect(currentIdentityDatabaseVersion, 128);
   });
 
   group('consent triggers', () {

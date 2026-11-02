@@ -119,7 +119,7 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 127);
+      expect(currentIdentityDatabaseVersion, 128);
       expect(await _userVersion(db), currentIdentityDatabaseVersion);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
@@ -133,8 +133,8 @@ void main() {
           same(runDirectNotificationDurabilityMigration),
         );
         expect(registry.last.version, currentIdentityDatabaseVersion);
-        expect(registry.last.name, '127_call_history_remote_permission_denied');
-        expect(registry[registry.length - 16].version, 112);
+        expect(registry.last.name, '128_media_attachment_sticker_id');
+        expect(registry[registry.length - 17].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
