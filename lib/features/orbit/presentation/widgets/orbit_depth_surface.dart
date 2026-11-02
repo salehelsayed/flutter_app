@@ -676,6 +676,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
 
   bool get _answerable => _enabled && !_suppressTap && !_composing;
 
+  /// A screen-reader activation comes with no pointer, so the drag that last
+  /// set [_suppressTap] cannot be what it means; it starts fresh, as [_down]
+  /// does.
+  VoidCallback _bySemantics(VoidCallback action) => () {
+    if (_pointers.isEmpty) _suppressTap = false;
+    action();
+  };
+
   void _endVisit() {
     _visit = OrbitDepthVisit.empty;
     if (_replyFocus.hasFocus) _replyFocus.unfocus();
@@ -1159,41 +1167,48 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                     size: target,
                     pressed: _visit.pressed(postId, reaction),
                     onTap: () => _react(postId, reaction),
+                    onActivate: _bySemantics(() => _react(postId, reaction)),
                   ),
                   SizedBox(width: 8 * k),
                 ],
                 Expanded(
-                  child: Material(
-                    key: const ValueKey('orbit-depth-reply'),
-                    color: _answerGreen,
-                    shape: const StadiumBorder(),
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () => _openComposer(postId),
-                      child: SizedBox(
-                        height: target,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(
-                              Icons.reply_rounded,
-                              size: 18,
-                              color: _onAnswerGreen,
-                            ),
-                            const SizedBox(width: 8),
-                            Flexible(
-                              child: Text(
-                                l10n.conversation_context_reply,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: _onAnswerGreen,
+                  child: Semantics(
+                    button: true,
+                    label: l10n.conversation_context_reply,
+                    excludeSemantics: true,
+                    onTap: _bySemantics(() => _openComposer(postId)),
+                    child: Material(
+                      key: const ValueKey('orbit-depth-reply'),
+                      color: _answerGreen,
+                      shape: const StadiumBorder(),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: () => _openComposer(postId),
+                        child: SizedBox(
+                          height: target,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(
+                                Icons.reply_rounded,
+                                size: 18,
+                                color: _onAnswerGreen,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  l10n.conversation_context_reply,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: _onAnswerGreen,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1456,6 +1471,7 @@ class _ReactionCircle extends StatelessWidget {
     required this.size,
     required this.pressed,
     required this.onTap,
+    required this.onActivate,
   });
 
   final String glyph;
@@ -1463,6 +1479,9 @@ class _ReactionCircle extends StatelessWidget {
   final double size;
   final bool pressed;
   final VoidCallback onTap;
+
+  /// The screen reader's tap.
+  final VoidCallback onActivate;
 
   @override
   Widget build(BuildContext context) {
@@ -1472,6 +1491,7 @@ class _ReactionCircle extends StatelessWidget {
       selected: pressed,
       label: label,
       excludeSemantics: true,
+      onTap: onActivate,
       child: Material(
         color: pressed
             ? _answerGreen.withValues(alpha: .18)

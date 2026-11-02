@@ -151,7 +151,8 @@ class OrbitDepthVisit {
         ...sends,
         messageId: send._with(
           inFlight: finished ? false : send.inFlight,
-          status: status,
+          // A confirmed delivery is final; an older answer cannot undo it.
+          status: send.status == ThoughtReplyStatus.sent ? null : status,
         ),
       },
       drafts: drafts,
