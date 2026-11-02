@@ -54,6 +54,22 @@ func (s *memoryPushTokenStore) RegisterToken(
 	platform string,
 	capabilities ...string,
 ) error {
+	return s.registerToken(peerId, token, platform, nil, capabilities...)
+}
+
+func (s *memoryPushTokenStore) RegisterTokenWithThoughtNotifications(
+	peerId, token, platform string,
+	enabled bool,
+	capabilities ...string,
+) error {
+	return s.registerToken(peerId, token, platform, &enabled, capabilities...)
+}
+
+func (s *memoryPushTokenStore) registerToken(
+	peerId, token, platform string,
+	thoughtNotificationsEnabled *bool,
+	capabilities ...string,
+) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -74,10 +90,11 @@ func (s *memoryPushTokenStore) RegisterToken(
 	}
 	s.tokens[peerId] = memoryPushTokenRecord{
 		entry: tokenEntry{
-			Token:        token,
-			Platform:     platform,
-			Capabilities: capabilities,
-			UpdatedAt:    time.Now(),
+			Token:                       token,
+			Platform:                    platform,
+			Capabilities:                capabilities,
+			UpdatedAt:                   time.Now(),
+			ThoughtNotificationsEnabled: thoughtNotificationsEnabled,
 		},
 		handle:     handle,
 		generation: generation,
@@ -100,10 +117,11 @@ func (s *memoryPushTokenStore) LookupRoute(peerId string) (*pushRouteLease, erro
 		return nil, nil
 	}
 	return &pushRouteLease{
-		Handle:       record.handle,
-		Generation:   record.generation,
-		Capabilities: append([]string(nil), record.entry.Capabilities...),
-		lookupKey:    peerId,
+		Handle:                       record.handle,
+		Generation:                   record.generation,
+		Capabilities:                 append([]string(nil), record.entry.Capabilities...),
+		thoughtNotificationsDisabled: thoughtNotificationsDisabled(record.entry.ThoughtNotificationsEnabled),
+		lookupKey:                    peerId,
 	}, nil
 }
 
@@ -113,6 +131,7 @@ func (s *memoryPushTokenStore) ResolveRoute(route pushRouteLease) (*resolvedPush
 	record, ok := s.tokens[route.lookupKey]
 	if !ok || route.Handle == "" || route.Generation == 0 ||
 		record.handle != route.Handle || record.generation != route.Generation ||
+		thoughtNotificationsDisabled(record.entry.ThoughtNotificationsEnabled) != route.thoughtNotificationsDisabled ||
 		!slices.Equal(record.entry.Capabilities, route.Capabilities) {
 		return nil, ErrPushRouteStale
 	}
@@ -129,6 +148,7 @@ func (s *memoryPushTokenStore) RevokeIfCurrent(route pushRouteLease) (bool, erro
 	record, ok := s.tokens[route.lookupKey]
 	if !ok || route.Handle == "" || route.Generation == 0 ||
 		record.handle != route.Handle || record.generation != route.Generation ||
+		thoughtNotificationsDisabled(record.entry.ThoughtNotificationsEnabled) != route.thoughtNotificationsDisabled ||
 		!slices.Equal(record.entry.Capabilities, route.Capabilities) {
 		return false, nil
 	}

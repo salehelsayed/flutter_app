@@ -95,6 +95,14 @@ func (p *plan368BackendProbe) RegisterToken(
 	return p.delegate.RegisterToken(peerID, tokenValue, platform, capabilities...)
 }
 
+func (p *plan368BackendProbe) RegisterTokenWithThoughtNotifications(
+	peerID, tokenValue, platform string,
+	enabled bool,
+	capabilities ...string,
+) error {
+	return p.delegate.RegisterTokenWithThoughtNotifications(peerID, tokenValue, platform, enabled, capabilities...)
+}
+
 func (p *plan368BackendProbe) UnregisterToken(peerID string) error {
 	return p.delegate.UnregisterToken(peerID)
 }

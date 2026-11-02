@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -170,6 +173,13 @@ func TestThoughtNotificationsRegistration_ControlsOnlyPostCreate(t *testing.T) {
 						}
 					})
 				}
+				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", &off, directReactionCapability)
+				registerThoughtNotificationPreference(t, env, platform, "refreshed-token", nil, directReactionCapability)
+				push = NewPushServiceWithBackend(reopen())
+				push.sender = recorder.Send
+				t.Run("omitted_field_restores_default_on", func(t *testing.T) {
+					assertThoughtNotificationProviderCalls(t, push, recorder, recipient, postCreatePushFixtureWithPostID, 1)
+				})
 			})
 		}
 	}
@@ -292,4 +302,137 @@ func TestThoughtNotificationsAndroidFallback_UsesThoughtChannel(t *testing.T) {
 			t.Fatal("chat push must retain data-only Android delivery")
 		}
 	})
+}
+
+func TestThoughtNotificationsStaleRoute_RefreshCannotBypassOptOut(t *testing.T) {
+	for _, kind := range []string{"memory", "redis_legacy", "redis_encrypted"} {
+		for _, opaque := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/opaque_%t", kind, opaque), func(t *testing.T) {
+				backend, reopen := thoughtNotificationBackend(t, kind)
+				var capabilities []string
+				if opaque {
+					capabilities = []string{opaqueWakeCapability}
+				}
+				if err := backend.RegisterToken("recipient", "token", "ios", capabilities...); err != nil {
+					t.Fatal(err)
+				}
+				selectedWhileOn := plan367Route(t, backend, "recipient")
+				if err := backend.RegisterTokenWithThoughtNotifications("recipient", "token", "ios", false, capabilities...); err != nil {
+					t.Fatal(err)
+				}
+				if revoked, err := backend.RevokeIfCurrent(selectedWhileOn); err != nil || revoked {
+					t.Fatalf("stale ON route revoked OFF registration: revoked=%v error=%v", revoked, err)
+				}
+				push := NewPushServiceWithBackend(reopen())
+				recorder := newRecordingPushSender()
+				push.sender = recorder.Send
+				push.SendNotification(context.Background(), "recipient", "sender", postCreatePushFixtureWithPostID, selectedWhileOn)
+				if got := recorder.SendCallCount(); got != 0 {
+					t.Fatalf("stale ON route bypassed current opt-out: provider calls = %d", got)
+				}
+			})
+		}
+	}
+}
+
+func TestThoughtNotificationsLegacyOptOut_SurvivesVaultMigration(t *testing.T) {
+	for _, platform := range []string{"android", "ios"} {
+		t.Run(platform, func(t *testing.T) {
+			config := plan367Config("key-a", "test", map[string][]byte{"key-a": plan367Key('a')})
+			_, backend := plan367RedisBackend(t, "thought-notifications-off-migration:", config)
+			push := NewPushServiceWithBackend(backend)
+			env := setupInboxStreamEnv(t, NewInboxStore(push), NewGroupInboxStore(500, 0))
+			off := false
+			registerThoughtNotificationPreference(t, env, platform, "migration-token", &off)
+			plan367Migrate(t, backend)
+			reopened := newRedisPushTokenBackend(backend.client, backend.prefix)
+			reopened.vaultConfig = config
+			push = NewPushServiceWithBackend(reopened)
+			recorder := newRecordingPushSender()
+			push.sender = recorder.Send
+			assertThoughtNotificationProviderCalls(t, push, recorder, env.sender.ID().String(), postCreatePushFixtureWithPostID, 0)
+		})
+	}
+}
+
+func TestThoughtNotificationsVault_AbsentPreferencePreservesLegacyAAD(t *testing.T) {
+	handle := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("h", 32)))
+	directory := pushTokenDirectoryRecord{
+		Handle: handle, Generation: 1, Platform: "ios", Capabilities: []string{},
+		ProviderEnvironment: "test",
+	}
+	aad, err := buildPushTokenVaultAAD("recipient", directory, "key-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf(`{"schema":1,"peer_digest":"%x","handle":%q,"generation":1,"platform":"ios","capabilities":[],"source_legacy_digest":"","provider_environment":"test","key_id":"key-a"}`,
+		sha256.Sum256([]byte("recipient")), handle)
+	if string(aad) != want {
+		t.Fatalf("absent preference changed legacy AAD: got %s, want %s", aad, want)
+	}
+}
+
+func TestThoughtNotificationsVault_OptOutCannotBeFlippedWithoutAuthentication(t *testing.T) {
+	_, backend, _ := plan367NewEncryptedFixture(t, "thought-notifications-tamper:")
+	if err := backend.RegisterTokenWithThoughtNotifications("recipient", "token", "ios", false); err != nil {
+		t.Fatal(err)
+	}
+	key := backend.directoryKey("recipient")
+	directory := plan367ReadJSONMap(t, backend, key)
+	directory["thought_notifications_enabled"] = true
+	plan367WriteJSONMap(t, backend, key, directory)
+	push := NewPushServiceWithBackend(backend)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	assertThoughtNotificationProviderCalls(t, push, recorder, "recipient", postCreatePushFixtureWithPostID, 0)
+}
+
+func TestThoughtNotificationsRegistration_FailedWriteIsNotAcknowledged(t *testing.T) {
+	backend := newFailingRegisterPushTokenBackend()
+	env := setupInboxStreamEnv(t, NewInboxStore(NewPushServiceWithBackend(backend)), NewGroupInboxStore(500, 0))
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	off := false
+	sendInboxReq(t, stream, inboxRequest{
+		Action: "register_token", Token: "failed-token", Platform: "ios",
+		ThoughtNotificationsEnabled: &off,
+	})
+	response := recvInboxResp(t, stream)
+	if response.Status != "ERROR" || response.Error != "Push token persistence failed" {
+		t.Fatalf("failed preference registration response = %#v, want persistence error", response)
+	}
+	if backend.registerCalls != 1 || backend.lastPeerID != env.sender.ID().String() {
+		t.Fatalf("failed write calls = %d peer = %q, want authenticated registration", backend.registerCalls, backend.lastPeerID)
+	}
+	if entry := backend.LookupToken(env.sender.ID().String()); entry != nil {
+		t.Fatalf("failed write persisted a token: %#v", entry)
+	}
+}
+
+func TestThoughtNotificationsWakeAdmission_KeepsThoughtsAtSemanticBoundary(t *testing.T) {
+	fixture := newWakeOutcomeTestFixture(t, "thought-notifications-durable-wake:")
+	if err := fixture.pushBackend.RegisterTokenWithThoughtNotifications("recipient", "token", "ios", false,
+		opaqueWakeCapability, wakeOutcomeCapability); err != nil {
+		t.Fatal(err)
+	}
+	// A messageId alias must not let a Thought lose its event type in a generic
+	// durable mailbox obligation, which also serves unrelated notification kinds.
+	envelope := strings.Replace(postCreatePushFixtureWithPostID, `"event_id":`, `"messageId":"thought-alias","event_id":`, 1)
+	entry := inboxMessage{From: "sender", Message: envelope, Timestamp: fixture.now.UnixMilli()}
+	if _, eligible := newWakeOutcomeAdmission("recipient", envelope, wakeOutcomeProducerDirectMessage,
+		plan367Route(t, fixture.pushBackend, "recipient"), entry.Timestamp, directWakeOutcomeExpiryMs(entry)); !eligible {
+		t.Fatal("fixture must otherwise qualify for generic durable wake admission")
+	}
+	if _, _, _, _, handled, err := fixture.inbox.storeWithWakeOutcome("recipient", entry); err != nil || handled {
+		t.Fatalf("Thought entered generic durable wake admission: handled=%v error=%v", handled, err)
+	}
+	if result, err := fixture.inbox.Store("recipient", entry); err != nil || result != InboxStoreResultStored {
+		t.Fatalf("Thought custody changed: result=%q error=%v", result, err)
+	}
+	if got := fixture.inbox.Count("recipient"); got != 1 {
+		t.Fatalf("Thought custody rows = %d, want 1", got)
+	}
 }

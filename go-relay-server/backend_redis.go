@@ -1622,7 +1622,7 @@ func decodeLegacyPushTokenRecord(payload []byte) (tokenEntry, error) {
 	}
 	for field := range fields {
 		switch field {
-		case "Token", "Platform", "Capabilities", "UpdatedAt":
+		case "Token", "Platform", "Capabilities", "UpdatedAt", "thought_notifications_enabled":
 		default:
 			return tokenEntry{}, errors.New("decode legacy push token record")
 		}
@@ -1641,6 +1641,11 @@ func decodeLegacyPushTokenRecord(payload []byte) (tokenEntry, error) {
 	if capabilities, ok := fields["Capabilities"]; ok {
 		if bytes.Equal(bytes.TrimSpace(capabilities), []byte("null")) ||
 			decodePushTokenJSONField(capabilities, &entry.Capabilities) != nil {
+			return tokenEntry{}, errors.New("decode legacy push token record")
+		}
+	}
+	if enabled, ok := fields["thought_notifications_enabled"]; ok {
+		if decodePushTokenJSONField(enabled, &entry.ThoughtNotificationsEnabled) != nil {
 			return tokenEntry{}, errors.New("decode legacy push token record")
 		}
 	}
@@ -1750,14 +1755,31 @@ func (b *redisPushTokenBackend) RegisterToken(
 	platform string,
 	capabilities ...string,
 ) error {
+	return b.registerToken(peerId, token, platform, nil, capabilities...)
+}
+
+func (b *redisPushTokenBackend) RegisterTokenWithThoughtNotifications(
+	peerId, token, platform string,
+	enabled bool,
+	capabilities ...string,
+) error {
+	return b.registerToken(peerId, token, platform, &enabled, capabilities...)
+}
+
+func (b *redisPushTokenBackend) registerToken(
+	peerId, token, platform string,
+	thoughtNotificationsEnabled *bool,
+	capabilities ...string,
+) error {
 	if peerId == "" || token == "" || platform == "" {
 		return errors.New("push token registration is incomplete")
 	}
 	entry := tokenEntry{
-		Token:        token,
-		Platform:     platform,
-		Capabilities: canonicalPushTokenVaultCapabilities(capabilities),
-		UpdatedAt:    b.nowTime(),
+		Token:                       token,
+		Platform:                    platform,
+		Capabilities:                canonicalPushTokenVaultCapabilities(capabilities),
+		UpdatedAt:                   b.nowTime(),
+		ThoughtNotificationsEnabled: thoughtNotificationsEnabled,
 	}
 	payload, err := encodeLegacyPushTokenRecord(entry)
 	if err != nil {
@@ -1770,7 +1792,7 @@ func (b *redisPushTokenBackend) RegisterToken(
 			return fmt.Errorf("store push token: %w", err)
 		}
 		if marker.State == pushTokenStateEncrypted {
-			return b.registerEncrypted(peerId, token, platform, entry.Capabilities)
+			return b.registerEncrypted(peerId, token, platform, thoughtNotificationsEnabled, entry.Capabilities)
 		}
 		err = b.registerLegacy(peerId, payload)
 		if errors.Is(err, errPushTokenStateChanged) {
@@ -1939,9 +1961,10 @@ func (b *redisPushTokenBackend) lookupLegacyRoute(peerID string) (*pushRouteLeas
 		return nil, err
 	}
 	return &pushRouteLease{
-		Capabilities: append([]string(nil), entry.Capabilities...),
-		lookupKey:    legacyKey,
-		legacyDigest: pushRouteLegacyDigestBytes(payload),
+		Capabilities:                 append([]string(nil), entry.Capabilities...),
+		thoughtNotificationsDisabled: thoughtNotificationsDisabled(entry.ThoughtNotificationsEnabled),
+		lookupKey:                    legacyKey,
+		legacyDigest:                 pushRouteLegacyDigestBytes(payload),
 	}, nil
 }
 
@@ -1966,11 +1989,12 @@ func (b *redisPushTokenBackend) lookupEncryptedRoute(peerID string) (*pushRouteL
 		}
 	}
 	route := &pushRouteLease{
-		Handle:       record.Handle,
-		Generation:   record.Generation,
-		Capabilities: append([]string(nil), record.Capabilities...),
-		lookupKey:    directoryKey,
-		legacyDigest: legacyDigest,
+		Handle:                       record.Handle,
+		Generation:                   record.Generation,
+		Capabilities:                 append([]string(nil), record.Capabilities...),
+		thoughtNotificationsDisabled: thoughtNotificationsDisabled(record.ThoughtNotificationsEnabled),
+		lookupKey:                    directoryKey,
+		legacyDigest:                 legacyDigest,
 	}
 	if _, err := b.resolveEncryptedRoute(*route, directoryKey, peerID); err != nil {
 		return nil, err
@@ -2042,7 +2066,8 @@ func (b *redisPushTokenBackend) resolveLegacyRoute(route pushRouteLease) (*resol
 	if err != nil {
 		return nil, err
 	}
-	if !slices.Equal(entry.Capabilities, canonicalPushTokenVaultCapabilities(route.Capabilities)) {
+	if thoughtNotificationsDisabled(entry.ThoughtNotificationsEnabled) != route.thoughtNotificationsDisabled ||
+		!slices.Equal(entry.Capabilities, canonicalPushTokenVaultCapabilities(route.Capabilities)) {
 		return nil, ErrPushRouteStale
 	}
 	return &resolvedPushTarget{
@@ -2054,7 +2079,8 @@ func (b *redisPushTokenBackend) resolveLegacyRoute(route pushRouteLease) (*resol
 
 func encryptedDirectoryMatchesRoute(record pushTokenDirectoryRecord, route pushRouteLease) bool {
 	capabilities := canonicalPushTokenVaultCapabilities(route.Capabilities)
-	if !slices.Equal(record.Capabilities, capabilities) {
+	if thoughtNotificationsDisabled(record.ThoughtNotificationsEnabled) != route.thoughtNotificationsDisabled ||
+		!slices.Equal(record.Capabilities, capabilities) {
 		return false
 	}
 	if route.Generation == 0 {
@@ -2218,6 +2244,7 @@ func (b *redisPushTokenBackend) registerEncrypted(
 	peerID string,
 	token string,
 	platform string,
+	thoughtNotificationsEnabled *bool,
 	capabilities []string,
 ) error {
 	config, err := b.ensureVaultConfig()
@@ -2291,12 +2318,13 @@ func (b *redisPushTokenBackend) registerEncrypted(
 			}
 		}
 		directory := pushTokenDirectoryRecord{
-			Handle:              handle,
-			Generation:          generation,
-			Platform:            platform,
-			Capabilities:        append([]string(nil), capabilities...),
-			ProviderEnvironment: config.providerEnvironment,
-			SourceLegacyDigest:  "",
+			Handle:                      handle,
+			Generation:                  generation,
+			Platform:                    platform,
+			Capabilities:                append([]string(nil), capabilities...),
+			ProviderEnvironment:         config.providerEnvironment,
+			SourceLegacyDigest:          "",
+			ThoughtNotificationsEnabled: thoughtNotificationsEnabled,
 		}
 		directoryPayload, err := encodePushTokenDirectoryRecord(directory)
 		if err != nil {
@@ -2884,12 +2912,13 @@ func (b *redisPushTokenBackend) reconcilePushTokenMigrationRow(
 		}
 	}
 	directory := pushTokenDirectoryRecord{
-		Handle:              handle,
-		Generation:          generation,
-		Platform:            legacyEntry.Platform,
-		Capabilities:        append([]string(nil), legacyEntry.Capabilities...),
-		ProviderEnvironment: config.providerEnvironment,
-		SourceLegacyDigest:  pushTokenLegacyDigest(legacyPayload),
+		Handle:                      handle,
+		Generation:                  generation,
+		Platform:                    legacyEntry.Platform,
+		Capabilities:                append([]string(nil), legacyEntry.Capabilities...),
+		ProviderEnvironment:         config.providerEnvironment,
+		SourceLegacyDigest:          pushTokenLegacyDigest(legacyPayload),
+		ThoughtNotificationsEnabled: legacyEntry.ThoughtNotificationsEnabled,
 	}
 	directoryPayload, err := encodePushTokenDirectoryRecord(directory)
 	if err != nil {
@@ -3153,6 +3182,7 @@ func (b *redisPushTokenBackend) verifyPushTokenMigrationSnapshot(
 		if directory.SourceLegacyDigest != pushTokenLegacyDigest(legacyPayload) ||
 			directory.ProviderEnvironment != config.providerEnvironment ||
 			directory.Platform != legacyEntry.Platform ||
+			thoughtNotificationsDisabled(directory.ThoughtNotificationsEnabled) != thoughtNotificationsDisabled(legacyEntry.ThoughtNotificationsEnabled) ||
 			!slices.Equal(directory.Capabilities, legacyEntry.Capabilities) {
 			return b.pushTokenMigrationSnapshotFault(
 				marker,

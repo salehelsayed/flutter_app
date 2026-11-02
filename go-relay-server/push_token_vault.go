@@ -50,12 +50,13 @@ type pushTokenStateMarker struct {
 // particular, neither a peer identifier nor provider-token material may be
 // added here; the peer is represented only by the digest bound into AEAD AAD.
 type pushTokenDirectoryRecord struct {
-	Handle              string
-	Generation          uint64
-	Platform            string
-	Capabilities        []string
-	ProviderEnvironment string
-	SourceLegacyDigest  string
+	Handle                      string
+	Generation                  uint64
+	Platform                    string
+	Capabilities                []string
+	ProviderEnvironment         string
+	SourceLegacyDigest          string
+	ThoughtNotificationsEnabled *bool
 }
 
 // pushTokenVaultEnvelope is the complete persisted vault value. Its exact
@@ -84,12 +85,13 @@ type pushTokenMarkerWire struct {
 }
 
 type pushTokenDirectoryWire struct {
-	Handle              string   `json:"handle"`
-	Generation          uint64   `json:"generation"`
-	Platform            string   `json:"platform"`
-	Capabilities        []string `json:"capabilities"`
-	ProviderEnvironment string   `json:"provider_environment"`
-	SourceLegacyDigest  string   `json:"source_legacy_digest"`
+	Handle                      string   `json:"handle"`
+	Generation                  uint64   `json:"generation"`
+	Platform                    string   `json:"platform"`
+	Capabilities                []string `json:"capabilities"`
+	ProviderEnvironment         string   `json:"provider_environment"`
+	SourceLegacyDigest          string   `json:"source_legacy_digest"`
+	ThoughtNotificationsEnabled *bool    `json:"thought_notifications_enabled,omitempty"`
 }
 
 type pushTokenVaultWire struct {
@@ -109,6 +111,8 @@ type pushTokenAADWire struct {
 	SourceLegacyDigest  string   `json:"source_legacy_digest"`
 	ProviderEnvironment string   `json:"provider_environment"`
 	KeyID               string   `json:"key_id"`
+	// Omission preserves the exact AAD of pre-preference encrypted records.
+	ThoughtNotificationsEnabled *bool `json:"thought_notifications_enabled,omitempty"`
 }
 
 // loadPushTokenVaultConfigFromEnv reads the exact three-variable vault
@@ -282,12 +286,13 @@ func encodePushTokenDirectoryRecord(record pushTokenDirectoryRecord) ([]byte, er
 		return nil, err
 	}
 	return json.Marshal(pushTokenDirectoryWire{
-		Handle:              record.Handle,
-		Generation:          record.Generation,
-		Platform:            record.Platform,
-		Capabilities:        append([]string{}, record.Capabilities...),
-		ProviderEnvironment: record.ProviderEnvironment,
-		SourceLegacyDigest:  record.SourceLegacyDigest,
+		Handle:                      record.Handle,
+		Generation:                  record.Generation,
+		Platform:                    record.Platform,
+		Capabilities:                append([]string{}, record.Capabilities...),
+		ProviderEnvironment:         record.ProviderEnvironment,
+		SourceLegacyDigest:          record.SourceLegacyDigest,
+		ThoughtNotificationsEnabled: record.ThoughtNotificationsEnabled,
 	})
 }
 
@@ -303,6 +308,7 @@ func decodePushTokenDirectoryRecord(payload []byte) (pushTokenDirectoryRecord, e
 			"source_legacy_digest",
 		},
 		pushTokenJSONMaxBytes,
+		"thought_notifications_enabled",
 	)
 	if err != nil {
 		return pushTokenDirectoryRecord{}, errors.New("push token directory JSON is invalid")
@@ -328,14 +334,20 @@ func decodePushTokenDirectoryRecord(payload []byte) (pushTokenDirectoryRecord, e
 	if err := decodePushTokenJSONField(fields["source_legacy_digest"], &wire.SourceLegacyDigest); err != nil {
 		return pushTokenDirectoryRecord{}, errors.New("push token directory source digest is invalid")
 	}
+	if enabled, ok := fields["thought_notifications_enabled"]; ok {
+		if err := decodePushTokenJSONField(enabled, &wire.ThoughtNotificationsEnabled); err != nil {
+			return pushTokenDirectoryRecord{}, errors.New("push token directory Thought preference is invalid")
+		}
+	}
 
 	record := pushTokenDirectoryRecord{
-		Handle:              wire.Handle,
-		Generation:          wire.Generation,
-		Platform:            wire.Platform,
-		Capabilities:        append([]string{}, wire.Capabilities...),
-		ProviderEnvironment: wire.ProviderEnvironment,
-		SourceLegacyDigest:  wire.SourceLegacyDigest,
+		Handle:                      wire.Handle,
+		Generation:                  wire.Generation,
+		Platform:                    wire.Platform,
+		Capabilities:                append([]string{}, wire.Capabilities...),
+		ProviderEnvironment:         wire.ProviderEnvironment,
+		SourceLegacyDigest:          wire.SourceLegacyDigest,
+		ThoughtNotificationsEnabled: wire.ThoughtNotificationsEnabled,
 	}
 	if err := validatePushTokenDirectoryRecord(record); err != nil {
 		return pushTokenDirectoryRecord{}, err
@@ -585,15 +597,16 @@ func buildPushTokenVaultAAD(
 	}
 	peerDigest := sha256.Sum256([]byte(peerID))
 	return json.Marshal(pushTokenAADWire{
-		Schema:              pushTokenVaultSchemaVersion,
-		PeerDigest:          hex.EncodeToString(peerDigest[:]),
-		Handle:              directory.Handle,
-		Generation:          directory.Generation,
-		Platform:            directory.Platform,
-		Capabilities:        append([]string{}, directory.Capabilities...),
-		SourceLegacyDigest:  directory.SourceLegacyDigest,
-		ProviderEnvironment: directory.ProviderEnvironment,
-		KeyID:               keyID,
+		Schema:                      pushTokenVaultSchemaVersion,
+		PeerDigest:                  hex.EncodeToString(peerDigest[:]),
+		Handle:                      directory.Handle,
+		Generation:                  directory.Generation,
+		Platform:                    directory.Platform,
+		Capabilities:                append([]string{}, directory.Capabilities...),
+		SourceLegacyDigest:          directory.SourceLegacyDigest,
+		ProviderEnvironment:         directory.ProviderEnvironment,
+		KeyID:                       keyID,
+		ThoughtNotificationsEnabled: directory.ThoughtNotificationsEnabled,
 	})
 }
 
@@ -711,19 +724,23 @@ func equalPushTokenStrings(left, right []string) bool {
 }
 
 // decodePushTokenJSONObject parses one complete JSON object while preserving
-// duplicate-key detection. allowed == nil admits arbitrary field names (used
-// only for the keyring's key-ID map); a non-nil list is both the exact allow
-// list and the exact required-field list.
+// duplicate-key detection. allowed == nil admits arbitrary field names; a
+// non-nil list names the required fields. optional adds allowed fields without
+// making them mandatory for older records.
 func decodePushTokenJSONObject(
 	payload []byte,
 	allowed []string,
 	maxBytes int,
+	optional ...string,
 ) (map[string]json.RawMessage, error) {
 	if len(payload) == 0 || len(payload) > maxBytes {
 		return nil, errors.New("JSON object size is invalid")
 	}
-	allowedSet := make(map[string]struct{}, len(allowed))
+	allowedSet := make(map[string]struct{}, len(allowed)+len(optional))
 	for _, field := range allowed {
+		allowedSet[field] = struct{}{}
+	}
+	for _, field := range optional {
 		allowedSet[field] = struct{}{}
 	}
 

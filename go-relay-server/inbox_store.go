@@ -46,9 +46,15 @@ type pushRouteLease struct {
 	Handle       string
 	Generation   uint64
 	Capabilities []string
+	// Zero preserves default-on behavior for routes registered by old clients.
+	thoughtNotificationsDisabled bool
 
 	lookupKey    string
 	legacyDigest [32]byte
+}
+
+func thoughtNotificationsDisabled(enabled *bool) bool {
+	return enabled != nil && !*enabled
 }
 
 func (route pushRouteLease) hasCapability(capability string) bool {
@@ -73,6 +79,9 @@ type PushTokenBackend interface {
 	// Success means the backend has confirmed the write; implementations must
 	// return storage failures instead of logging and acknowledging them.
 	RegisterToken(peerId string, token string, platform string, capabilities ...string) error
+	// RegisterTokenWithThoughtNotifications atomically stores the same route
+	// and the device's explicitly supplied Thought notification preference.
+	RegisterTokenWithThoughtNotifications(peerId string, token string, platform string, enabled bool, capabilities ...string) error
 
 	// UnregisterToken durably removes the authenticated peer's current route.
 	UnregisterToken(peerId string) error

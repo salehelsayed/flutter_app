@@ -1156,9 +1156,12 @@ func TestRelayNotificationClosure_PushRouteDirectoryCiphertextAndGenerationContr
 		if field.IsExported() && field.Name != "Handle" && field.Name != "Generation" && field.Name != "Capabilities" {
 			t.Fatalf("pushRouteLease unexpectedly exports %q", field.Name)
 		}
+		if field.Name == "thoughtNotificationsDisabled" && field.Type.Kind() != reflect.Bool {
+			t.Fatal("Thought notification policy must expose only one private boolean")
+		}
 	}
 	sort.Strings(fields)
-	wantFields := []string{"Capabilities", "Generation", "Handle", "legacyDigest", "lookupKey"}
+	wantFields := []string{"Capabilities", "Generation", "Handle", "legacyDigest", "lookupKey", "thoughtNotificationsDisabled"}
 	if !reflect.DeepEqual(fields, wantFields) {
 		t.Fatalf("pushRouteLease fields = %#v, want exact privacy boundary %#v", fields, wantFields)
 	}
@@ -1419,6 +1422,14 @@ type plan367BackendProbe struct {
 
 func (p *plan367BackendProbe) RegisterToken(peerID, tokenValue, platform string, capabilities ...string) error {
 	return p.delegate.RegisterToken(peerID, tokenValue, platform, capabilities...)
+}
+
+func (p *plan367BackendProbe) RegisterTokenWithThoughtNotifications(
+	peerID, tokenValue, platform string,
+	enabled bool,
+	capabilities ...string,
+) error {
+	return p.delegate.RegisterTokenWithThoughtNotifications(peerID, tokenValue, platform, enabled, capabilities...)
 }
 
 func (p *plan367BackendProbe) UnregisterToken(peerID string) error {

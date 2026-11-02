@@ -50,6 +50,7 @@ const (
 	groupInvitePushBody         = "Open Mknoon to review"
 	postCreatePushTitle         = "New thought"
 	postCreatePushBody          = "A friend shared a thought"
+	postCreatePushChannelID     = "mknoon_thoughts"
 	groupInviteAndroidTagPrefix = "mknoon_group_invite_"
 	introPushNotificationTitle  = "New Introduction"
 	introPushNotificationBody   = "Open Mknoon to review"
@@ -350,10 +351,11 @@ func pushDeliveryResultError(result pushDeliveryResult) error {
 }
 
 type tokenEntry struct {
-	Token        string
-	Platform     string
-	Capabilities []string `json:"Capabilities,omitempty"`
-	UpdatedAt    time.Time
+	Token                       string
+	Platform                    string
+	Capabilities                []string `json:"Capabilities,omitempty"`
+	UpdatedAt                   time.Time
+	ThoughtNotificationsEnabled *bool `json:"thought_notifications_enabled,omitempty"`
 }
 
 func NewPushService(ctx context.Context, serviceAccountPath string) *PushService {
@@ -427,7 +429,23 @@ func (ps *PushService) RegisterToken(
 	platform string,
 	capabilities ...string,
 ) error {
-	if err := ps.tokenBackend.RegisterToken(peerId, token, platform, capabilities...); err != nil {
+	return ps.registerToken(peerId, token, platform, nil, capabilities...)
+}
+
+func (ps *PushService) registerToken(
+	peerId, token, platform string,
+	thoughtNotificationsEnabled *bool,
+	capabilities ...string,
+) error {
+	var err error
+	if thoughtNotificationsEnabled == nil {
+		err = ps.tokenBackend.RegisterToken(peerId, token, platform, capabilities...)
+	} else {
+		err = ps.tokenBackend.RegisterTokenWithThoughtNotifications(
+			peerId, token, platform, *thoughtNotificationsEnabled, capabilities...,
+		)
+	}
+	if err != nil {
 		return fmt.Errorf("persist push token: %w", err)
 	}
 	log.Printf("[PUSH] outcome=registered")
@@ -664,6 +682,7 @@ func (ps *PushService) sendSelectedPushThroughGateway(
 		requiredCapability,
 		buildRichMessage,
 		nil,
+		false,
 		projectRichMessage...,
 	)
 }
@@ -696,6 +715,7 @@ func (ps *PushService) sendSelectedGroupPushThroughGateway(
 		requiredCapability,
 		buildRichMessage,
 		&identity,
+		false,
 		projectRichMessage...,
 	)
 }
@@ -707,6 +727,7 @@ func (ps *PushService) sendSelectedPushThroughGatewayWithAdmission(
 	requiredCapability string,
 	buildRichMessage pushMessageFactory,
 	admissionIdentity *groupMessageDispatchAdmissionIdentity,
+	isThoughtNotification bool,
 	projectRichMessage ...pushMessageProjector,
 ) pushDeliveryResult {
 	route := copyPushRouteLease(initialRoute)
@@ -721,6 +742,12 @@ func (ps *PushService) sendSelectedPushThroughGatewayWithAdmission(
 	opaqueLocked := initialOpaque
 
 	for selectionAttempt := 0; selectionAttempt < 2; selectionAttempt++ {
+		// Keep this semantic guard before both rich and fixed opaque routing.
+		// Recheck after stale-route refresh; mixed mailbox wakes have no Thought
+		// origin and never enter this policy.
+		if isThoughtNotification && route.thoughtNotificationsDisabled {
+			return pushDeliverySuppressed
+		}
 		selectedOpaque, selectedEligible := classifySelectedPushRoute(route, requiredCapability)
 		if !selectedEligible || (opaqueLocked && !selectedOpaque) {
 			pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
@@ -838,6 +865,7 @@ func (ps *PushService) sendGroupWakeOutcomeThroughGateway(
 		requiredCapability,
 		nil,
 		&identity,
+		false,
 	)
 	recordGroupMessageDispatch(groupMessageDispatchSourceInbox, result)
 	return result
@@ -883,7 +911,7 @@ func (ps *PushService) sendDirectOpaqueWakeThroughGateway(
 		return pushDeliveryRetryable
 	}
 	return ps.sendSelectedPushThroughGatewayWithAdmission(
-		ctx, recipientPeerID, route, requiredCapability, nil, &identity,
+		ctx, recipientPeerID, route, requiredCapability, nil, &identity, false,
 	)
 }
 
@@ -1043,6 +1071,7 @@ func (ps *PushService) sendRichNotification(
 		"",
 		func() *messaging.Message { return buildPushMessage("", fromPeerID, message) },
 		admissionIdentity,
+		extractChatPushMetadata(message).RouteType == "post_create",
 		projectMessage...,
 	)
 }
@@ -1448,6 +1477,9 @@ func buildPushMessage(token, fromPeerId, message string) *messaging.Message {
 		Title:     resolvedTitle,
 		Body:      resolvedBody,
 		ChannelID: pushNotificationChannelID,
+	}
+	if metadata.RouteType == "post_create" {
+		androidNotification.ChannelID = postCreatePushChannelID
 	}
 	if metadata.RouteType == "group_invite" {
 		androidNotification.Tag = groupInviteAndroidNotificationTag(
@@ -2948,6 +2980,11 @@ func (is *InboxStore) directWakeOutcomeProducer(
 		return wakeOutcomeProducerGroupMessage, "", metadata.MessageID, true
 	}
 	metadata := extractChatPushMetadata(entry.Message)
+	// Thought notifications need their event type at dispatch to enforce the
+	// device preference. Generic durable mailbox obligations omit that type.
+	if metadata.RouteType == "post_create" {
+		return 0, "", "", false
+	}
 	if !metadata.ShouldNotify || (is.wakeTokens != nil && wakeTokenGateEnforced &&
 		!is.wakeTokens.IsAuthorized(toPeerID, entry.WakeToken)) {
 		return 0, "", "", false
@@ -4423,6 +4460,8 @@ type inboxRequest struct {
 	// Plan 256: recipient-advertised push capabilities are stored with the
 	// authenticated peer's platform token. Legacy registrations omit this field.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// Omitted legacy registrations keep Thought notifications enabled.
+	ThoughtNotificationsEnabled *bool `json:"thought_notifications_enabled,omitempty"`
 	// FDC-09 §12 access-token wake gate (additive). WakeToken is the opaque token a
 	// SENDER presents on `store` to authorize waking the recipient; WakeTokens is
 	// the SET a RECIPIENT registers via `register_wake_tokens`. omitempty keeps
@@ -4831,10 +4870,11 @@ func HandleInboxStream(
 		if req.Token == "" || req.Platform == "" {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required fields: token, platform"}
 		} else {
-			err := inbox.push.RegisterToken(
+			err := inbox.push.registerToken(
 				remotePeer,
 				req.Token,
 				req.Platform,
+				req.ThoughtNotificationsEnabled,
 				req.Capabilities...,
 			)
 			if err != nil {

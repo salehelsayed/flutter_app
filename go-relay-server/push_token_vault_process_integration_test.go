@@ -20,11 +20,12 @@ import (
 // the handoff: reconstructing a route from its public projection would make a
 // stale revoke vacuously fail instead of exercising the persisted generation.
 type redisPushRouteDTO struct {
-	Handle       string   `json:"handle"`
-	Generation   uint64   `json:"generation"`
-	Capabilities []string `json:"capabilities"`
-	LookupKey    string   `json:"lookupKey"`
-	LegacyDigest [32]byte `json:"legacyDigest"`
+	Handle                       string   `json:"handle"`
+	Generation                   uint64   `json:"generation"`
+	Capabilities                 []string `json:"capabilities"`
+	LookupKey                    string   `json:"lookupKey"`
+	LegacyDigest                 [32]byte `json:"legacyDigest"`
+	ThoughtNotificationsDisabled bool     `json:"thoughtNotificationsDisabled,omitempty"`
 }
 
 func redisPushRouteDTOFromLease(route *pushRouteLease) *redisPushRouteDTO {
@@ -32,21 +33,23 @@ func redisPushRouteDTOFromLease(route *pushRouteLease) *redisPushRouteDTO {
 		return nil
 	}
 	return &redisPushRouteDTO{
-		Handle:       route.Handle,
-		Generation:   route.Generation,
-		Capabilities: append([]string(nil), route.Capabilities...),
-		LookupKey:    route.lookupKey,
-		LegacyDigest: route.legacyDigest,
+		Handle:                       route.Handle,
+		Generation:                   route.Generation,
+		Capabilities:                 append([]string(nil), route.Capabilities...),
+		LookupKey:                    route.lookupKey,
+		LegacyDigest:                 route.legacyDigest,
+		ThoughtNotificationsDisabled: route.thoughtNotificationsDisabled,
 	}
 }
 
 func (route *redisPushRouteDTO) lease() pushRouteLease {
 	return pushRouteLease{
-		Handle:       route.Handle,
-		Generation:   route.Generation,
-		Capabilities: append([]string(nil), route.Capabilities...),
-		lookupKey:    route.LookupKey,
-		legacyDigest: route.LegacyDigest,
+		Handle:                       route.Handle,
+		Generation:                   route.Generation,
+		Capabilities:                 append([]string(nil), route.Capabilities...),
+		lookupKey:                    route.LookupKey,
+		legacyDigest:                 route.LegacyDigest,
+		thoughtNotificationsDisabled: route.ThoughtNotificationsDisabled,
 	}
 }
 

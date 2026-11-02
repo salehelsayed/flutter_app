@@ -33,6 +33,14 @@ func (b *failingRegisterPushTokenBackend) RegisterToken(
 	return errTestPushTokenPersistence
 }
 
+func (b *failingRegisterPushTokenBackend) RegisterTokenWithThoughtNotifications(
+	peerID, token, platform string,
+	_ bool,
+	capabilities ...string,
+) error {
+	return b.RegisterToken(peerID, token, platform, capabilities...)
+}
+
 func TestPushServiceRegisterTokenPropagatesBackendPersistenceFailure(t *testing.T) {
 	backend := newFailingRegisterPushTokenBackend()
 	push := NewPushServiceWithBackend(backend)
