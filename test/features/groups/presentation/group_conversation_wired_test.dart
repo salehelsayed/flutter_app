@@ -7,6 +7,10 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -1990,6 +1994,8 @@ void main() {
       AppVisibilityRouteObserver? visibilityRouteObserver,
       AppVisibilityRouteRegistry? visibilityRouteRegistry,
       ComposerDraftStore? composerDraftStore,
+      StickerUsageRecorder stickerUsageRecorder =
+          const NoopStickerUsageRecorder(),
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -2052,9 +2058,135 @@ void main() {
           forwardChatMessageListener: forwardChatMessageListener,
           openAnnouncementSenderConversation:
               openAnnouncementSenderConversation,
+          stickerUsageRecorder: stickerUsageRecorder,
         ),
       );
     }
+
+    testWidgets('stickers v1: the Stickers tile opens the panel and a tapped '
+        'sticker publishes one ordinary image with the sticker key', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      final tempDir = Directory.systemTemp.createTempSync('group_sticker_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await saveActiveGroupMembers(groupRepo, group);
+      final staged = File('${tempDir.path}/staged.jpg')
+        ..writeAsBytesSync(validJpegFixtureBytes);
+      final recorder = _RecordingStickerUsageRecorder();
+      final uploadedBytes = <List<int>>[];
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: mediaAttachmentRepo,
+          mediaFileManager: _CopyingMediaFileManager(),
+          initialPendingMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: staged,
+              budgetBytes: staged.lengthSync(),
+            ),
+          ],
+          stickerUsageRecorder: recorder,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                String? blobId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                uploadedBytes.add(File(localFilePath).readAsBytesSync());
+                return successfulGroupUploadFixture(
+                  blobId: blobId!,
+                  mime: mime,
+                  localFilePath: localFilePath,
+                );
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(
+            find.byKey(const ValueKey('group-attach-stickers-action')),
+          )
+          .onTap!();
+      for (
+        var i = 0;
+        i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      expect(find.byKey(const ValueKey('sticker-tab-big_mood')), findsOne);
+
+      await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+      );
+      for (var i = 0; i < 300 && groupPublishPayloads(bridge).isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await pumpFrames(tester, count: 10);
+
+      final payload = groupPublishPayloads(bridge).single;
+      final media = (payload['media'] as List).cast<Map<String, dynamic>>();
+      final attachment = media.single;
+      expect(attachment['sticker'], {'id': 'big_mood.en.hug'});
+      expect(attachment.keys, isNot(contains('blobCustody')));
+      expect(attachment['mime'], 'image/webp');
+      expect(attachment['mediaType'], 'image');
+      expect(attachment['width'], 512);
+      expect(attachment['height'], 512);
+      expect(payload['text'], '');
+      expect(payload['quotedMessageId'], isNull);
+      expect(
+        uploadedBytes.single,
+        File('assets/stickers/big_mood/en/hug.webp').readAsBytesSync(),
+      );
+      expect(recorder.ids, ['big_mood.en.hug']);
+      final screen = tester.widget<GroupConversationScreen>(
+        find.byType(GroupConversationScreen),
+      );
+      expect(
+        screen.composerStateListenable?.value.pendingAttachments.single.path,
+        staged.path,
+        reason: 'the staged photo stays in the composer',
+      );
+      final saved = await mediaAttachmentRepo.getAttachmentsForMessage(
+        payload['messageId'] as String,
+        owner: MediaOwnerLane.group,
+      );
+      expect(saved.single.stickerId, 'big_mood.en.hug');
+    });
 
     testWidgets(
       'build-127 composer clears sent padded text and keeps an unsent draft on return',
@@ -23847,5 +23979,41 @@ class _FailingCameraPicker extends FakeMediaPicker {
     expect(source, ImageSource.camera);
     pickVideoCalls++;
     throw PlatformException(code: 'camera_access_denied');
+  }
+}
+
+class _StickerTempPath extends PathProviderPlatform {
+  _StickerTempPath(this.path);
+  final String path;
+  @override
+  Future<String?> getTemporaryPath() async => path;
+  @override
+  Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+class _RecordingStickerUsageRecorder implements StickerUsageRecorder {
+  final ids = <String>[];
+  @override
+  Future<void> recordSent(String stickerId) async => ids.add(stickerId);
+}
+
+class _CopyingMediaFileManager extends FakeMediaFileManager {
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    final relative = await super.copyToDurableStorage(
+      sourceFilePath: sourceFilePath,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+    await File(
+      sourceFilePath,
+    ).copy(p.join(FakeMediaFileManager.testRootPath, relative));
+    return relative;
   }
 }

@@ -102,12 +102,16 @@ const _controllerTestPaths = <String>[
 // Composer drafts (owner, 11-01): one optional `ConversationWired` field,
 // `composerDraftStore`, defaulting to the shared app store, so an unsent text,
 // photo or video and the private setting come back after leaving the chat.
-const _expectedDirectApiFingerprint = '2cf4b34f';
+// Stickers v1: one optional field, `stickerUsageRecorder`, defaulting to the
+// const no-op recorder. Without it the fingerprint is the previous 2cf4b34f.
+const _expectedDirectApiFingerprint = 'c2d1898f';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 // Composer drafts (owner, 11-01): the same optional `composerDraftStore`
 // field on `GroupConversationWired`.
-const _expectedGroupApiFingerprint = 'cfec919a';
+// Stickers v1: the same optional `stickerUsageRecorder` field. Without it
+// the fingerprint is the previous cfec919a.
+const _expectedGroupApiFingerprint = '073281ee';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).
@@ -151,11 +155,14 @@ const _expectedGroupApiFingerprint = 'cfec919a';
 // the group handoff retain their existing fingerprints.
 // Send as text: one optional recording/review action, delegated to the existing
 // wired capture owner. All prior arguments and both Wired APIs are unchanged.
+// Stickers v1: the direct handoff adds only `stickerPanel` (the open sticker
+// panel, or null) and `onComposerTextTap` (closes it).
 const _expectedDirectHandoffFingerprint = 'c1a752e7';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
 // wired capture owner. All prior arguments and both Wired APIs are unchanged.
+// Stickers v1: the same two handoff arguments.
 const _expectedGroupHandoffFingerprint = '0e09acce';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();

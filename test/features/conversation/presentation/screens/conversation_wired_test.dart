@@ -113,6 +113,9 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../shared/fixtures/complete_pdf.dart';
 import '../../../../shared/fakes/fake_audio_recorder_service.dart';
@@ -2124,6 +2127,8 @@ void main() {
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
     ComposerDraftStore? composerDraftStore,
+    StickerUsageRecorder stickerUsageRecorder =
+        const NoopStickerUsageRecorder(),
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2194,6 +2199,7 @@ void main() {
           modalityGate: modalityGate ?? const DirectConversationModalityGate(),
           outgoingCallCapability: outgoingCallCapability,
           callTimelineSource: callTimelineSource,
+          stickerUsageRecorder: stickerUsageRecorder,
         ),
       ),
     );
@@ -3804,6 +3810,293 @@ void main() {
       ),
     );
   }
+
+  group('stickers v1', () {
+    for (final strict in [true, false]) {
+      testWidgets('the Stickers tile opens the panel and a tapped sticker goes '
+          'out as one ordinary ${strict ? 'strict' : 'legacy'} image with the '
+          'sticker key', (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(
+          driver: _SynchronousUploadWakeLockDriver(),
+        );
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        final tempDir = Directory.systemTemp.createTempSync('sticker_send_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+        addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+        final stagedPhoto = File('${tempDir.path}/staged.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final fixture = (await tester.runAsync(
+          MediaRepositoryRealDbFixture.create,
+        ))!;
+        addTearDown(fixture.dispose);
+        await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
+        final durableMediaFileManager =
+            TrackingDurableConversationMediaFileManager(tempDir);
+        final recorder = _RecordingStickerUsageRecorder();
+        final sentJson = <Map<String, dynamic>>[];
+        final sentText = <String>[];
+        final sentQuotes = <String?>[];
+        final sentPolicies = <PrivateMediaPolicy?>[];
+        final uploadedBytes = <List<int>>[];
+        String? sentMessageId;
+        final strictCoordinator = strictComposerCoordinator(
+          repository: fixture.repo as DirectMediaBlobCustodyRepository,
+          artifactRoot: tempDir,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                uploadedBytes.add(File(ciphertextPath).readAsBytesSync());
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': attachmentId,
+                  'storeStatus': 'stored',
+                  'custodyKind': 'direct_media_blob_v1',
+                  'custodyContract': 'ack_or_expiry_v1',
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': 'application/octet-stream',
+                  'expiresAtMs': 2000000000000,
+                  'custodyRelayPeerId': 'relay-sticker-test',
+                };
+              },
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: fixture.messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: fixture.messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          contactRepo: FakeContactRepository(),
+          initialAttachments: [stagedPhoto],
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: durableMediaFileManager,
+          preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
+          directMediaBlobCustodyClientEnabled: strict,
+          stickerUsageRecorder: recorder,
+          uploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                blobId,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                uploadedBytes.add(File(localFilePath).readAsBytesSync());
+                final canonicalPath = durableMediaFileManager
+                    .relativePathForAttachment(
+                      contactPeerId: recipientPeerId,
+                      blobId: blobId!,
+                      mime: mime,
+                    );
+                await File(localFilePath).copy(
+                  await durableMediaFileManager.localPathForAttachment(
+                    contactPeerId: recipientPeerId,
+                    blobId: blobId,
+                    mime: mime,
+                  ),
+                );
+                return MediaAttachment(
+                  id: blobId,
+                  messageId: '',
+                  mime: mime,
+                  size: File(localFilePath).lengthSync(),
+                  mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                  width: width,
+                  height: height,
+                  localPath: canonicalPath,
+                  downloadStatus: 'done',
+                  createdAt: DateTime.now().toUtc().toIso8601String(),
+                  contentHash: 'sticker-test-hash',
+                  encryptionKeyBase64: 'sticker-test-key',
+                  encryptionNonce: 'sticker-test-nonce',
+                  encryptionScheme:
+                      kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                );
+              },
+          sendFn:
+              ({
+                required p2pService,
+                required messageRepo,
+                required targetPeerId,
+                required text,
+                required senderPeerId,
+                required senderUsername,
+                messageId,
+                required bool preassignedMessageIdIsFresh,
+                String? authoredTextIntentToken,
+                timestamp,
+                bridge,
+                recipientMlKemPublicKey,
+                quotedMessageId,
+                mediaAttachments,
+                privateMediaPolicy,
+                mediaAttachmentRepo,
+                transportMetrics,
+                directEventFanout,
+              }) async {
+                sentMessageId = messageId;
+                sentText.add(text);
+                sentQuotes.add(quotedMessageId);
+                sentPolicies.add(privateMediaPolicy);
+                sentJson.addAll(
+                  (mediaAttachments ?? const <MediaAttachment>[]).map(
+                    (attachment) => attachment.toJson(),
+                  ),
+                );
+                return _instantSuccessSendFn(
+                  p2pService: p2pService,
+                  messageRepo: messageRepo,
+                  targetPeerId: targetPeerId,
+                  text: text,
+                  senderPeerId: senderPeerId,
+                  senderUsername: senderUsername,
+                  messageId: messageId,
+                  preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
+                  timestamp: timestamp,
+                  bridge: bridge,
+                  recipientMlKemPublicKey: recipientMlKemPublicKey,
+                  quotedMessageId: quotedMessageId,
+                  mediaAttachments: mediaAttachments,
+                  privateMediaPolicy: privateMediaPolicy,
+                  mediaAttachmentRepo: mediaAttachmentRepo,
+                  transportMetrics: transportMetrics,
+                );
+              },
+        );
+        await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(
+          find.byKey(const ValueKey('private-media-option-protected')),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('private-media-use-mode')),
+          200,
+          scrollable: find.descendant(
+            of: find.byKey(const ValueKey('private-media-policy-sheet')),
+            matching: find.byType(Scrollable),
+          ),
+        );
+        await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(
+              find.byKey(const ValueKey('conversation-attach-stickers-action')),
+            )
+            .onTap!();
+        await pumpUntilAsyncIo(
+          tester,
+          () => find.byType(StickerPanel).evaluate().isNotEmpty,
+        );
+        expect(find.byKey(const ValueKey('sticker-tab-orbit_crew')), findsOne);
+        expect(find.byKey(const ValueKey('sticker-group-capybara')), findsOne);
+
+        await tester.tap(
+          find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.angry')),
+        );
+        await pumpUntilAsyncIo(
+          tester,
+          () => sentJson.isNotEmpty && recorder.ids.isNotEmpty,
+          timeout: const Duration(seconds: 10),
+        );
+
+        final attachment = sentJson.single;
+        expect(attachment['sticker'], {'id': 'orbit_crew.planet.angry'});
+        if (strict) {
+          expect(attachment['blobCustody'], isA<Map<String, dynamic>>());
+          expect(
+            (attachment['blobCustody'] as Map<String, dynamic>).keys,
+            isNot(contains('sticker')),
+          );
+        } else {
+          expect(attachment.keys, isNot(contains('blobCustody')));
+        }
+        expect(attachment['mime'], 'image/webp');
+        expect(attachment['mediaType'], 'image');
+        expect(attachment['width'], 512);
+        expect(attachment['height'], 512);
+        final assetBytes = File(
+          'assets/stickers/orbit_crew/planet/angry.webp',
+        ).readAsBytesSync();
+        expect(attachment['size'], assetBytes.length);
+        expect(uploadedBytes.single, assetBytes);
+        expect(sentText, ['']);
+        expect(sentQuotes, [null]);
+        expect(sentPolicies, const [PrivateMediaPolicy.ordinary()]);
+        expect(recorder.ids, ['orbit_crew.planet.angry']);
+        expect(
+          find.byType(AttachmentPreviewStrip),
+          findsOneWidget,
+          reason: 'the staged photo stays in the composer',
+        );
+
+        final persisted = (await tester.runAsync(
+          () => fixture.repo.getAttachmentsForMessage(
+            sentMessageId!,
+            owner: MediaOwnerLane.direct,
+          ),
+        ))!;
+        expect(persisted.single.stickerId, 'orbit_crew.planet.angry');
+
+        await tester.tap(find.byType(TextField));
+        await tester.pump();
+        expect(
+          find.byType(StickerPanel),
+          findsNothing,
+          reason: 'tapping the text field closes the panel',
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      });
+    }
+
+    test('image/webp passes the disappearing initial producer matrix', () {
+      expect(
+        disappearingMediaInitialProducerMatrixAllows(
+          policyVersion: 1,
+          mode: PrivateMediaMode.disappearing,
+          durationSeconds: PrivateMediaPolicy.allowedDurationsSeconds.first,
+          mime: 'image/webp',
+          mediaType: 'image',
+        ),
+        isTrue,
+      );
+    });
+  });
 
   group('FDC-04 warm on open', () {
     // TC-04-09: opening the conversation screen fires warmPeer(contact.peerId)
@@ -19469,4 +19762,19 @@ ConversationCallTimelineEntry _callEntry({
     endedAt: startedAt.add(const Duration(seconds: 20)),
     duration: duration,
   );
+}
+
+class _StickerTempPath extends PathProviderPlatform {
+  _StickerTempPath(this.path);
+  final String path;
+  @override
+  Future<String?> getTemporaryPath() async => path;
+  @override
+  Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+class _RecordingStickerUsageRecorder implements StickerUsageRecorder {
+  final ids = <String>[];
+  @override
+  Future<void> recordSent(String stickerId) async => ids.add(stickerId);
 }
