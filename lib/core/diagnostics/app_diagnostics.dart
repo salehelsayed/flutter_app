@@ -546,6 +546,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
     return trace;
   }
 
+  void recordStickerSent(String stickerId) {}
+
   bool record({
     required String feature,
     required String stage,

@@ -5500,6 +5500,8 @@
       "id": "diagnostics",
       "patterns": [
         "lib/core/diagnostics/*",
+        "lib/features/stickers/domain/sticker_usage_recorder.dart",
+        "lib/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart",
         "docker-ws/app_diagnostics*",
         "test/core/diagnostics/*",
         "docker-ws/call_diagnostics*",
@@ -5928,6 +5930,7 @@
     {
       "id": "diagnostic-schema",
       "patterns": [
+        "assets/stickers/packs.json",
         "tool/app_diagnostics/*",
         "tool/call_diagnostics/*",
         "lib/features/call/diagnostics/call_diagnostic_schema.dart",

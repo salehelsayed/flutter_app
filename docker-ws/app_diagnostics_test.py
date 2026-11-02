@@ -40,6 +40,23 @@ class AppDiagnosticsTests(unittest.TestCase):
         path.write_text(json.dumps(data))
         return path
 
+    def test_sticker_snapshots_accept_closed_ids_and_preserve_old_records(self):
+        old = self.event()
+        snapshots = [self.event(feature='stickers', stage='snapshot', outcome='ok',
+                                values={'sticker': sticker, 'count': 2,
+                                        'reportTimeIsIntervalEnd': True})
+                     for sticker in ['orbit_crew.planet.hello', 'custom', 'unknown']]
+        self.record([old, *snapshots])
+        rows, health = MODULE.read_records(self.directory, self.now)
+        self.assertEqual({row['event']['eventId'] for row in rows},
+                         {event['eventId'] for event in [old, *snapshots]}, health)
+        for sticker, count in [('PRIVATE_STICKER_TEXT', 1), ('custom', -1),
+                               ('custom', 1.5), ('custom', True)]:
+            invalid = self.event(feature='stickers', stage='snapshot', outcome='ok',
+                                 values={'sticker': sticker, 'count': count,
+                                         'reportTimeIsIntervalEnd': True})
+            self.assertFalse(MODULE.validate(invalid))
+
     def test_go_final_only_null_events_retains_valid_final(self):
         final = self.event(stage='finish', outcome='success')
         self.record([final], events=None)
