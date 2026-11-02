@@ -5820,102 +5820,107 @@ class _ConversationWiredState extends State<ConversationWired>
       builder: (ctx) {
         final sheetColors = ctx.backgroundReadableColors;
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: sheetColors.divider,
-                  borderRadius: BorderRadius.circular(2),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 8),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: sheetColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: Icon(
-                  Icons.photo_library,
-                  color: sheetColors.iconPrimary,
-                ),
-                title: Text(
-                  AppLocalizations.of(context)!.picker_media_library,
-                  style: TextStyle(color: sheetColors.textPrimary),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickFromGallery();
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.camera_alt, color: sheetColors.iconPrimary),
-                title: Text(
-                  AppLocalizations.of(context)!.picker_take_photo,
-                  style: TextStyle(color: sheetColors.textPrimary),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickFromCamera();
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
-                title: Text(
-                  AppLocalizations.of(context)!.picker_record_video,
-                  style: TextStyle(color: sheetColors.textPrimary),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickVideoFromCamera();
-                },
-              ),
-              ListTile(
-                key: const ValueKey('conversation-attach-stickers-action'),
-                leading: Icon(
-                  Icons.emoji_emotions_outlined,
-                  color: sheetColors.iconPrimary,
-                ),
-                title: Text(
-                  AppLocalizations.of(context)!.stickers_title,
-                  style: TextStyle(color: sheetColors.textPrimary),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _openStickerPanel();
-                },
-              ),
-              if (widget.documentAttachmentsEnabled)
+                const SizedBox(height: 16),
                 ListTile(
-                  key: ConversationWired.attachSheetDocumentKey,
                   leading: Icon(
-                    Icons.picture_as_pdf_outlined,
+                    Icons.photo_library,
                     color: sheetColors.iconPrimary,
                   ),
                   title: Text(
-                    AppLocalizations.of(context)!.picker_document,
+                    AppLocalizations.of(context)!.picker_media_library,
                     style: TextStyle(color: sheetColors.textPrimary),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
-                    _pickDocuments();
+                    _pickFromGallery();
                   },
                 ),
-              // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
-              // the sheet ONLY — never picks, never touches staged media.
-              ListTile(
-                key: ConversationWired.attachSheetCancelKey,
-                leading: Icon(
-                  Icons.close_rounded,
-                  color: sheetColors.iconPrimary,
+                ListTile(
+                  leading: Icon(
+                    Icons.camera_alt,
+                    color: sheetColors.iconPrimary,
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context)!.picker_take_photo,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickFromCamera();
+                  },
                 ),
-                title: Text(
-                  AppLocalizations.of(context)!.btn_cancel,
-                  style: TextStyle(color: sheetColors.textPrimary),
+                ListTile(
+                  leading: Icon(Icons.videocam, color: sheetColors.iconPrimary),
+                  title: Text(
+                    AppLocalizations.of(context)!.picker_record_video,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _pickVideoFromCamera();
+                  },
                 ),
-                onTap: () => Navigator.pop(ctx),
-              ),
-              const SizedBox(height: 16),
-            ],
+                ListTile(
+                  key: const ValueKey('conversation-attach-stickers-action'),
+                  leading: Icon(
+                    Icons.emoji_emotions_outlined,
+                    color: sheetColors.iconPrimary,
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context)!.stickers_title,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _openStickerPanel();
+                  },
+                ),
+                if (widget.documentAttachmentsEnabled)
+                  ListTile(
+                    key: ConversationWired.attachSheetDocumentKey,
+                    leading: Icon(
+                      Icons.picture_as_pdf_outlined,
+                      color: sheetColors.iconPrimary,
+                    ),
+                    title: Text(
+                      AppLocalizations.of(context)!.picker_document,
+                      style: TextStyle(color: sheetColors.textPrimary),
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _pickDocuments();
+                    },
+                  ),
+                // 204 (BUG-1): explicit Cancel to go back to the chat. Dismisses
+                // the sheet ONLY — never picks, never touches staged media.
+                ListTile(
+                  key: ConversationWired.attachSheetCancelKey,
+                  leading: Icon(
+                    Icons.close_rounded,
+                    color: sheetColors.iconPrimary,
+                  ),
+                  title: Text(
+                    AppLocalizations.of(context)!.btn_cancel,
+                    style: TextStyle(color: sheetColors.textPrimary),
+                  ),
+                  onTap: () => Navigator.pop(ctx),
+                ),
+                const SizedBox(height: 16),
+              ],
+            ),
           ),
         );
       },
