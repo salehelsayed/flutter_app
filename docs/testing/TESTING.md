@@ -497,6 +497,17 @@ inbox-only recovery or the affected store device's unknown consent state.
 First failures and preservation evidence are retained in
 `.codex-test-logs/delivery-recovery-20261101/`.
 
+Settings → My QR is a generic signed-QR surface, not the empty-circle first-time
+experience. Its old unconditional `EmptyCircleState` showed the onboarding hint
+even with an active friend. The seeded-friend case in
+`orbit_settings_entry_test.dart` opens the actual Settings tile and verifies the
+signed QR image and scan callback before asserting that the empty title is
+absent. Removing only the generic QR hint needs no contact-count state or new
+copy. The first-time screen keeps its hint: its daylight readability case and
+the existing empty-circle literal/animation tests remain preservation sentinels.
+The host proof covers widget navigation and fake signing, not optical scanning
+or a signed device artifact. Evidence: `.codex-test-logs/r9-device-findings-20261102/`.
+
 On 2026-10-23, a valid Move Account QR from the empty-contact first-time screen
 dispatched correctly but returned to that screen before confirmation. Both the
 first-time and Orbit handlers synchronously replace the scanner with the

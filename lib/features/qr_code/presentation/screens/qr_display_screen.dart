@@ -5,13 +5,9 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/home/presentation/widgets/qr_code_section.dart';
 import 'package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart';
-import 'package:flutter_app/features/home/presentation/widgets/empty_circle_state.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 
 /// Screen that displays the user's QR code with FTE-style layout.
-///
-/// Shows AmbientBackground, QRCodeSection, ScanFriendCard, and
-/// EmptyCircleState with staggered entrance animations.
 class QRDisplayScreen extends StatefulWidget {
   /// The JSON string to encode in the QR code (null while loading).
   final String? qrData;
@@ -100,7 +96,6 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
     final horizontalPadding = lerpDouble(20, 24, t)!;
     final topGap = lerpDouble(48, 64, t)!;
     final sectionGap = lerpDouble(8, 16, t)!;
-    final lowerGap = lerpDouble(8, 32, t)!;
     final bottomGap = lerpDouble(4, 16, t)!;
 
     return Scaffold(
@@ -159,14 +154,6 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
                                 child: ScanFriendCard(
                                   onTap: widget.onScanPressed,
                                 ),
-                              ),
-                            ),
-                            SizedBox(height: lowerGap),
-                            // Empty circle state (always visible)
-                            const RepaintBoundary(
-                              child: TickerMode(
-                                enabled: true,
-                                child: EmptyCircleState(),
                               ),
                             ),
                             if (widget.footer case final footer?) ...[
