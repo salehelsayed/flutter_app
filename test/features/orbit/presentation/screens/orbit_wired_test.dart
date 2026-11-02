@@ -12,7 +12,6 @@ import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery
 import 'package:flutter_app/features/conversation/domain/repositories/thought_reaction_message_repository.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_timeline_entry.dart';
 import 'package:flutter_app/features/orbit/domain/repositories/orbit_call_activity_source.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -118,8 +117,6 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
-import '../../../../shared/fakes/fake_mic_permission_gateway.dart';
-import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/fake_group_dissolve_preflight.dart';
@@ -956,6 +953,121 @@ void main() {
       },
     );
 
+    Future<_OrbitThoughtPostRepository> enterDepthWithThought(
+      WidgetTester tester,
+    ) async {
+      setLargeTestSurface(tester);
+      messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.timedDrag(
+        find.byType(OrbitDepthSurface),
+        const Offset(0, -260),
+        const Duration(seconds: 1),
+      );
+      await pumpOrbitFrames(tester, count: 30);
+      return posts;
+    }
+
+    testWidgets(
+      'a 3D reaction sends one quoted reply and stays on the ring; the same '
+      'emoji again sends nothing and the avatar still opens the chat',
+      (tester) async {
+        await enterDepthWithThought(tester);
+        final love = find.byKey(const ValueKey('orbit-depth-react-love'));
+        expect(love, findsOneWidget);
+        await tester.tap(love);
+        await pumpOrbitFrames(tester, count: 12);
+        await tester.tap(love);
+        await pumpOrbitFrames(tester, count: 12);
+        final replies = await messageRepo.getMessagesForContact(
+          testContact.peerId,
+        );
+        expect(
+          replies.map((message) => (message.text, message.quotedMessageId)),
+          [('❤️', 'thought:lake')],
+        );
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
+
+        await tester.tap(
+          find.byKey(ValueKey('orbit-depth-face-${testContact.peerId}')),
+        );
+        await pumpOrbitFrames(tester, count: 12);
+        expect(
+          tester
+              .widget<ConversationWired>(find.byType(ConversationWired))
+              .contact
+              .peerId,
+          testContact.peerId,
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
+      'a 3D typed reply goes through the same quoted-reply path and opens '
+      'nothing',
+      (tester) async {
+        await enterDepthWithThought(tester);
+        expect(find.byKey(const ValueKey('orbit-depth-reply')), findsOneWidget);
+        final navigator = tester.state<NavigatorState>(
+          find.byType(Navigator).first,
+        );
+        await tester.tap(find.byKey(const ValueKey('orbit-depth-reply')));
+        await pumpOrbitFrames(tester, count: 4);
+        expect(find.byIcon(Icons.mic), findsNothing);
+        await tester.enterText(_depthReplyField, 'count me in');
+        await tester.pump();
+        await tester.tap(_depthReplySend);
+        await pumpOrbitFrames(tester, count: 12);
+        final replies = await messageRepo.getMessagesForContact(
+          testContact.peerId,
+        );
+        expect(
+          replies.map((message) => (message.text, message.quotedMessageId)),
+          [('count me in', 'thought:lake')],
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-depth-composer')),
+          findsNothing,
+        );
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(navigator.canPop(), isFalse);
+        expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets('a tap on the 3D thought opens its card view only', (
+      tester,
+    ) async {
+      await enterDepthWithThought(tester);
+      await tester.tap(find.byKey(const ValueKey('orbit-depth-text-lake')));
+      await pumpOrbitFrames(tester, count: 8);
+      expect(find.byType(ThoughtCardScreen), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('thought-reply-composer')),
+        findsNothing,
+      );
+      expect(find.byIcon(Icons.mic), findsNothing);
+      expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
+      await finishThoughtCase(tester);
+    });
+
     testWidgets(
       'entering 3D, each face starts on that friend\'s real 2D avatar',
       (tester) async {
@@ -1566,7 +1678,10 @@ void main() {
           find.text('My own live thought', findRichText: true),
           findsOneWidget,
         );
-        expect(_replyField, findsNothing);
+        expect(
+          find.byKey(const ValueKey('thought-reply-composer')),
+          findsNothing,
+        );
         expect(posts.focusedIds, isEmpty);
 
         Navigator.of(tester.element(find.byType(ThoughtCardScreen))).pop();
@@ -2033,7 +2148,25 @@ void main() {
       await finishThoughtCase(tester);
     });
 
-    Future<void> replyFromCard(
+    /// Types [text] into the 3D bar's reply field for the friend in the
+    /// center and sends it. Nothing navigates.
+    Future<void> replyFromDepth(WidgetTester tester, String text) async {
+      await tester.timedDrag(
+        find.byType(OrbitDepthSurface),
+        const Offset(0, -260),
+        const Duration(seconds: 1),
+      );
+      await pumpOrbitFrames(tester, count: 30);
+      await tester.tap(find.byKey(const ValueKey('orbit-depth-reply')));
+      await pumpOrbitFrames(tester, count: 4);
+      await tester.enterText(_depthReplyField, text);
+      await tester.pump();
+      await tester.tap(_depthReplySend);
+      await pumpOrbitFrames(tester, count: 12);
+      expect(find.byType(ConversationWired), findsNothing);
+    }
+
+    Future<void> replyFromDepthThenOpenChat(
       WidgetTester tester,
       _OrbitThoughtPostRepository posts, {
       required DateTime Function() clock,
@@ -2050,13 +2183,11 @@ void main() {
         buildOrbitWired(postRepository: posts, thoughtNowProvider: clock),
       );
       await pumpOrbitFrames(tester, count: 8);
-      await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
-      await pumpOrbitFrames(tester, count: 8);
-      await tester.enterText(_replyField, 'count me in');
-      await tester.pump();
-      await tester.tap(_replySend);
+      await replyFromDepth(tester, 'count me in');
+      await tester.tap(
+        find.byKey(ValueKey('orbit-depth-face-${testContact.peerId}')),
+      );
       await pumpOrbitFrames(tester, count: 12);
-      expect(find.byType(ThoughtCardScreen), findsNothing);
       expect(find.byType(ConversationWired), findsOneWidget);
       expect(
         find.descendant(
@@ -2101,7 +2232,7 @@ void main() {
           downloadStatus: 'done',
         ),
       );
-      await replyFromCard(tester, posts, clock: () => thoughtNow);
+      await replyFromDepthThenOpenChat(tester, posts, clock: () => thoughtNow);
 
       final thumbnail = tester.widget<Image>(
         find.descendant(
@@ -2140,7 +2271,11 @@ void main() {
             createdAt: thoughtNow.toIso8601String(),
           ),
         );
-        await replyFromCard(tester, posts, clock: () => thoughtNow);
+        await replyFromDepthThenOpenChat(
+          tester,
+          posts,
+          clock: () => thoughtNow,
+        );
         expect(find.byKey(const ValueKey('thought-quote-photo')), findsNothing);
 
         await posts.updatePostMediaLocalPath(
@@ -2157,6 +2292,9 @@ void main() {
           (thumbnail.image as ResizeImage).imageProvider,
           FileImage(photo),
         );
+        // The 3D card asked for the photo too; its 30 s download timeout must
+        // run out before the test ends.
+        await tester.pump(const Duration(seconds: 30));
         await finishThoughtCase(tester);
       },
     );
@@ -2556,139 +2694,30 @@ void main() {
       });
     }
 
-    for (final entry in ['normal', 'text', 'voice']) {
-      testWidgets(
-        '$entry Thought entry paints its first chat frame at the live edge without scrolling',
-        (tester) async {
-          setLargeTestSurface(tester);
-          messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
-          identityRepo.seed(testIdentity);
-          contactRepo.seed([testContact]);
-          for (final message in thoughtReplyHistory()) {
-            await messageRepo.saveMessage(message);
-          }
-          final posts = await photoThoughtForScroll();
-          final recorder = FakeAudioRecorderService()
-            ..fakeDurationMs = 1500
-            ..fakeSizeBytes = 2048;
-          if (entry == 'voice') {
-            final directory = Directory.systemTemp.createTempSync(
-              'thought-entry-voice-',
-            );
-            addTearDown(() => directory.deleteSync(recursive: true));
-            recorder.fakeOutputPath = '${directory.path}/v.m4a';
-            File(
-              recorder.fakeOutputPath!,
-            ).writeAsBytesSync(List<int>.filled(2048, 1));
-          }
-          await tester.pumpWidget(
-            buildOrbitWired(
-              postRepository: posts,
-              thoughtNowProvider: () => thoughtNow,
-              audioRecorderService: recorder,
-              micPermissionGateway: FakeMicPermissionGateway(),
-            ),
-          );
-          await pumpOrbitFrames(tester, count: 8);
-          if (entry == 'normal') {
-            await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
-          } else {
-            await tester.tap(
-              find.byKey(const ValueKey('orbit-thought-tap-lake')),
-            );
-            await pumpOrbitFrames(tester, count: 8);
-            if (entry == 'text') {
-              await tester.enterText(_replyField, 'Fresh Thought entry reply');
-              await tester.pump();
-              await tester.tap(_replySend);
-            } else {
-              await tester.tap(find.byType(VoiceRecordButton));
-              await pumpOrbitFrames(tester, count: 2);
-              await tester.tap(find.byType(VoiceRecordButton));
-            }
-          }
-          final controller = await firstChatList(tester);
-          for (var frame = 0; frame < 25; frame++) {
-            if (entry == 'voice') {
-              // Durable voice preparation deletes the recorder file through real I/O.
-              await tester.runAsync(
-                () => Future<void>.delayed(const Duration(milliseconds: 10)),
-              );
-            }
-            await tester.pump(const Duration(milliseconds: 16));
-            expectLiveEdge(controller);
-          }
-          if (entry == 'text') {
-            expect(
-              find
-                  .text('Fresh Thought entry reply', findRichText: true)
-                  .hitTestable(),
-              findsOneWidget,
-            );
-          }
-          if (entry == 'voice') {
-            final chat = tester.widget<ConversationWired>(
-              find.byType(ConversationWired),
-            );
-            expect(
-              chat.initialThoughtVoiceReply!.quotedMessageId,
-              'thought:lake',
-            );
-            final screen = tester.widget<ConversationScreen>(
-              find.byType(ConversationScreen),
-            );
-            final reply = screen.messages.where((m) => !m.isIncoming).single;
-            expect(reply.quotedMessageId, 'thought:lake');
-            expect(reply.media.single.mediaType, 'audio');
-            expect(
-              find.byKey(ValueKey('msg-${reply.id}')).hitTestable(),
-              findsOneWidget,
-            );
-          }
-          await finishThoughtCase(tester);
-        },
-      );
-    }
-
     testWidgets(
-      'a Thought reply returns to a scrolled chat already at the live edge',
+      'normal Thought entry paints its first chat frame at the live edge without scrolling',
       (tester) async {
+        setLargeTestSurface(tester);
+        messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        for (final message in thoughtReplyHistory()) {
+          await messageRepo.saveMessage(message);
+        }
         final posts = await photoThoughtForScroll();
-        var now = thoughtNow;
-        await replyFromCard(
-          tester,
-          posts,
-          clock: () => now,
-          history: thoughtReplyHistory(),
-        );
-        final list = tester.widget<ListView>(
-          find.byKey(const ValueKey('messages')),
-        );
-        final controller = list.controller!;
-        controller.jumpTo(600);
-        await tester.pump();
-        expect(controller.offset, greaterThan(500));
-        await tester.tap(
-          find.byKey(const ValueKey('thought-quote-open')).hitTestable().first,
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
         );
         await pumpOrbitFrames(tester, count: 8);
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-        now = thoughtNow.add(const Duration(seconds: 1));
-        await tester.enterText(_replyField, 'Reply while reading history');
-        await tester.pump();
-        await tester.tap(_replySend);
-        await tester.pump();
-        expectLiveEdge(controller);
-        for (var frame = 0; frame < 60; frame++) {
+        await tester.tap(find.byKey(const ValueKey('orbit-node-0')));
+        final controller = await firstChatList(tester);
+        for (var frame = 0; frame < 25; frame++) {
           await tester.pump(const Duration(milliseconds: 16));
           expectLiveEdge(controller);
         }
-        expect(
-          find
-              .text('Reply while reading history', findRichText: true)
-              .hitTestable(),
-          findsOneWidget,
-        );
         await finishThoughtCase(tester);
       },
     );
@@ -2697,7 +2726,7 @@ void main() {
       'ordinary chat sends still animate to the live edge from older history',
       (tester) async {
         final posts = await photoThoughtForScroll();
-        await replyFromCard(
+        await replyFromDepthThenOpenChat(
           tester,
           posts,
           clock: () => thoughtNow,
@@ -2726,49 +2755,6 @@ void main() {
       },
     );
 
-    testWidgets(
-      'a typed reply to a reopened quote returns to the same chat once',
-      (tester) async {
-        final posts = _OrbitThoughtPostRepository();
-        addTearDown(posts.dispose);
-        await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
-        await replyFromCard(tester, posts, clock: () => thoughtNow);
-        await tester.enterText(find.byType(TextField), 'unsent chat draft');
-        await tester.pump();
-
-        await tester.tap(find.byKey(const ValueKey('thought-quote-open')));
-        await pumpOrbitFrames(tester, count: 8);
-        expect(find.byType(ThoughtCardScreen), findsOneWidget);
-
-        await tester.enterText(_replyField, 'bringing snacks');
-        await tester.pump();
-        await tester.tap(_replySend);
-        await pumpOrbitFrames(tester, count: 12);
-
-        expect(find.byType(ThoughtCardScreen), findsNothing);
-        expect(find.byType(ConversationWired), findsOneWidget);
-        expect(
-          find.byKey(const ValueKey('thought-quote-block')),
-          findsNWidgets(2),
-        );
-        expect(find.text('bringing snacks'), findsOneWidget);
-        expect(
-          tester.widget<TextField>(find.byType(TextField)).controller!.text,
-          'unsent chat draft',
-        );
-        final replies = await messageRepo.getMessagesForContact(
-          testContact.peerId,
-        );
-        expect(replies, hasLength(2));
-        expect(replies.map((message) => message.id).toSet(), hasLength(2));
-        expect(
-          replies.every((message) => message.quotedMessageId == 'thought:lake'),
-          isTrue,
-        );
-        await finishThoughtCase(tester);
-      },
-    );
-
     testWidgets('a quote whose thought is gone does not open anything', (
       tester,
     ) async {
@@ -2782,7 +2768,7 @@ void main() {
           expiresAt: thoughtNow.add(const Duration(minutes: 5)),
         ),
       );
-      await replyFromCard(tester, posts, clock: () => now);
+      await replyFromDepthThenOpenChat(tester, posts, clock: () => now);
 
       now = thoughtNow.add(const Duration(minutes: 6));
       await tester.pump(const Duration(minutes: 6));
@@ -2799,7 +2785,7 @@ void main() {
       final posts = _OrbitThoughtPostRepository();
       addTearDown(posts.dispose);
       await posts.savePost(thought('lake', text: 'Sunset at the lake?'));
-      await replyFromCard(tester, posts, clock: () => thoughtNow);
+      await replyFromDepthThenOpenChat(tester, posts, clock: () => thoughtNow);
 
       await posts.deletePostCascade('lake');
       await pumpOrbitFrames(tester, count: 6);
@@ -2829,13 +2815,12 @@ void main() {
           ),
         );
         await pumpOrbitFrames(tester, count: 8);
-        await tester.tap(find.byKey(const ValueKey('orbit-thought-tap-lake')));
-        await pumpOrbitFrames(tester, count: 8);
-        await tester.enterText(_replyField, 'count me in');
-        await tester.pump();
-        await tester.tap(_replySend);
+        await replyFromDepth(tester, 'count me in');
+        await tester.tap(
+          find.byKey(ValueKey('orbit-depth-face-${testContact.peerId}')),
+        );
         await pumpOrbitFrames(tester, count: 12);
-        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsOneWidget);
         expect(posts.heldCount, greaterThan(0));
 
         await posts.deletePostCascade('lake');
@@ -2862,7 +2847,7 @@ void main() {
           expiresAt: thoughtNow.add(const Duration(minutes: 5)),
         ),
       );
-      await replyFromCard(tester, posts, clock: () => clock);
+      await replyFromDepthThenOpenChat(tester, posts, clock: () => clock);
       expect(quoteGone(), findsNothing);
 
       clock = thoughtNow.add(const Duration(minutes: 5, seconds: 1));
@@ -2875,7 +2860,7 @@ void main() {
     });
 
     testWidgets(
-      'latest note opens current-name card, marks read, a reply lands quoted in chat, and the face opens ordinary chat',
+      'latest note opens a view-only current-name card, marks read, and the face opens ordinary chat',
       (tester) async {
         setLargeTestSurface(tester);
         messageRepo = _ThoughtIntentMessageRepository(testIdentity.peerId);
@@ -2925,39 +2910,20 @@ void main() {
         expect(posts.focusedIds, ['latest-thought']);
         expect((await posts.getPost('latest-thought'))!.isRead, isTrue);
 
-        await tester.enterText(_replyField, 'count me in');
-        await tester.pump();
-        await tester.tap(_replySend);
-        await tester.tap(_replySend, warnIfMissed: false);
-        await pumpOrbitFrames(tester, count: 12);
-        expect(find.byType(ThoughtCardScreen), findsNothing);
-        expect(find.byType(ConversationWired), findsOneWidget);
-        final messageChat = tester.widget<ConversationWired>(
-          find.byType(ConversationWired),
-        );
-        expect(messageChat.contact.peerId, currentContact.peerId);
-        expect(messageChat.initialText, isNull);
-        expect(messageChat.initialThoughtReply, isNull);
-        final queuedReplies = await messageRepo.getMessagesForContact(
-          currentContact.peerId,
-        );
-        expect(queuedReplies, hasLength(1));
-        expect(queuedReplies.single.text, 'count me in');
-        expect(queuedReplies.single.quotedMessageId, 'thought:latest-thought');
-        expect(find.text('count me in', findRichText: true), findsOneWidget);
         expect(
-          find.descendant(
-            of: find.byKey(const ValueKey('thought-quote-block')),
-            matching: find.text('Latest private thought'),
-          ),
-          findsOneWidget,
-        );
-        expect(
-          find.byType(ThoughtCardScreen, skipOffstage: false),
+          find.byKey(const ValueKey('thought-reply-composer')),
           findsNothing,
         );
+        expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('thought-close')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ThoughtCardScreen), findsNothing);
+        expect(find.byType(ConversationWired), findsNothing);
+        expect(
+          await messageRepo.getMessagesForContact(testContact.peerId),
+          isEmpty,
+        );
 
-        Navigator.of(tester.element(find.byType(ConversationWired))).pop();
         await pumpOrbitFrames(tester, count: 8);
         expect(
           tester
@@ -2980,55 +2946,6 @@ void main() {
           findsNothing,
         );
         expect(posts.focusedIds, ['latest-thought']);
-        await finishThoughtCase(tester);
-      },
-    );
-
-    testWidgets(
-      'a voice reply recorded on the card opens the chat that sends it',
-      (tester) async {
-        setLargeTestSurface(tester);
-        identityRepo.seed(testIdentity);
-        contactRepo.seed([testContact]);
-        final posts = _OrbitThoughtPostRepository();
-        addTearDown(posts.dispose);
-        await posts.savePost(thought('voice-thought', text: 'Say it out loud'));
-        final recorder = FakeAudioRecorderService()
-          ..fakeDurationMs = 1500
-          ..fakeOutputPath = '/tmp/orbit-thought-voice.m4a';
-
-        await tester.pumpWidget(
-          buildOrbitWired(
-            postRepository: posts,
-            thoughtNowProvider: () => thoughtNow,
-            audioRecorderService: recorder,
-            micPermissionGateway: FakeMicPermissionGateway(),
-          ),
-        );
-        await pumpOrbitFrames(tester, count: 8);
-        await tester.tap(
-          find.byKey(const ValueKey('orbit-thought-tap-voice-thought')),
-        );
-        await pumpOrbitFrames(tester, count: 8);
-        final mic = find.descendant(
-          of: find.byKey(const ValueKey('thought-reply-composer')),
-          matching: find.byType(VoiceRecordButton),
-        );
-        await tester.tap(mic);
-        await pumpOrbitFrames(tester, count: 4);
-        await tester.tap(mic);
-        await pumpOrbitFrames(tester, count: 12);
-
-        expect(find.byType(ThoughtCardScreen), findsNothing);
-        final chat = tester.widget<ConversationWired>(
-          find.byType(ConversationWired),
-        );
-        expect(chat.contact.peerId, testContact.peerId);
-        expect(chat.initialThoughtVoiceReply!.postId, 'voice-thought');
-        expect(
-          chat.initialThoughtVoiceReply!.recording.filePath,
-          '/tmp/orbit-thought-voice.m4a',
-        );
         await finishThoughtCase(tester);
       },
     );
@@ -3247,7 +3164,10 @@ void main() {
         expect(find.byType(ThoughtCardScreen), findsOneWidget);
 
         await tester.pump(const Duration(seconds: 5));
-        expect(_replyField, findsNothing);
+        expect(
+          find.byKey(const ValueKey('thought-reply-composer')),
+          findsNothing,
+        );
         // Content closes at expiry; allow the ordinary route's reverse
         // transition to dispose its offstage widget before asserting absence.
         await pumpOrbitFrames(tester, count: 8);
@@ -12887,20 +12807,15 @@ class _CountingCallActivitySource implements OrbitCallActivitySource {
   }
 }
 
-Finder get _replyField => find.descendant(
-  of: find.byKey(const ValueKey('thought-reply-composer')),
+Finder get _depthReplyField => find.descendant(
+  of: find.byKey(const ValueKey('orbit-depth-composer')),
   matching: find.byType(TextField),
 );
 
-Finder get _replySend => find
-    .ancestor(
-      of: find.descendant(
-        of: find.byKey(const ValueKey('thought-reply-composer')),
-        matching: find.byIcon(Icons.arrow_upward_rounded),
-      ),
-      matching: find.byType(GestureDetector),
-    )
-    .first;
+Finder get _depthReplySend => find.descendant(
+  of: find.byKey(const ValueKey('orbit-depth-composer')),
+  matching: find.byIcon(Icons.arrow_upward_rounded),
+);
 
 /// Who wrote back to a Thought, as the test sets it.
 class _WroteBackMessageRepository extends InMemoryMessageRepository

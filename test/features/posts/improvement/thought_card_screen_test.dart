@@ -6,16 +6,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter_app/core/media/audio_recorder_service.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
-import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
@@ -29,8 +25,6 @@ import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
-import '../../../shared/fakes/fake_audio_recorder_service.dart';
-import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/fakes/in_memory_post_repository.dart';
 import '../../../shared/bidi_layout_checks.dart';
@@ -80,11 +74,7 @@ void main() {
     PostModel initialPost, {
     String authorName = 'Alice',
     Locale locale = const Locale('en'),
-    bool messageable = true,
-    void Function(String text, String postId)? onReply,
-    Future<ThoughtReplyStatus> Function(String, String, String)? sendReply,
     Stream<ConversationMessage>? replyChanges,
-    VoidCallback? onOpenChat,
     Future<void> Function(String)? onShown,
     Future<ThoughtActivity> Function(String)? loadActivity,
     Future<int> Function()? retryPosting,
@@ -92,8 +82,6 @@ void main() {
     Future<PostModel?> Function()? loadCurrent,
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
     download,
-    ValueChanged<ThoughtVoiceReply>? onVoiceReply,
-    AudioRecorderService? recorder,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -115,15 +103,7 @@ void main() {
             postRepo: posts,
             loadCurrentThought:
                 loadCurrent ?? () => loadCurrentFriendThought(initialPost),
-            onReply: !messageable
-                ? null
-                : sendReply ??
-                      (text, postId, _) async {
-                        onReply?.call(text, postId);
-                        return ThoughtReplyStatus.sent;
-                      },
             replyChanges: replyChanges,
-            onOpenChat: onOpenChat,
             onShown: onShown,
             loadActivity: loadActivity,
             retryPosting: retryPosting,
@@ -133,9 +113,6 @@ void main() {
                 (_) async => throw StateError('Unexpected media download'),
             eligibilityChanges: eligibility.stream,
             nowProvider: () => now,
-            onVoiceReply: onVoiceReply,
-            audioRecorderService: recorder,
-            micPermissionGateway: FakeMicPermissionGateway(),
           ),
         ),
       ),
@@ -144,14 +121,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pump();
   }
-
-  /// The card removes a dropped recording with real file I/O.
-  Future<void> waitForDeletion(WidgetTester tester, File file) =>
-      tester.runAsync(() async {
-        for (var i = 0; i < 50 && file.existsSync(); i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 20));
-        }
-      });
 
   Future<void> finish(WidgetTester tester) async {
     await tester.pumpWidget(const SizedBox.shrink());
@@ -184,11 +153,79 @@ void main() {
       expect(find.byType(PostCard), findsNothing);
       expect(find.byIcon(Icons.favorite_border), findsNothing);
       expect(find.byIcon(Icons.comment_outlined), findsNothing);
-      expect(_replyField, findsOneWidget);
-      expect(find.text('Reply to Alice…'), findsOneWidget);
       await finish(tester);
     },
   );
+
+  testWidgets("a friend's card is view only: no reactions, reply field or "
+      'microphone, with its header and Close', (tester) async {
+    final thought = _thought(initialNow);
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Alice'), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-age')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
+    expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
+    for (final reaction in ['love', 'laugh', 'fire', 'applause']) {
+      expect(find.byKey(ValueKey('thought-react-$reaction')), findsNothing);
+    }
+    expect(find.text('❤️'), findsNothing);
+    expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('Reply to Alice…'), findsNothing);
+    expect(find.byIcon(Icons.mic), findsNothing);
+    expect(find.byKey(const ValueKey('thought-delete')), findsNothing);
+    expect(find.byKey(const ValueKey('thought-activity-open')), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('the own card still shows Seen by and Delete', (tester) async {
+    final mine = _thought(initialNow).copyWith(
+      senderPeerId: 'local-peer',
+      authorPeerId: 'local-peer',
+      authorUsername: 'Me',
+      isIncoming: false,
+    );
+    await posts.savePost(mine);
+    final query = LoadOrbitThoughtsUseCase(
+      postRepo: posts,
+      contactRepo: contacts,
+      nowProvider: () => now,
+    );
+
+    await openCard(
+      tester,
+      mine,
+      authorName: 'You',
+      loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
+      loadActivity: (_) async => (
+        viewers: [(peerId: 'sam', name: 'Sam')],
+        reactions: [
+          (
+            reaction: ThoughtReaction.love,
+            participants: [(peerId: 'sam', name: 'Sam')],
+          ),
+        ],
+      ),
+      onDelete: (_) async {},
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('thought-activity-open')),
+        matching: find.text('Seen by 1 friend'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('thought-delete')), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+    await finish(tester);
+  });
 
   testWidgets('an own thought card has no reply field and stays unread', (
     tester,
@@ -210,7 +247,6 @@ void main() {
       tester,
       mine,
       authorName: 'You',
-      messageable: false,
       loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
     );
     await tester.pumpAndSettle();
@@ -218,7 +254,7 @@ void main() {
     expect(find.text('You'), findsOneWidget);
     expect(find.text('2h ago · gone in 22 h'), findsOneWidget);
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(_replyField, findsNothing);
+    expect(find.byType(TextField), findsNothing);
     expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
     expect(find.byType(FilledButton), findsNothing);
     expect(posts.focusedIds, isEmpty);
@@ -243,7 +279,6 @@ void main() {
       await openCard(
         tester,
         mine,
-        messageable: false,
         loadCurrent: () => posts.getPost(mine.id),
         retryPosting: () {
           retries++;
@@ -278,7 +313,6 @@ void main() {
       await openCard(
         tester,
         mine,
-        messageable: false,
         loadCurrent: () => posts.getPost(mine.id),
         loadActivity: (_) async => (
           viewers: [(peerId: 'sam', name: 'Sam'), (peerId: 'mo', name: 'Mo')],
@@ -391,7 +425,6 @@ void main() {
         tester,
         mine,
         authorName: 'You',
-        messageable: false,
         loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
         onDelete: onDelete,
       );
@@ -482,145 +515,6 @@ void main() {
     expect(find.text('orbit-home'), findsOneWidget);
     await finish(tester);
   });
-
-  testWidgets('a typed reply sends once and opens chat without waiting', (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final replies = <(String, String)>[];
-    var closedBeforeReply = false;
-    var chatOpens = 0;
-    final sending = Completer<ThoughtReplyStatus>();
-    await openCard(
-      tester,
-      thought,
-      sendReply: (text, postId, _) {
-        replies.add((text, postId));
-        closedBeforeReply = navigationObserver.poppedNames.contains(
-          'thought-card',
-        );
-        return sending.future;
-      },
-      onOpenChat: () => chatOpens++,
-    );
-
-    await tester.tap(_replyField);
-    await tester.pump();
-    expect(find.byKey(const ValueKey('thought-react-love')), findsNothing);
-    await tester.enterText(_replyField, '  count me in ');
-    await tester.pump();
-    await tester.tap(_replySend);
-    await tester.tap(_replySend, warnIfMissed: false);
-    await tester.pumpAndSettle();
-
-    expect(replies, [('count me in', 'thought-1')]);
-    expect(closedBeforeReply, isFalse);
-    expect(chatOpens, 1);
-    expect(find.byType(ThoughtCardScreen), findsNothing);
-    sending.complete(ThoughtReplyStatus.failed);
-    await tester.pump();
-    expect(chatOpens, 1);
-    expect(tester.takeException(), isNull);
-    await finish(tester);
-  });
-
-  testWidgets('a reaction is one tap and sends its glyph', (tester) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final replies = <(String, String)>[];
-    await openCard(
-      tester,
-      thought,
-      onReply: (text, postId) => replies.add((text, postId)),
-    );
-
-    expect(tester.widget<GestureDetector>(_replySend).onTap, isNull);
-    await tester.tap(find.byKey(const ValueKey('thought-react-fire')));
-    await tester.pumpAndSettle();
-
-    expect(replies, [('🔥', 'thought-1')]);
-    expect(find.byType(ThoughtCardScreen), findsOneWidget);
-    expect(find.text('sent'), findsOneWidget);
-    await finish(tester);
-  });
-
-  testWidgets('reaction retry keeps the same ID and glyph', (tester) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final attempts = <(String, String, String)>[];
-    await openCard(
-      tester,
-      thought,
-      sendReply: (text, postId, messageId) async {
-        attempts.add((text, postId, messageId));
-        return attempts.length == 1
-            ? ThoughtReplyStatus.failed
-            : ThoughtReplyStatus.sent;
-      },
-    );
-    await tester.tap(find.byKey(const ValueKey('thought-react-fire')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('thought-reply-retry')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('thought-reply-retry')));
-    await tester.pumpAndSettle();
-    expect(attempts, hasLength(2));
-    expect(attempts.last, attempts.first);
-    expect(attempts.first.$1, '🔥');
-    expect(find.text('sent'), findsOneWidget);
-    expect(find.byType(ThoughtCardScreen), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byType(TextField)).controller!.text,
-      '',
-    );
-    await finish(tester);
-  });
-
-  testWidgets(
-    'a queued reply updates to Sent with no separate open-chat line',
-    (tester) async {
-      final thought = _thought(initialNow);
-      await posts.savePost(thought);
-      final changes = StreamController<ConversationMessage>.broadcast();
-      addTearDown(changes.close);
-      String? sentId;
-      var chatOpens = 0;
-      await openCard(
-        tester,
-        thought,
-        sendReply: (_, _, id) async {
-          sentId = id;
-          return ThoughtReplyStatus.queued;
-        },
-        replyChanges: changes.stream,
-        onOpenChat: () => chatOpens++,
-      );
-      await tester.tap(find.byKey(const ValueKey('thought-react-love')));
-      await tester.pumpAndSettle();
-      expect(find.text('Sending...'), findsOneWidget);
-      expect(chatOpens, 0);
-      changes.add(
-        ConversationMessage(
-          id: sentId!,
-          contactPeerId: 'alice-peer',
-          senderPeerId: 'local-peer',
-          text: '❤️',
-          timestamp: now.toIso8601String(),
-          createdAt: now.toIso8601String(),
-          isIncoming: false,
-          status: 'inboxed',
-          quotedMessageId: 'thought:thought-1',
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('sent'), findsOneWidget);
-      expect(find.byKey(const ValueKey('thought-reply-retry')), findsNothing);
-      expect(find.byKey(const ValueKey('thought-open-chat')), findsNothing);
-      expect(find.text('Open chat with Alice'), findsNothing);
-      expect(chatOpens, 0);
-      await finish(tester);
-    },
-  );
 
   testWidgets(
     'initial stale item and later arrivals resolve to only the newest thought',
@@ -934,7 +828,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Quiet thought', findRichText: true), findsOneWidget);
-    expect(_replyField, findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
     await finish(tester);
   });
 
@@ -1052,177 +946,17 @@ void main() {
         'image',
       ).copyWith(localPath: photo.path, downloadStatus: 'done'),
     );
-    await openCard(tester, thought, onReply: (_, _) {});
+    await openCard(tester, thought);
     await pumpMediaFrames(tester);
   }
-
-  testWidgets('the mic records a voice reply that goes to the chat', (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    final recorder = FakeAudioRecorderService()
-      ..fakeDurationMs = 1500
-      ..fakeOutputPath = '/tmp/thought-reply.m4a';
-    final voiceReplies = <ThoughtVoiceReply>[];
-    await openCard(
-      tester,
-      thought,
-      onReply: (_, _) {},
-      onVoiceReply: voiceReplies.add,
-      recorder: recorder,
-    );
-
-    final mic = find.descendant(
-      of: find.byKey(const ValueKey('thought-reply-composer')),
-      matching: find.byType(VoiceRecordButton),
-    );
-    expect(mic, findsOneWidget);
-    await tester.tap(mic);
-    await tester.pump(const Duration(milliseconds: 100));
-    await tester.pump(const Duration(milliseconds: 100));
-    expect(recorder.startCallCount, 1);
-    expect(voiceReplies, isEmpty);
-    await tester.tap(mic);
-    await tester.pumpAndSettle();
-
-    expect(voiceReplies, hasLength(1));
-    expect(voiceReplies.single.postId, 'thought-1');
-    expect(voiceReplies.single.quotedMessageId, 'thought:thought-1');
-    expect(voiceReplies.single.recording.filePath, '/tmp/thought-reply.m4a');
-    expect(voiceReplies.single.autoStopped, isFalse);
-    expect(find.byType(ThoughtCardScreen), findsNothing);
-    expect(find.text('orbit-home'), findsOneWidget);
-    await finish(tester);
-  });
-
-  testWidgets(
-    'a call that cuts the recording leaves no file and no reply',
-    timeout: const Timeout(Duration(seconds: 30)),
-    (tester) async {
-      final thought = _thought(initialNow);
-      await posts.savePost(thought);
-      final file = _tempFile('cut-by-call.m4a');
-      final recorder = FakeAudioRecorderService()..fakeOutputPath = file.path;
-      final voiceReplies = <ThoughtVoiceReply>[];
-      await openCard(
-        tester,
-        thought,
-        onReply: (_, _) {},
-        onVoiceReply: voiceReplies.add,
-        recorder: recorder,
-      );
-      await tester.tap(find.byType(VoiceRecordButton));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(recorder.isRecording, isTrue);
-
-      var callGotMicrophone = false;
-      unawaited(
-        microphoneCaptureLeasesFor(
-          recorder,
-        ).prepareForCall().then((_) => callGotMicrophone = true),
-      );
-      for (var i = 0; i < 5; i++) {
-        await tester.pump(const Duration(milliseconds: 50));
-      }
-      await waitForDeletion(tester, file);
-
-      expect(callGotMicrophone, isTrue);
-
-      expect(voiceReplies, isEmpty);
-      expect(file.existsSync(), isFalse);
-      expect(find.byType(ThoughtCardScreen), findsOneWidget);
-      await finish(tester);
-    },
-  );
-
-  testWidgets(
-    'a recording that finishes after the card closed is removed',
-    timeout: const Timeout(Duration(seconds: 30)),
-    (tester) async {
-      final thought = _thought(initialNow);
-      await posts.savePost(thought);
-      final file = _tempFile('after-close.m4a');
-      final stopGate = Completer<void>();
-      final recorder = FakeAudioRecorderService()
-        ..fakeOutputPath = file.path
-        ..stopGate = stopGate;
-      final voiceReplies = <ThoughtVoiceReply>[];
-      await openCard(
-        tester,
-        thought,
-        onReply: (_, _) {},
-        onVoiceReply: voiceReplies.add,
-        recorder: recorder,
-      );
-      final mic = find.byType(VoiceRecordButton);
-      await tester.tap(mic);
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.tap(mic);
-      await tester.pump();
-
-      navigator.currentState!.pop();
-      await tester.pumpAndSettle();
-      expect(find.byType(ThoughtCardScreen), findsNothing);
-      stopGate.complete();
-      await tester.pump();
-      await waitForDeletion(tester, file);
-
-      expect(voiceReplies, isEmpty);
-      expect(file.existsSync(), isFalse);
-      await finish(tester);
-    },
-  );
-
-  testWidgets('typing swaps the mic for Send, and no recorder means no mic', (
-    tester,
-  ) async {
-    final thought = _thought(initialNow);
-    await posts.savePost(thought);
-    await openCard(
-      tester,
-      thought,
-      onReply: (_, _) {},
-      onVoiceReply: (_) {},
-      recorder: FakeAudioRecorderService(),
-    );
-    expect(find.byType(VoiceRecordButton), findsOneWidget);
-    await tester.enterText(_replyField, 'hi');
-    await tester.pump();
-    expect(find.byType(VoiceRecordButton), findsNothing);
-    await finish(tester);
-
-    await openCard(tester, thought, onReply: (_, _) {});
-    expect(find.byType(VoiceRecordButton), findsNothing);
-    await finish(tester);
-  });
-
-  testWidgets('the reply box is the chat composer without its +', (
-    tester,
-  ) async {
-    await openPhotoCard(tester);
-
-    final composer = find.byKey(const ValueKey('thought-reply-composer'));
-    expect(tester.widget(composer), isA<ComposeArea>());
-    expect(find.byKey(const ValueKey('composer-attach-button')), findsNothing);
-    expect(
-      find.descendant(of: composer, matching: find.text('Reply to Alice…')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('thought-open-chat')), findsNothing);
-    await finish(tester);
-  });
 
   testWidgets('a tap on the photo shows it alone, a second tap brings back '
       'the card', (tester) async {
     await openPhotoCard(tester);
     final photo = find.byKey(const ValueKey('thought-photo-full'));
     final chrome = [
-      find.byKey(const ValueKey('thought-reply-composer')),
       find.byKey(const ValueKey('thought-age')),
-      find.byKey(const ValueKey('thought-react-love')),
+      find.byKey(const ValueKey('thought-close')),
     ];
     for (final part in chrome) {
       expect(part, findsOneWidget);
@@ -1248,7 +982,7 @@ void main() {
     await openPhotoCard(tester);
     await tester.tap(find.byKey(const ValueKey('thought-photo-full')));
     await tester.pump();
-    expect(find.byKey(const ValueKey('thought-reply-composer')), findsNothing);
+    expect(find.byKey(const ValueKey('thought-close')), findsNothing);
 
     await posts.savePost(
       _withId(
@@ -1266,31 +1000,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.byKey(const ValueKey('thought-photo-toggle')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('thought-reply-composer')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('thought-close')), findsOneWidget);
     expect(find.byKey(const ValueKey('thought-age')), findsOneWidget);
-    await finish(tester);
-  });
-
-  testWidgets('with the keyboard open a tap on the photo only closes it', (
-    tester,
-  ) async {
-    await openPhotoCard(tester);
-    await tester.tap(_replyField);
-    await tester.pump();
-    expect(tester.widget<TextField>(_replyField).focusNode!.hasFocus, isTrue);
-
-    await tester.tapAt(
-      tester.getCenter(find.byKey(const ValueKey('thought-photo-full'))),
-    );
-    await tester.pump();
-    expect(tester.widget<TextField>(_replyField).focusNode!.hasFocus, isFalse);
-    expect(
-      find.byKey(const ValueKey('thought-reply-composer')),
-      findsOneWidget,
-    );
     await finish(tester);
   });
 
@@ -1424,38 +1135,6 @@ void main() {
       debugOnDeviceAiOverride = null;
       debugModelDeliveryOverride = null;
     });
-
-    testWidgets(
-      'Thought card recording has no Send as text action with model ready',
-      (tester) async {
-        debugTranslatePreviewEnabledOverride = true;
-        final thought = _thought(initialNow);
-        await posts.savePost(thought);
-        final recorder = FakeAudioRecorderService()
-          ..fakeOutputPath = '/tmp/thought-send-as-text-excluded.m4a';
-        await openCard(
-          tester,
-          thought,
-          onReply: (_, _) {},
-          onVoiceReply: (_) {},
-          recorder: recorder,
-        );
-        final composer = find.byKey(const ValueKey('thought-reply-composer'));
-        await tester.tap(
-          find.descendant(
-            of: composer,
-            matching: find.byType(VoiceRecordButton),
-          ),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
-        await tester.pump(const Duration(milliseconds: 100));
-        expect(recorder.isRecording, isTrue);
-        expect(tester.widget<ComposeArea>(composer).onSendAsText, isNull);
-        expect(find.text('Send as text'), findsNothing);
-        expect(find.byType(VoiceRecordButton), findsOneWidget);
-        await finish(tester);
-      },
-    );
 
     testWidgets('without the flag a foreign thought has no Translate', (
       tester,
@@ -1651,18 +1330,3 @@ class _RecordingNavigatorObserver extends NavigatorObserver {
     super.didPop(route, previousRoute);
   }
 }
-
-Finder get _replyField => find.descendant(
-  of: find.byKey(const ValueKey('thought-reply-composer')),
-  matching: find.byType(TextField),
-);
-
-Finder get _replySend => find
-    .ancestor(
-      of: find.descendant(
-        of: find.byKey(const ValueKey('thought-reply-composer')),
-        matching: find.byIcon(Icons.arrow_upward_rounded),
-      ),
-      matching: find.byType(GestureDetector),
-    )
-    .first;
