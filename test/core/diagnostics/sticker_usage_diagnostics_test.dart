@@ -143,6 +143,22 @@ void main() {
     },
   );
 
+  test('default recorder resolves the collector after construction', () async {
+    await AppDiagnostics.instance.dispose();
+    final recorder = AppDiagnosticStickerUsageRecorder();
+    await install();
+    await recorder.recordSent(_firstSticker);
+    now = DateTime(2026, 10, 30, 1);
+    final restarted = await install(enabled: null);
+    final events = await snapshots(restarted);
+    expect(events, hasLength(1));
+    expect(events.single['values'], {
+      'sticker': _firstSticker,
+      'count': 1,
+      'reportTimeIsIntervalEnd': true,
+    });
+  });
+
   for (final clear in [false, true]) {
     test(
       '${clear ? 'clear' : 'disable'} removes pending counts before restart',
