@@ -134,8 +134,8 @@ void main() {
     expect(body.decoration, isNotNull);
   });
 
-  test('the strict group media manifest carries the sticker at the top of '
-      'the attachment commitment', () {
+  test('a protected group media commitment with a sticker key is refused, '
+      'as builds 127 to 129 refuse it', () {
     final manifest = ProtectedGroupMediaManifest(
       groupId: 'group-1',
       messageId: 'msg-strict',
@@ -151,7 +151,6 @@ void main() {
           height: 512,
           encryptionKeyBase64: 'key',
           encryptionNonce: 'nonce',
-          stickerId: 'orbit_crew.tux.approved',
           targets: [
             GroupMediaBlobTargetCommitment(
               recipientPeerId: 'peer-b',
@@ -161,15 +160,30 @@ void main() {
         ),
       ],
     );
-
-    final encoded = manifest.encode();
-    final attachmentJson =
-        (manifest.toJson()['attachments']! as List).single
-            as Map<String, Object?>;
-    expect(attachmentJson['sticker'], {'id': 'orbit_crew.tux.approved'});
+    final plain = manifest.toJson();
     expect(
-      ProtectedGroupMediaManifest.decode(encoded).attachments.single.stickerId,
-      'orbit_crew.tux.approved',
+      ProtectedGroupMediaManifest.fromJson(plain).attachments.single.mime,
+      'image/webp',
+    );
+    final withSticker = <String, Object?>{
+      ...plain,
+      'attachments': [
+        <String, Object?>{
+          ...(plain['attachments']! as List).single as Map<String, Object?>,
+          'sticker': {'id': 'orbit_crew.tux.approved'},
+        },
+      ],
+    };
+
+    expect(
+      () => ProtectedGroupMediaManifest.fromJson(withSticker),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          'non-canonical group-media fields',
+        ),
+      ),
     );
   });
 

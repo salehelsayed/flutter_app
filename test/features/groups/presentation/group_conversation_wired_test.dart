@@ -10,6 +10,13 @@ import 'package:flutter/services.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -1996,6 +2003,8 @@ void main() {
       ComposerDraftStore? composerDraftStore,
       StickerUsageRecorder stickerUsageRecorder =
           const NoopStickerUsageRecorder(),
+      PreparedGroupMediaBlobCustodyCoordinator?
+      preparedGroupMediaBlobCustodyCoordinator,
     }) {
       final g = group ?? makeChatGroup();
       final effectiveMsgRepo = messageRepo ?? msgRepo;
@@ -2059,6 +2068,8 @@ void main() {
           openAnnouncementSenderConversation:
               openAnnouncementSenderConversation,
           stickerUsageRecorder: stickerUsageRecorder,
+          preparedGroupMediaBlobCustodyCoordinator:
+              preparedGroupMediaBlobCustodyCoordinator,
         ),
       );
     }
@@ -2186,6 +2197,185 @@ void main() {
         owner: MediaOwnerLane.group,
       );
       expect(saved.single.stickerId, 'big_mood.en.hug');
+    });
+
+    testWidgets('stickers v1: in a protected group a sticker goes out as an '
+        'ordinary photo with no sticker id', (tester) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      final tempDir = Directory.systemTemp.createTempSync('strict_sticker_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+      final group = makeChatGroup();
+      await groupRepo.saveGroup(group);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: testIdentity.peerId,
+          username: testIdentity.username,
+          role: MemberRole.admin,
+          publicKey: testIdentity.publicKey,
+          mlKemPublicKey: testIdentity.mlKemPublicKey,
+          devices: <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'me',
+              transportPeerId: 'me',
+              deviceSigningPublicKey: testIdentity.publicKey,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 10),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: group.id,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-peer-bob',
+          mlKemPublicKey: 'mlkem-peer-bob',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-bob',
+              transportPeerId: 'transport-bob',
+              deviceSigningPublicKey: 'pk-peer-bob',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 5, 1, 10, 2),
+              eventId: 'authority-sticker',
+              keyEpoch: 1,
+            ),
+            inboxStore: _StoredStrictInbox(),
+          ),
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+      final strictMedia = _StrictStickerCustodyRepository();
+      final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+        artifactStore: GroupMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => tempDir,
+        ),
+        prepareArtifact: ({required bridge, required localFilePath}) async {
+          final plaintext = await File(localFilePath).readAsBytes();
+          final ciphertext = <int>[...List<int>.filled(16, 0xa5), ...plaintext];
+          final encrypted = File(
+            p.join(tempDir.path, 'cipher_${p.basename(localFilePath)}.bin'),
+          )..writeAsBytesSync(ciphertext);
+          return EncryptedMediaArtifact(
+            encryptedPath: encrypted.path,
+            keyBase64: 'sticker-key',
+            nonce: 'sticker-nonce',
+            scheme: groupMediaBlobEncryptionScheme,
+            contentHash: sha256.convert(ciphertext).toString(),
+            plaintextSize: plaintext.length,
+          );
+        },
+        strictUpload:
+            ({
+              required bridge,
+              required custodyBlobId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async => <String, dynamic>{
+              'ok': true,
+              'id': custodyBlobId,
+              'storeStatus': 'stored',
+              'custodyKind': groupMediaBlobCustodyKind,
+              'custodyContract': groupMediaBlobCustodyContract,
+              'contentHash': contentHash,
+              'size': ciphertextSize,
+              'mime': groupMediaBlobTransportMime,
+              'expiresAtMs': DateTime.now()
+                  .add(const Duration(days: 7))
+                  .millisecondsSinceEpoch,
+              'custodyRelayPeerId': 'relay-$recipientPeerId',
+            },
+      );
+
+      await tester.pumpWidget(
+        buildWidget(
+          group: group,
+          mediaRepo: strictMedia,
+          mediaFileManager: _CopyingMediaFileManager(),
+          preparedGroupMediaBlobCustodyCoordinator: coordinator,
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(
+            find.byKey(const ValueKey('group-attach-stickers-action')),
+          )
+          .onTap!();
+      for (
+        var i = 0;
+        i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+      );
+      for (var i = 0; i < 300 && _sentMediaManifests(bridge).isEmpty; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await pumpFrames(tester, count: 10);
+
+      expect(groupPublishPayloads(bridge), isEmpty);
+      final manifestJson = _sentMediaManifests(bridge).first;
+      final attachmentJson =
+          ((jsonDecode(manifestJson) as Map<String, dynamic>)['attachments']
+                      as List)
+                  .single
+              as Map<String, dynamic>;
+      expect(attachmentJson.keys, isNot(contains('sticker')));
+      expect(attachmentJson['mime'], 'image/webp');
+      expect(attachmentJson['width'], 512);
+      final manifest = ProtectedGroupMediaManifest.decode(manifestJson);
+      expect(manifest.attachments.single.mime, 'image/webp');
+      final saved = await strictMedia.getAttachmentsForMessage(
+        manifest.messageId,
+        owner: MediaOwnerLane.group,
+      );
+      expect(saved.single.mime, 'image/webp');
+      expect(saved.single.stickerId, isNull);
     });
 
     testWidgets(
@@ -24016,4 +24206,178 @@ class _CopyingMediaFileManager extends FakeMediaFileManager {
     ).copy(p.join(FakeMediaFileManager.testRootPath, relative));
     return relative;
   }
+}
+
+List<String> _sentMediaManifests(FakeBridge bridge) {
+  final manifests = <String>[];
+  void visit(Object? value) {
+    if (value is Map) {
+      final manifest = value['mediaManifest'];
+      if (manifest is String) manifests.add(manifest);
+      value.values.forEach(visit);
+    } else if (value is List) {
+      value.forEach(visit);
+    } else if (value is String && value.contains('mediaManifest')) {
+      try {
+        visit(jsonDecode(value));
+      } on FormatException {
+        return;
+      }
+    }
+  }
+
+  bridge.sentMessages.forEach(visit);
+  return manifests;
+}
+
+final class _StoredStrictInbox
+    implements AckOrExpiryInboxStore, GroupContentExpiryBoundedInboxStore {
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async => const InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    custodyContract: ackOrExpiryInboxCustodyContract,
+  );
+
+  @override
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async => InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    custodyContract: ackOrExpiryInboxCustodyContract,
+    expiresAtMs: custodyExpiresAtOrBeforeMs,
+  );
+}
+
+final class _StrictStickerCustodyRepository
+    extends CountingMediaAttachmentRepository
+    implements
+        GroupMediaBlobCustodyRepository,
+        GroupMediaBlobArtifactReferenceInventoryRepository {
+  final List<DirectMediaBlobCustodyRow> rows = <DirectMediaBlobCustodyRow>[];
+
+  @override
+  bool get supportsGroupMediaBlobCustody => true;
+
+  @override
+  Future<T> runGroupMediaBlobCustodyLifecycle<T>(Future<T> Function() action) =>
+      action();
+
+  @override
+  Future<GroupMediaBlobCustodyStageOutcome>
+  stageFreshOutgoingGroupMediaBlobGeneration({
+    required GroupMessage parent,
+    required List<MediaAttachment> attachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required Map<String, String> custodyBlobIdsByAttachmentId,
+  }) async {
+    if (rows.isNotEmpty) return GroupMediaBlobCustodyStageOutcome.refused;
+    for (final attachment in attachments) {
+      await saveAttachment(attachment, owner: MediaOwnerLane.group);
+    }
+    rows.addAll(custodyRows);
+    return GroupMediaBlobCustodyStageOutcome.applied;
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyForMessage({
+    required String groupId,
+    required String messageId,
+  }) async => rows
+      .where((row) => row.groupId == groupId && row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => rows
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadGroupMediaBlobCustodyForTarget({
+    required String groupId,
+    required String attachmentId,
+    required String custodyBlobId,
+    required DirectMediaBlobCustodyDirection direction,
+    String? recipientPeerId,
+  }) async {
+    for (final row in rows) {
+      if (row.groupId == groupId &&
+          row.attachmentId == attachmentId &&
+          row.custodyBlobId == custodyBlobId &&
+          row.direction == direction &&
+          row.recipientPeerId == recipientPeerId) {
+        return row;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> transitionGroupMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final index = rows.indexWhere(
+      (row) => row.exactDatabaseProjectionMatches(expected),
+    );
+    if (index < 0 || !expected.canTransitionTo(next)) return false;
+    rows[index] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteGroupMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+
+  @override
+  Future<Set<String>> loadGroupMediaBlobArtifactRelativePaths() async =>
+      rows.map((row) => row.ciphertextRelativePath).whereType<String>().toSet();
+
+  @override
+  Future<bool> commitIncomingGroupMediaBlobLocalPath({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String localPath,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+    required int nowMs,
+  }) async => false;
+
+  @override
+  Future<bool> terminalizeIncomingGroupMediaBlobForLocalDeletion({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+  }) async => false;
+
+  @override
+  Future<bool> deleteIncomingGroupMediaBlobAckPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+
+  @override
+  Future<bool> deleteIncomingGroupMediaBlobIfExpired({
+    required DirectMediaBlobCustodyRow expected,
+    required int nowMs,
+  }) async => false;
+
+  @override
+  Future<int> countOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => 0;
 }
