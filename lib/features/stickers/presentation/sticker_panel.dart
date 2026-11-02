@@ -107,7 +107,11 @@ class _StickerPanelState extends State<StickerPanel> {
                         _StickerCell(
                           key: ValueKey('sticker-cell-${sticker.id}'),
                           sticker: sticker,
-                          label: stickerSemanticsLabel(l10n, sticker.id),
+                          label: stickerSemanticsLabel(
+                            l10n,
+                            widget.catalog,
+                            sticker.id,
+                          ),
                           onTap: () => widget.onSend(sticker),
                         ),
                     ],

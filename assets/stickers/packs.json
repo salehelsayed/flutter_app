@@ -717,7 +717,8 @@
               "file": "assets/stickers/big_mood/en/hi.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "hi."
             },
             {
               "id": "big_mood.en.hug",
@@ -733,7 +734,8 @@
               "file": "assets/stickers/big_mood/en/huh.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Huh?"
             },
             {
               "id": "big_mood.en.im_fine",
@@ -741,7 +743,8 @@
               "file": "assets/stickers/big_mood/en/im_fine.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "I'm fine."
             },
             {
               "id": "big_mood.en.lol",
@@ -749,7 +752,8 @@
               "file": "assets/stickers/big_mood/en/lol.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "LOL"
             },
             {
               "id": "big_mood.en.on_it",
@@ -757,7 +761,8 @@
               "file": "assets/stickers/big_mood/en/on_it.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "On it"
             },
             {
               "id": "big_mood.en.thanks",
@@ -765,7 +770,8 @@
               "file": "assets/stickers/big_mood/en/thanks.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Thanks!"
             },
             {
               "id": "big_mood.en.yay",
@@ -773,7 +779,8 @@
               "file": "assets/stickers/big_mood/en/yay.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Yay!"
             }
           ]
         },
@@ -787,7 +794,8 @@
               "file": "assets/stickers/big_mood/ar/bird.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "يا زلمة!"
             },
             {
               "id": "big_mood.ar.blob",
@@ -795,7 +803,8 @@
               "file": "assets/stickers/big_mood/ar/blob.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "اشطا"
             },
             {
               "id": "big_mood.ar.cloud",
@@ -803,7 +812,8 @@
               "file": "assets/stickers/big_mood/ar/cloud.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "معلش"
             },
             {
               "id": "big_mood.ar.comet",
@@ -811,7 +821,8 @@
               "file": "assets/stickers/big_mood/ar/comet.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "مطفي عالآخر"
             },
             {
               "id": "big_mood.ar.teacup",
@@ -819,7 +830,8 @@
               "file": "assets/stickers/big_mood/ar/teacup.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "روق"
             }
           ]
         },
@@ -833,7 +845,8 @@
               "file": "assets/stickers/big_mood/de/alien.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Nicht dein Ernst!"
             },
             {
               "id": "big_mood.de.ghost",
@@ -841,7 +854,8 @@
               "file": "assets/stickers/big_mood/de/ghost.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Vermiss dich."
             },
             {
               "id": "big_mood.de.potato",
@@ -849,7 +863,8 @@
               "file": "assets/stickers/big_mood/de/potato.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Was geht mich das an?"
             },
             {
               "id": "big_mood.de.gecko",
@@ -857,7 +872,8 @@
               "file": "assets/stickers/big_mood/de/gecko.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Erzähl!"
             },
             {
               "id": "big_mood.de.cactus",
@@ -865,7 +881,8 @@
               "file": "assets/stickers/big_mood/de/cactus.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "War nicht so gemeint."
             },
             {
               "id": "big_mood.de.octopus",
@@ -873,7 +890,8 @@
               "file": "assets/stickers/big_mood/de/octopus.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Eins nach dem anderen!"
             },
             {
               "id": "big_mood.de.moon",
@@ -881,7 +899,8 @@
               "file": "assets/stickers/big_mood/de/moon.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Bin durch."
             },
             {
               "id": "big_mood.de.raccoon",
@@ -889,7 +908,8 @@
               "file": "assets/stickers/big_mood/de/raccoon.webp",
               "source": "owner via ChatGPT",
               "licence": "owner",
-              "consent": "n/a"
+              "consent": "n/a",
+              "printedText": "Ich war's nicht!"
             }
           ]
         }

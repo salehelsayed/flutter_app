@@ -8051,8 +8051,8 @@ abstract class AppLocalizations {
   /// No description provided for @sticker_semantics.
   ///
   /// In en, this message translates to:
-  /// **'{name} sticker'**
-  String sticker_semantics(String name);
+  /// **'{group} sticker, {position} of {count}'**
+  String sticker_semantics(String group, int position, int count);
 
   /// No description provided for @sticker_group_planet.
   ///

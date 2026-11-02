@@ -2198,7 +2198,7 @@
   "stickers_title": "Sticker",
   "stickers_recent": "Zuletzt",
   "sticker_preview": "Sticker",
-  "sticker_semantics": "{name}-Sticker",
+  "sticker_semantics": "{group}-Sticker, {position} von {count}",
   "sticker_group_planet": "Planet",
   "sticker_group_capybara": "Capybara",
   "sticker_group_nerd_duck": "Nerd-Ente",

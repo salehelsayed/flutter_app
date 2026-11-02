@@ -4900,8 +4900,8 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sticker_preview => 'ملصق';
 
   @override
-  String sticker_semantics(String name) {
-    return 'ملصق $name';
+  String sticker_semantics(String group, int position, int count) {
+    return 'ملصق $group، $position من $count';
   }
 
   @override

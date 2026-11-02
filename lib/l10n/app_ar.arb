@@ -2198,7 +2198,7 @@
   "stickers_title": "الملصقات",
   "stickers_recent": "الأخيرة",
   "sticker_preview": "ملصق",
-  "sticker_semantics": "ملصق {name}",
+  "sticker_semantics": "ملصق {group}، {position} من {count}",
   "sticker_group_planet": "كوكب",
   "sticker_group_capybara": "كابيبارا",
   "sticker_group_nerd_duck": "بطة التقنية",

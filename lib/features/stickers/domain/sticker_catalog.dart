@@ -11,10 +11,18 @@ const String kStickerPacksAssetPath = 'assets/stickers/packs.json';
 enum StickerPackStatus { ship, testOnly }
 
 final class StickerEntry {
-  const StickerEntry({required this.id, required this.assetPath});
+  const StickerEntry({
+    required this.id,
+    required this.assetPath,
+    this.printedText,
+  });
 
   final String id;
   final String assetPath;
+
+  /// The words printed on the art, in their own language, or null for a
+  /// sticker without words.
+  final String? printedText;
 }
 
 final class StickerGroup {
@@ -48,7 +56,7 @@ final class StickerCatalog {
     : _byId = {
         for (final pack in packs)
           for (final group in pack.groups)
-            for (final sticker in group.stickers) sticker.id: sticker,
+            for (final sticker in group.stickers) sticker.id: (sticker, group),
       };
 
   /// Parses packs.json. Throws [FormatException] on a malformed list: it is a
@@ -64,15 +72,11 @@ final class StickerCatalog {
   }
 
   final List<StickerPack> packs;
-  final Map<String, StickerEntry> _byId;
+  final Map<String, (StickerEntry, StickerGroup)> _byId;
 
-  StickerEntry? byId(String id) => _byId[id];
-}
+  StickerEntry? byId(String id) => _byId[id]?.$1;
 
-/// The group segment of a pack-list id (`<pack>.<group>.<name>`), or null.
-String? stickerGroupIdOf(String stickerId) {
-  final parts = stickerId.split('.');
-  return parts.length == 3 ? parts[1] : null;
+  StickerGroup? groupOf(String id) => _byId[id]?.$2;
 }
 
 StickerPack _parsePack(Map<String, Object?> raw) {
@@ -106,6 +110,10 @@ StickerGroup _parseGroup(Map<String, Object?> raw) {
         StickerEntry(
           id: _string(sticker['id']),
           assetPath: _string(sticker['file']),
+          printedText: switch (sticker['printedText']) {
+            null => null,
+            final text => _string(text),
+          },
         ),
     ]),
   );

@@ -4948,8 +4948,8 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sticker_preview => 'Sticker';
 
   @override
-  String sticker_semantics(String name) {
-    return '$name-Sticker';
+  String sticker_semantics(String group, int position, int count) {
+    return '$group-Sticker, $position von $count';
   }
 
   @override

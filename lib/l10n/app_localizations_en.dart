@@ -4837,8 +4837,8 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sticker_preview => 'Sticker';
 
   @override
-  String sticker_semantics(String name) {
-    return '$name sticker';
+  String sticker_semantics(String group, int position, int count) {
+    return '$group sticker, $position of $count';
   }
 
   @override

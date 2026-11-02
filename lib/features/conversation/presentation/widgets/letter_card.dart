@@ -11,6 +11,8 @@ import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 
 /// Fully-rounded outer corner radius for a bubble (136 Phase 2).
@@ -990,28 +992,31 @@ class LetterCard extends StatelessWidget {
   Widget _buildSticker(AppLocalizations l10n, MediaAttachment sticker) {
     final width = sticker.width ?? 0;
     final height = sticker.height ?? 0;
+    final picture = MediaGridCell(
+      attachment: sticker,
+      borderRadius: 0,
+      fit: BoxFit.contain,
+      cacheWidth: 480,
+      onLongPress: onMediaLongPress != null ? () => onMediaLongPress!(0) : null,
+      onRetryUnavailableMedia: onRetryUnavailableMedia != null
+          ? () => onRetryUnavailableMedia!(sticker.id)
+          : null,
+      requireVerifiedContentHash: requireVerifiedContentHash,
+      ownedMediaPeerId: ownedMediaPeerId,
+    );
     return SizedBox(
       width: kStickerMessageWidth,
       height: width > 0 && height > 0
           ? kStickerMessageWidth * height / width
           : kStickerMessageWidth,
-      child: Semantics(
-        image: true,
-        label: stickerSemanticsLabel(l10n, sticker.stickerId!),
-        excludeSemantics: true,
-        child: MediaGridCell(
-          attachment: sticker,
-          borderRadius: 0,
-          fit: BoxFit.contain,
-          cacheWidth: 480,
-          onLongPress: onMediaLongPress != null
-              ? () => onMediaLongPress!(0)
-              : null,
-          onRetryUnavailableMedia: onRetryUnavailableMedia != null
-              ? () => onRetryUnavailableMedia!(sticker.id)
-              : null,
-          requireVerifiedContentHash: requireVerifiedContentHash,
-          ownedMediaPeerId: ownedMediaPeerId,
+      child: FutureBuilder<StickerCatalog>(
+        future: loadBundledStickerCatalog(),
+        initialData: loadedBundledStickerCatalog,
+        builder: (context, catalog) => Semantics(
+          image: true,
+          label: stickerSemanticsLabel(l10n, catalog.data, sticker.stickerId!),
+          excludeSemantics: true,
+          child: picture,
         ),
       ),
     );

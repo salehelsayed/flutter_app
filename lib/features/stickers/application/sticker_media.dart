@@ -38,6 +38,9 @@ Future<PendingComposerMedia> prepareStickerMedia(
 
 StickerCatalog? _bundledCatalog;
 
+/// The bundled catalog if [loadBundledStickerCatalog] has completed.
+StickerCatalog? get loadedBundledStickerCatalog => _bundledCatalog;
+
 /// The bundled catalog, parsed once per process.
 Future<StickerCatalog> loadBundledStickerCatalog() async =>
     _bundledCatalog ??= StickerCatalog.parse(

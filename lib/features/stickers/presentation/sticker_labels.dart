@@ -27,10 +27,23 @@ String stickerPackLabel(AppLocalizations l10n, String packId) =>
       _ => l10n.stickers_title,
     };
 
-/// "{name} sticker" for a sticker id, or plain "Sticker" when the id names no
-/// known group (an unknown or future pack).
-String stickerSemanticsLabel(AppLocalizations l10n, String stickerId) {
-  final groupId = stickerGroupIdOf(stickerId);
-  final name = groupId == null ? null : stickerGroupLabel(l10n, groupId);
-  return name == null ? l10n.sticker_preview : l10n.sticker_semantics(name);
+/// The words printed on the sticker, else "{group} sticker, {position} of
+/// {count}", or plain "Sticker" for an id [catalog] does not hold (an unknown
+/// or hidden pack, or a catalog not loaded yet).
+String stickerSemanticsLabel(
+  AppLocalizations l10n,
+  StickerCatalog? catalog,
+  String stickerId,
+) {
+  final sticker = catalog?.byId(stickerId);
+  final group = catalog?.groupOf(stickerId);
+  if (sticker == null || group == null) return l10n.sticker_preview;
+  if (sticker.printedText case final printedText?) return printedText;
+  final name = stickerGroupLabel(l10n, group.id);
+  if (name == null) return l10n.sticker_preview;
+  return l10n.sticker_semantics(
+    name,
+    group.stickers.indexOf(sticker) + 1,
+    group.stickers.length,
+  );
 }
