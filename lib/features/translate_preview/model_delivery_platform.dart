@@ -98,7 +98,6 @@ final class AppSupportModelDeliveryStorage implements ModelDeliveryStorage {
 
   static const recordKey = 'mknoon.translator.model_delivery.v1';
   static const _safetyFileName = 'inference_safety.json';
-  static const _channel = MethodChannel('mknoon/gemma_preview');
   final Future<void> Function(Future<void> Function()) _removeModel;
   final Future<Directory> Function() _supportDirectory;
   final DiskSpaceChannel _diskSpace;
