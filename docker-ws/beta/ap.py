@@ -12,6 +12,7 @@ Usage: ap.py <phone> <command> [args]
   tap <predicate>              tap the first match
   tapxy <x> <y>                tap a point
   type <predicate> <text>      type into the first match
+  clear <predicate>            clear the text of the first match
   hold <predicate> <ms>        press and hold (long press) the first match
   swipe <x1> <y1> <x2> <y2> [ms]
   key <text>                   type text into the focused element (W3C key actions)
@@ -71,6 +72,38 @@ def el(phone, pred):
     return list(v.values())[0]
 
 
+_PICKER_ITEM = re.compile(
+    r'label="(Photo|Screenshot|Video|Live Photo|Portrait|Panorama|Screen Recording|Slo-mo|Time-lapse|Burst), '
+    r'\d{1,2} [A-Z][a-z]+')
+_PICKER_CHROME = re.compile(r'(name|label)="(Collections|Albums|Recents|Photos picker|PhotosGridView)"')
+_EXACT_PRED = re.compile(r"^(label|name) == '[^'*?\\]+'$")
+
+
+def picker_open(xml):
+    """True while a system photo picker is in the hierarchy (owner rule: no unfiltered reads)."""
+    return bool(_PICKER_ITEM.search(xml) or _PICKER_CHROME.search(xml))
+
+
+def picker_guard(cmd, args, xml):
+    """Return the exact label filter to apply, None when no picker is open; exit when the call is not allowed."""
+    if not picker_open(xml):
+        return None
+    if cmd == "shot":
+        raise SystemExit("PICKER OPEN: screenshots are refused while a photo picker is open")
+    if cmd == "src":
+        if not args or any(c in args[0] for c in ".^$*+?{}[]\\|()"):
+            raise SystemExit("PICKER OPEN: src needs one literal exact test label (no regex) while a photo picker is open")
+        return args[0]
+    if cmd in ("find", "tap", "attr", "wait"):
+        if not args or not _EXACT_PRED.match(args[0]):
+            raise SystemExit("PICKER OPEN: use an exact predicate label == '<test label>' while a photo picker is open")
+    return None
+
+
+def source(phone):
+    return req("GET", f"/session/{sid(phone)}/source")
+
+
 def tapxy(phone, x, y):
     req("POST", f"/session/{sid(phone)}/actions", {"actions": [{
         "type": "pointer", "id": "f1", "parameters": {"pointerType": "touch"},
@@ -96,6 +129,7 @@ def main():
         req("DELETE", f"/session/{sid(phone)}")
         s = sessions(); s.pop(phone, None); json.dump(s, open(STORE, "w")); print("closed")
     elif cmd == "shot":
+        picker_guard(cmd, args, source(phone))
         st = req("POST", f"/session/{sid(phone)}/execute/sync",
                  {"script": "mobile: queryAppState", "args": [{"bundleId": BUNDLE}]})
         if st != 4:
@@ -105,17 +139,26 @@ def main():
         open(f, "wb").write(base64.b64decode(req("GET", f"/session/{sid(phone)}/screenshot")))
         print(os.path.abspath(f))
     elif cmd == "src":
-        x = req("GET", f"/session/{sid(phone)}/source")
+        x = source(phone)
+        exact = picker_guard(cmd, args, x)
         if not args:
             print(x)
             return
         for line in x.splitlines():
-            if re.search(args[0], line):
+            if exact is not None:
+                if f'label="{exact}"' not in line and f'name="{exact}"' not in line:
+                    continue
+            elif not re.search(args[0], line):
+                continue
+            if True:
                 m = {k: v for k, v in re.findall(r'(\w+)="([^"]*)"', line)}
                 print(m.get("type", "?").replace("XCUIElementType", ""), "|", m.get("name", ""), "|",
                       m.get("label", ""), "|", m.get("value", ""), "|",
                       f'{m.get("x")},{m.get("y")} {m.get("width")}x{m.get("height")}', "|", m.get("visible", ""))
+    elif cmd == "clear":
+        req("POST", f"/session/{sid(phone)}/element/{el(phone, args[0])}/clear", {}); print("cleared")
     elif cmd in ("find", "tap", "type", "hold"):
+        picker_guard(cmd, args, source(phone))
         e = el(phone, args[0])
         if cmd == "find":
             r = req("GET", f"/session/{sid(phone)}/element/{e}/rect")
@@ -179,6 +222,7 @@ def main():
         open(args[0], "wb").write(base64.b64decode(v or ""))
         print(args[0], os.path.getsize(args[0]), "bytes")
     elif cmd == "attr":
+        picker_guard(cmd, args, source(phone))
         e = el(phone, args[0])
         print(req("GET", f"/session/{sid(phone)}/element/{e}/attribute/{args[1]}"))
     elif cmd in ("lock", "islocked", "unlockscreen"):
