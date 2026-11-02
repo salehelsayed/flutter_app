@@ -122,6 +122,10 @@ def main():
                 "appium:updatedWDABundleId": "com.facebook.WebDriverAgentRunner",
                 "appium:wdaLaunchTimeout": 420000, "appium:wdaLocalPort": p["port"],
                 "appium:newCommandTimeout": 3600, "appium:autoLaunch": False}
+        url = os.environ.get("AP_WDA_URL")
+        if url:
+            # WDA already started by docker-ws/wda_start_safe.sh: attach, never let Appium run its own xcodebuild.
+            caps["appium:webDriverAgentUrl"] = url
         v = req("POST", "/session", {"capabilities": {"alwaysMatch": caps}}, timeout=900)
         s = sessions(); s[phone] = v["sessionId"]; json.dump(s, open(STORE, "w"))
         print("session", v["sessionId"])
