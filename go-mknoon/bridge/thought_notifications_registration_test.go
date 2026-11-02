@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -88,3 +89,86 @@ func TestInboxRegisterToken_ThoughtNotificationsBooleanReachesRelay(t *testing.T
 }
 
 func thoughtNotificationsBool(value bool) *bool { return &value }
+
+func TestInboxRegisterToken_ThoughtPreferencePartialRelayAckRetriesCurrentOff(t *testing.T) {
+	withFreshSingletonNode(t)
+	var mu sync.Mutex
+	rejectSecond := true
+	current := map[string]bool{"first": true, "second": true}
+	preferenceFrames := map[string][]bool{}
+	addresses := make([]string, 0, 2)
+	for _, name := range []string{"first", "second"} {
+		relayHost, err := libp2p.New(libp2p.ListenAddrStrings("/ip4/127.0.0.1/tcp/0"))
+		if err != nil {
+			t.Fatalf("start %s relay: %v", name, err)
+		}
+		defer relayHost.Close()
+		relayName := name
+		relayHost.SetStreamHandler(node.InboxProtocol, func(s network.Stream) {
+			defer s.Close()
+			var request map[string]interface{}
+			if err := json.Unmarshal(readBridgeTestFrame(t, s), &request); err != nil {
+				t.Errorf("decode %s relay frame: %v", relayName, err)
+				return
+			}
+			mu.Lock()
+			rejected := relayName == "second" && rejectSecond
+			if enabled, present := request["thought_notifications_enabled"].(bool); present {
+				preferenceFrames[relayName] = append(preferenceFrames[relayName], enabled)
+				if !rejected {
+					current[relayName] = enabled
+				}
+			}
+			mu.Unlock()
+			if rejected {
+				writeBridgeTestFrame(t, s, []byte(`{"status":"ERROR","error":"temporary registration failure"}`))
+			} else {
+				writeBridgeTestFrame(t, s, []byte(`{"status":"OK"}`))
+			}
+		})
+		addresses = append(addresses, relayHost.Addrs()[0].String()+"/p2p/"+relayHost.ID().String())
+	}
+
+	startInput, err := json.Marshal(map[string]interface{}{
+		"privateKeyHex": generateTestKeyHex(t),
+		// Duplicate addresses for one peer must not become another ACK target.
+		"relayAddresses": []string{addresses[0], addresses[0], addresses[1]},
+		"autoRegister": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertOk(t, parseJSON(t, StartNode(string(startInput))))
+	input := `{"token":"same-device-token","platform":"ios","thought_notifications_enabled":false}`
+	partial := parseJSON(t, InboxRegisterToken(input))
+	if partial["ok"] != false || partial["errorCode"] != "INBOX_ERROR" {
+		t.Errorf("partial preference ACK must remain retryable, got %#v", partial)
+	}
+	mu.Lock()
+	if current["first"] || !current["second"] {
+		t.Errorf("fixture must retain OFF on successful relay and stale ON on rejected relay: %#v", current)
+	}
+	mu.Unlock()
+
+	nodeMu.Lock()
+	legacyNode := singletonNode
+	nodeMu.Unlock()
+	if err := legacyNode.InboxRegisterToken("legacy-token", "ios"); err != nil {
+		t.Errorf("legacy at-least-one registration must still succeed: %v", err)
+	}
+
+	mu.Lock()
+	rejectSecond = false
+	mu.Unlock()
+	assertOk(t, parseJSON(t, InboxRegisterToken(input)))
+	mu.Lock()
+	defer mu.Unlock()
+	for _, name := range []string{"first", "second"} {
+		if current[name] {
+			t.Errorf("retry left %s relay ON", name)
+		}
+		if !reflect.DeepEqual(preferenceFrames[name], []bool{false, false}) {
+			t.Errorf("%s relay preference frames = %#v, want current OFF on both attempts", name, preferenceFrames[name])
+		}
+	}
+}
