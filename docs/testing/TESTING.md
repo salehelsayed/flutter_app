@@ -11527,6 +11527,20 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   was budget-cancelled after 218 passes and is retained as incomplete. Evidence:
   `startup-notice-red.log`, `startup-green-selected/`, `startup-final-selected/`;
   tested source `a1fd5d0b229ad86e6ec1f5a231c725fdf3facd73c3c592f310556055c04525fd`.
+  The reviewed branch rebased onto main `0e3d34447` preserves the approved
+  English, German and Arabic memory notices verbatim. The translator lane passes
+  362 cases, bootstrap 23 and workflow 330, with no failures or skips; focused
+  analysis passes. The Android API-30 Robolectric
+  `GemmaPreviewChannelTest` now passes its one real method-channel case with no
+  failures or skips, distinguishing kernel total RAM from changing available
+  RAM and the system low-memory flag. It ran with Java 17, one Gradle worker and
+  the shared native lease, starting at load 10.71. Evidence and exact commands
+  are in `.codex-test-logs/android-ai-memory-floor-round9-20261102/`, including
+  `focused-selected/results.json`, `analyze/result.json` and
+  `native-junit-summary.json`. This is focused host/native evidence; broader
+  selected lanes and physical-device behavior remain separate. The iOS 2.5 GiB
+  cold-load floor is unchanged and still awaits iPhone 11 process-headroom
+  calibration; Android measurements do not establish that iOS limit.
   `TRANSLATION_CAPABILITY` retains numeric RAM/OS, ABI and decision
   without identifiers. Host policy/mock-channel tests and native source checks
   do not establish device performance or signed-artifact behavior.
