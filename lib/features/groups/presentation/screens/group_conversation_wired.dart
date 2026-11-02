@@ -3058,13 +3058,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
 
     var stickerSendRecorded = false;
-    void showOptimisticMessage() {
-      // The send outlives the route, so the once-only tally must not depend
-      // on the screen still being mounted.
+    // The send outlives the route and the lane, so the once-only tally must
+    // not depend on the screen still showing this group.
+    void recordStickerSentOnce() {
       if (sticker != null && !stickerSendRecorded) {
         stickerSendRecorded = true;
         _recordStickerSent(sticker.id);
       }
+    }
+
+    void showOptimisticMessage() {
+      recordStickerSentOnce();
       if (!_isCurrentSendLane(sendLane) || optimisticDisplayed) {
         return;
       }
@@ -3156,6 +3160,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   ),
                   sources: sources,
                 );
+            if (strictResult.preparation.hasDurableAuthority) {
+              recordStickerSentOnce();
+            }
             if (!_canContinueSendOperation(
               sendLane,
               exactAttachmentOperation,
