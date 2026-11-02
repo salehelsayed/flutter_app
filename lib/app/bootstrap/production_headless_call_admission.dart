@@ -132,6 +132,27 @@ typedef HeadlessCallHistoryRecorder =
       CallSignal? invite,
     });
 
+/// Shares the production terminal-history writer with host composition fixtures.
+/// The secure store identifies the same durable owner as the database; this
+/// extraction leaves terminal projection behavior unchanged.
+HeadlessCallHistoryRecorder createProductionHeadlessCallHistoryRecorder({
+  required Database database,
+  required SecureKeyStore secureKeyStore,
+  required MissedCallNotifier notifier,
+}) {
+  final repository = CallHistoryRepositoryImpl(database);
+  final projector = CallHistoryProjector(repository);
+  return ({required terminal, required reason, invite}) =>
+      recordHeadlessTerminalCall(
+        repository: repository,
+        projector: projector,
+        notifier: notifier,
+        terminal: terminal,
+        reason: reason,
+        invite: invite,
+      );
+}
+
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
 /// events, acknowledging custody, or starting media. All provisional replay
 /// reservations are rolled back so the foreground canonical owner can
@@ -875,8 +896,6 @@ final class AndroidProductionHeadlessCallAdmissionBackend
     // isolate is the only place its row can be written AND the only place its
     // missed-call card can be posted. Without both, the case where the user
     // was least able to notice the call is the one that tells them least.
-    final callHistoryRepository = CallHistoryRepositoryImpl(database);
-    final callHistory = CallHistoryProjector(callHistoryRepository);
     final headlessCard = HeadlessMissedCallNotification();
     final missedCallNotifier = MissedCallNotifier(
       postWithAction: (entry, title, body) => headlessCard.show(
@@ -912,18 +931,12 @@ final class AndroidProductionHeadlessCallAdmissionBackend
       missedBody: localizedMissedCallBody(),
       unknownCallerTitle: localizedMissedCallUnknownCaller(),
     );
-    Future<void> recordTerminalCallHistory({
-      required CallSignal terminal,
-      required CallEndReason reason,
-      CallSignal? invite,
-    }) => recordHeadlessTerminalCall(
-      repository: callHistoryRepository,
-      projector: callHistory,
-      notifier: missedCallNotifier,
-      terminal: terminal,
-      reason: reason,
-      invite: invite,
-    );
+    final recordTerminalCallHistory =
+        createProductionHeadlessCallHistoryRecorder(
+          database: database,
+          secureKeyStore: _secureKeyStore,
+          notifier: missedCallNotifier,
+        );
 
     // Plan 404: the decline reply writes through the foreground's transport
     // shape (direct race + mailbox custody) without a coordinator lane.

@@ -12,6 +12,11 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_app/app/bootstrap/call_signaling_composition.dart';
 import 'package:flutter_app/app/bootstrap/call_wake_contact_key_backfill.dart';
 import 'package:flutter_app/app/bootstrap/production_call_signaling_graph.dart';
+import 'package:flutter_app/app/bootstrap/production_headless_call_admission.dart';
+import 'package:flutter_app/features/call/application/incoming_call_pre_presentation_admission.dart';
+import 'package:flutter_app/features/call/application/missed_call_notifier.dart';
+import 'package:flutter_app/features/call/data/call_history_repository_impl.dart';
+import 'package:flutter_app/features/call/infrastructure/headless_call_admission_entrypoint.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/database/migrations/117_call_history.dart';
@@ -880,15 +885,46 @@ void main() {
     'ringing',
     'connected',
     'connected late observation',
+    'headless connected',
+    'headless checkpoint read failure',
+    'headless never connected',
+    'headless no checkpoint',
+    'headless unrelated checkpoint',
+    'headless wrong handle',
+    'headless wrong account',
+    'headless wrong device',
+    'headless blocked contact',
+    'headless rekeyed contact',
+    'headless deleted and re-added contact',
+    'headless rekeyed identity',
     'Android ringing',
     'blocked contact',
     'rekeyed contact',
     'deleted and re-added contact',
     'rekeyed identity',
   ]) {
-    final connected = scenario.startsWith('connected');
-    final android = scenario == 'Android ringing';
-    final shouldRecover = scenario == 'ringing' || connected || android;
+    final headless = scenario.startsWith('headless ');
+    final connected =
+        scenario.startsWith('connected') ||
+        (headless &&
+            scenario != 'headless never connected' &&
+            scenario != 'headless no checkpoint');
+    final android = scenario == 'Android ringing' || headless;
+    final revoked =
+        headless &&
+        const [
+          'headless blocked contact',
+          'headless rekeyed contact',
+          'headless deleted and re-added contact',
+          'headless rekeyed identity',
+        ].contains(scenario);
+    final checkpointReadFailure =
+        scenario == 'headless checkpoint read failure';
+    final wrongBinding = scenario.startsWith('headless wrong ');
+    final unrelated = scenario == 'headless unrelated checkpoint';
+    final shouldRecover = headless
+        ? !revoked
+        : scenario == 'ringing' || connected || android;
     test(
       'VC-026 killed-side $scenario history after restart without a fresh invite',
       () async {
@@ -1004,24 +1040,53 @@ void main() {
                 );
           },
         );
+        if (headless) {
+          // The incoming call was visible before process loss. Android's
+          // foreground presenter requires a mounted projection listener.
+          final presentation = first.composition.changes.listen((_) {});
+          addTearDown(presentation.cancel);
+        }
         await first.composition.start();
         await _configureCancellationEndpoint(first, 'remote-account');
         final graph = first.graphs.single;
-        expect(
-          await graph.startOutgoingCall('remote-account'),
-          OutgoingCallStartResult.started,
-        );
+        if (headless) {
+          final invite = _killedCallSignal(CallSignalType.invite);
+          first.bridge.responses['message.decrypt'] = {
+            'ok': true,
+            'plaintext': jsonEncode(invite.toMap()),
+          };
+          first.p2p.messages.add(
+            ChatMessage(
+              from: 'remote-account',
+              to: 'local-account',
+              content: _killedCallEnvelope(invite, _killedCallHandle),
+              timestamp: _callNow.toIso8601String(),
+              isIncoming: true,
+              transport: 'direct',
+            ),
+          );
+          await _untilComposition(
+            () =>
+                graph.coordinator.activeSession?.incomingValidated == true &&
+                graph.coordinator.activeSession?.state == CallState.ringing,
+          );
+        } else {
+          expect(
+            await graph.startOutgoingCall('remote-account'),
+            OutgoingCallStartResult.started,
+          );
+          await graph.coordinator.dispatch(
+            CallEvent(
+              type: CallEventType.remoteRinging,
+              eventId: 'vc026-authenticated-remote-ringing',
+              occurredAt: graph.coordinator.clock(),
+              callId: graph.coordinator.activeSession!.callId,
+              contactPeerId: 'remote-account',
+            ),
+          );
+        }
         final callId = graph.coordinator.activeSession!.callId!;
         final startedAt = graph.coordinator.activeSession!.startedAt;
-        await graph.coordinator.dispatch(
-          CallEvent(
-            type: CallEventType.remoteRinging,
-            eventId: 'vc026-authenticated-remote-ringing',
-            occurredAt: graph.coordinator.clock(),
-            callId: callId,
-            contactPeerId: 'remote-account',
-          ),
-        );
         expect(graph.coordinator.activeSession?.state, CallState.ringing);
         if (connected) {
           final turnNow = DateTime.now().millisecondsSinceEpoch;
@@ -1051,7 +1116,9 @@ void main() {
             );
           }
 
-          await event(CallEventType.remoteAccept);
+          await event(
+            headless ? CallEventType.answer : CallEventType.remoteAccept,
+          );
           if (graph.coordinator.activeSession?.state == CallState.accepted) {
             await event(CallEventType.negotiationReady);
           }
@@ -1061,7 +1128,8 @@ void main() {
           expect(graph.coordinator.activeSession?.state, CallState.connected);
         }
         final connectedAt = graph.coordinator.activeSession?.connectedAt;
-        if (scenario == 'connected late observation') {
+        if (scenario == 'connected late observation' ||
+            (headless && connected)) {
           const checkpointKey = 'vc2_active_call_history_v1';
           final checkpoint =
               jsonDecode((await keys.read(checkpointKey))!)
@@ -1093,7 +1161,7 @@ void main() {
 
         // Capture the durable bytes at process loss before graceful teardown can
         // write a terminal row. VACUUM includes committed WAL data.
-        final captured = FakeSecureKeyStore();
+        final captured = _FailingHeadlessCheckpointReadStore();
         for (final entry in (await keys.readAll()).entries) {
           await captured.write(entry.key, entry.value);
         }
@@ -1105,37 +1173,157 @@ void main() {
           if (restoredDatabase.isOpen) await restoredDatabase.close();
         });
         expect(await restoredDatabase.query('call_history'), isEmpty);
-        switch (scenario) {
-          case 'blocked contact':
-            await restoredDatabase.update(
-              'contacts',
-              {'is_blocked': 1},
-              where: 'peer_id = ?',
-              whereArgs: ['remote-account'],
+        Future<void> revokeAuthority() async {
+          switch (headless
+              ? scenario.substring('headless '.length)
+              : scenario) {
+            case 'blocked contact':
+              await restoredDatabase.update(
+                'contacts',
+                {'is_blocked': 1},
+                where: 'peer_id = ?',
+                whereArgs: ['remote-account'],
+              );
+            case 'rekeyed contact':
+              await restoredDatabase.update(
+                'contacts',
+                {'public_key': 'different-remote-key'},
+                where: 'peer_id = ?',
+                whereArgs: ['remote-account'],
+              );
+            case 'deleted and re-added contact':
+              final contact = (await restoredDatabase.query(
+                'contacts',
+                where: 'peer_id = ?',
+                whereArgs: ['remote-account'],
+              )).single;
+              await restoredDatabase.delete(
+                'contacts',
+                where: 'peer_id = ?',
+                whereArgs: ['remote-account'],
+              );
+              await restoredDatabase.insert('contacts', contact);
+            case 'rekeyed identity':
+              await restoredDatabase.update('identity', {
+                'public_key': 'different-local-key',
+              }, where: 'id = 1');
+          }
+        }
+
+        if (!headless) await revokeAuthority();
+        final missedCards = <String>[];
+        List<Map<String, Object?>>? headlessRows;
+        Future<void> Function()? replayHeadless;
+        if (headless) {
+          const checkpointKey = 'vc2_active_call_history_v1';
+          final raw = (await captured.read(checkpointKey))!;
+          final checkpoint = jsonDecode(raw) as Map<String, dynamic>;
+          expect(checkpoint['direction'], 'incoming');
+          expect(checkpoint['connected_at'], connectedAt?.toIso8601String());
+          if (unrelated || wrongBinding) {
+            final field = switch (scenario) {
+              'headless unrelated checkpoint' => 'call_id',
+              'headless wrong handle' => 'call_handle',
+              'headless wrong account' => 'contact',
+              _ => 'remote_device',
+            };
+            checkpoint[field] = field == 'call_id' || field == 'call_handle'
+                ? '99999999-9999-4999-8999-999999999999'
+                : 'unrelated-account';
+            await captured.write(checkpointKey, jsonEncode(checkpoint));
+          }
+          if (scenario == 'headless no checkpoint') {
+            await captured.delete(checkpointKey);
+          }
+          final beforeHeadless = await captured.read(checkpointKey);
+          replayHeadless = () => _runKilledCallHeadlessTerminal(
+            database: restoredDatabase,
+            secureKeyStore: captured,
+            missedCards: missedCards,
+            afterAuthentication: revoked ? revokeAuthority : null,
+          );
+          captured.failCheckpointRead = checkpointReadFailure;
+          try {
+            await replayHeadless();
+          } finally {
+            captured.failCheckpointRead = false;
+          }
+          headlessRows = await restoredDatabase.query('call_history');
+          if (checkpointReadFailure) {
+            expect(
+              headlessRows,
+              isEmpty,
+              reason:
+                  'checkpoint read uncertainty must not fall through to a weaker terminal history write',
             );
-          case 'rekeyed contact':
-            await restoredDatabase.update(
-              'contacts',
-              {'public_key': 'different-remote-key'},
-              where: 'peer_id = ?',
-              whereArgs: ['remote-account'],
+            expect(missedCards, isEmpty);
+            expect(captured.failedCheckpointReads, greaterThan(0));
+            expect(
+              await captured.read(checkpointKey),
+              beforeHeadless,
+              reason:
+                  'failed headless reads must retain the original checkpoint for recovery',
             );
-          case 'deleted and re-added contact':
-            final contact = (await restoredDatabase.query(
-              'contacts',
-              where: 'peer_id = ?',
-              whereArgs: ['remote-account'],
-            )).single;
-            await restoredDatabase.delete(
-              'contacts',
-              where: 'peer_id = ?',
-              whereArgs: ['remote-account'],
+            return;
+          }
+          if (revoked || wrongBinding) {
+            expect(
+              headlessRows,
+              isEmpty,
+              reason:
+                  'authenticated terminal must not weak-fallback past a revoked or mismatched checkpoint',
             );
-            await restoredDatabase.insert('contacts', contact);
-          case 'rekeyed identity':
-            await restoredDatabase.update('identity', {
-              'public_key': 'different-local-key',
-            }, where: 'id = 1');
+            expect(missedCards, isEmpty);
+            if (wrongBinding) {
+              expect(await captured.read(checkpointKey), beforeHeadless);
+              return;
+            }
+          } else {
+            expect(headlessRows, hasLength(1));
+            final firstRow = (await CallHistoryRepositoryImpl(
+              restoredDatabase,
+            ).getByCallId(callId))!;
+            expect(firstRow.direction, CallDirection.incoming);
+            if (connected && !unrelated) {
+              expect(
+                firstRow.status,
+                CallHistoryStatus.completed,
+                reason:
+                    'the first durable headless row must preserve the connected checkpoint before foreground recovery',
+              );
+              expect(firstRow.startedAt, startedAt);
+              expect(firstRow.connectedAt, connectedAt);
+              expect(firstRow.duration, const Duration(seconds: 30));
+              expect(
+                firstRow.endedAt,
+                connectedAt!.add(const Duration(seconds: 30)),
+              );
+              expect(missedCards, isEmpty);
+              expect(await captured.read(checkpointKey), isNull);
+            } else {
+              expect(firstRow.connectedAt, isNull);
+              expect(
+                firstRow.status,
+                isIn([CallHistoryStatus.missed, CallHistoryStatus.cancelled]),
+              );
+              expect(missedCards, hasLength(1));
+            }
+            if (unrelated) {
+              expect(
+                await captured.read(checkpointKey),
+                beforeHeadless,
+                reason:
+                    'headless settlement must not consume another call checkpoint',
+              );
+              await replayHeadless();
+              expect(
+                await restoredDatabase.query('call_history'),
+                headlessRows,
+              );
+              expect(missedCards, hasLength(1));
+              return;
+            }
+          }
         }
         var historyAtNativeAttach = false;
         final announcedHistory = <(CallId, bool)>[];
@@ -1185,20 +1373,32 @@ void main() {
           reason: 'the killed side must retain its authenticated call history',
         );
         expect(row!.contactAccountPeerId, 'remote-account');
-        expect(row.direction, CallDirection.outgoing);
+        expect(
+          row.direction,
+          headless ? CallDirection.incoming : CallDirection.outgoing,
+        );
         expect(
           row.status,
-          connected ? CallHistoryStatus.completed : CallHistoryStatus.failed,
+          connected
+              ? CallHistoryStatus.completed
+              : headless
+              ? CallHistoryStatus.cancelled
+              : CallHistoryStatus.failed,
         );
         expect(row.connectedAt, connectedAt);
-        expect(row.startedAt, startedAt);
-        if (scenario == 'connected late observation') {
+        if (!headless || connected) expect(row.startedAt, startedAt);
+        if (scenario == 'connected late observation' ||
+            (headless && connected)) {
           expect(row.duration, const Duration(seconds: 30));
           expect(row.endedAt, connectedAt!.add(const Duration(seconds: 30)));
         }
         expect(
           announcedHistory,
-          [(callId, true)],
+          scenario == 'headless never connected'
+              ? [(callId, false)]
+              : headless
+              ? <(CallId, bool)>[]
+              : [(callId, true)],
           reason:
               'mounted history consumers must hear the existing durable-row notification',
         );
@@ -1222,7 +1422,11 @@ void main() {
         await restored.composition.onResume();
         expect(
           announcedHistory,
-          [(callId, true)],
+          scenario == 'headless never connected'
+              ? [(callId, false)]
+              : headless
+              ? <(CallId, bool)>[]
+              : [(callId, true)],
           reason:
               'repeated start or resume must not announce another recovered row',
         );
@@ -1231,6 +1435,16 @@ void main() {
               .listForContact('remote-account'),
           hasLength(1),
         );
+        if (headless) {
+          await replayHeadless!();
+          expect(
+            await restoredDatabase.query('call_history'),
+            headlessRows,
+            reason:
+                'foreground restart and authenticated terminal replay must leave the first row byte-for-byte unchanged',
+          );
+          expect(missedCards, connected ? isEmpty : hasLength(1));
+        }
       },
     );
   }
@@ -8080,6 +8294,157 @@ final class _UnusedCallTrustedRosterProvider
 final class _UnusedCallAuthorityClient implements CallAuthorityClient {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _FailingHeadlessCheckpointReadStore extends FakeSecureKeyStore {
+  bool failCheckpointRead = false;
+  int failedCheckpointReads = 0;
+
+  @override
+  Future<String?> read(String key) async {
+    if (failCheckpointRead && key == 'vc2_active_call_history_v1') {
+      failedCheckpointReads++;
+      throw StateError('fixture checkpoint storage unavailable');
+    }
+    return super.read(key);
+  }
+}
+
+const _killedCallHandle = '33333333-3333-4333-8333-333333333333';
+
+CallSignal _killedCallSignal(CallSignalType event) => CallSignal.create(
+  callId: _callA,
+  messageId: event == CallSignalType.invite
+      ? '00000000-0000-4000-8000-000000000023'
+      : '00000000-0000-4000-8000-000000000024',
+  event: event,
+  senderAccountPeerId: 'remote-account',
+  senderDevicePeerId: 'remote-account',
+  recipientAccountPeerId: 'local-account',
+  recipientDevicePeerId: 'local-account',
+  senderSequence: event == CallSignalType.invite ? 1 : 2,
+  iceGeneration: 0,
+  createdAtMs: event == CallSignalType.invite ? 2_000_000 : 2_035_000,
+  expiresAtMs: event == CallSignalType.invite ? 2_045_000 : 2_080_000,
+  payload: event == CallSignalType.invite
+      ? const <String, Object?>{}
+      : const <String, Object?>{'reason': 'local_hangup'},
+);
+
+String _killedCallEnvelope(CallSignal signal, String handle) => jsonEncode({
+  'type': 'call_signal',
+  'version': '1',
+  'message_id': signal.messageId,
+  'call_handle': handle,
+  'expires_at_ms': signal.expiresAtMs,
+  'kem': base64Encode([1]),
+  'ciphertext': base64Encode([2]),
+  'nonce': base64Encode([3]),
+  'signature': base64Encode([4]),
+});
+
+/// Runs the production admission, recorder, SQL projector and missed-card
+/// policy. Only transport/crypto responses and notification delivery are fake.
+Future<void> _runKilledCallHeadlessTerminal({
+  required Database database,
+  required SecureKeyStore secureKeyStore,
+  required List<String> missedCards,
+  Future<void> Function()? afterAuthentication,
+}) async {
+  final terminal = _killedCallSignal(CallSignalType.terminate);
+  final bridge = _Bridge();
+  bridge.responses['payload.verify'] = {'ok': true, 'valid': true};
+  bridge.responses['message.decrypt'] = {
+    'ok': true,
+    'plaintext': jsonEncode(terminal.toMap()),
+  };
+  bridge.responses['call_retrieve_v1'] = {
+    'ok': true,
+    'events': [
+      {
+        'callHandle': _killedCallHandle,
+        'messageId': terminal.messageId,
+        'senderPeerId': 'remote-account',
+        'recipientDevicePeerId': 'local-account',
+        'envelope': _killedCallEnvelope(terminal, _killedCallHandle),
+        'receiptAtMs': terminal.createdAtMs,
+        'expiresAtMs': terminal.expiresAtMs,
+      },
+    ],
+    'receiptAtMs': terminal.createdAtMs,
+    'expiresAtMs': terminal.expiresAtMs,
+    'hasMore': false,
+  };
+  bridge.responses['call_ack_v1'] = {'ok': true, 'acked': 1};
+  final admission = IncomingCallPrePresentationAdmission(
+    codec: SecureCallEnvelopeCodec(
+      crypto: BridgeCallEnvelopeCrypto(bridge: bridge),
+      nowMs: () => terminal.createdAtMs,
+    ),
+    trustedRosterProvider: DatabaseCallTrustedRosterProvider(database),
+    localAuthorityProvider: () async => const CallLocalDeviceAuthority(
+      accountPeerId: 'local-account',
+      devicePeerId: 'local-account',
+      mlKemSecretKey: 'local-mlkem-secret-key',
+    ),
+  );
+  var authenticated = false;
+  final session = MailboxProductionHeadlessCallAdmissionSession(
+    mailboxClient: BridgeCallMailboxClient(bridge: bridge),
+    authenticateEvent: ({required invocation, required event}) async {
+      final admitted = await admission.authenticateMailboxEvent(
+        nativeCallId: invocation.callId,
+        wakeExpiresAtMs: invocation.expiresAtMs,
+        event: event,
+      );
+      authenticated = true;
+      await afterAuthentication?.call();
+      return HeadlessAuthenticatedMailboxEvent(
+        event: admitted.signal.event,
+        signal: admitted.signal,
+        rollbackReplay: admitted.rollbackReplay,
+      );
+    },
+    historyRecorder: createProductionHeadlessCallHistoryRecorder(
+      database: database,
+      secureKeyStore: secureKeyStore,
+      notifier: MissedCallNotifier(
+        post:
+            ({
+              required contactAccountPeerId,
+              required title,
+              required body,
+            }) async {
+              missedCards.add(body);
+            },
+        resolveContactName: (_) async => 'Remote contact',
+        isSuppressed: (_) async => false,
+        missedBody: 'Missed voice call',
+        unknownCallerTitle: 'Unknown caller',
+      ),
+    ),
+    closeResources: () async => const HeadlessCallAdmissionCleanup(
+      databaseClosed: true,
+      leaseReleased: true,
+    ),
+  );
+  expect(
+    await session.evaluate(
+      HeadlessCallAdmissionInvocation(
+        nonce: '11111111-1111-4111-8111-111111111111',
+        callId: _killedCallHandle,
+        wakeHandle: '33333333333343338333333333333333',
+        expiresAtMs: terminal.expiresAtMs,
+      ),
+    ),
+    HeadlessCallAdmissionDisposition.terminal,
+  );
+  expect(
+    authenticated,
+    isTrue,
+    reason: 'the real admission gate must authenticate before history work',
+  );
+  await session.close();
 }
 
 Future<Database> _openKilledCallDatabase(String path) {
