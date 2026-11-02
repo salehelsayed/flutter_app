@@ -156,14 +156,16 @@ const _expectedGroupApiFingerprint = '073281ee';
 // Send as text: one optional recording/review action, delegated to the existing
 // wired capture owner. All prior arguments and both Wired APIs are unchanged.
 // Stickers v1: the direct handoff adds only `stickerPanel` (the open sticker
-// panel, or null) and `onComposerTextTap` (closes it).
-const _expectedDirectHandoffFingerprint = 'c1a752e7';
+// panel, or null) and `onComposerTextTap` (closes it). Without them the
+// fingerprint is the previous c1a752e7.
+const _expectedDirectHandoffFingerprint = '88133174';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
 // Send as text: one optional recording/review action, delegated to the existing
 // wired capture owner. All prior arguments and both Wired APIs are unchanged.
-// Stickers v1: the same two handoff arguments.
-const _expectedGroupHandoffFingerprint = '0e09acce';
+// Stickers v1: the same two handoff arguments. Without them the fingerprint
+// is the previous 0e09acce.
+const _expectedGroupHandoffFingerprint = '077dd765';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 
