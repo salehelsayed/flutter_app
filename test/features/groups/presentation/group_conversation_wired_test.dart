@@ -76,6 +76,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/linked_group_conversation_wired.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
@@ -119,6 +122,7 @@ import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fixtures/media_bytes.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 import '../../conversation/application/helpers/fake_upload_media_fn.dart';
+import '../../translate_preview/fake_model_delivery_controller.dart';
 
 const _tinyPngBytes = <int>[
   0x89,
@@ -1857,6 +1861,26 @@ MediaAttachment successfulGroupUploadFixture({
 /// passed — the work being awaited crosses widget fake-async and real file/DB
 /// work. Tests below pump until their causal event or future settles instead of
 /// racing host load with arbitrary delays or inflated wall-clock ceilings.
+class _ComposerTranscriptionAi implements OnDeviceAi {
+  final paths = <String>[];
+  // The request starts inside testWidgets' fake-async zone, unlike setUp.
+  Completer<String>? _result;
+  Completer<String> get result => _result ??= Completer<String>();
+  set result(Completer<String> value) {
+    _result = value;
+  }
+
+  @override
+  Future<String> transcribe(String audioPath) {
+    paths.add(audioPath);
+    return result.future;
+  }
+
+  @override
+  Future<String> translate(String text, {required String languageName}) =>
+      throw StateError('Send as text must only transcribe');
+}
+
 void main() {
   group('GroupConversationWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -10284,6 +10308,358 @@ void main() {
       await tester.pump();
       expect(voiceFile.existsSync(), isFalse);
       await callLease.release();
+    });
+
+    group('send as text', () {
+      late GroupModel chatGroup;
+      late File voiceFile;
+      late FakeAudioRecorderService recorder;
+      late FakeModelDeliveryController delivery;
+      late _ComposerTranscriptionAi ai;
+      late int uploads;
+      late int mediaSaves;
+
+      setUp(() async {
+        chatGroup = makeChatGroup();
+        await groupRepo.saveGroup(chatGroup);
+        await saveActiveGroupMembers(groupRepo, chatGroup);
+        voiceFile = File(
+          '${Directory.systemTemp.path}/send_as_text_group_'
+          '${DateTime.now().microsecondsSinceEpoch}.m4a',
+        )..writeAsBytesSync(List<int>.filled(2048, 7));
+        recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 3000
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = voiceFile.path;
+        delivery = FakeModelDeliveryController(const ModelReady(sizeBytes: 1));
+        ai = _ComposerTranscriptionAi();
+        uploads = 0;
+        mediaSaves = 0;
+        mediaAttachmentRepo.onSaveAttachment = (_) => mediaSaves++;
+        debugTranslatePreviewEnabledOverride = true;
+        debugModelDeliveryOverride = delivery;
+        debugOnDeviceAiOverride = ai;
+      });
+
+      tearDown(() {
+        debugTranslatePreviewEnabledOverride = null;
+        debugModelDeliveryOverride = null;
+        debugOnDeviceAiOverride = null;
+        if (voiceFile.existsSync()) voiceFile.deleteSync();
+      });
+
+      GroupConversationScreen screen(WidgetTester tester) =>
+          tester.widget<GroupConversationScreen>(
+            find.byType(GroupConversationScreen),
+          );
+
+      VoiceRecordingState recordingPhase(WidgetTester tester) {
+        final visible = screen(tester);
+        return visible.composerStateListenable?.value.recordingState ??
+            visible.recordingState;
+      }
+
+      String composerText(WidgetTester tester) =>
+          tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+      Future<void> open(
+        WidgetTester tester, {
+        GroupModel? currentGroup,
+        String? initialText,
+      }) async {
+        await tester.pumpWidget(
+          buildWidget(
+            group: currentGroup ?? chatGroup,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: FakeMediaFileManager(),
+            audioRecorderService: recorder,
+            initialText: initialText,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploads++;
+                  throw StateError('Send as text must not upload audio');
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+      }
+
+      Future<void> start(WidgetTester tester, {bool review = false}) async {
+        await (screen(tester).onRecordStart! as Future<void> Function())();
+        await tester.pump();
+        expect(recorder.isRecording, isTrue);
+        if (review) {
+          final callLease = await CallMediaConflictAdapter(
+            microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+          ).acquireForCall();
+          await tester.pump();
+          await callLease.release();
+          expect(
+            find.byKey(const ValueKey('voice-review-send')),
+            findsOneWidget,
+          );
+        }
+      }
+
+      Future<void> convert(WidgetTester tester) async {
+        expect(find.text('Send as text'), findsOneWidget);
+        await tester.tap(find.text('Send as text'));
+        await tester.pump();
+      }
+
+      void expectNoVoiceEffects() {
+        expect(uploads, 0);
+        expect(mediaSaves, 0);
+        expect(mediaAttachmentRepo.count, 0);
+      }
+
+      testWidgets(
+        'group recording becomes focused appended draft and ordinary text only',
+        (tester) async {
+          await open(tester, initialText: 'Existing draft');
+          await start(tester);
+          await convert(tester);
+          expect(ai.paths, [voiceFile.path]);
+          expect(recorder.stopCallCount, 1);
+          expect(find.text('Transcribing…'), findsOneWidget);
+          expect(voiceFile.existsSync(), isTrue);
+          expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+          expectNoVoiceEffects();
+          ai.result.complete('group words');
+          await pumpFrames(tester, count: 5);
+          expect(composerText(tester), 'Existing draft group words');
+          expect(
+            tester
+                .widget<TextField>(find.byType(TextField))
+                .focusNode!
+                .hasFocus,
+            isTrue,
+          );
+          expect(voiceFile.existsSync(), isFalse);
+          expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+          expectNoVoiceEffects();
+
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpFrames(tester, count: 20);
+          final sent = await msgRepo.getMessagesPage(chatGroup.id);
+          expect(sent.single.text, 'Existing draft group words');
+          expectNoVoiceEffects();
+        },
+      );
+
+      testWidgets('group duplicate conversion taps stop and transcribe once', (
+        tester,
+      ) async {
+        await open(tester);
+        await start(tester);
+        expect(find.text('Send as text'), findsOneWidget);
+        await tester.tap(find.text('Send as text'));
+        await tester.tap(find.text('Send as text'));
+        await tester.pump();
+        expect(recorder.stopCallCount, 1);
+        expect(ai.paths, [voiceFile.path]);
+        ai.result.complete('once');
+        await pumpFrames(tester, count: 5);
+        expect(composerText(tester), 'once');
+        expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+        expectNoVoiceEffects();
+      });
+
+      testWidgets('group review converts held audio without another stop', (
+        tester,
+      ) async {
+        await open(tester);
+        await start(tester, review: true);
+        await convert(tester);
+        ai.result.complete('review words');
+        await pumpFrames(tester, count: 5);
+        expect(recorder.stopCallCount, 1);
+        expect(ai.paths, [voiceFile.path]);
+        expect(composerText(tester), 'review words');
+        expect(voiceFile.existsSync(), isFalse);
+        expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+        expectNoVoiceEffects();
+      });
+
+      for (final empty in [false, true]) {
+        testWidgets(
+          'group ${empty ? 'empty' : 'failed'} transcription retains review audio',
+          (tester) async {
+            await open(tester);
+            await start(tester);
+            await convert(tester);
+            if (empty) {
+              ai.result.complete('   ');
+            } else {
+              ai.result.completeError(StateError('local inference failed'));
+            }
+            await pumpFrames(tester, count: 5);
+            expect(find.text("Couldn't transcribe"), findsOneWidget);
+            expect(
+              find.byKey(const ValueKey('voice-review-send')),
+              findsOneWidget,
+            );
+            expect(
+              find.byKey(const ValueKey('voice-review-discard')),
+              findsOneWidget,
+            );
+            expect(find.text('Send as text'), findsOneWidget);
+            expect(voiceFile.existsSync(), isTrue);
+            expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+            expectNoVoiceEffects();
+          },
+        );
+      }
+
+      testWidgets(
+        'group model not ready opens existing sheet and retains review audio',
+        (tester) async {
+          delivery.state.value = const ModelPaused(
+            receivedBytes: 1,
+            totalBytes: 10,
+          );
+          await open(tester);
+          await start(tester);
+          await convert(tester);
+          await pumpFrames(tester, count: 5);
+          expect(find.byType(PrivateTranslatorSheet), findsOneWidget);
+          expect(recordingPhase(tester), VoiceRecordingState.reviewing);
+          expect(voiceFile.existsSync(), isTrue);
+          expect(recorder.stopCallCount, 1);
+          expect(ai.paths, isEmpty);
+          expectNoVoiceEffects();
+        },
+      );
+
+      testWidgets('group switch rejects an outstanding transcript', (
+        tester,
+      ) async {
+        await open(tester);
+        await start(tester);
+        await convert(tester);
+        expect(ai.paths, [voiceFile.path]);
+        final other = chatGroup.copyWith(
+          id: 'group-send-as-text-2',
+          name: 'Other group',
+          topicName: 'topic-send-as-text-2',
+        );
+        await groupRepo.saveGroup(other);
+        await saveActiveGroupMembers(groupRepo, other);
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: other.id,
+            keyGeneration: 1,
+            encryptedKey: 'test-group-send-as-text-key-2',
+            createdAt: DateTime.now().toUtc(),
+          ),
+        );
+        await open(tester, currentGroup: other);
+        expect(screen(tester).group.id, other.id);
+        expect(screen(tester).canWrite, isTrue);
+        expect(recordingPhase(tester), VoiceRecordingState.idle);
+        expect(composerText(tester), isEmpty);
+        ai.result.complete('words for the old group');
+        await pumpFrames(tester, count: 5);
+        expect(screen(tester).group.id, other.id);
+        expect(recordingPhase(tester), VoiceRecordingState.idle);
+        expect(composerText(tester), isEmpty);
+        expect(await msgRepo.getMessagesPage(chatGroup.id), isEmpty);
+        expect(await msgRepo.getMessagesPage(other.id), isEmpty);
+        expectNoVoiceEffects();
+      });
+
+      for (final disabled in ['flag off', 'unsupported']) {
+        testWidgets(
+          'group $disabled recording and review offer no Send as text',
+          (tester) async {
+            if (disabled == 'flag off') {
+              debugTranslatePreviewEnabledOverride = false;
+              debugModelDeliveryOverride = null;
+            } else {
+              delivery.state.value = const ModelUnsupported();
+            }
+            await open(tester);
+            await start(tester);
+            expect(find.text('Send as text'), findsNothing);
+            final callLease = await CallMediaConflictAdapter(
+              microphoneCaptureLeases: microphoneCaptureLeasesFor(recorder),
+            ).acquireForCall();
+            await tester.pump();
+            await callLease.release();
+            expect(find.text('Send as text'), findsNothing);
+            expect(
+              find.byKey(const ValueKey('voice-review-send')),
+              findsOneWidget,
+            );
+            expect(ai.paths, isEmpty);
+            expectNoVoiceEffects();
+          },
+        );
+      }
+
+      testWidgets(
+        'linked group recording keeps ordinary voice without Send as text',
+        (tester) async {
+          var voiceSends = 0;
+          await tester.pumpWidget(
+            MaterialApp(
+              locale: const Locale('en'),
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: LinkedGroupConversationWired(
+                group: chatGroup,
+                loadCurrentGroup: (_) async => chatGroup,
+                loadProtectedMessages: (_) async => const <GroupMessage>[],
+                loadProtectedReactions: (_) async => const {},
+                markVisibleMessagesRead: (_, _) async {},
+                groupConversationTracker: ActiveConversationTracker(),
+                isAuthoritySettled: (_) async => true,
+                canAuthorProtectedContent: (_) async => true,
+                sendProtectedText: (_, _) async => true,
+                toggleProtectedReaction:
+                    ({
+                      required groupId,
+                      required message,
+                      required emoji,
+                      required remove,
+                    }) async => true,
+                startVoiceRecording: (_) async => true,
+                stopVoiceRecording: (_) async {
+                  voiceSends++;
+                  return true;
+                },
+                cancelVoiceRecording: (_) async => true,
+              ),
+            ),
+          );
+          await pumpFrames(tester, count: 5);
+          screen(tester).onRecordStart!();
+          await pumpFrames(tester, count: 5);
+          expect(screen(tester).isRecording, isTrue);
+          expect(find.text('Send as text'), findsNothing);
+          expect(screen(tester).onSendAsText, isNull);
+          expect(
+            find.bySemanticsLabel('Stop and send voice message'),
+            findsOneWidget,
+          );
+          expect(voiceSends, 0);
+          expect(ai.paths, isEmpty);
+        },
+      );
     });
 
     testWidgets('info button navigates to group info', (tester) async {

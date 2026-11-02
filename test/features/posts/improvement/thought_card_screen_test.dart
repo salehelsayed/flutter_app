@@ -1425,6 +1425,38 @@ void main() {
       debugModelDeliveryOverride = null;
     });
 
+    testWidgets(
+      'Thought card recording has no Send as text action with model ready',
+      (tester) async {
+        debugTranslatePreviewEnabledOverride = true;
+        final thought = _thought(initialNow);
+        await posts.savePost(thought);
+        final recorder = FakeAudioRecorderService()
+          ..fakeOutputPath = '/tmp/thought-send-as-text-excluded.m4a';
+        await openCard(
+          tester,
+          thought,
+          onReply: (_, _) {},
+          onVoiceReply: (_) {},
+          recorder: recorder,
+        );
+        final composer = find.byKey(const ValueKey('thought-reply-composer'));
+        await tester.tap(
+          find.descendant(
+            of: composer,
+            matching: find.byType(VoiceRecordButton),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(recorder.isRecording, isTrue);
+        expect(tester.widget<ComposeArea>(composer).onSendAsText, isNull);
+        expect(find.text('Send as text'), findsNothing);
+        expect(find.byType(VoiceRecordButton), findsOneWidget);
+        await finish(tester);
+      },
+    );
+
     testWidgets('without the flag a foreign thought has no Translate', (
       tester,
     ) async {

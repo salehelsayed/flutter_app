@@ -4656,6 +4656,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get translator_translate_failed => 'Couldn\'t translate';
 
   @override
+  String get voice_send_as_text_action => 'Send as text';
+
+  @override
   String get translator_transcribing => 'Transcribing…';
 
   @override

@@ -319,6 +319,7 @@ class ConversationScreen extends StatefulWidget {
   final VoidCallback? onRecordCancel;
   final VoidCallback? onReviewSend;
   final VoidCallback? onReviewDiscard;
+  final VoidCallback? onSendAsText;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final ValueListenable<ConversationComposerViewState>? composerStateListenable;
@@ -439,6 +440,7 @@ class ConversationScreen extends StatefulWidget {
     this.onRecordCancel,
     this.onReviewSend,
     this.onReviewDiscard,
+    this.onSendAsText,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.composerStateListenable,
@@ -1017,6 +1019,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           onRecordCancel: widget.onRecordCancel,
           onReviewSend: widget.onReviewSend,
           onReviewDiscard: widget.onReviewDiscard,
+          onSendAsText: widget.onSendAsText,
           recordingDuration: composerState.recordingDuration,
           amplitudeValues: composerState.amplitudeValues,
           initialText: widget.initialText,

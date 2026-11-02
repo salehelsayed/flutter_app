@@ -4764,6 +4764,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get translator_translate_failed => 'Übersetzen fehlgeschlagen';
 
   @override
+  String get voice_send_as_text_action => 'Als Text senden';
+
+  @override
   String get translator_transcribing => 'Wird transkribiert…';
 
   @override

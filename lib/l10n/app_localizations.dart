@@ -7754,6 +7754,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t translate'**
   String get translator_translate_failed;
 
+  /// No description provided for @voice_send_as_text_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Send as text'**
+  String get voice_send_as_text_action;
+
   /// Shown while a voice message is turned into text.
   ///
   /// In en, this message translates to:

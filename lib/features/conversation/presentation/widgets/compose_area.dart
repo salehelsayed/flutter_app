@@ -1,4 +1,5 @@
 import 'dart:ui';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/shared/widgets/action_semantics.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,14 @@ import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/voice_record_button.dart';
 import 'package:flutter_app/shared/widgets/private_media_policy_picker_sheet.dart';
 
-enum VoiceRecordingState { idle, arming, recording, stopping, reviewing }
+enum VoiceRecordingState {
+  idle,
+  arming,
+  recording,
+  stopping,
+  reviewing,
+  transcribing,
+}
 
 extension VoiceRecordingStateX on VoiceRecordingState {
   bool get isActive => this != VoiceRecordingState.idle;
@@ -46,6 +54,7 @@ class ComposeArea extends StatefulWidget {
   final VoidCallback? onRecordCancel;
   final VoidCallback? onReviewSend;
   final VoidCallback? onReviewDiscard;
+  final VoidCallback? onSendAsText;
   final Duration recordingDuration;
   final List<double> amplitudeValues;
   final String? initialText;
@@ -89,6 +98,7 @@ class ComposeArea extends StatefulWidget {
     this.onRecordCancel,
     this.onReviewSend,
     this.onReviewDiscard,
+    this.onSendAsText,
     this.recordingDuration = Duration.zero,
     this.amplitudeValues = const [],
     this.initialText,
@@ -205,6 +215,15 @@ class _ComposeAreaState extends State<ComposeArea>
       _hasText = nextText.trim().isNotEmpty;
       _updateSendButton();
     }
+    if (oldWidget.recordingState == VoiceRecordingState.transcribing &&
+        widget.recordingState == VoiceRecordingState.idle &&
+        nextText.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.recordingState == VoiceRecordingState.idle) {
+          _focusNode.requestFocus();
+        }
+      });
+    }
     if (oldWidget.hasAttachments != widget.hasAttachments) {
       _updateSendButton();
     }
@@ -273,7 +292,9 @@ class _ComposeAreaState extends State<ComposeArea>
           ),
           const SizedBox(width: 10),
           Text(
-            _formatDuration(widget.recordingDuration),
+            widget.recordingState == VoiceRecordingState.transcribing
+                ? AppLocalizations.of(context)!.translator_transcribing
+                : _formatDuration(widget.recordingDuration),
             style: TextStyle(
               fontSize: 14,
               color: isLightSurface
@@ -325,10 +346,14 @@ class _ComposeAreaState extends State<ComposeArea>
         const SizedBox(width: 8),
         ActionSemantics(
           label: AppLocalizations.of(context)!.voice_review_send_action,
-          enabled: widget.onReviewSend != null,
+          enabled:
+              widget.onReviewSend != null &&
+              widget.recordingState != VoiceRecordingState.transcribing,
           child: GestureDetector(
             key: const ValueKey('voice-review-send'),
-            onTap: widget.onReviewSend,
+            onTap: widget.recordingState == VoiceRecordingState.transcribing
+                ? null
+                : widget.onReviewSend,
             behavior: HitTestBehavior.opaque,
             child: Container(
               width: 36,
@@ -617,7 +642,10 @@ class _ComposeAreaState extends State<ComposeArea>
                     ],
                     // Review preview, recording overlay, or text input
                     Expanded(
-                      child: widget.recordingState.isReviewing
+                      child:
+                          (widget.recordingState.isReviewing ||
+                              widget.recordingState ==
+                                  VoiceRecordingState.transcribing)
                           ? _buildReviewPreview(context)
                           : _isRecording
                           ? RecordingOverlay(
@@ -754,7 +782,10 @@ class _ComposeAreaState extends State<ComposeArea>
                     // Review actions, mic button, or send button
                     Padding(
                       padding: const EdgeInsets.only(bottom: 3),
-                      child: widget.recordingState.isReviewing
+                      child:
+                          (widget.recordingState.isReviewing ||
+                              widget.recordingState ==
+                                  VoiceRecordingState.transcribing)
                           ? _buildReviewActions(context)
                           : _shouldShowMicButton
                           ? VoiceRecordButton(
@@ -829,11 +860,35 @@ class _ComposeAreaState extends State<ComposeArea>
                     ),
                   ],
                 ),
+                if (widget.onSendAsText != null &&
+                    (widget.recordingState == VoiceRecordingState.recording ||
+                        widget.recordingState == VoiceRecordingState.reviewing))
+                  _buildSendAsTextAction(context),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSendAsTextAction(BuildContext context) {
+    final delivery = translatePreviewDelivery;
+    if (delivery == null) return const SizedBox.shrink();
+    return ValueListenableBuilder<ModelDeliveryState>(
+      valueListenable: delivery.state,
+      builder: (context, state, _) => state is ModelUnsupported
+          ? const SizedBox.shrink()
+          : Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton(
+                key: const ValueKey('voice-send-as-text'),
+                onPressed: widget.onSendAsText,
+                child: Text(
+                  AppLocalizations.of(context)!.voice_send_as_text_action,
+                ),
+              ),
+            ),
     );
   }
 }

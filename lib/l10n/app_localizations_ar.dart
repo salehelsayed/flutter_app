@@ -4722,6 +4722,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get translator_translate_failed => 'تعذّرت الترجمة';
 
   @override
+  String get voice_send_as_text_action => 'إرسال كنص';
+
+  @override
   String get translator_transcribing => 'جارٍ التفريغ النصي…';
 
   @override

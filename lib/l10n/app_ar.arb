@@ -2149,6 +2149,7 @@
   "translator_try_again": "حاول مجددًا",
   "translator_translating": "جارٍ الترجمة…",
   "translator_translate_failed": "تعذّرت الترجمة",
+  "voice_send_as_text_action": "إرسال كنص",
   "translator_transcribing": "جارٍ التفريغ النصي…",
   "translator_transcribe_failed": "تعذّر التفريغ النصي",
   "translator_sheet_title": "مترجمك الخاص",

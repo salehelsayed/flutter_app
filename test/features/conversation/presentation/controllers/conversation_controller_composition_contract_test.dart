@@ -149,10 +149,14 @@ const _expectedGroupApiFingerprint = 'cfec919a';
 // quoted Thoughts now also receive explicit IDs for pending first lookups.
 // These are display-state handoff changes only; both public Wired APIs and
 // the group handoff retain their existing fingerprints.
-const _expectedDirectHandoffFingerprint = 'b832d963';
+// Send as text: one optional recording/review action, delegated to the existing
+// wired capture owner. All prior arguments and both Wired APIs are unchanged.
+const _expectedDirectHandoffFingerprint = 'c1a752e7';
 // R2-3: the group handoff adds review send/discard callbacks for a voice note
 // stopped by call Answer. The callbacks delegate to the wired capture owner.
-const _expectedGroupHandoffFingerprint = '060099cf';
+// Send as text: one optional recording/review action, delegated to the existing
+// wired capture owner. All prior arguments and both Wired APIs are unchanged.
+const _expectedGroupHandoffFingerprint = '0e09acce';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();
 

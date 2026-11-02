@@ -71,6 +71,9 @@ import 'package:flutter_app/features/conversation/application/send_voice_message
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -120,6 +123,7 @@ import '../../../../shared/helpers/legacy_upload_media_fn.dart';
 import '../../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../../shared/fakes/fake_media_picker.dart';
 import '../../../../shared/fakes/in_memory_composer_draft_store.dart';
+import '../../../translate_preview/fake_model_delivery_controller.dart';
 import '../../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../../shared/fakes/fake_upload_wake_lock_driver.dart';
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
@@ -1851,6 +1855,26 @@ final class _RecordingOutgoingCallCapability
     if (completer != null) return completer.future;
     return result;
   }
+}
+
+class _ComposerTranscriptionAi implements OnDeviceAi {
+  final paths = <String>[];
+  // The request starts inside testWidgets' fake-async zone, unlike setUp.
+  Completer<String>? _result;
+  Completer<String> get result => _result ??= Completer<String>();
+  set result(Completer<String> value) {
+    _result = value;
+  }
+
+  @override
+  Future<String> transcribe(String audioPath) {
+    paths.add(audioPath);
+    return result.future;
+  }
+
+  @override
+  Future<String> translate(String text, {required String languageName}) =>
+      throw StateError('Send as text must only transcribe');
 }
 
 void main() {
@@ -14378,7 +14402,15 @@ void main() {
         return (SendVoiceMessageResult.success, delivered);
       }
 
-      Future<ConversationScreen> startThenAutoStop(WidgetTester tester) async {
+      Future<ConversationScreen> startThenAutoStop(
+        WidgetTester tester, {
+        bool autoStop = true,
+        String? initialText,
+        ThoughtVoiceReply? initialThoughtVoiceReply,
+        ComposerDraftStore? composerDraftStore,
+        MediaAttachmentRepository? mediaAttachmentRepo,
+        LegacyTestUploadMediaFn? uploadMediaFn,
+      }) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final chatListener = ChatMessageListener(
           chatMessageStream: const Stream.empty(),
@@ -14395,6 +14427,11 @@ void main() {
           p2pService: FakeP2PService(localPeer: true, localMediaResult: true),
           audioRecorderService: recorder,
           sendVoiceMessageFn: reviewSendVoiceFn,
+          initialText: initialText,
+          initialThoughtVoiceReply: initialThoughtVoiceReply,
+          composerDraftStore: composerDraftStore,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          uploadMediaFn: uploadMediaFn,
         );
 
         final screen = tester.widget<ConversationScreen>(
@@ -14402,7 +14439,7 @@ void main() {
         );
         await (screen.onRecordStart! as Future<void> Function())();
         await tester.pump(const Duration(milliseconds: 100));
-        await recorder.triggerAutoStop();
+        if (autoStop) await recorder.triggerAutoStop();
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 200));
         return tester.widget<ConversationScreen>(
@@ -14531,6 +14568,402 @@ void main() {
           reason: 'discard must delete the held recording file',
         );
         expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
+      });
+
+      group('send as text', () {
+        late FakeModelDeliveryController delivery;
+        late _ComposerTranscriptionAi ai;
+        late FakeMediaAttachmentRepository media;
+        late InMemoryComposerDraftStore drafts;
+        late int uploads;
+
+        setUp(() {
+          delivery = FakeModelDeliveryController(
+            const ModelReady(sizeBytes: 1),
+          );
+          ai = _ComposerTranscriptionAi();
+          media = FakeMediaAttachmentRepository();
+          drafts = InMemoryComposerDraftStore();
+          uploads = 0;
+          debugTranslatePreviewEnabledOverride = true;
+          debugModelDeliveryOverride = delivery;
+          debugOnDeviceAiOverride = ai;
+        });
+
+        tearDown(() {
+          debugTranslatePreviewEnabledOverride = null;
+          debugModelDeliveryOverride = null;
+          debugOnDeviceAiOverride = null;
+        });
+
+        ConversationScreen screen(WidgetTester tester) =>
+            tester.widget<ConversationScreen>(find.byType(ConversationScreen));
+
+        VoiceRecordingState recordingPhase(WidgetTester tester) =>
+            screen(tester).composerStateListenable!.value.recordingState;
+
+        String composerText(WidgetTester tester) =>
+            tester.widget<TextField>(find.byType(TextField)).controller!.text;
+
+        Future<void> start(
+          WidgetTester tester, {
+          bool review = false,
+          String? initialText,
+        }) async {
+          await startThenAutoStop(
+            tester,
+            autoStop: review,
+            initialText: initialText,
+            composerDraftStore: drafts,
+            mediaAttachmentRepo: media,
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  blobId,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) async {
+                  uploads++;
+                  throw StateError('Send as text must not upload audio');
+                },
+          );
+        }
+
+        Future<void> convert(WidgetTester tester) async {
+          expect(find.text('Send as text'), findsOneWidget);
+          await tester.tap(find.text('Send as text'));
+          await tester.pump();
+        }
+
+        void expectNoVoiceEffects() {
+          expect(sendVoiceCalls, 0);
+          expect(uploads, 0);
+          expect(media.allSavedAttachments, isEmpty);
+        }
+
+        testWidgets(
+          'recording becomes an appended focused draft and sends ordinary text only',
+          (tester) async {
+            await start(tester, initialText: 'Existing draft');
+            await convert(tester);
+            expect(recorder.stopCallCount, 1);
+            expect(ai.paths, [voiceFile.path]);
+            expect(find.text('Transcribing…'), findsOneWidget);
+            expect(voiceFile.existsSync(), isTrue);
+            expect(messageRepo.store, isEmpty);
+            expectNoVoiceEffects();
+
+            ai.result.complete('spoken words');
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            expect(composerText(tester), 'Existing draft spoken words');
+            expect(
+              tester
+                  .widget<TextField>(find.byType(TextField))
+                  .focusNode!
+                  .hasFocus,
+              isTrue,
+            );
+            expect(voiceFile.existsSync(), isFalse);
+            expect(messageRepo.store, isEmpty);
+            expectNoVoiceEffects();
+
+            await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 500));
+            expect(
+              messageRepo.store.values.single.text,
+              'Existing draft spoken words',
+            );
+            expect(messageRepo.store.values.single.media, isEmpty);
+            expectNoVoiceEffects();
+          },
+        );
+
+        testWidgets(
+          'review conversion reuses held audio without stopping twice',
+          (tester) async {
+            await start(tester, review: true);
+            await convert(tester);
+            ai.result.complete('from review');
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            expect(recorder.stopCallCount, 1);
+            expect(ai.paths, [voiceFile.path]);
+            expect(composerText(tester), 'from review');
+            expect(voiceFile.existsSync(), isFalse);
+            expect(messageRepo.store, isEmpty);
+            expectNoVoiceEffects();
+          },
+        );
+
+        testWidgets('duplicate recording conversion taps transcribe once', (
+          tester,
+        ) async {
+          await start(tester);
+          expect(find.text('Send as text'), findsOneWidget);
+          await tester.tap(find.text('Send as text'));
+          await tester.tap(find.text('Send as text'));
+          await tester.pump();
+          expect(recorder.stopCallCount, 1);
+          expect(ai.paths, [voiceFile.path]);
+          ai.result.complete('once');
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(composerText(tester), 'once');
+          expectNoVoiceEffects();
+        });
+
+        for (final empty in [false, true]) {
+          testWidgets(
+            '${empty ? 'empty' : 'failed'} transcription retains audio and review actions',
+            (tester) async {
+              await start(tester);
+              await convert(tester);
+              if (empty) {
+                ai.result.complete('   ');
+              } else {
+                ai.result.completeError(StateError('local inference failed'));
+              }
+              await tester.pump();
+              await tester.pump(const Duration(milliseconds: 100));
+              expect(find.text("Couldn't transcribe"), findsOneWidget);
+              expect(
+                find.byKey(const ValueKey('voice-review-send')),
+                findsOneWidget,
+              );
+              expect(
+                find.byKey(const ValueKey('voice-review-discard')),
+                findsOneWidget,
+              );
+              expect(find.text('Send as text'), findsOneWidget);
+              expect(voiceFile.existsSync(), isTrue);
+              expect(messageRepo.store, isEmpty);
+              expectNoVoiceEffects();
+            },
+          );
+        }
+
+        for (final state in <String, ModelDeliveryState>{
+          'not downloaded': const ModelNotDownloaded(
+            totalBytes: 10,
+            freeBytes: 100,
+            onWifi: true,
+          ),
+          'downloading': const ModelDownloading(
+            receivedBytes: 1,
+            totalBytes: 10,
+          ),
+          'waiting for wifi': const ModelWaitingForWifi(
+            receivedBytes: 1,
+            totalBytes: 10,
+          ),
+          'paused': const ModelPaused(receivedBytes: 1, totalBytes: 10),
+          'failed': const ModelFailed(),
+          'no space': const ModelNotEnoughSpace(
+            totalBytes: 10,
+            neededBytes: 20,
+            freeBytes: 1,
+          ),
+        }.entries) {
+          testWidgets(
+            '${state.key} opens existing translator sheet and retains review',
+            (tester) async {
+              delivery.state.value = state.value;
+              await start(tester);
+              await convert(tester);
+              await tester.pump(const Duration(milliseconds: 400));
+              expect(find.byType(PrivateTranslatorSheet), findsOneWidget);
+              expect(ai.paths, isEmpty);
+              expect(recorder.stopCallCount, 1);
+              expect(voiceFile.existsSync(), isTrue);
+              expect(recordingPhase(tester), VoiceRecordingState.reviewing);
+              expect(messageRepo.store, isEmpty);
+              expectNoVoiceEffects();
+            },
+          );
+        }
+
+        testWidgets(
+          'discard rejects late transcript without touching a newer recording',
+          (tester) async {
+            await start(tester, review: true);
+            await convert(tester);
+            await (screen(tester).onReviewDiscard!
+                as Future<void> Function())();
+            await tester.pump();
+            expect(voiceFile.existsSync(), isFalse);
+            final newerFile = File('${voiceFile.path}.new.m4a')
+              ..writeAsBytesSync(List<int>.filled(2048, 3));
+            addTearDown(() {
+              if (newerFile.existsSync()) newerFile.deleteSync();
+            });
+            recorder.fakeOutputPath = newerFile.path;
+            await (screen(tester).onRecordStart! as Future<void> Function())();
+            await tester.pump();
+            ai.result.complete('obsolete words');
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            expect(recordingPhase(tester), VoiceRecordingState.recording);
+            expect(newerFile.existsSync(), isTrue);
+            expect(messageRepo.store, isEmpty);
+            expectNoVoiceEffects();
+            await (screen(tester).onRecordCancel! as Future<void> Function())();
+            await tester.pump();
+            expect(composerText(tester), isEmpty);
+          },
+        );
+
+        testWidgets('navigation rejects an outstanding transcript', (
+          tester,
+        ) async {
+          await start(tester);
+          await convert(tester);
+          final nextDraft = TextEditingController(
+            text: 'Other conversation draft',
+          );
+          addTearDown(nextDraft.dispose);
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(body: TextField(controller: nextDraft)),
+            ),
+          );
+          ai.result.complete('obsolete words');
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(nextDraft.text, 'Other conversation draft');
+          expect(messageRepo.store, isEmpty);
+          expectNoVoiceEffects();
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        });
+
+        testWidgets(
+          'failed conversion retries the same held audio and can still send voice',
+          (tester) async {
+            await start(tester);
+            await convert(tester);
+            ai.result.completeError(StateError('local inference failed'));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            expect(voiceFile.existsSync(), isTrue);
+            expect(
+              find.byKey(const ValueKey('voice-review-send')),
+              findsOneWidget,
+            );
+
+            ai.result = Completer<String>();
+            await convert(tester);
+            expect(recorder.stopCallCount, 1);
+            expect(ai.paths, [voiceFile.path, voiceFile.path]);
+            ai.result.completeError(StateError('still unavailable'));
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            await (screen(tester).onReviewSend! as Future<void> Function())();
+            await tester.pump();
+            expect(sendVoiceCalls, 1);
+            expect(uploads, 0);
+          },
+        );
+
+        testWidgets(
+          'converted text survives reopening as an ordinary local draft',
+          (tester) async {
+            await start(tester);
+            await convert(tester);
+            ai.result.complete('saved local words');
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            await tester.pumpWidget(const SizedBox.shrink());
+            await tester.pump();
+            await pumpScreen(
+              tester,
+              identityRepo: FakeIdentityRepository(makeIdentity()),
+              messageRepo: messageRepo,
+              chatListener: ChatMessageListener(
+                chatMessageStream: const Stream.empty(),
+                messageRepo: messageRepo,
+                contactRepo: FakeContactRepository(),
+              ),
+              sendFn: _instantSuccessSendFn,
+              composerDraftStore: drafts,
+            );
+            await tester.pump();
+            expect(composerText(tester), 'saved local words');
+            expect(drafts.drafts.values.single.text, 'saved local words');
+            expect(drafts.drafts.values.single.attachments, isEmpty);
+            expect(messageRepo.store, isEmpty);
+            expectNoVoiceEffects();
+          },
+        );
+
+        testWidgets(
+          'ordinary manual stop still sends voice without transcription',
+          (tester) async {
+            await start(tester);
+            await (screen(tester).onRecordStop! as Future<void> Function())();
+            await tester.pump();
+            expect(sendVoiceCalls, 1);
+            expect(ai.paths, isEmpty);
+          },
+        );
+
+        testWidgets(
+          'normal recording after an initial Thought voice reply offers Send as text',
+          (tester) async {
+            await startThenAutoStop(
+              tester,
+              autoStop: false,
+              initialThoughtVoiceReply: ThoughtVoiceReply(
+                recording: AudioRecording(
+                  filePath: voiceFile.path,
+                  durationMs: 1800,
+                  sizeBytes: 2048,
+                ),
+                waveform: const [0.4],
+                postId: 'thought-send-as-text-exclusion',
+              ),
+            );
+            expect(sendVoiceCalls, 1);
+            expect(recordingPhase(tester), VoiceRecordingState.recording);
+            expect(find.text('Send as text'), findsOneWidget);
+            expect(screen(tester).onSendAsText, isNotNull);
+            expect(ai.paths, isEmpty);
+          },
+        );
+
+        for (final disabled in ['flag off', 'unsupported']) {
+          testWidgets('$disabled recording and review offer no Send as text', (
+            tester,
+          ) async {
+            if (disabled == 'flag off') {
+              debugTranslatePreviewEnabledOverride = false;
+              debugModelDeliveryOverride = null;
+            } else {
+              delivery.state.value = const ModelUnsupported();
+            }
+            await start(tester);
+            expect(find.text('Send as text'), findsNothing);
+            await recorder.triggerAutoStop();
+            await tester.pump();
+            expect(find.text('Send as text'), findsNothing);
+            expect(
+              find.byKey(const ValueKey('voice-review-send')),
+              findsOneWidget,
+            );
+            expect(ai.paths, isEmpty);
+            expectNoVoiceEffects();
+          });
+        }
       });
     });
 

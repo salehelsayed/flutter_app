@@ -11278,6 +11278,36 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   checks. They do not prove SQLCipher's native binary, signed mobile restart,
   model accuracy or the full account-transfer journey. Evidence and per-file
   commands: `.codex-test-logs/translate-persist-129-20261030/`.
+  Send as text reuses that opt-in model from direct and ordinary group
+  recording/review bars. It converts an owner-held recording into the ordinary
+  local text draft; it does not stage a voice message, create an attachment row,
+  upload audio or send automatically. A successful conversion deletes its source
+  audio; reopening restores the saved words without another inference. Failure
+  or an unavailable model retains the review recording for retry, voice send or
+  discard. Late results require the same chat and exact held capture, so discard,
+  navigation, a group rebind or authority revocation cannot append obsolete words.
+  Manual stop keeps its existing immediate voice-send behavior. Thought-card
+  replies and linked groups do not receive the new action; linked recording and
+  draft behavior stays at baseline. The existing conversation/group lanes cover
+  these paths and shared localized/compact controls; the preview lane retains
+  the Thought/voice preservation sentinels.
+  Widget-test AI completers must be created inside `testWidgets` (or lazily on
+  transcription), rather than an outer `setUp`: the outer-zone future was not
+  drained by the widget fake clock and produced stalled results/unhandled errors.
+  Phase assertions read `composerStateListenable.value`; the pure-screen's legacy
+  constructor snapshot need not rebuild for a controller-only change. Group
+  rebind fixtures must seed the next group's send key and membership before
+  asserting that its writable composer rejected an old transcript. First
+  attempts and corrected causal evidence are retained under
+  `.codex-test-logs/send-as-text-20261102/`. Host fake AI/recorder coverage does not
+  prove native recording, actual model output or delivery on a signed device;
+  those proof legs belong to the separate device handoff.
+  Device checks on 2026-11-02 exercised build 202 on iPhone 11 with a Pixel peer
+  on build 201: direct/group text delivery, discard, manual voice send,
+  Thought-reply exclusion and the model-verifying sheet passed. Linked-group
+  exclusion was checked in source only; no linked secondary or model
+  NotDownloaded/Failed state was exercised. The device verdict remains in the
+  main checkout at `.codex-test-logs/send-as-text-20261102/device/verdict.md`.
   The flag does not remove plugin/native dependencies or the iOS increased-memory
   entitlement from a build; enabling it does not certify native delivery,
   inference or signing compatibility.

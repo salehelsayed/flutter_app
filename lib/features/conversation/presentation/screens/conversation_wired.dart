@@ -144,6 +144,9 @@ import 'package:flutter_app/shared/widgets/conversation/conversation_composer_co
 import 'package:flutter_app/shared/widgets/conversation/conversation_reaction_projection_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_upload_activity_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_voice_capture_controller.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
@@ -755,6 +758,8 @@ class _ConversationWiredState extends State<ConversationWired>
   // 117 Session 3: a recording captured by the 5-minute auto-stop is held
   // here (with its waveform) while the composer is in the `reviewing` state,
   // so the user can send or discard it instead of it being silently dropped.
+  ConversationVoiceCaptureOutcome? _pendingReviewOutcome;
+  int _voiceTextGeneration = 0;
   AudioRecording? _pendingReviewRecording;
   List<double> _pendingReviewWaveform = const [];
 
@@ -1614,7 +1619,11 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   void _onVoiceCaptureStateChanged() {
-    if (!mounted) return;
+    if (!mounted ||
+        _composerController.value.recordingState ==
+            VoiceRecordingState.transcribing) {
+      return;
+    }
     final voiceState = _voiceCaptureController.state;
     final recordingState = switch (voiceState.phase) {
       ConversationVoiceCapturePhase.idle => VoiceRecordingState.idle,
@@ -6078,6 +6087,7 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    _voiceTextGeneration++;
     _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
     final result = await _voiceCaptureController.start(
       recorder: recorder,
@@ -6113,6 +6123,10 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _onRecordStop() async {
+    if (_composerController.value.recordingState ==
+        VoiceRecordingState.transcribing) {
+      return;
+    }
     if (!_voiceCaptureController.state.isActive) {
       return;
     }
@@ -6152,7 +6166,11 @@ class _ConversationWiredState extends State<ConversationWired>
       details: {'durationMs': recording.durationMs},
     );
 
-    await _sendVoiceRecording(recording, outcome.waveform);
+    await _sendVoiceRecording(
+      recording,
+      outcome.waveform,
+      captureOutcome: outcome,
+    );
   }
 
   /// Sends a captured voice [recording] (with its [waveform]) through the
@@ -6169,9 +6187,11 @@ class _ConversationWiredState extends State<ConversationWired>
   /// recording back, not that the bytes silently leak.
   void _restoreVoiceReviewHoldAfterRefusal(
     AudioRecording recording,
-    List<double> waveform,
-  ) {
+    List<double> waveform, {
+    ConversationVoiceCaptureOutcome? outcome,
+  }) {
     if (!mounted) return;
+    _pendingReviewOutcome = outcome;
     _pendingReviewRecording = recording;
     _pendingReviewWaveform = waveform;
     _updateComposerState(
@@ -6184,8 +6204,9 @@ class _ConversationWiredState extends State<ConversationWired>
 
   Future<void> _sendVoiceRecording(
     AudioRecording recording,
-    List<double> waveform,
-  ) async {
+    List<double> waveform, {
+    ConversationVoiceCaptureOutcome? captureOutcome,
+  }) async {
     // Send the voice message
     final identity = _identity;
     if (identity == null) return;
@@ -6212,7 +6233,11 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_VOICE_SEND_INVALID_RECORDING',
         details: {'sizeBytes': recording.sizeBytes},
       );
-      _restoreVoiceReviewHoldAfterRefusal(recording, waveform);
+      _restoreVoiceReviewHoldAfterRefusal(
+        recording,
+        waveform,
+        outcome: captureOutcome,
+      );
       return;
     }
     final fanoutCapableRepository =
@@ -6239,7 +6264,11 @@ class _ConversationWiredState extends State<ConversationWired>
         event: 'CONV_FL_VOICE_SEND_MEDIA_FANOUT_ADMISSION_REFUSED',
         details: {'reason': voiceAdmission.reason},
       );
-      _restoreVoiceReviewHoldAfterRefusal(recording, waveform);
+      _restoreVoiceReviewHoldAfterRefusal(
+        recording,
+        waveform,
+        outcome: captureOutcome,
+      );
       return;
     }
 
@@ -6617,6 +6646,7 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   Future<void> _onRecordCancel() async {
+    _voiceTextGeneration++;
     if (!_voiceCaptureController.state.isActive) {
       return;
     }
@@ -6656,6 +6686,7 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    _pendingReviewOutcome = outcome;
     _pendingReviewRecording = recording;
     _pendingReviewWaveform = outcome.waveform;
     _updateComposerState(
@@ -6691,6 +6722,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     final recording = outcome.recording;
     if (recording == null) return;
+    _pendingReviewOutcome = outcome;
     _pendingReviewRecording = recording;
     _pendingReviewWaveform = outcome.waveform;
     _updateComposerState(
@@ -6705,8 +6737,120 @@ class _ConversationWiredState extends State<ConversationWired>
     );
   }
 
+  bool _isCurrentVoiceTextCapture(
+    ConversationVoiceCaptureOutcome outcome,
+    int generation,
+    String peerId,
+  ) =>
+      mounted &&
+      generation == _voiceTextGeneration &&
+      widget.contact.peerId == peerId &&
+      identical(_pendingReviewOutcome, outcome) &&
+      identical(_pendingReviewRecording, outcome.recording) &&
+      _voiceCaptureController.isCurrentOutcome(outcome);
+
+  Future<void> _onSendAsText() async {
+    final delivery = translatePreviewDelivery;
+    final phase = _composerController.value.recordingState;
+    if (delivery == null ||
+        delivery.state.value is ModelUnsupported ||
+        (phase != VoiceRecordingState.recording &&
+            phase != VoiceRecordingState.reviewing) ||
+        (phase == VoiceRecordingState.reviewing &&
+            _pendingReviewOutcome == null)) {
+      return;
+    }
+    final generation = ++_voiceTextGeneration;
+    final peerId = widget.contact.peerId;
+    _updateComposerState(recordingState: VoiceRecordingState.transcribing);
+    final outcome =
+        _pendingReviewOutcome ?? await _voiceCaptureController.stop();
+    if (!mounted ||
+        generation != _voiceTextGeneration ||
+        widget.contact.peerId != peerId) {
+      final path = outcome?.recording?.filePath;
+      if (path != null) {
+        try {
+          final file = File(path);
+          if (file.existsSync()) file.deleteSync();
+        } on FileSystemException {
+          /* Already removed. */
+        }
+      }
+      return;
+    }
+    final recording = outcome?.recording;
+    if (outcome == null ||
+        recording == null ||
+        outcome.error != null ||
+        !_voiceCaptureController.isCurrentOutcome(outcome)) {
+      _updateComposerState(recordingState: VoiceRecordingState.idle);
+      return;
+    }
+    _pendingReviewOutcome = outcome;
+    _pendingReviewRecording = recording;
+    _pendingReviewWaveform = outcome.waveform;
+    if (delivery.state.value is! ModelReady) {
+      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
+      await showPrivateTranslatorSheet(context, controller: delivery);
+      return;
+    }
+    try {
+      final text = (await translatePreviewAi.transcribe(
+        recording.filePath,
+      )).trim();
+      if (!_isCurrentVoiceTextCapture(outcome, generation, peerId)) return;
+      if (text.isEmpty) throw StateError('Empty transcription');
+      _pendingReviewOutcome = null;
+      _pendingReviewRecording = null;
+      _pendingReviewWaveform = const [];
+      _voiceTextGeneration++;
+      final separator =
+          _draftText.isEmpty || RegExp(r'\s$').hasMatch(_draftText) ? '' : ' ';
+      _onDraftChanged('$_draftText$separator$text');
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+      try {
+        final file = File(recording.filePath);
+        if (file.existsSync()) file.deleteSync();
+      } on FileSystemException {
+        /* Temporary file already removed. */
+      }
+    } catch (_) {
+      if (!mounted ||
+          !_isCurrentVoiceTextCapture(outcome, generation, peerId)) {
+        return;
+      }
+      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translator_transcribe_failed),
+          action: SnackBarAction(
+            label: l10n.translator_try_again,
+            onPressed: () {
+              if (_isCurrentVoiceTextCapture(outcome, generation, peerId)) {
+                unawaited(_onSendAsText());
+              }
+            },
+          ),
+        ),
+      );
+    }
+  }
+
   /// User chose to send the auto-stopped recording held for review.
   Future<void> _onReviewSend() async {
+    if (_composerController.value.recordingState ==
+        VoiceRecordingState.transcribing) {
+      return;
+    }
+    _voiceTextGeneration++;
+    final captureOutcome = _pendingReviewOutcome;
+    _pendingReviewOutcome = null;
     final recording = _pendingReviewRecording;
     if (recording == null) return;
     final waveform = _pendingReviewWaveform;
@@ -6724,11 +6868,17 @@ class _ConversationWiredState extends State<ConversationWired>
       event: 'CONV_FL_RECORD_REVIEW_SENT',
       details: {'durationMs': recording.durationMs},
     );
-    await _sendVoiceRecording(recording, waveform);
+    await _sendVoiceRecording(
+      recording,
+      waveform,
+      captureOutcome: captureOutcome,
+    );
   }
 
   /// User chose to discard the auto-stopped recording held for review.
   Future<void> _onReviewDiscard() async {
+    _voiceTextGeneration++;
+    _pendingReviewOutcome = null;
     final recording = _pendingReviewRecording;
     _pendingReviewRecording = null;
     _pendingReviewWaveform = const [];
@@ -8207,6 +8357,8 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     // 117 Session 3: a never-acted-on auto-stop review recording is the user's
     // to keep only while the screen is open; clean up its temp on teardown.
+    _voiceTextGeneration++;
+    _pendingReviewOutcome = null;
     final reviewRecording = _pendingReviewRecording;
     _pendingReviewRecording = null;
     if (reviewRecording != null) {
@@ -8248,6 +8400,12 @@ class _ConversationWiredState extends State<ConversationWired>
   @override
   void didUpdateWidget(covariant ConversationWired oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.contact.peerId != widget.contact.peerId) {
+      _voiceTextGeneration++;
+      _pendingReviewOutcome = null;
+      unawaited(_onReviewDiscard());
+      unawaited(_voiceCaptureController.invalidateSessionScope());
+    }
     if (!identical(
       oldWidget.outgoingCallCapability,
       widget.outgoingCallCapability,
@@ -9005,6 +9163,9 @@ class _ConversationWiredState extends State<ConversationWired>
               : null,
           onReviewDiscard: widget.audioRecorderService != null
               ? _onReviewDiscard
+              : null,
+          onSendAsText: widget.audioRecorderService != null
+              ? _onSendAsText
               : null,
           composerStateListenable: _composerController,
           initialText: _draftText,

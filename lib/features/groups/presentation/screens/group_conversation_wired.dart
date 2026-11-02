@@ -126,6 +126,9 @@ import 'package:flutter_app/shared/widgets/conversation/conversation_composer_co
 import 'package:flutter_app/shared/widgets/conversation/conversation_reaction_projection_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_upload_activity_controller.dart';
 import 'package:flutter_app/shared/widgets/conversation/conversation_voice_capture_controller.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import 'package:flutter_app/features/translate_preview/private_translator_sheet.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
@@ -679,6 +682,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // Voice recording state
   late final ConversationVoiceCaptureController _voiceCaptureController;
   ConversationVoiceCaptureOutcome? _pendingCallInterruptedRecording;
+  int _voiceTextGeneration = 0;
   late final ConversationUploadActivityController<ConversationComposerSnapshot>
   _uploadActivityController;
   int _sendLaneBindingGeneration = 0;
@@ -1000,7 +1004,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _onVoiceCaptureStateChanged() {
-    if (!mounted) return;
+    if (!mounted ||
+        _composerController.value.recordingState ==
+            VoiceRecordingState.transcribing) {
+      return;
+    }
     final voiceState = _voiceCaptureController.state;
     final recordingState = switch (voiceState.phase) {
       ConversationVoiceCapturePhase.idle => VoiceRecordingState.idle,
@@ -5326,7 +5334,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // -------------------------------------------------------------------------
 
   Future<void> _onRecordStart() async {
-    if (!_canWrite) return;
+    if (!_canWrite || _composerController.value.recordingState.isActive) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (_isSending) return;
     final recorder = widget.audioRecorderService;
@@ -5334,6 +5342,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       return;
     }
 
+    _voiceTextGeneration++;
     final result = await _voiceCaptureController.start(
       recorder: recorder,
       requestPermission: widget.micPermissionGateway.request,
@@ -5364,6 +5373,11 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _onRecordStop() async {
+    if (_composerController.value.recordingState ==
+        VoiceRecordingState.transcribing) {
+      return;
+    }
+    _voiceTextGeneration++;
     final pendingOutcome = _pendingCallInterruptedRecording;
     if (!_canWrite) return;
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
@@ -6057,6 +6071,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   Future<void> _onRecordCancel() async {
+    _voiceTextGeneration++;
     if (!_canWrite) return;
     if (!_voiceCaptureController.state.isActive) {
       return;
@@ -6109,6 +6124,108 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     );
   }
 
+  bool _isCurrentVoiceTextCapture(
+    ConversationVoiceCaptureOutcome outcome,
+    int generation,
+    String groupId,
+  ) =>
+      mounted &&
+      _canWrite &&
+      generation == _voiceTextGeneration &&
+      widget.group.id == groupId &&
+      identical(_pendingCallInterruptedRecording, outcome) &&
+      _voiceCaptureController.isCurrentOutcome(outcome);
+
+  Future<void> _onSendAsText() async {
+    final delivery = translatePreviewDelivery;
+    final phase = _composerController.value.recordingState;
+    if (!_canWrite ||
+        delivery == null ||
+        delivery.state.value is ModelUnsupported ||
+        (phase != VoiceRecordingState.recording &&
+            phase != VoiceRecordingState.reviewing)) {
+      return;
+    }
+    final generation = ++_voiceTextGeneration;
+    final groupId = widget.group.id;
+    _updateComposerState(recordingState: VoiceRecordingState.transcribing);
+    final outcome =
+        _pendingCallInterruptedRecording ??
+        await _voiceCaptureController.stop();
+    if (!mounted ||
+        generation != _voiceTextGeneration ||
+        widget.group.id != groupId ||
+        !_canWrite) {
+      final path = outcome?.recording?.filePath;
+      if (path != null) {
+        try {
+          final file = File(path);
+          if (file.existsSync()) file.deleteSync();
+        } on FileSystemException {
+          /* Already removed. */
+        }
+      }
+      return;
+    }
+    final recording = outcome?.recording;
+    if (outcome == null ||
+        recording == null ||
+        outcome.error != null ||
+        !_voiceCaptureController.isCurrentOutcome(outcome)) {
+      _updateComposerState(recordingState: VoiceRecordingState.idle);
+      return;
+    }
+    _pendingCallInterruptedRecording = outcome;
+    if (delivery.state.value is! ModelReady) {
+      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
+      await showPrivateTranslatorSheet(context, controller: delivery);
+      return;
+    }
+    try {
+      final text = (await translatePreviewAi.transcribe(
+        recording.filePath,
+      )).trim();
+      if (!_isCurrentVoiceTextCapture(outcome, generation, groupId)) return;
+      if (text.isEmpty) throw StateError('Empty transcription');
+      _pendingCallInterruptedRecording = null;
+      _voiceTextGeneration++;
+      final separator =
+          _draftText.isEmpty || RegExp(r'\s$').hasMatch(_draftText) ? '' : ' ';
+      _onDraftChanged('$_draftText$separator$text');
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+      try {
+        final file = File(recording.filePath);
+        if (file.existsSync()) file.deleteSync();
+      } on FileSystemException {
+        /* Temporary file already removed. */
+      }
+    } catch (_) {
+      if (!mounted ||
+          !_isCurrentVoiceTextCapture(outcome, generation, groupId)) {
+        return;
+      }
+      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
+      final l10n = AppLocalizations.of(context)!;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(l10n.translator_transcribe_failed),
+          action: SnackBarAction(
+            label: l10n.translator_try_again,
+            onPressed: () {
+              if (_isCurrentVoiceTextCapture(outcome, generation, groupId)) {
+                unawaited(_onSendAsText());
+              }
+            },
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _onCallInterruptedReviewSend() async {
     final outcome = _pendingCallInterruptedRecording;
     if (outcome == null) return;
@@ -6127,6 +6244,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   }
 
   void _discardCallInterruptedReviewFile() {
+    _voiceTextGeneration++;
     final outcome = _pendingCallInterruptedRecording;
     _pendingCallInterruptedRecording = null;
     if (outcome == null) return;
@@ -6143,6 +6261,18 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   /// false (and the screen nulls them out), so without this an active
   /// recorder would be stranded until auto-stop or dispose.
   void _forceCancelActiveRecording() {
+    final hadReview =
+        _pendingCallInterruptedRecording != null ||
+        _composerController.value.recordingState ==
+            VoiceRecordingState.transcribing;
+    _discardCallInterruptedReviewFile();
+    if (hadReview) {
+      _updateComposerState(
+        recordingState: VoiceRecordingState.idle,
+        recordingDuration: Duration.zero,
+        amplitudeValues: const [],
+      );
+    }
     final voiceState = _voiceCaptureController.state;
     if (!voiceState.isActive && !_voiceCaptureController.hasActiveSession) {
       return;
@@ -8361,6 +8491,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 ? _onCallInterruptedReviewSend
                 : null,
             onReviewDiscard: _onCallInterruptedReviewDiscard,
+            onSendAsText: _canWrite && _supportsDurableGroupMediaUploads
+                ? _onSendAsText
+                : null,
             recordingState: _composerController.value.recordingState,
             onMediaTap: _onMediaTap,
             onOpenPrivateMedia: _privateMediaViewerController == null

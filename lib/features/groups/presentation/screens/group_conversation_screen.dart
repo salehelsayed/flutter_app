@@ -100,6 +100,7 @@ class GroupConversationScreen extends StatelessWidget {
   final VoidCallback? onRecordCancel;
   final VoidCallback? onReviewSend;
   final VoidCallback? onReviewDiscard;
+  final VoidCallback? onSendAsText;
   final bool isRecording;
   final VoiceRecordingState recordingState;
   final Duration recordingDuration;
@@ -196,6 +197,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onRecordCancel,
     this.onReviewSend,
     this.onReviewDiscard,
+    this.onSendAsText,
     this.isRecording = false,
     this.recordingState = VoiceRecordingState.idle,
     this.recordingDuration = Duration.zero,
@@ -358,6 +360,7 @@ class GroupConversationScreen extends StatelessWidget {
                 onRecordCancel: onRecordCancel,
                 onReviewSend: onReviewSend,
                 onReviewDiscard: onReviewDiscard,
+                onSendAsText: onSendAsText,
                 recordingDuration: composerState.recordingDuration,
                 amplitudeValues: composerState.amplitudeValues,
                 initialText: initialText,

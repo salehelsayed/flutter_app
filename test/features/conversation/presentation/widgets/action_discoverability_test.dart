@@ -168,6 +168,16 @@ void main() {
             ),
           );
           await tester.pump();
+          if (phase == VoiceRecordingState.transcribing) {
+            final l10n = AppLocalizations.of(
+              tester.element(find.byType(ComposeArea)),
+            )!;
+            expect(find.text(l10n.translator_transcribing), findsOneWidget);
+            _action(tester, labels[4], enabled: false);
+            _action(tester, labels[5]);
+            _action(tester, names[3], enabled: false);
+            continue;
+          }
           final node = _action(
             tester,
             labels[phase.index],

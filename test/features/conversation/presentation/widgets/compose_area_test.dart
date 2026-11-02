@@ -1,4 +1,7 @@
 import 'dart:ui' as ui;
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
+import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
+import '../../../translate_preview/fake_model_delivery_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,6 +139,179 @@ void main() {
     }
     handle.dispose();
     expect([starts, stops, sends, discards], [1, 2, 1, 1]);
+  });
+
+  group('Send as text recording controls', () {
+    late FakeModelDeliveryController delivery;
+
+    setUp(() {
+      debugTranslatePreviewEnabledOverride = true;
+      delivery = FakeModelDeliveryController(const ModelReady(sizeBytes: 1));
+      debugModelDeliveryOverride = delivery;
+    });
+
+    tearDown(() {
+      debugTranslatePreviewEnabledOverride = null;
+      debugModelDeliveryOverride = null;
+    });
+
+    Widget recordingBar({
+      required VoiceRecordingState phase,
+      required bool compact,
+      required String locale,
+      VoidCallback? onText,
+      VoidCallback? onVoice,
+      VoidCallback? onDiscard,
+    }) => MaterialApp(
+      locale: Locale(locale),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.bottomCenter,
+          child: ComposeArea(
+            onSend: (_) {},
+            compact: compact,
+            recordingState: phase,
+            onRecordStart: () {},
+            onRecordStop: onVoice ?? () {},
+            onRecordCancel: () {},
+            onReviewSend: onVoice ?? () {},
+            onReviewDiscard: onDiscard ?? () {},
+            onSendAsText: onText,
+          ),
+        ),
+      ),
+    );
+
+    for (final entry in {
+      'en': 'Send as text',
+      'de': 'Als Text senden',
+      'ar': 'إرسال كنص',
+    }.entries) {
+      for (final compact in [false, true]) {
+        for (final phase in [
+          VoiceRecordingState.recording,
+          VoiceRecordingState.reviewing,
+        ]) {
+          testWidgets(
+            '${entry.key} ${phase.name} compact=$compact exposes one localized text action',
+            (tester) async {
+              final semantics = tester.ensureSemantics();
+              var conversions = 0;
+              var voices = 0;
+              await tester.pumpWidget(
+                recordingBar(
+                  phase: phase,
+                  compact: compact,
+                  locale: entry.key,
+                  onText: () => conversions++,
+                  onVoice: () => voices++,
+                ),
+              );
+              await tester.pump();
+              expect(find.text(entry.value), findsOneWidget);
+              final action = find.bySemanticsLabel(entry.value);
+              expect(action, findsOneWidget);
+              final node = tester.getSemantics(action);
+              expect(node.getSemanticsData().flagsCollection.isButton, isTrue);
+              expect(
+                node.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+                isTrue,
+              );
+              tester.binding.renderViews.single.owner!.semanticsOwner!
+                  .performAction(node.id, ui.SemanticsAction.tap);
+              await tester.pump();
+              expect(conversions, 1);
+              expect(voices, 0);
+              expect(tester.takeException(), isNull);
+              semantics.dispose();
+            },
+          );
+        }
+        testWidgets(
+          '${entry.key} compact=$compact transcribing retains discard and disables voice',
+          (tester) async {
+            final semantics = tester.ensureSemantics();
+            var voices = 0;
+            var discards = 0;
+            await tester.pumpWidget(
+              recordingBar(
+                phase: VoiceRecordingState.transcribing,
+                compact: compact,
+                locale: entry.key,
+                onText: () {},
+                onVoice: () => voices++,
+                onDiscard: () => discards++,
+              ),
+            );
+            await tester.pump();
+            final l10n = AppLocalizations.of(
+              tester.element(find.byType(ComposeArea)),
+            )!;
+            expect(find.text(l10n.translator_transcribing), findsOneWidget);
+            expect(find.text(entry.value), findsNothing);
+            expect(find.byType(TextField), findsNothing);
+            final voice = tester.getSemantics(
+              find.bySemanticsLabel(l10n.voice_review_send_action),
+            );
+            expect(
+              voice.getSemanticsData().hasAction(ui.SemanticsAction.tap),
+              isFalse,
+            );
+            await tester.tap(find.byKey(const ValueKey('voice-review-send')));
+            await tester.tap(
+              find.byKey(const ValueKey('voice-review-discard')),
+            );
+            expect(voices, 0);
+            expect(discards, 1);
+            expect(tester.takeException(), isNull);
+            semantics.dispose();
+          },
+        );
+      }
+    }
+
+    for (final phase in [
+      VoiceRecordingState.recording,
+      VoiceRecordingState.reviewing,
+    ]) {
+      testWidgets('${phase.name} follows mounted model capability changes', (
+        tester,
+      ) async {
+        await tester.pumpWidget(
+          recordingBar(
+            phase: phase,
+            compact: false,
+            locale: 'en',
+            onText: () {},
+          ),
+        );
+        expect(find.text('Send as text'), findsOneWidget);
+        delivery.state.value = const ModelUnsupported();
+        await tester.pump();
+        expect(find.text('Send as text'), findsNothing);
+        delivery.state.value = const ModelReady(sizeBytes: 1);
+        await tester.pump();
+        expect(find.text('Send as text'), findsOneWidget);
+      });
+    }
+
+    testWidgets(
+      'Thought-style recording without conversion callback keeps its controls',
+      (tester) async {
+        await tester.pumpWidget(
+          recordingBar(
+            phase: VoiceRecordingState.recording,
+            compact: false,
+            locale: 'en',
+          ),
+        );
+        expect(find.text('Send as text'), findsNothing);
+        expect(find.text('Cancel'), findsOneWidget);
+        expect(find.byType(VoiceRecordButton), findsOneWidget);
+      },
+    );
   });
 
   group('ComposeArea', () {
