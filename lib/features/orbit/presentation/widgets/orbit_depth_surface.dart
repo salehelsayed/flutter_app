@@ -671,7 +671,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final keyboard = View.of(context).viewInsets.bottom;
     final hidden = _keyboard > 0 && keyboard == 0;
     _keyboard = keyboard;
-    if (hidden && _composing) _closeComposer();
+    if (hidden && _composing) _closeComposerAfterFrame();
   }
 
   bool get _answerable => _enabled && !_suppressTap && !_composing;
@@ -690,7 +690,17 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 
   void _onReplyFocus() {
-    if (!_replyFocus.hasFocus && _composing) _closeComposer();
+    if (!_replyFocus.hasFocus && _composing) _closeComposerAfterFrame();
+  }
+
+  /// The system Back that hid the keyboard can arrive in this same frame; it
+  /// must still find the composer open, so it closes only that and 3D stays.
+  void _closeComposerAfterFrame() {
+    WidgetsBinding.instance
+      ..addPostFrameCallback((_) {
+        if (mounted) _closeComposer();
+      })
+      ..ensureVisualUpdate();
   }
 
   void _openComposer(String postId) {
