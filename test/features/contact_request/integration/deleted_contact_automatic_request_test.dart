@@ -91,6 +91,7 @@ MessageRepositoryImpl _deletionMessageRepository(Database db) {
 
 IntroductionRepositoryImpl _buildIntroRepo(Database db) =>
     IntroductionRepositoryImpl(
+      secureKeyStore: FakeSecureKeyStore(),
       dbInsertIntroduction: (row) => dbInsertIntroduction(db, row),
       dbLoadIntroduction: (id) => dbLoadIntroduction(db, id),
       dbDeleteIntroduction: (id) => dbDeleteIntroduction(db, id),
