@@ -7839,8 +7839,11 @@ visible and cannot become an ordinary first-attempt PASS.
   already be current while the accepted invitation still carries an older key;
   resend the actual latest epoch independently of metadata newness. The handler
   retains active-group, current-requester and effective rotation-permission
-  checks, and the existing sender requalifies the target before delivery. The
-  GX-002 host regression delivers key 3 before invite-2 acceptance, observes the
+  checks, and the existing sender requalifies the target before delivery.
+  Signed metadata replies remain admin-only; a current writer with explicit
+  rotation permission can independently resend the latest key. The authorized
+  writer regression retains zero metadata responses and denied-role controls.
+  The GX-002 host regression delivers key 3 before invite-2 acceptance, observes the
   legitimate admission refusal, then exercises the actual request/listener and
   current-key sender to converge on 3. Crypto/transport and group repositories
   are explicit host fakes, not native delivery or real database restart proof.

@@ -982,6 +982,46 @@ void main() {
     );
 
     test(
+      'GX002 a permission-qualified writer resends the latest key without metadata',
+      () async {
+        await seedBobGroup(
+          bobRole: MemberRole.writer,
+          permissions: const GroupMemberPermissions(
+            inviteMembers: true,
+            rotateKeys: true,
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'grp-abc123',
+            peerId: '12D3KooWAlice',
+            role: MemberRole.writer,
+            mlKemPublicKey: 'aliceMlKem64',
+            joinedAt: DateTime.utc(2026, 1, 1),
+          ),
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true),
+        );
+        final requestListener = buildConfigRequestListener(
+          p2pService: p2pService,
+        );
+        addTearDown(requestListener.dispose);
+        requestListener.start();
+
+        incomingController.add(_makeConfigRequestMessage());
+        await Future<void>.delayed(Duration.zero);
+        await requestListener.waitForIdle();
+
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(resentKeys, [
+          (groupId: 'grp-abc123', peerId: '12D3KooWAlice', keyEpoch: 7),
+        ]);
+      },
+    );
+
+    test(
       'GX002 an admin with rotateKeys denied sends metadata without a key',
       () async {
         await seedBobGroup(

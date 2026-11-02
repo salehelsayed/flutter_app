@@ -97,8 +97,8 @@ Future<void> handleIncomingGroupConfigRequest({
   if (group == null || group.isDissolved || group.selfRemovedAt != null) return;
   final members = await groupRepo.getMembers(body.groupId);
 
-  // Only an admin's reply is trusted by the joiner's applier, so don't bother
-  // replying otherwise.
+  // Metadata replies are trusted only from admins. Key resend authorization
+  // is independent and uses the responder's effective rotateKeys permission.
   final ownMembership = await groupRepo.getMember(
     body.groupId,
     identity.peerId,
@@ -109,53 +109,53 @@ Future<void> handleIncomingGroupConfigRequest({
       event: 'GROUP_CONFIG_REQUEST_HANDLE_NOT_ADMIN_RESPONDER',
       details: {},
     );
-    return;
-  }
+    if (ownMembership == null) return;
+  } else {
+    final groupConfig = buildGroupConfigPayload(group, members);
+    final updatedAt = (group.lastMetadataEventAt ?? group.createdAt).toUtc();
+    final actorPayload = buildGroupMetadataActorEventPayload(
+      groupId: body.groupId,
+      updatedAt: updatedAt,
+      actorPeerId: identity.peerId,
+      actorUsername: identity.username,
+      actorPublicKey: identity.publicKey,
+      groupConfig: groupConfig,
+    );
+    final canonical = canonicalizeGroupMetadataActorEventPayload(actorPayload);
+    final signResponse = await callSignPayload(
+      bridge: bridge,
+      dataToSign: canonical,
+      privateKey: identity.privateKey,
+    );
+    final signature = signResponse['signature'] as String?;
+    if (signResponse['ok'] != true ||
+        signature == null ||
+        signature.trim().isEmpty) {
+      return;
+    }
+    final systemPayload = <String, dynamic>{
+      '__sys': groupMetadataUpdatedEventType,
+      'updatedAt': updatedAt.toIso8601String(),
+      'groupConfig': groupConfig,
+      groupMetadataActorEventEnvelopeField:
+          buildSignedGroupMetadataActorEventEnvelope(
+            signedPayload: canonical,
+            signature: signature,
+          ),
+    };
 
-  final groupConfig = buildGroupConfigPayload(group, members);
-  final updatedAt = (group.lastMetadataEventAt ?? group.createdAt).toUtc();
-  final actorPayload = buildGroupMetadataActorEventPayload(
-    groupId: body.groupId,
-    updatedAt: updatedAt,
-    actorPeerId: identity.peerId,
-    actorUsername: identity.username,
-    actorPublicKey: identity.publicKey,
-    groupConfig: groupConfig,
-  );
-  final canonical = canonicalizeGroupMetadataActorEventPayload(actorPayload);
-  final signResponse = await callSignPayload(
-    bridge: bridge,
-    dataToSign: canonical,
-    privateKey: identity.privateKey,
-  );
-  final signature = signResponse['signature'] as String?;
-  if (signResponse['ok'] != true ||
-      signature == null ||
-      signature.trim().isEmpty) {
-    return;
+    await _sendEncrypted(
+      p2pService: p2pService,
+      bridge: bridge,
+      type: groupConfigResponseType,
+      groupId: body.groupId,
+      senderPeerId: identity.peerId,
+      recipientPeerId: message.from,
+      recipientMlKemPublicKey: requester.mlKemPublicKey,
+      plaintext: jsonEncode(systemPayload),
+      eventPrefix: 'GROUP_CONFIG_RESPONSE',
+    );
   }
-  final systemPayload = <String, dynamic>{
-    '__sys': groupMetadataUpdatedEventType,
-    'updatedAt': updatedAt.toIso8601String(),
-    'groupConfig': groupConfig,
-    groupMetadataActorEventEnvelopeField:
-        buildSignedGroupMetadataActorEventEnvelope(
-          signedPayload: canonical,
-          signature: signature,
-        ),
-  };
-
-  await _sendEncrypted(
-    p2pService: p2pService,
-    bridge: bridge,
-    type: groupConfigResponseType,
-    groupId: body.groupId,
-    senderPeerId: identity.peerId,
-    recipientPeerId: message.from,
-    recipientMlKemPublicKey: requester.mlKemPublicKey,
-    plaintext: jsonEncode(systemPayload),
-    eventPrefix: 'GROUP_CONFIG_RESPONSE',
-  );
 
   final resendKey = distributeGroupKeyAtEpochToPeer;
   if (resendKey == null) return;
