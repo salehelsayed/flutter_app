@@ -50,6 +50,25 @@ void main() {
     expect(queued.settle('unknown', ThoughtReplyStatus.sent), same(queued));
   });
 
+  for (final lateResult in [
+    ThoughtReplyStatus.queued,
+    ThoughtReplyStatus.failed,
+  ]) {
+    test('a confirmed sent survives an older send result of '
+        '${lateResult.name}', () {
+      final completed = visit
+          .react('post-1', ThoughtReaction.love, 'm1')!
+          .visit
+          .settle('m1', ThoughtReplyStatus.sent, finished: false)
+          .settle('m1', lateResult);
+      final send = completed.latestFor('post-1')!;
+      expect(send.status, ThoughtReplyStatus.sent);
+      expect(send.inFlight, isFalse);
+      expect(send.canRetry, isFalse);
+      expect(completed.react('post-1', ThoughtReaction.love, 'm2'), isNull);
+    });
+  }
+
   test('a typed reply closes the composer, clears its draft and trims', () {
     final open = visit
         .openComposer('post-1')

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -268,6 +269,81 @@ void main() {
       findsOneWidget,
     );
     await finish(tester);
+  });
+
+  for (final lateResult in [
+    ThoughtReplyStatus.queued,
+    ThoughtReplyStatus.failed,
+  ]) {
+    testWidgets('a "sent" update stays sent when the held send then returns '
+        '${lateResult.name}', (tester) async {
+      await mount(tester);
+      await enter(tester);
+      hold = Completer();
+      await tap(tester, react('love'));
+      statuses.add((
+        messageId: sent.single.messageId,
+        status: ThoughtReplyStatus.sent,
+      ));
+      await rest(tester);
+      hold!.complete(lateResult);
+      await rest(tester);
+      expect(
+        find.descendant(of: status, matching: find.text('sent')),
+        findsOneWidget,
+      );
+      expect(retry, findsNothing);
+      await tap(tester, react('love'));
+      expect(sent.map((s) => s.text), ['❤️']);
+      await finish(tester);
+    });
+  }
+
+  testWidgets('a screen reader tap on each reaction sends it once, and on '
+      'Reply, Send and outside works the composer', (tester) async {
+    final handle = tester.ensureSemantics();
+    await mount(tester);
+    await enter(tester);
+    Future<void> activate(Finder target) async {
+      final node = tester.getSemantics(target);
+      expect(
+        node.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: '$target has no tap action',
+      );
+      tester.binding.performSemanticsAction(
+        SemanticsActionEvent(
+          type: SemanticsAction.tap,
+          nodeId: node.id,
+          viewId: tester.view.viewId,
+        ),
+      );
+      await rest(tester);
+    }
+
+    for (final name in ['love', 'laugh', 'fire', 'applause']) {
+      await activate(react(name));
+    }
+    expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏']);
+
+    await activate(replyButton);
+    expect(composer, findsOneWidget);
+    await activate(find.byKey(const ValueKey('orbit-depth-composer-dismiss')));
+    expect(composer, findsNothing);
+
+    await activate(replyButton);
+    await tester.enterText(composerField, 'by voice over');
+    await rest(tester);
+    await activate(
+      find.descendant(
+        of: composer,
+        matching: find.byIcon(Icons.arrow_upward_rounded),
+      ),
+    );
+    expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏', 'by voice over']);
+    expect(composer, findsNothing);
+    await finish(tester);
+    handle.dispose();
   });
 
   testWidgets('Reply opens a text-only composer in place; Send uses the same '
