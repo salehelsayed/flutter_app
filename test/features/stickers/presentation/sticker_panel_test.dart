@@ -1,11 +1,15 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_selection.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/secure_storage/fake_secure_key_store.dart';
 
 final _catalog = StickerCatalog.parse(
   File('assets/stickers/packs.json').readAsStringSync(),
@@ -165,6 +169,113 @@ void main() {
     );
     await tester.pump();
     expect(_visibleStickerIds(tester).first, startsWith('big_mood.en.'));
+  });
+
+  testWidgets('screen readers can activate faces, tabs and stickers', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final sent = await _pumpPanel(tester);
+
+    Future<void> activate(Finder finder) async {
+      final node = tester.getSemantics(finder);
+      expect(
+        node.getSemanticsData().hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: 'the button has a tap action',
+      );
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      await tester.pump();
+    }
+
+    await activate(find.bySemanticsLabel('Capybara'));
+    expect(
+      _visibleStickerIds(tester).first,
+      startsWith('orbit_crew.capybara.'),
+    );
+
+    await activate(find.bySemanticsLabel('Big Mood'));
+    expect(_visibleStickerIds(tester).first, startsWith('big_mood.en.'));
+
+    await activate(find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')));
+    expect(sent, ['big_mood.en.hug']);
+
+    await activate(find.bySemanticsLabel('Recent'));
+    expect(find.byKey(const ValueKey('sticker-group-de')), findsNothing);
+    semantics.dispose();
+  });
+
+  testWidgets('a sticker sent from the open picker shows in Recent at once', (
+    tester,
+  ) async {
+    final store = StickerRecentsStore(FakeSecureKeyStore());
+    final sent = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Align(
+            alignment: Alignment.bottomCenter,
+            child: BundledStickerPanel(
+              recents: store,
+              onSend: (sticker) => sent.add(sticker.id),
+            ),
+          ),
+        ),
+      ),
+    );
+    for (
+      var i = 0;
+      i < 50 && find.byType(StickerPanel).evaluate().isEmpty;
+      i++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(_visibleStickerIds(tester).first, 'orbit_crew.planet.angry');
+
+    await tester.tap(
+      find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.crying')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.angry')),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.crying')),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-recent')));
+    await tester.pump();
+
+    expect(sent, [
+      'orbit_crew.planet.crying',
+      'orbit_crew.planet.angry',
+      'orbit_crew.planet.crying',
+    ]);
+    expect(_visibleStickerIds(tester), [
+      'orbit_crew.planet.crying',
+      'orbit_crew.planet.angry',
+    ]);
+    expect(await store.load(), [
+      'orbit_crew.planet.crying',
+      'orbit_crew.planet.angry',
+    ]);
+  });
+
+  test('overlapping Recent writes keep every send, newest first', () async {
+    final store = StickerRecentsStore(FakeSecureKeyStore());
+
+    await Future.wait([
+      store.recordSent('a'),
+      store.recordSent('b'),
+      store.recordSent('a'),
+      store.recordSent('c'),
+    ]);
+
+    expect(await store.load(), ['c', 'a', 'b']);
   });
 
   testWidgets('a pack with one group shows no face row', (tester) async {

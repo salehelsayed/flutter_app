@@ -4084,6 +4084,182 @@ void main() {
       });
     }
 
+    Future<void> pumpFailingStickerScreen(
+      WidgetTester tester, {
+      required Future<MediaAttachment?> Function() upload,
+      DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+    }) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
+      UploadWakeLockController.debugReset(
+        driver: _SynchronousUploadWakeLockDriver(),
+      );
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final tempDir = Directory.systemTemp.createTempSync('sticker_fail_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+      final stagedPhoto = File('${tempDir.path}/staged.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final fixture = (await tester.runAsync(
+        () => MediaRepositoryRealDbFixture.create(
+          wireOutgoingDirectPrivateMediaBlobGeneration: false,
+        ),
+      ))!;
+      addTearDown(fixture.dispose);
+      await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: fixture.messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: fixture.messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        contactRepo: FakeContactRepository(),
+        initialAttachments: [stagedPhoto],
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: TrackingDurableConversationMediaFileManager(tempDir),
+        uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              blobId,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) => upload(),
+        sendFn: _instantSuccessSendFn,
+      );
+    }
+
+    Future<void> tapStickerInPanel(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(
+            find.byKey(const ValueKey('conversation-attach-stickers-action')),
+          )
+          .onTap!();
+      await pumpUntilAsyncIo(
+        tester,
+        () => find.byType(StickerPanel).evaluate().isNotEmpty,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.angry')),
+      );
+    }
+
+    testWidgets('stickers v1: a failed sticker upload leaves the staged photo '
+        'with its View once policy', (tester) async {
+      await pumpFailingStickerScreen(
+        tester,
+        upload: () async => null,
+        uploadRetryProjectionRepo: _TerminalComposerUploadProjection(),
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-selector')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(
+        find.byKey(const ValueKey('private-media-option-view-once')),
+      );
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('private-media-use-mode')),
+        200,
+        scrollable: find.descendant(
+          of: find.byKey(const ValueKey('private-media-policy-sheet')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('private-media-use-mode')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      await tapStickerInPanel(tester);
+      await pumpUntilAsyncIo(
+        tester,
+        () => find
+            .text('Failed to upload media. Try again.')
+            .evaluate()
+            .isNotEmpty,
+        timeout: const Duration(seconds: 10),
+      );
+
+      expect(find.byType(AttachmentPreviewStrip), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('private-media-selector')),
+          matching: find.text('View once'),
+        ),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
+    testWidgets('stickers v1: text typed and a photo removed after a sticker '
+        'tap survive that sticker failing', (tester) async {
+      final upload = Completer<MediaAttachment?>();
+      var uploadStarted = false;
+      await pumpFailingStickerScreen(
+        tester,
+        upload: () {
+          uploadStarted = true;
+          return upload.future;
+        },
+      );
+
+      await tapStickerInPanel(tester);
+      await pumpUntilAsyncIo(
+        tester,
+        () => uploadStarted,
+        timeout: const Duration(seconds: 10),
+      );
+      await tester.enterText(find.byType(TextField), 'typed after the sticker');
+      await tester.pump();
+      tester
+          .widget<AttachmentPreviewStrip>(find.byType(AttachmentPreviewStrip))
+          .onRemove!(0);
+      await tester.pump();
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+
+      upload.complete(null);
+      await pumpUntilAsyncIo(
+        tester,
+        () => find
+            .text('Failed to upload media. Try again.')
+            .evaluate()
+            .isNotEmpty,
+        timeout: const Duration(seconds: 10),
+      );
+
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'typed after the sticker',
+      );
+      expect(find.byType(AttachmentPreviewStrip), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+
     test('image/webp passes the disappearing initial producer matrix', () {
       expect(
         disappearingMediaInitialProducerMatrixAllows(

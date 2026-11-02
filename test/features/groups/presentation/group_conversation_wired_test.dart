@@ -2378,6 +2378,263 @@ void main() {
       expect(saved.single.stickerId, isNull);
     });
 
+    Future<void> openStickerPanel(WidgetTester tester) async {
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+      tester
+          .widget<ListTile>(
+            find.byKey(const ValueKey('group-attach-stickers-action')),
+          )
+          .onTap!();
+      for (
+        var i = 0;
+        i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
+        i++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+      await tester.pump();
+    }
+
+    Future<void> pumpAsyncUntil(
+      WidgetTester tester,
+      bool Function() condition,
+    ) async {
+      for (var i = 0; i < 300 && !condition(); i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+    }
+
+    for (final staged in [false, true]) {
+      testWidgets('stickers v1: a failed sticker leaves text typed after the '
+          'tap${staged ? ' and the removed staged photo' : ''} as they are', (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        final tempDir = Directory.systemTemp.createTempSync('group_fail_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+        addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+        final photo = File('${tempDir.path}/staged.jpg')
+          ..writeAsBytesSync(validJpegFixtureBytes);
+        final upload = Completer<MediaAttachment?>();
+        var uploadStarted = false;
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            mediaRepo: mediaAttachmentRepo,
+            mediaFileManager: _CopyingMediaFileManager(),
+            initialPendingMedia: [
+              if (staged)
+                PendingComposerMedia(
+                  file: photo,
+                  budgetBytes: photo.lengthSync(),
+                ),
+            ],
+            uploadMediaFn:
+                ({
+                  required bridge,
+                  required localFilePath,
+                  required mime,
+                  required recipientPeerId,
+                  String? blobId,
+                  mediaFileManager,
+                  width,
+                  height,
+                  durationMs,
+                  waveform,
+                  allowedPeers,
+                  deleteSourceWhenDone = false,
+                  preparedArtifact,
+                }) {
+                  uploadStarted = true;
+                  return upload.future;
+                },
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await openStickerPanel(tester);
+        await tester.tap(
+          find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+        );
+        await pumpAsyncUntil(tester, () => uploadStarted);
+        expect(uploadStarted, isTrue);
+        await tester.enterText(find.byType(TextField), 'typed after the tap');
+        await tester.pump();
+        if (staged) {
+          tester
+              .widget<AttachmentPreviewStrip>(
+                find.byType(AttachmentPreviewStrip),
+              )
+              .onRemove!(0);
+          await tester.pump();
+        }
+
+        upload.complete(null);
+        GroupMessage? sticker() => tester
+            .widget<GroupConversationScreen>(
+              find.byType(GroupConversationScreen),
+            )
+            .messages
+            .where((message) => !message.isIncoming)
+            .firstOrNull;
+        await pumpAsyncUntil(
+          tester,
+          () => sticker() != null && sticker()!.status != 'sending',
+        );
+        await pumpFrames(tester, count: 10);
+
+        expect(sticker()?.status, isNot('sending'));
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'typed after the tap',
+        );
+        expect(
+          tester
+              .widget<GroupConversationScreen>(
+                find.byType(GroupConversationScreen),
+              )
+              .composerStateListenable
+              ?.value
+              .pendingAttachments,
+          isEmpty,
+        );
+      });
+    }
+
+    testWidgets('stickers v1: a sticker still preparing when the screen moves '
+        'to another group is dropped and its temp file deleted', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      final tempDir = Directory.systemTemp.createTempSync('group_rebind_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final gate = Completer<void>();
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _GatedStickerTempPath(
+        tempDir.path,
+        gate.future,
+      );
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+      final groupA = makeChatGroup();
+      final groupB = makeChatGroup().copyWith(
+        id: 'group-2',
+        name: 'Second Group',
+        topicName: 'topic-2',
+      );
+      for (final group in [groupA, groupB]) {
+        await groupRepo.saveGroup(group);
+        await saveActiveGroupMembers(groupRepo, group);
+      }
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupB.id,
+          keyGeneration: 1,
+          encryptedKey: 'test-group-key-2',
+          createdAt: DateTime.now().toUtc(),
+        ),
+      );
+      final recorder = _RecordingStickerUsageRecorder();
+      Widget screenFor(GroupModel group) => buildWidget(
+        group: group,
+        mediaRepo: mediaAttachmentRepo,
+        mediaFileManager: _CopyingMediaFileManager(),
+        stickerUsageRecorder: recorder,
+        uploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              String? blobId,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async => successfulGroupUploadFixture(
+              blobId: blobId!,
+              mime: mime,
+              localFilePath: localFilePath,
+            ),
+      );
+
+      await tester.pumpWidget(screenFor(groupA));
+      await pumpFrames(tester, count: 20);
+      await openStickerPanel(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+      );
+      await tester.pump();
+
+      await tester.pumpWidget(screenFor(groupB));
+      await pumpUntil(
+        tester,
+        () =>
+            tester
+                .widget<GroupConversationScreen>(
+                  find.byType(GroupConversationScreen),
+                )
+                .group
+                .id ==
+            groupB.id,
+      );
+      gate.complete();
+      await pumpAsyncUntil(
+        tester,
+        () =>
+            groupPublishPayloads(bridge).isNotEmpty ||
+            tempDir.listSync().any(
+              (file) => p.basename(file.path).startsWith('sticker_'),
+            ),
+      );
+      await pumpAsyncUntil(
+        tester,
+        () =>
+            groupPublishPayloads(bridge).isNotEmpty ||
+            !tempDir.listSync().any(
+              (file) => p.basename(file.path).startsWith('sticker_'),
+            ),
+      );
+      await pumpFrames(tester, count: 10);
+
+      expect(groupPublishPayloads(bridge), isEmpty);
+      expect(recorder.ids, isEmpty);
+      expect(
+        tempDir
+            .listSync()
+            .map((file) => p.basename(file.path))
+            .where((name) => name.startsWith('sticker_')),
+        isEmpty,
+      );
+    });
+
     testWidgets(
       'build-127 composer clears sent padded text and keeps an unsent draft on return',
       (tester) async {
@@ -24179,6 +24436,16 @@ class _StickerTempPath extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => path;
   @override
   Future<String?> getApplicationDocumentsPath() async => path;
+}
+
+class _GatedStickerTempPath extends _StickerTempPath {
+  _GatedStickerTempPath(super.path, this.gate);
+  final Future<void> gate;
+  @override
+  Future<String?> getTemporaryPath() async {
+    await gate;
+    return path;
+  }
 }
 
 class _RecordingStickerUsageRecorder implements StickerUsageRecorder {
