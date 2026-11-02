@@ -127,6 +127,7 @@ import 'migrations/124_thought_photo_previews_and_view_receipts.dart';
 import 'migrations/125_local_ai_previews.dart';
 import 'migrations/126_thoughts_metrics_opt_out.dart';
 import 'migrations/127_call_history_remote_permission_denied.dart';
+import 'migrations/128_media_attachment_sticker_id.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -735,6 +736,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '127_call_history_remote_permission_denied',
     runCallHistoryRemotePermissionDeniedMigration,
   ),
+  ProductionMigrationEntry(
+    128,
+    '128_media_attachment_sticker_id',
+    runMediaAttachmentStickerIdMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1332,6 +1338,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     127,
     '127_call_history_remote_permission_denied',
     runCallHistoryRemotePermissionDeniedMigration,
+  ),
+  ProductionMigrationEntry(
+    128,
+    '128_media_attachment_sticker_id',
+    runMediaAttachmentStickerIdMigration,
   ),
 ]);
 

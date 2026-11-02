@@ -4889,4 +4889,66 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get you_page_empty => 'لا شيء مشارك الآن';
+
+  @override
+  String get stickers_title => 'الملصقات';
+
+  @override
+  String get stickers_recent => 'الأخيرة';
+
+  @override
+  String get sticker_preview => 'ملصق';
+
+  @override
+  String sticker_semantics(String name) {
+    return 'ملصق $name';
+  }
+
+  @override
+  String get sticker_group_planet => 'كوكب';
+
+  @override
+  String get sticker_group_capybara => 'كابيبارا';
+
+  @override
+  String get sticker_group_nerd_duck => 'بطة التقنية';
+
+  @override
+  String get sticker_group_pearl => 'لؤلؤة';
+
+  @override
+  String get sticker_group_new_baby => 'مولود جديد';
+
+  @override
+  String get sticker_group_otter => 'ثعلب الماء';
+
+  @override
+  String get sticker_group_otter_family => 'عائلة ثعلب الماء';
+
+  @override
+  String get sticker_group_tux => 'تَكس';
+
+  @override
+  String get sticker_group_en => 'الإنجليزية';
+
+  @override
+  String get sticker_group_ar => 'العربية';
+
+  @override
+  String get sticker_group_de => 'الألمانية';
+
+  @override
+  String get sticker_group_arab => 'مشاهير عرب';
+
+  @override
+  String get sticker_group_german => 'مشاهير ألمان';
+
+  @override
+  String get sticker_pack_orbit_crew => 'Orbit Crew';
+
+  @override
+  String get sticker_pack_big_mood => 'Big Mood';
+
+  @override
+  String get sticker_pack_nujoom => 'نجوم';
 }

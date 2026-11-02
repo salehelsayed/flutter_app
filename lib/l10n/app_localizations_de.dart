@@ -4937,4 +4937,66 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get you_page_empty => 'Gerade nichts geteilt';
+
+  @override
+  String get stickers_title => 'Sticker';
+
+  @override
+  String get stickers_recent => 'Zuletzt';
+
+  @override
+  String get sticker_preview => 'Sticker';
+
+  @override
+  String sticker_semantics(String name) {
+    return '$name-Sticker';
+  }
+
+  @override
+  String get sticker_group_planet => 'Planet';
+
+  @override
+  String get sticker_group_capybara => 'Capybara';
+
+  @override
+  String get sticker_group_nerd_duck => 'Nerd-Ente';
+
+  @override
+  String get sticker_group_pearl => 'Perle';
+
+  @override
+  String get sticker_group_new_baby => 'Neues Baby';
+
+  @override
+  String get sticker_group_otter => 'Otter';
+
+  @override
+  String get sticker_group_otter_family => 'Otterfamilie';
+
+  @override
+  String get sticker_group_tux => 'Tux';
+
+  @override
+  String get sticker_group_en => 'Englisch';
+
+  @override
+  String get sticker_group_ar => 'Arabisch';
+
+  @override
+  String get sticker_group_de => 'Deutsch';
+
+  @override
+  String get sticker_group_arab => 'Arabische Promis';
+
+  @override
+  String get sticker_group_german => 'Deutsche Promis';
+
+  @override
+  String get sticker_pack_orbit_crew => 'Orbit Crew';
+
+  @override
+  String get sticker_pack_big_mood => 'Big Mood';
+
+  @override
+  String get sticker_pack_nujoom => 'Nujoom';
 }

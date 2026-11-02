@@ -115,6 +115,10 @@ class MediaAttachment {
   /// disk path. Null for image/video/audio and for legacy rows.
   final String? fileName;
 
+  /// Pack-list id of a sticker (`"sticker": {"id": ...}` on the wire). A
+  /// sticker is an ordinary image otherwise; null for every other attachment.
+  final String? stickerId;
+
   const MediaAttachment({
     required this.id,
     required this.messageId,
@@ -142,6 +146,7 @@ class MediaAttachment {
     this.isBookmarked = false,
     this.lastPlaybackPositionMs = 0,
     this.fileName,
+    this.stickerId,
   });
 
   bool get isAnimated => mime == 'image/gif';
@@ -214,6 +219,7 @@ class MediaAttachment {
       lastPlaybackPositionMs:
           (map['last_playback_position_ms'] as num?)?.toInt() ?? 0,
       fileName: map['file_name'] as String?,
+      stickerId: map['sticker_id'] as String?,
     );
   }
 
@@ -252,6 +258,7 @@ class MediaAttachment {
       'last_playback_position_ms': lastPlaybackPositionMs,
       // 414: written only when set, so rows without a name never need v120.
       if (fileName != null) 'file_name': fileName,
+      if (stickerId != null) 'sticker_id': stickerId,
     };
   }
 
@@ -289,6 +296,10 @@ class MediaAttachment {
           ? DirectMediaBlobCustodyCommitment.fromJson(json['blobCustody'])
           : null,
       fileName: sanitizeAttachmentFileName(json['fileName']),
+      stickerId: switch (json['sticker']) {
+        {'id': final String id} => id,
+        _ => null,
+      },
     );
   }
 
@@ -311,6 +322,7 @@ class MediaAttachment {
       if (encryptionScheme != null) 'encryptionScheme': encryptionScheme,
       if (blobCustody != null) 'blobCustody': blobCustody!.toJson(),
       if (fileName != null) 'fileName': fileName,
+      if (stickerId != null) 'sticker': {'id': stickerId},
     };
   }
 
@@ -354,6 +366,7 @@ class MediaAttachment {
     bool? isBookmarked,
     int? lastPlaybackPositionMs,
     String? fileName,
+    String? stickerId,
   }) {
     return MediaAttachment(
       id: id ?? this.id,
@@ -397,6 +410,7 @@ class MediaAttachment {
       lastPlaybackPositionMs:
           lastPlaybackPositionMs ?? this.lastPlaybackPositionMs,
       fileName: fileName ?? this.fileName,
+      stickerId: stickerId ?? this.stickerId,
     );
   }
 

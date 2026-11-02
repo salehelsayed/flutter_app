@@ -92,4 +92,6 @@
 // switch (build 129). Existing rows keep 0; the mark is one-way.
 // v127 lets call_history.terminal_reason hold remote_permission_denied (the
 // callee's microphone is off) by rebuilding the table; every row is kept.
-const int currentIdentityDatabaseVersion = 127;
+// v128 adds nullable `media_attachments.sticker_id`, the pack-list id of a
+// sticker attachment. No default and no backfill.
+const int currentIdentityDatabaseVersion = 128;

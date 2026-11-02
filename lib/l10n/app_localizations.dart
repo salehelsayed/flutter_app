@@ -8029,6 +8029,126 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nothing shared right now'**
   String get you_page_empty;
+
+  /// No description provided for @stickers_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Stickers'**
+  String get stickers_title;
+
+  /// No description provided for @stickers_recent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent'**
+  String get stickers_recent;
+
+  /// No description provided for @sticker_preview.
+  ///
+  /// In en, this message translates to:
+  /// **'Sticker'**
+  String get sticker_preview;
+
+  /// No description provided for @sticker_semantics.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} sticker'**
+  String sticker_semantics(String name);
+
+  /// No description provided for @sticker_group_planet.
+  ///
+  /// In en, this message translates to:
+  /// **'Planet'**
+  String get sticker_group_planet;
+
+  /// No description provided for @sticker_group_capybara.
+  ///
+  /// In en, this message translates to:
+  /// **'Capybara'**
+  String get sticker_group_capybara;
+
+  /// No description provided for @sticker_group_nerd_duck.
+  ///
+  /// In en, this message translates to:
+  /// **'Nerd duck'**
+  String get sticker_group_nerd_duck;
+
+  /// No description provided for @sticker_group_pearl.
+  ///
+  /// In en, this message translates to:
+  /// **'Pearl'**
+  String get sticker_group_pearl;
+
+  /// No description provided for @sticker_group_new_baby.
+  ///
+  /// In en, this message translates to:
+  /// **'New baby'**
+  String get sticker_group_new_baby;
+
+  /// No description provided for @sticker_group_otter.
+  ///
+  /// In en, this message translates to:
+  /// **'Otter'**
+  String get sticker_group_otter;
+
+  /// No description provided for @sticker_group_otter_family.
+  ///
+  /// In en, this message translates to:
+  /// **'Otter family'**
+  String get sticker_group_otter_family;
+
+  /// No description provided for @sticker_group_tux.
+  ///
+  /// In en, this message translates to:
+  /// **'Tux'**
+  String get sticker_group_tux;
+
+  /// No description provided for @sticker_group_en.
+  ///
+  /// In en, this message translates to:
+  /// **'English'**
+  String get sticker_group_en;
+
+  /// No description provided for @sticker_group_ar.
+  ///
+  /// In en, this message translates to:
+  /// **'Arabic'**
+  String get sticker_group_ar;
+
+  /// No description provided for @sticker_group_de.
+  ///
+  /// In en, this message translates to:
+  /// **'German'**
+  String get sticker_group_de;
+
+  /// No description provided for @sticker_group_arab.
+  ///
+  /// In en, this message translates to:
+  /// **'Arab celebrities'**
+  String get sticker_group_arab;
+
+  /// No description provided for @sticker_group_german.
+  ///
+  /// In en, this message translates to:
+  /// **'German celebrities'**
+  String get sticker_group_german;
+
+  /// No description provided for @sticker_pack_orbit_crew.
+  ///
+  /// In en, this message translates to:
+  /// **'Orbit Crew'**
+  String get sticker_pack_orbit_crew;
+
+  /// No description provided for @sticker_pack_big_mood.
+  ///
+  /// In en, this message translates to:
+  /// **'Big Mood'**
+  String get sticker_pack_big_mood;
+
+  /// No description provided for @sticker_pack_nujoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Nujoom'**
+  String get sticker_pack_nujoom;
 }
 
 class _AppLocalizationsDelegate
