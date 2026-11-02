@@ -10963,6 +10963,36 @@ testers. There is no capability negotiation. An older receiver can reject a
 labeled event if that order is violated; old-shape records remain valid on the
 updated receiver. Host schema tests do not establish deployment or device proof.
 
+Sticker usage diagnostics count calls to `StickerUsageRecorder.recordSent` at
+the admitted-message boundary, once per message rather than per recipient or
+retry. The production adapter uses `AppDiagnostics`; it neither waits for disk
+nor propagates observation failures into sending. Counts are closed sticker IDs
+plus `custom` and `unknown`, without message, recipient, group or per-send time.
+The canonical enum must equal `assets/stickers/packs.json`, including reserved
+IDs, and all generated schema copies must agree.
+
+The existing diagnostics archive owns both consent and the daily tally. Startup
+converts completed local-day buckets into snapshots and removes admitted counts
+in the same archive commit. Each timestamp is the stored next-local-midnight
+boundary minus one millisecond, with `reportTimeIsIntervalEnd` set. Calendar
+construction preserves 23/25-hour days; a changed timezone may create a separate
+boundary bucket, without rewriting an earlier boundary. Retention stays seven
+days, with at most 32 boundary buckets; older counts expire without upload.
+Snapshot groups contain at most 64 entries and retain ordinary archive quotas.
+Disable, explicit clear and storage-failure disable purge in-memory counts;
+re-enabling cannot revive them. Existing upload consent and retry semantics
+remain authoritative. The one-second write window can lose recent counts on
+abrupt termination; this is a beta signal, not exact delivered-message accounting.
+
+The 20 focused host cases in `sticker_usage_diagnostics_test.dart` cover real-file
+restart, interval timestamps, 270 snapshots across two days, privacy, malformed
+restore, consent races and retry identity. Run seasonal-boundary cases with
+`TZ=Europe/Berlin`; UTC alone does not exercise DST. RED/GREEN receipts are in
+`.codex-test-logs/sticker-tally-20261102/`. Recorder tests do not prove the UI's
+send-admission call-site placement, device behavior or signed-build delivery.
+The new optional vocabulary remains on uploads, so the updated relay must precede
+testers receiving the app, under the existing deployment order above.
+
 Eight build128/129 incoming-domain CallKit code3 traces were OS Do Not Disturb filtering.
 The released report/completion path stays unchanged; duplicate UUID is code2.
 

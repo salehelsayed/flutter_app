@@ -195,6 +195,28 @@ void main() {
   });
 
   test(
+    're-enable starts fresh without pre-disable or disabled counts',
+    () async {
+      final diagnostics = await install();
+      await send(diagnostics, _firstSticker);
+      await send(diagnostics, _firstSticker);
+      await diagnostics.setEnabled(false);
+      await send(diagnostics, _firstSticker);
+      await diagnostics.setEnabled(true);
+      await send(diagnostics, _firstSticker);
+      now = DateTime(2026, 10, 30, 1);
+      final restarted = await install(enabled: null);
+      final events = await snapshots(restarted);
+      expect(events, hasLength(1));
+      expect(events.single['values'], {
+        'sticker': _firstSticker,
+        'count': 1,
+        'reportTimeIsIntervalEnd': true,
+      });
+    },
+  );
+
+  test(
     'all sticker IDs across two days survive per-group event limits',
     () async {
       final manifest =
@@ -356,6 +378,89 @@ void main() {
     final closed = await install(enabled: null);
     expect(await snapshots(closed), hasLength(1));
   });
+
+  test('stored midnight boundary survives a changed local timezone', () async {
+    final diagnostics = await install();
+    await diagnostics.dispose();
+    final state = await saved();
+    final localEnd = DateTime(2026, 10, 30).millisecondsSinceEpoch - 1;
+    final originalEnd = localEnd + const Duration(hours: 5).inMilliseconds;
+    state['stickerUsage'] = [
+      {
+        'intervalEndMs': originalEnd,
+        'counts': {_firstSticker: 1},
+      },
+    ];
+    await File('${directory.path}/state.json').writeAsString(jsonEncode(state));
+    final moved = await install(enabled: null);
+    await send(moved, _firstSticker);
+    now = DateTime(2026, 10, 30, 12);
+    final restarted = await install(enabled: null);
+    final events = await snapshots(restarted);
+    expect(
+      events.map((e) => e['occurredAtMs']),
+      unorderedEquals([localEnd, originalEnd]),
+    );
+    expect(events.map((e) => (e['values'] as Map)['count']), [1, 1]);
+  });
+
+  test(
+    'restoration bounds bucket arrays and only retains closed map keys',
+    () async {
+      final diagnostics = await install();
+      await diagnostics.dispose();
+      final state = await saved();
+      final end = DateTime(2026, 10, 30).millisecondsSinceEpoch - 1;
+      state['stickerUsage'] = [
+        for (var day = 0; day < 100; day++)
+          {
+            'intervalEndMs': end + day * 60000,
+            'counts': {
+              _firstSticker: 1,
+              for (var id = 0; id < 200; id++) 'PRIVATE_RESTORED_$id': 1,
+            },
+          },
+      ];
+      await File(
+        '${directory.path}/state.json',
+      ).writeAsString(jsonEncode(state));
+      final restarted = await install(enabled: null);
+      expect(restarted.enabled, true);
+      final retained = (await saved())['stickerUsage'] as List;
+      expect(retained, isNotEmpty);
+      expect(retained.length, lessThanOrEqualTo(32));
+      for (final bucket in retained) {
+        expect(bucket['counts'], {_firstSticker: 1});
+      }
+      expect(jsonEncode(await saved()), isNot(contains('PRIVATE_RESTORED_')));
+    },
+  );
+
+  test(
+    'adapter isolates an observation exception from admitted send',
+    () async {
+      var clockThrows = false;
+      final diagnostics = await AppDiagnostics.installForTesting(
+        directory: directory,
+        now: () {
+          if (clockThrows) throw StateError('clock unavailable');
+          return now;
+        },
+      );
+      final recorder = AppDiagnosticStickerUsageRecorder(
+        diagnostics: diagnostics,
+      );
+      clockThrows = true;
+      await expectLater(recorder.recordSent(_firstSticker), completes);
+      clockThrows = false;
+      await send(diagnostics, _firstSticker);
+      now = DateTime(2026, 10, 30, 1);
+      final restarted = await install(enabled: null);
+      final events = await snapshots(restarted);
+      expect(events, hasLength(1));
+      expect((events.single['values'] as Map)['count'], 1);
+    },
+  );
 
   test('upload retry preserves snapshot identity and closed values', () async {
     final diagnostics = await install();

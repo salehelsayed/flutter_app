@@ -14,6 +14,7 @@ import 'app_diagnostic_schema.dart';
 import 'local_connection_diagnostics.dart';
 import 'app_diagnostic_events.dart';
 import 'diagnostic_archive_writer.dart';
+import 'sticker_usage_tally.dart';
 
 typedef AppDiagnosticUpload =
     Future<Set<String>> Function(List<Map<String, Object?>> events);
@@ -101,6 +102,10 @@ final class AppDiagnostics with WidgetsBindingObserver {
   );
   static const _maxBytes = 4 * 1024 * 1024;
   static const _retentionMs = 7 * 24 * 60 * 60 * 1000;
+  final _stickerUsage = StickerUsageTally(
+    stickerIds: _valueEnums['sticker']!.cast<String>(),
+    retentionMs: _retentionMs,
+  );
   final _random = Random.secure();
   final _enabled = ValueNotifier(false);
   final _eventsById = <String, Map<String, Object?>>{};
@@ -234,6 +239,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
       (_) => _random.nextInt(256),
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
     _elapsed.start();
+    Object? savedStickerUsage;
     try {
       await directory.create(recursive: true);
       if (await _file.exists()) {
@@ -247,6 +253,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           throw const FormatException('state');
         }
         _enabled.value = raw['enabled'] == true;
+        savedStickerUsage = raw['stickerUsage'];
         _epoch = _integer(raw['consentEpoch']);
         _clearPending = raw['clearPending'] == true;
         _nativeClearPending = raw['nativeClearPending'] == true;
@@ -340,6 +347,8 @@ final class AppDiagnostics with WidgetsBindingObserver {
         _clearMemory();
       } else {
         _prune();
+        _stickerUsage.restore(savedStickerUsage, _now());
+        _recordCompletedStickerDays();
         for (final pending in List<Map<String, Object?>>.of(_open.values)) {
           final feature = pending['feature'] as String;
           final trace = pending['traceId'] as String;
@@ -546,7 +555,36 @@ final class AppDiagnostics with WidgetsBindingObserver {
     return trace;
   }
 
-  void recordStickerSent(String stickerId) {}
+  void recordStickerSent(String stickerId) {
+    if (!enabled || !_ready || !_storageHealthy) return;
+    _stickerUsage.record(stickerId, _now());
+    _schedulePersist();
+  }
+
+  void _recordCompletedStickerDays() {
+    for (final day in _stickerUsage.completedDays(_now())) {
+      var index = 0;
+      var trace = _newId();
+      for (final entry in day.counts.entries) {
+        if (index > 0 && index % 64 == 0) trace = _newId();
+        index++;
+        if (_recordAt(
+          feature: 'stickers',
+          stage: 'snapshot',
+          outcome: 'ok',
+          traceId: trace,
+          occurredAtMs: day.intervalEndMs,
+          values: {
+            'sticker': entry.key,
+            'count': entry.value,
+            'reportTimeIsIntervalEnd': true,
+          },
+        )) {
+          _stickerUsage.remove(day.intervalEndMs, entry.key);
+        }
+      }
+    }
+  }
 
   bool record({
     required String feature,
@@ -554,6 +592,23 @@ final class AppDiagnostics with WidgetsBindingObserver {
     required String outcome,
     String reason = 'none',
     String? traceId,
+    Map<String, Object?> values = const {},
+  }) => _recordAt(
+    feature: feature,
+    stage: stage,
+    outcome: outcome,
+    reason: reason,
+    traceId: traceId,
+    values: values,
+  );
+
+  bool _recordAt({
+    required String feature,
+    required String stage,
+    required String outcome,
+    String reason = 'none',
+    String? traceId,
+    int? occurredAtMs,
     Map<String, Object?> values = const {},
   }) {
     if (!enabled || !_ready || !_storageHealthy) return false;
@@ -565,7 +620,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
         'source': 'flutter',
         'runId': _runId,
         'sequence': ++_sequence,
-        'occurredAtMs': _nowMs,
+        'occurredAtMs': occurredAtMs ?? _nowMs,
         'elapsedMs': _elapsed.elapsedMilliseconds,
         'feature': feature,
         'stage': stage,
@@ -690,6 +745,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
   }
 
   void _clearMemory() {
+    _stickerUsage.clear();
     _retrying.clear();
     _resetUploadBackoff();
     _archiveWriter?.clearEvents();
@@ -1177,6 +1233,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
   }
 
   void _prune() {
+    if (_stickerUsage.prune(_now())) _writeRequested = true;
     final cutoff = _nowMs - _retentionMs;
     if (_nextBindingExpiryMs case final expiry? when _nowMs >= expiry) {
       _nextBindingExpiryMs = null;
@@ -1260,6 +1317,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
             'nativeDroppedSeen': _nativeDroppedSeen,
             'lastUploadAtMs': _lastUpload,
             'bindingSalt': _bindingSalt,
+            'stickerUsage': _stickerUsage.toJson(),
             if (fullMetadata)
               'bindings': {
                 for (final entry in _bindings.entries)
@@ -1304,6 +1362,7 @@ final class AppDiagnostics with WidgetsBindingObserver {
           _fullMetadataRequired = true;
           _storageHealthy = false;
           _enabled.value = false;
+          _stickerUsage.clear();
           _lastError = 'sink_unavailable';
           _nativeConsentPending = true;
         }
