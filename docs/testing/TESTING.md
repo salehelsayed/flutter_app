@@ -5820,6 +5820,13 @@ visible and cannot become an ordinary first-attempt PASS.
   unchanged. No per-person exclusion history is retained: an already-submitted
   eligible copy arriving after an opted-out copy can still count, and a later
   opted-out retry cannot subtract it. Actual InboxStore cases prove that boundary.
+  Keep custody timestamps on the relay's current clock when authored metric
+  dates are fixed: the admission and in-flight-copy fixtures previously stamped
+  both clocks at October 26 and began failing on November 2 when seven-day
+  custody expiry pruned their rows. Updating only those custody timestamps
+  preserves the fixed authored week and every delivery/count assertion; all ten
+  affected leaf cases pass. Retain the original full-relay failure and focused
+  correction in `.codex-test-logs/thought-notifications-switch-20261102/`.
   Returning posters are estimated from current-week
   senders intersected with the union of every earlier retained week, not just
   the preceding week. No additional sketch/ID storage is added; nonadjacent
@@ -8036,6 +8043,10 @@ visible and cannot become an ordinary first-attempt PASS.
   rather than one pump or assertions inside a production-caught callback. An
   unlimited subtitle still truncates if it retains `TextOverflow.ellipsis`;
   EN/DE/AR cases assert `RenderParagraph.didExceedMaxLines == false` at 2x text.
+  Nearby settings fixtures must select the switch inside `settings-row-nearby`:
+  the first switch now belongs to Thought notifications. The two original
+  Nearby action assertions failed with the ordinal selector; all three cases in
+  `settings_wired_posts_nearby_test.dart` pass with the row-scoped selector.
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now
@@ -11228,6 +11239,15 @@ execution remains owned by Flutter; host checks do not certify native behavior.
   circuit connection at both endpoints after each dial.
   The original full-suite and isolated failures remain in `go-core-full.log`
   and `nw002-original.log`; ten isolated passes are in `nw002-isolated.log`.
+  The separate hole-punch negative-control helper needs the same existing
+  hermetic-network and relay-only-advertisement settings. Its one-time peerstore
+  clear permits asynchronous address exchange to restore direct routes; the
+  Notifiee can then report a real direct upgrade while punch counters stay zero.
+  The first full-core failure remains under
+  `.codex-test-logs/thought-notifications-switch-20261102/`; an unchanged isolated
+  pass is only nonreproduction. After isolating that helper, three repetitions
+  pass with private reachability, the four-second polling window and all original
+  message, connection and zero-counter assertions unchanged.
 - **Outgoing-call diagnostic widget clocks:** conversation widget tests use
   the existing diagnostic persistence hook for event-semantic assertions.
   Archive isolate I/O started in the widget fake-clock zone can strand a later

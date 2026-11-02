@@ -39,14 +39,20 @@ func startNW002RelayNodeWithTracerNoForce(
 	t.Helper()
 	hexKey := generateTestKey(t)
 	n := New(collector)
+	n.hermeticLocalNetworkForTests = true
 	tracer.n = n
 	n.SetHolePunchTracerForTests(tracer)
 	// NOTE: do NOT force public reachability — this is the relay-only real case.
+	// Keep Identify and hole-punch address exchange from upgrading this
+	// explicitly circuit-only fixture to a direct connection.
+	flags := DefaultFeatureFlags()
+	flags.DebugAdvertiseRelayOnly = true
 
 	_, err := n.Start(NodeConfig{
 		PrivateKeyHex:  hexKey,
 		RelayAddresses: []string{relayAddr},
 		AutoRegister:   false,
+		FeatureFlags:   &flags,
 	})
 	if err != nil {
 		t.Fatalf("Start with local circuit relay (nc tracer): %v", err)

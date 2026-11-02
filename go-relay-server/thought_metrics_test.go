@@ -120,6 +120,8 @@ func TestThoughtMetricsOptOutAdmissionPreservesInboxDelivery(t *testing.T) {
 			installThoughtMetrics(t, m)
 			inbox := NewInboxStore(nil)
 			entry := thoughtMetricEntry("thought-opt-out-"+tc.name, "author-opt-out-"+tc.name, now)
+			// Keep authored metric time fixed while custody follows the relay clock.
+			entry.Timestamp = time.Now().UnixMilli()
 			if tc.flag != "" {
 				entry.Message = strings.TrimSuffix(entry.Message, "}") + `,"thoughts_metrics_opt_out":` + tc.flag + "}"
 			}
@@ -154,6 +156,8 @@ func TestThoughtMetricsOptOutDoesNotRecallSubmittedEligibleCopy(t *testing.T) {
 	installThoughtMetrics(t, m)
 	inbox := NewInboxStore(nil)
 	eligible := thoughtMetricEntry("thought-in-flight", "author-in-flight", now)
+	// Keep authored metric time fixed while custody follows the relay clock.
+	eligible.Timestamp = time.Now().UnixMilli()
 	optedOut := eligible
 	optedOut.Message = strings.TrimSuffix(eligible.Message, "}") + `,"thoughts_metrics_opt_out":true}`
 	for i, entry := range []inboxMessage{optedOut, eligible, optedOut} {

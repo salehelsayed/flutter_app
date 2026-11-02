@@ -365,9 +365,13 @@ void main() {
       nearbyLocationService: nearbyLocationService,
     );
 
-    await tester.ensureVisible(find.byType(Switch).first);
+    final nearbySwitch = find.descendant(
+      of: find.byKey(const ValueKey('settings-row-nearby')),
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(nearbySwitch);
     await tester.pump();
-    await tester.tap(find.byType(Switch).first);
+    await tester.tap(nearbySwitch);
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(nearbyLocationService.refreshInteractivelyFromSettingsCallCount, 1);
@@ -407,9 +411,13 @@ void main() {
       nearbyLocationService: nearbyLocationService,
     );
 
-    await tester.ensureVisible(find.byType(Switch).first);
+    final nearbySwitch = find.descendant(
+      of: find.byKey(const ValueKey('settings-row-nearby')),
+      matching: find.byType(Switch),
+    );
+    await tester.ensureVisible(nearbySwitch);
     await tester.pump();
-    await tester.tap(find.byType(Switch).first);
+    await tester.tap(nearbySwitch);
     await tester.pump(const Duration(milliseconds: 100));
 
     final settings = await privacyRepository.load();
