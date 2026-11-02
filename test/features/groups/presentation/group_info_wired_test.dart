@@ -6885,11 +6885,6 @@ void main() {
           'messageId': 'msg-self-removal',
         };
         bridge.responses['group:inboxStore'] = {'ok': true};
-        bridge.responses['group:generateNextKey'] = {
-          'ok': true,
-          'groupKey': 'failed-leave-rotated-key',
-          'keyEpoch': 9,
-        };
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
         final exitHarness = (await tester.runAsync(
@@ -6953,17 +6948,13 @@ void main() {
         );
         final publishIndex = bridge.commandLog.indexOf('group:publish');
         final inboxStoreIndex = bridge.commandLog.indexOf('group:inboxStore');
-        final generateKeyIndex = bridge.commandLog.indexOf(
-          'group:generateNextKey',
-        );
         final leaveIndex = bridge.commandLog.indexOf('group:leave');
         expect(publishIndex, isNonNegative);
         expect(inboxStoreIndex, isNonNegative);
-        expect(generateKeyIndex, isNonNegative);
+        expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
         expect(publishIndex, lessThan(leaveIndex));
         expect(inboxStoreIndex, lessThan(leaveIndex));
-        expect(generateKeyIndex, lessThan(leaveIndex));
-        expect(p2pService.sentMessageLog.length, 2);
+        expect(p2pService.sentMessageLog, isEmpty);
         expect(await msgRepo.getMessage('gca010-existing-history'), isNotNull);
         expect(await groupRepo.getGroup('group-1'), isNotNull);
         final members = await groupRepo.getMembers('group-1');
@@ -6978,7 +6969,9 @@ void main() {
           () => durableGroupRepo.getLatestKey('group-1'),
         );
         expect(latestKey, isNotNull);
-        expect(latestKey!.keyGeneration, 9);
+        // Rotation belongs to the successor; native failure retains the
+        // departing device's existing keys until native-only retry succeeds.
+        expect(latestKey!.keyGeneration, 8);
         expect(
           (await tester.runAsync(
             () => durableGroupRepo.getKeyByGeneration('group-1', 8),
@@ -6988,9 +6981,13 @@ void main() {
         expect(
           (await tester.runAsync(
             () => durableGroupRepo.getKeyByGeneration('group-1', 9),
-          ))?.encryptedKey,
-          'failed-leave-rotated-key',
+          )),
+          isNull,
         );
+        final exitEvidence = (await tester.runAsync(
+          () => exitHarness.driver!.evidenceFor(group.id),
+        ))!;
+        expect(exitEvidence.rotationOutcome, 'completed');
 
         final retainedIntent = await tester.runAsync(exitHarness.loadIntent);
         expect(retainedIntent, isNotNull);
@@ -7481,7 +7478,7 @@ void main() {
     );
 
     testWidgets(
-      'multi-admin leave broadcasts self-removal, rotates key, and pops to first route',
+      'multi-admin leave broadcasts self-removal, hands rotation to successor, and pops to first route',
       (tester) async {
         final groupRepo = InMemoryGroupRepository();
         final msgRepo = InMemoryGroupMessageRepository();
@@ -7524,11 +7521,6 @@ void main() {
         );
 
         final bridge = PassthroughCryptoBridge();
-        bridge.responses['group:generateNextKey'] = {
-          'ok': true,
-          'groupKey': 'fake-rotated-key',
-          'keyEpoch': 2,
-        };
         bridge.responses['group:publish'] = {'ok': true, 'messageId': 'msg-1'};
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: testIdentity);
@@ -7589,7 +7581,7 @@ void main() {
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
-        expect(bridge.commandLog, contains('group:generateNextKey'));
+        expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
         expect(bridge.commandLog, contains('group:leave'));
         expect(
           bridge.commandLog.indexOf('group:publish'),
@@ -7599,11 +7591,7 @@ void main() {
           bridge.commandLog.indexOf('group:inboxStore'),
           lessThan(bridge.commandLog.indexOf('group:leave')),
         );
-        expect(
-          bridge.commandLog.indexOf('group:generateNextKey'),
-          lessThan(bridge.commandLog.indexOf('group:leave')),
-        );
-        expect(p2pService.sentMessageLog.length, 2);
+        expect(p2pService.sentMessageLog, isEmpty);
 
         final publishMsg = bridge.sentMessages.firstWhere((message) {
           final parsed = jsonDecode(message) as Map<String, dynamic>;
@@ -7619,6 +7607,10 @@ void main() {
                 as Map<String, dynamic>;
         expect(sysText['member']['peerId'], 'peer-admin');
         expect(sysText['member']['username'], 'Admin');
+        final exitEvidence = (await tester.runAsync(
+          () => exitHarness.driver!.evidenceFor(group.id),
+        ))!;
+        expect(exitEvidence.rotationOutcome, 'completed');
 
         expect(await msgRepo.getMessageCount('group-1'), 0);
 
@@ -7690,11 +7682,6 @@ void main() {
         );
 
         final bridge = PassthroughCryptoBridge();
-        bridge.responses['group:generateNextKey'] = {
-          'ok': true,
-          'groupKey': 'writer-rotated-key',
-          'keyEpoch': 2,
-        };
         final p2pService = FakeP2PService();
         final identityRepo = FakeIdentityRepository(identity: leavingIdentity);
         final exitHarness = (await tester.runAsync(
@@ -7754,7 +7741,7 @@ void main() {
 
         expect(bridge.commandLog, contains('group:publish'));
         expect(bridge.commandLog, contains('group:inboxStore'));
-        expect(bridge.commandLog, contains('group:generateNextKey'));
+        expect(bridge.commandLog, isNot(contains('group:generateNextKey')));
         expect(bridge.commandLog, contains('group:leave'));
         expect(
           bridge.commandLog.indexOf('group:publish'),
@@ -7764,12 +7751,12 @@ void main() {
           bridge.commandLog.indexOf('group:inboxStore'),
           lessThan(bridge.commandLog.indexOf('group:leave')),
         );
-        expect(
-          bridge.commandLog.indexOf('group:generateNextKey'),
-          lessThan(bridge.commandLog.indexOf('group:leave')),
-        );
-        expect(p2pService.sentMessageLog.length, 2);
+        expect(p2pService.sentMessageLog, isEmpty);
 
+        final exitEvidence = (await tester.runAsync(
+          () => exitHarness.driver!.evidenceFor(group.id),
+        ))!;
+        expect(exitEvidence.rotationOutcome, 'completed');
         expect(await msgRepo.getMessageCount('group-1'), 0);
 
         expect(await groupRepo.getGroup('group-1'), isNull);

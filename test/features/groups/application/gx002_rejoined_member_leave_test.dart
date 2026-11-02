@@ -885,6 +885,231 @@ void main() {
     );
   }
 
+  test(
+    'GC008 creator leave key reaches every member when leave overtakes key delivery',
+    () async {
+      final a = _Peer('Alice');
+      final b = _Peer('Bob');
+      final c = _Peer('Charlie');
+      final d = _Peer('Dana');
+      final peers = [a, b, c, d];
+      const groupId = 'gc008-creator-leave-key-order';
+      addTearDown(() async {
+        debugSetFlowEventSink(null);
+        for (final peer in peers) {
+          await peer.close();
+        }
+      });
+      for (final peer in peers) {
+        peer.contacts.seed(peers.map((other) => other.contact).toList());
+      }
+      a.bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': groupId,
+        'groupKey': 'gc008-initial-key',
+        'keyEpoch': 1,
+      };
+      final created = await a.process.run(
+        () => createGroupWithMembers(
+          bridge: a.bridge,
+          groupRepo: a.groups,
+          p2pService: a.p2p,
+          identity: a.identity,
+          selectedContacts: [b.contact, c.contact, d.contact],
+          type: GroupType.chat,
+          name: 'GC008 creator leave',
+        ),
+      );
+      expect(created.membersAdded, 3);
+      expect(created.invitesSent, 3);
+      for (final joining in [b, c, d]) {
+        await _acceptInvite(a, joining, groupId);
+        final joined = _lastInboxEnvelope(joining);
+        for (final receiver in peers.where((peer) => peer != joining)) {
+          if (await receiver.groups.getGroup(groupId) != null) {
+            await _deliver(joining, receiver, groupId, joined);
+          }
+        }
+      }
+
+      final pending = <String, GroupPendingBroadcast>{};
+      final promotion = await a.process.run(
+        () => changeGroupMemberRoleAndBroadcast(
+          bridge: a.bridge,
+          groupRepo: a.groups,
+          identityRepo: a.identities,
+          messageRepo: a.messages,
+          groupId: groupId,
+          memberPeerId: b.id,
+          role: MemberRole.admin,
+          enqueuePending: (row) async {
+            pending[row.id] = row;
+          },
+          loadPending: (id) async =>
+              pending.values.where((row) => row.groupId == id).toList(),
+          removePending: (id) async {
+            pending.remove(id);
+          },
+        ),
+      );
+      expect(promotion.updatedMember.role, MemberRole.admin);
+      expect(pending, isEmpty);
+      final promoted = _lastInboxEnvelope(a);
+      for (final receiver in [b, c, d]) {
+        await _deliver(a, receiver, groupId, promoted);
+      }
+      // A prior successful creator rotation establishes the observed epoch 2
+      // baseline without seeding any recipient key or bypassing its listener.
+      await _rotateAsPeer(a, peers, groupId, []);
+      for (final peer in peers) {
+        expect((await peer.groups.getLatestKey(groupId))!.keyGeneration, 2);
+      }
+
+      final departingGenerationCount = a.bridge.commandLog
+          .where((command) => command == 'group:generateNextKey')
+          .length;
+      b.bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'gc008-successor-key-3',
+        'keyEpoch': 3,
+      };
+      final keyFrames = <String, String>{};
+      String? offlineKeyFrame;
+      var successorRotations = 0;
+      b.rotateAfterRemoteRemoval = (id) async {
+        expect(await b.groups.getMember(id, a.id), isNull);
+        final outcome = await rotateAndDistributeGroupKey(
+          bridge: b.bridge,
+          groupRepo: b.groups,
+          groupId: id,
+          selfPeerId: b.id,
+          senderPublicKey: b.identity.publicKey,
+          senderPrivateKey: b.identity.privateKey,
+          senderUsername: b.name,
+          sendP2PMessage: (peerId, content) async {
+            if (peerId == d.id) {
+              offlineKeyFrame = content;
+              return false;
+            }
+            final accepted = await b.p2p.sendMessage(peerId, content);
+            if (accepted) keyFrames[peerId] = content;
+            return accepted;
+          },
+          storeP2PMessageInInbox: b.p2p.storeInInbox,
+        );
+        if (outcome.rotated) successorRotations++;
+        return outcome.rotated;
+      };
+      final departingKeyFrames = <String>[];
+      late Map<String, dynamic> left;
+      final leaveAt = DateTime.now().toUtc();
+      final exit = await a.process.run(
+        () => DurableGroupExitSurfaceHarness.createForSurface(
+          groupId: groupId,
+          bridge: a.bridge,
+          groupRepository: a.groups,
+          identityRepository: a.identities,
+          messageRepository: a.messages,
+          now: () => leaveAt,
+          sendP2PMessage: (peerId, content) async {
+            final accepted = await a.p2p.sendMessage(peerId, content);
+            if (accepted) departingKeyFrames.add(content);
+            return accepted;
+          },
+          storeP2PMessageInInbox: a.p2p.storeInInbox,
+          afterNoticeAttempt: (_) async {
+            left = _lastInboxEnvelope(a);
+          },
+        ),
+      );
+      try {
+        final result = await a.process.run(exit.requestLeaveForTest);
+        expect(result.status.name, 'started');
+        final evidence = await exit.driver!.evidenceFor(groupId);
+        expect(evidence.rotationOutcome, 'completed');
+        expect(await exit.hasDurableGroup(), isFalse);
+        expect(await a.groups.getGroup(groupId), isNull);
+      } finally {
+        await exit.close();
+      }
+      expect(departingKeyFrames, isEmpty);
+      expect(
+        a.bridge.commandLog
+            .where((command) => command == 'group:generateNextKey')
+            .length,
+        departingGenerationCount,
+      );
+      expect(keyFrames, isEmpty);
+      expect(left['recipientPeerIds'], unorderedEquals([b.id, c.id, d.id]));
+
+      String? receiving;
+      final unauthorized = <String>[];
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UNAUTHORIZED_SENDER') {
+          unauthorized.add(receiving!);
+        }
+      });
+      Future<void> deliverKey(_Peer receiver, String frame) =>
+          receiver.process.run(() async {
+            receiving = receiver.id;
+            await receiver.keyListener.handleProtectedEnvelope(
+              ChatMessage(
+                from: b.id,
+                to: receiver.id,
+                content: frame,
+                timestamp: leaveAt.toIso8601String(),
+                isIncoming: true,
+              ),
+            );
+          });
+
+      // B authenticates the leave before producing the only new key. Deliver
+      // every exact successor frame in both orders: C gets key then leave;
+      // offline D gets leave then its stored key. B stays authorized in both.
+      await _deliver(a, b, groupId, left);
+      expect(successorRotations, 1);
+      expect(keyFrames.keys, [c.id]);
+      expect(b.p2p.storeInInboxLog, hasLength(1));
+      final storedKey = b.p2p.storeInInboxLog.single;
+      expect(storedKey.toPeerId, d.id);
+      expect(offlineKeyFrame, isNotNull);
+      expect(storedKey.message, offlineKeyFrame);
+      for (final frame in [...keyFrames.values, storedKey.message]) {
+        expect((jsonDecode(frame) as Map)['type'], 'group_key_update');
+      }
+      await deliverKey(c, keyFrames[c.id]!);
+      await _deliver(a, c, groupId, left);
+      await _deliver(a, d, groupId, left);
+      expect(await d.groups.getMember(groupId, a.id), isNull);
+      expect((await d.groups.getLatestKey(groupId))!.keyGeneration, 2);
+      await deliverKey(d, storedKey.message);
+      final epochs = <String, int>{
+        for (final peer in [b, c, d])
+          peer.id: (await peer.groups.getLatestKey(groupId))!.keyGeneration,
+      };
+      debugPrint(
+        jsonEncode({
+          'case': 'GC008',
+          'keyProducer': b.id,
+          'deliveredRecipients': [...keyFrames.keys, storedKey.toPeerId],
+          'epochs': epochs,
+          'unauthorizedKeyReceivers': unauthorized,
+        }),
+      );
+      expect(epochs, {b.id: 3, c.id: 3, d.id: 3});
+      expect(unauthorized, isEmpty);
+      for (final peer in [b, c, d]) {
+        expect(await peer.groups.getMember(groupId, a.id), isNull);
+        expect(
+          (await peer.groups.getLatestKey(groupId))!.encryptedKey,
+          'gc008-successor-key-3',
+        );
+      }
+      await _deliver(a, b, groupId, left);
+      expect(successorRotations, 1);
+    },
+  );
+
   for (final rejoined in [false, true]) {
     testWidgets(
       rejoined

@@ -7834,6 +7834,34 @@ visible and cannot become an ordinary first-attempt PASS.
   Host waits retain an allowlisted timeout stage and already-matched endpoint
   observations before reset. Keep polling intervals and deadlines unchanged;
   missing or mismatched endpoint results must not become successful receipts.
+  The GC-008 successor-handoff candidate leaves key generation to the remaining
+  eligible rotation leader after the authenticated departure. The departing
+  member creates no competing key; planned handoff completes the existing
+  durable rotation phase without reporting an unexpected deferral. Its
+  four-peer host regression delivers every successor frame in both key/leave
+  orders, checks identical survivor keys and rejects duplicate rotation on
+  repeated leave. An offline recipient's failed live key delivery deposits the
+  exact signed frame through production inbox fallback; replay through its real
+  key listener converges to the same key material. Current-sender permission
+  and monotonic-key checks remain.
+  The fixtures use actual Dart owners with explicit in-memory repositories and
+  fake crypto/transport; they do not establish native delivery or restart.
+  Evidence is under `.codex-test-logs/gc008-successor-rotation-20261102/`.
+  Actual receiver-replay fixtures must pass their own captured leave clock:
+  the reusable exit harness defaults to July 2026 and correctly triggers stale
+  removal protection against later memberships if that clock is not replaced.
+
+  The owner approved this offline-successor tradeoff; Astra recommended keeping
+  it (Kayan m-cd6ca149 and m-70c0486f, 2026-11-02). If the next admin is offline,
+  another member with key rights takes over after about 16 minutes (31 for the
+  next one), but only while their app runs. If no other member has key rights,
+  the change waits for that admin. Until rotation succeeds, remaining members
+  use their existing key. Any retained copy can decrypt new ciphertext if
+  obtained, including a copy kept by the departed member; normal current-member
+  delivery restrictions still apply. Without another available eligible
+  rotator, there is no fixed maximum delay: the window can last for the
+  successor's entire offline period and until a later rotation succeeds.
+
   Group re-invite key catch-up reuses the current-key delivery callback when
   an admitted member requests post-join configuration resync. Metadata can
   already be current while the accepted invitation still carries an older key;

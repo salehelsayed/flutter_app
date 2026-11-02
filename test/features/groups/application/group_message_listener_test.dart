@@ -4417,10 +4417,10 @@ void main() {
     );
 
     test(
-      'the next leader does not rotate again after the leader left on its own',
+      'the next leader rotates after the previous leader left on its own',
       () async {
-        // peer-sender is the earliest admin, so it leads; it rotates on the
-        // way out and Bob must not fork the epoch with a second rotation.
+        // peer-sender is the earliest admin, so it leads before leaving.
+        // Bob becomes the sole rotator after applying the signed departure.
         await handOverAdminToBob(
           bobJoinedAt: initialMemberJoinedAt.add(const Duration(minutes: 1)),
         );
@@ -4439,7 +4439,7 @@ void main() {
         );
 
         expect(await groupRepo.getMember('group-1', 'peer-sender'), isNull);
-        expect(rotateCalls, isEmpty);
+        expect(rotateCalls, ['group-1']);
       },
     );
 

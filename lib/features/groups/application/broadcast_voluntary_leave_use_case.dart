@@ -2,12 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
-import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
-import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -122,11 +120,8 @@ class VoluntaryLeaveBroadcastResult {
   final VoluntaryLeaveBroadcastSkipReason? skipReason;
   final Map<String, dynamic>? livePublishResult;
 
-  /// True when the member left but could NOT rotate the group key because the
-  /// leaver lacks the `rotateKeys` permission and/or is not the group creator.
-  /// The departure still broadcasts and completes (best-effort rotation); the
-  /// group owes a re-key, which a remaining admin performs on receiving the
-  /// `member_removed` — mirroring admin-removal's remover-driven rotation.
+  /// True for an unexpected rotation deferral. A planned handoff to the
+  /// remaining rotation leader completes without setting this failure flag.
   final bool rotationDeferred;
 
   const VoluntaryLeaveBroadcastResult({
@@ -530,9 +525,12 @@ Future<Object?> _preparedVoluntaryLeaveCryptographicAuthorityFailure({
   }
 }
 
-/// Performs only the existing best-effort rotation. It reloads identity and
-/// membership so a durable runner can resume here without re-preparing or
-/// re-signing the leave notice after process recreation.
+/// Completes the departure's rotation phase by handing re-keying to the
+/// remaining rotation leader after it authenticates the leave notice.
+///
+/// Retains the durable runner's entry point and identity check on resume. The
+/// departing member must not generate a competing key: receivers that already
+/// applied its leave correctly reject any later key update from that sender.
 Future<VoluntaryLeaveRotationResult> rotateVoluntaryLeaveGroupKeyBestEffort({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -550,47 +548,14 @@ Future<VoluntaryLeaveRotationResult> rotateVoluntaryLeaveGroupKeyBestEffort({
       identity.peerId != expectedSelfPeerId) {
     throw StateError('Voluntary leave identity changed before key rotation');
   }
-  final members = await groupRepo.getMembers(groupId);
-  final hasRemainingMembers = members.any(
-    (member) => member.peerId != identity.peerId,
-  );
-  if (!hasRemainingMembers) {
-    return const VoluntaryLeaveRotationResult(
-      rotatedKey: null,
-      rotationDeferred: false,
-    );
-  }
-
-  final rotationOutcome = await rotateAndDistributeGroupKey(
-    bridge: bridge,
-    groupRepo: groupRepo,
-    groupId: groupId,
-    selfPeerId: identity.peerId,
-    senderPublicKey: identity.publicKey,
-    senderPrivateKey: identity.privateKey,
-    senderUsername: identity.username,
-    sendP2PMessage: sendP2PMessage,
-    storeP2PMessageInInbox: storeP2PMessageInInbox,
-  );
-  final rotatedKey = rotationOutcome.key;
-  final rotationDeferred = rotatedKey == null;
-  if (rotationDeferred) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_VOLUNTARY_LEAVE_ROTATION_DEFERRED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      },
-    );
-  }
-  return VoluntaryLeaveRotationResult(
-    rotatedKey: rotatedKey,
-    rotationDeferred: rotationDeferred,
+  return const VoluntaryLeaveRotationResult(
+    rotatedKey: null,
+    rotationDeferred: false,
   );
 }
 
-/// Broadcasts the local member's voluntary leave and rotates future group
-/// traffic away from the departing member before local cleanup deletes state.
+/// Broadcasts the local member's voluntary leave and hands future group
+/// re-keying to the remaining rotation leader before local cleanup.
 Future<VoluntaryLeaveBroadcastResult> broadcastVoluntaryLeaveAndRotateKey({
   required Bridge bridge,
   required GroupRepository groupRepo,

@@ -27,14 +27,11 @@ final class _RemoteMemberRemovalFollowUp {
     required this.removedPeerWasActiveMember,
     required this.removalAuthorPeerId,
     required this.snapshotHasNoActiveMembers,
-    this.removedPeerWasRotationLeader = false,
   });
 
   final String? removedPeerId;
   final bool removedPeerWasActiveMember;
 
-  /// The removed member was the key rotation leader just before the removal.
-  final bool removedPeerWasRotationLeader;
   final String removalAuthorPeerId;
   final bool snapshotHasNoActiveMembers;
 }
@@ -892,8 +889,6 @@ final class _GroupMessageSystemTransitionProcessor {
             removalAuthorPeerId: committedRemoval.removalAuthorPeerId,
             snapshotHasNoActiveMembers:
                 committedRemoval.snapshotHasNoActiveMembers,
-            removedPeerWasRotationLeader:
-                committedRemoval.removedPeerWasRotationLeader,
           );
           emitFlowEvent(
             layer: 'FL',
@@ -2369,19 +2364,9 @@ final class _GroupMessageSystemTransitionProcessor {
     // is the idempotency anchor for the post-departure re-key below: a duplicate
     // member_removed (peer already gone) must not trigger a second rotation.
     var removedPeerWasActiveMember = false;
-    var removedPeerWasRotationLeader = false;
     if (removedPeerId != null && removedPeerId.isNotEmpty) {
       final removedMember = await _groupRepo.getMember(groupId, removedPeerId);
       removedPeerWasActiveMember = removedMember != null;
-      final preRemovalGroup = await _groupRepo.getGroup(groupId);
-      removedPeerWasRotationLeader =
-          removedMember != null &&
-          preRemovalGroup != null &&
-          groupKeyRotationLeaderPeerId(
-                group: preRemovalGroup,
-                members: await _groupRepo.getMembers(groupId),
-              ) ==
-              removedPeerId;
       final snapshotRepo = _groupRepo is RemovedGroupMemberSnapshotRepository
           ? _groupRepo as RemovedGroupMemberSnapshotRepository
           : null;
@@ -2480,7 +2465,6 @@ final class _GroupMessageSystemTransitionProcessor {
       removedPeerWasActiveMember: removedPeerWasActiveMember,
       removalAuthorPeerId: senderId,
       snapshotHasNoActiveMembers: snapshotHasNoActiveMembers,
-      removedPeerWasRotationLeader: removedPeerWasRotationLeader,
     );
 
     if (snapshotHasNoActiveMembers) {
@@ -2495,20 +2479,17 @@ final class _GroupMessageSystemTransitionProcessor {
   }
 
   /// Re-keys a group after a remote member departure the local device did not
-  /// author, preserving forward secrecy when the leaver could not rotate.
+  /// author. Voluntary leavers hand rotation to this remaining member so every
+  /// key update is sent by a member that survives the authenticated removal.
   ///
-  /// All guards must hold; in particular only the group CREATOR auto-rotates.
-  /// That keeps a single deterministic rotator (matching
-  /// [rotateAndDistributeGroupKey]'s creator-only gate), so multiple remaining
-  /// admins never race, and other members converge via the creator's
-  /// distributed `key:update`.
+  /// Only the remaining rotation leader auto-rotates, matching
+  /// [rotateAndDistributeGroupKey]'s gate so multiple admins never race.
   Future<void> _maybeRotateGroupKeyAfterRemoteRemoval(
     String groupId, {
     required String? removedPeerId,
     required bool removedPeerWasActiveMember,
     required String removalAuthorPeerId,
     required bool snapshotHasNoActiveMembers,
-    bool removedPeerWasRotationLeader = false,
   }) async {
     final rotate = _rotateGroupKeyAfterRemoteRemoval;
     if (rotate == null) return;
@@ -2528,13 +2509,6 @@ final class _GroupMessageSystemTransitionProcessor {
     // Do not rotate on a removal this device authored: the remover already
     // rotated locally (admin-removal path) and a voluntary leaver cannot.
     if (removalAuthorPeerId == selfPeerId) return;
-    // A leader who leaves rotates on the way out (it is still a member then);
-    // a second rotation here could fork the epoch. The owed-rotation sweeper
-    // remains the backstop if that rotation failed.
-    if (removedPeerWasRotationLeader && removalAuthorPeerId == removedPeerId) {
-      return;
-    }
-
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) return;
 
