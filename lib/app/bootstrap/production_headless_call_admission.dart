@@ -45,6 +45,8 @@ import 'package:flutter_app/features/settings/application/background_preference_
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
+import 'package:flutter_app/features/call/infrastructure/active_call_history_checkpoint.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -128,29 +130,51 @@ typedef HeadlessRingingReplySender =
 typedef HeadlessCallHistoryRecorder =
     Future<void> Function({
       required CallSignal terminal,
+      required String callHandle,
       required CallEndReason reason,
       CallSignal? invite,
     });
 
-/// Shares the production terminal-history writer with host composition fixtures.
-/// The secure store identifies the same durable owner as the database; this
-/// extraction leaves terminal projection behavior unchanged.
+/// Preserves an authenticated connected checkpoint before the ordinary
+/// headless terminal writer can create a never-connected history row.
 HeadlessCallHistoryRecorder createProductionHeadlessCallHistoryRecorder({
   required Database database,
   required SecureKeyStore secureKeyStore,
+  required IdentityModel localIdentity,
   required MissedCallNotifier notifier,
 }) {
   final repository = CallHistoryRepositoryImpl(database);
   final projector = CallHistoryProjector(repository);
-  return ({required terminal, required reason, invite}) =>
-      recordHeadlessTerminalCall(
-        repository: repository,
-        projector: projector,
-        notifier: notifier,
-        terminal: terminal,
-        reason: reason,
-        invite: invite,
-      );
+  final checkpoint = ActiveCallHistoryCheckpoint(
+    database: database,
+    secureKeyStore: secureKeyStore,
+    localIdentity: localIdentity,
+    readContext: (_) => null,
+    clock: () => DateTime.now().toUtc(),
+  );
+  return ({
+    required terminal,
+    required callHandle,
+    required reason,
+    invite,
+  }) async {
+    if (await checkpoint.settleConnectedTerminal(
+      callId: terminal.callId,
+      callHandle: callHandle,
+      remoteAccountPeerId: terminal.senderAccountPeerId,
+      remoteDevicePeerId: terminal.senderDevicePeerId,
+    )) {
+      return;
+    }
+    await recordHeadlessTerminalCall(
+      repository: repository,
+      projector: projector,
+      notifier: notifier,
+      terminal: terminal,
+      reason: reason,
+      invite: invite,
+    );
+  };
 }
 
 /// Evaluates one exact-handle mailbox page without dispatching coordinator
@@ -363,7 +387,11 @@ final class MailboxProductionHeadlessCallAdmissionSession
         await _acknowledgeEndedCall(invocation.callId, authenticatedMessageIds);
         // 406: no foreground owner will ever project this call, so the row has
         // to be written here or the chat shows nothing for it.
-        await _recordHistory(terminal: terminalSignal, invite: inviteSignal);
+        await _recordHistory(
+          terminal: terminalSignal,
+          callHandle: invocation.callId,
+          invite: inviteSignal,
+        );
         return HeadlessCallAdmissionDisposition.terminal;
       }
       // An unjudged row may be the terminate; never ring past it.
@@ -411,6 +439,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
   /// custody work and must not be undone by a history write that failed.
   Future<void> _recordHistory({
     required CallSignal? terminal,
+    required String callHandle,
     CallSignal? invite,
   }) async {
     final recorder = _historyRecorder;
@@ -418,6 +447,7 @@ final class MailboxProductionHeadlessCallAdmissionSession
     try {
       await recorder(
         terminal: terminal,
+        callHandle: callHandle,
         reason: terminal.event == CallSignalType.reject
             ? CallEndReason.declined
             : CallEndReason.callerCancelled,
@@ -935,6 +965,7 @@ final class AndroidProductionHeadlessCallAdmissionBackend
         createProductionHeadlessCallHistoryRecorder(
           database: database,
           secureKeyStore: _secureKeyStore,
+          localIdentity: identity,
           notifier: missedCallNotifier,
         );
 

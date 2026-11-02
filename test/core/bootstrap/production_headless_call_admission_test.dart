@@ -1343,6 +1343,7 @@ final class _HistoryRecorder {
 
   Future<void> record({
     required CallSignal terminal,
+    required String callHandle,
     required CallEndReason reason,
     CallSignal? invite,
   }) async {

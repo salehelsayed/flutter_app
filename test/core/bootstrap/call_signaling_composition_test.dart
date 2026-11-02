@@ -1239,6 +1239,7 @@ void main() {
           replayHeadless = () => _runKilledCallHeadlessTerminal(
             database: restoredDatabase,
             secureKeyStore: captured,
+            localIdentity: graph.localIdentity,
             missedCards: missedCards,
             afterAuthentication: revoked ? revokeAuthority : null,
           );
@@ -8348,6 +8349,7 @@ String _killedCallEnvelope(CallSignal signal, String handle) => jsonEncode({
 Future<void> _runKilledCallHeadlessTerminal({
   required Database database,
   required SecureKeyStore secureKeyStore,
+  required IdentityModel localIdentity,
   required List<String> missedCards,
   Future<void> Function()? afterAuthentication,
 }) async {
@@ -8408,6 +8410,7 @@ Future<void> _runKilledCallHeadlessTerminal({
     historyRecorder: createProductionHeadlessCallHistoryRecorder(
       database: database,
       secureKeyStore: secureKeyStore,
+      localIdentity: localIdentity,
       notifier: MissedCallNotifier(
         post:
             ({

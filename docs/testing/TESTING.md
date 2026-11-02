@@ -8313,18 +8313,29 @@ visible and cannot become an ordinary first-attempt PASS.
   Fresh device proof for this follow-up is pending. Evidence is under
   `.codex-test-logs/vc026-connected-20261101/` in the
   `vc026-connected-checkpoint-20261101` worktree.
-  **Later — headless-intake ordering:** source inspection for build 193's
+  **Headless-intake ordering:** source inspection for build 193's
   intermittent killed-caller “Missed voice call” found that an authenticated
   terminal-only headless page can first-write an incoming, never-connected
   history row before foreground checkpoint recovery. Insert-only projection
   then retains that row. The A4 database fields were not retained, so this is
-  a source-supported candidate for that device result. This follow-up is
-  deferred by coordinator decision `m-cfe472ec`; the current change is limited
-  to connected checkpoint refresh and connected-status precedence. The smallest
-  later option settles only the authenticated terminal's exact call-ID, handle,
-  account and device checkpoint before headless fallback, reusing transactional
-  authority checks. Revocation or I/O failure must not fall through into a new
-  incoming row; unrelated checkpoints and existing rows keep their protections.
+  a source-supported candidate for that device result. The earlier deferral
+  (`m-cfe472ec`) is superseded by authorized follow-up `m-322f86dd`. The real
+  SQLite process-loss composition fixture now reproduces the headless-first
+  ordering through the shared production recorder: the connected row was
+  cancelled instead of completed. Twelve focused headless cases pass after
+  the fix (baseline: three pass, nine fail). Only the authenticated terminal's
+  exact call-ID, handle, account and device connected checkpoint settles before
+  fallback, reusing transactional authority validation and insert-only history.
+  Revocation suppresses fallback; binding mismatches and storage uncertainty
+  retain checkpoint bytes and do not create a weaker row. Unrelated checkpoints
+  remain untouched, and ordinary never-connected cancelled/missed behavior is
+  preserved. Its authority check and fallback remain separate SQL operations;
+  the atomic authority-and-projection guarantee belongs to connected settlement.
+  The first connected row retains the 30-second last-observation duration, posts
+  no missed card, and survives foreground restart and terminal replay unchanged.
+  This is host evidence, not fresh device or signed-build verification. Evidence:
+  `.codex-test-logs/vc026-headless-history-20261102/` in the
+  `flutter_app-astra-vc026-headless-history-20261102` worktree.
   **VC-026 process-loss candidate:** owner-approved task `m-ea6ea1ed`, based
   on RCA SHA256 `66974a7ebb2156d7466a46d4877b0acb12f382a6d6f06cbb3175cc368b35b4de`,
   adds fresh-native-controller reconciliation for a persisted ADOPTED journal.

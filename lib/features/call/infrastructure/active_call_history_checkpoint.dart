@@ -145,6 +145,46 @@ final class ActiveCallHistoryCheckpoint {
     await _settle(record);
   });
 
+  /// Settles only this authenticated terminal's connected checkpoint. True
+  /// means history was handled or its authority was revoked; false permits the
+  /// ordinary never-connected history writer. Uncertainty never permits it.
+  Future<bool> settleConnectedTerminal({
+    required CallId callId,
+    required String callHandle,
+    required String remoteAccountPeerId,
+    required String remoteDevicePeerId,
+  }) => _mutate(() async {
+    final record = await _read();
+    if (record == null || record['call_id'] != callId.value) return false;
+    if (record['call_handle'] != callHandle ||
+        record['contact'] != remoteAccountPeerId ||
+        record['remote_device'] != remoteDevicePeerId) {
+      throw StateError('call checkpoint terminal binding changed');
+    }
+    if (!await _available()) {
+      throw StateError('call checkpoint authority schema unavailable');
+    }
+    if (record['connected_at'] != null) {
+      // Authority and completed-row projection stay in the same transaction.
+      await _settle(record);
+      return true;
+    }
+    // Preserve ordinary missed/cancelled history for an unconnected call.
+    // This check precedes that writer's separate transaction; it does not
+    // establish a new atomic authority-plus-fallback guarantee.
+    final authorized = await dbWriteTransaction(database, (tx) async {
+      final authority = await _authority(
+        tx,
+        remoteAccountPeerId,
+        remoteDevicePeerId,
+      );
+      return authority != null && _matchesAuthority(record, authority);
+    });
+    if (authorized) return false;
+    await _clear(callId.value);
+    return true;
+  });
+
   Future<void> clear(CallId callId) => _mutate(() => _clear(callId.value));
 
   Future<void> _clear(String callId) async {
