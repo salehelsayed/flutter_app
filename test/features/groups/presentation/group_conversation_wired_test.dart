@@ -2395,10 +2395,13 @@ void main() {
       expect(saved.single.stickerId, isNull);
     });
 
-    for (final leaveChat in <bool>[true, false]) {
+    for (final during in <String>[
+      'left',
+      'kept open',
+      'rebound to another group',
+    ]) {
       testWidgets('stickers v1: a protected group sticker counts once in the '
-          'tally when the chat is ${leaveChat ? 'left' : 'kept open'} '
-          'during upload', (tester) async {
+          'tally when the chat is $during during upload', (tester) async {
         final diagnosticsDir = await installStickerDiagnostics(tester);
         final uploadEntered = Completer<void>();
         final uploadRelease = Completer<void>();
@@ -2527,15 +2530,32 @@ void main() {
               },
         );
 
-        await tester.pumpWidget(
-          buildWidget(
-            group: group,
-            messageRepo: strictMessages,
-            mediaRepo: strictMedia,
-            mediaFileManager: _CopyingMediaFileManager(),
-            preparedGroupMediaBlobCustodyCoordinator: coordinator,
-          ),
+        Widget screenFor(GroupModel shown) => buildWidget(
+          group: shown,
+          messageRepo: strictMessages,
+          mediaRepo: strictMedia,
+          mediaFileManager: _CopyingMediaFileManager(),
+          preparedGroupMediaBlobCustodyCoordinator: coordinator,
         );
+        final otherGroup = makeChatGroup().copyWith(
+          id: 'group-2',
+          name: 'Second Group',
+          topicName: 'topic-2',
+        );
+        if (during == 'rebound to another group') {
+          await groupRepo.saveGroup(otherGroup);
+          await saveActiveGroupMembers(groupRepo, otherGroup);
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: otherGroup.id,
+              keyGeneration: 1,
+              encryptedKey: 'test-group-key-2',
+              createdAt: DateTime.now().toUtc(),
+            ),
+          );
+        }
+
+        await tester.pumpWidget(screenFor(group));
         await pumpFrames(tester, count: 20);
 
         await tester.tap(find.byIcon(Icons.add_rounded));
@@ -2567,7 +2587,23 @@ void main() {
           await tester.pump(const Duration(milliseconds: 10));
         }
         expect(uploadEntered.isCompleted, isTrue);
-        if (leaveChat) await tester.pumpWidget(const SizedBox.shrink());
+        switch (during) {
+          case 'left':
+            await tester.pumpWidget(const SizedBox.shrink());
+          case 'rebound to another group':
+            await tester.pumpWidget(screenFor(otherGroup));
+            await pumpUntil(
+              tester,
+              () =>
+                  tester
+                      .widget<GroupConversationScreen>(
+                        find.byType(GroupConversationScreen),
+                      )
+                      .group
+                      .id ==
+                  otherGroup.id,
+            );
+        }
         uploadRelease.complete();
         for (
           var i = 0;
@@ -2595,6 +2631,7 @@ void main() {
         expect(attachmentJson['mime'], 'image/webp');
         expect(attachmentJson['width'], 512);
         final manifest = ProtectedGroupMediaManifest.decode(manifestJson);
+        expect(manifest.groupId, group.id);
         expect(manifest.attachments.single.mime, 'image/webp');
         final saved = await strictMedia.getAttachmentsForMessage(
           manifest.messageId,
