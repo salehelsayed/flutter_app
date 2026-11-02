@@ -34,5 +34,6 @@ MediaAttachment applyGroupUploadCompletionAuthority({
     isBookmarked: expectedAttachment.isBookmarked,
     lastPlaybackPositionMs: expectedAttachment.lastPlaybackPositionMs,
     fileName: expectedAttachment.fileName,
+    stickerId: expectedAttachment.stickerId,
   );
 }

@@ -110,6 +110,10 @@ import 'package:flutter_app/features/groups/domain/utils/group_message_ordering.
 import 'package:flutter_app/features/groups/presentation/group_backlog_retention_notice.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_private_media_viewer.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_shared_media_library_screen.dart';
@@ -352,6 +356,9 @@ class GroupConversationWired extends StatefulWidget {
   /// 414 (D3): shows the attach sheet's "Document" (PDF) row. Defaults to the
   /// `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS` build define.
   final bool documentAttachmentsEnabled;
+
+  /// Told once per sticker message, after its optimistic row exists.
+  final StickerUsageRecorder stickerUsageRecorder;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final AudioRecorderService? audioRecorderService;
@@ -459,6 +466,7 @@ class GroupConversationWired extends StatefulWidget {
     this.imageProcessor,
     this.mediaPicker,
     this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
+    this.stickerUsageRecorder = const NoopStickerUsageRecorder(),
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
@@ -573,6 +581,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   Set<int> _sharedMediaAnchorReplayLoadGenerations = const <int>{};
   bool _initialLoadDone = false;
   bool _isSending = false;
+  bool _stickerPanelOpen = false;
   Set<String> _retryingFailedMessageIds = const {};
   String? _activeQuoteMessageId;
   String _draftText = '';
@@ -2511,6 +2520,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     required String messageId,
     required List<PendingComposerMedia> mediaToUpload,
     required List<String> attachmentIds,
+    String? stickerId,
   }) async {
     final mediaAttachmentRepo = lane.mediaAttachmentRepository;
     final mediaFileManager = lane.mediaFileManager;
@@ -2611,6 +2621,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           pending.file.path,
           mediaType: MediaAttachment.mediaTypeFromMime(mime),
         ),
+        stickerId: stickerId,
       );
       emitFlowEvent(
         layer: 'FL',
@@ -2823,6 +2834,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
         waveform: uploaded.waveform,
         contentHash: contentHash,
+        stickerId: plan.pendingAttachment.stickerId,
       );
     }
 
@@ -2845,6 +2857,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
         waveform: uploaded.waveform,
         contentHash: contentHash,
+        stickerId: plan.pendingAttachment.stickerId,
       );
     }
     if (absoluteOwnedPath != plan.absoluteDurablePath) {
@@ -2873,31 +2886,43 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       uploadRetryCount: plan.pendingAttachment.uploadRetryCount,
       waveform: uploaded.waveform,
       contentHash: contentHash,
+      stickerId: plan.pendingAttachment.stickerId,
     );
   }
 
-  Future<void> _onSend(String text) async {
+  /// Sends the composer's draft, or, with [sticker], that one sticker as an
+  /// ordinary image with no text and no quote, leaving the composer's own
+  /// draft, quote and staged media untouched.
+  Future<void> _onSend(
+    String text, {
+    ({String id, PendingComposerMedia media})? sticker,
+  }) async {
     if (!_canWrite) return;
     if (!await _refreshSendCapabilityAndCanWrite()) return;
     if (!_hasCompleteSenderIdentity) return;
     final sendLane = _captureSendLane();
     final sendGroupId = sendLane.groupId;
 
-    final mediaToUpload = List<PendingComposerMedia>.from(
-      _composerController.pendingAttachments,
-    );
+    final mediaToUpload = sticker != null
+        ? [sticker.media]
+        : List<PendingComposerMedia>.from(
+            _composerController.pendingAttachments,
+          );
     final hasAttachments = mediaToUpload.isNotEmpty;
+    if (sticker != null) text = '';
     if (text.isEmpty && !hasAttachments) return;
     final draftText = text;
-    final quotedMessageId = _activeQuoteMessageId;
+    final quotedMessageId = sticker != null ? null : _activeQuoteMessageId;
     const privateMediaPolicy = GroupPrivateMediaPolicy.ordinary();
     const privateKeyGeneration = 0;
-    final restoredResolution = await _resolveRestoredMediaContinuationForSend(
-      lane: sendLane,
-      draftText: draftText,
-      quotedMessageId: quotedMessageId,
-      pendingAttachments: mediaToUpload,
-    );
+    final restoredResolution = sticker != null
+        ? (handled: false, continuation: null)
+        : await _resolveRestoredMediaContinuationForSend(
+            lane: sendLane,
+            draftText: draftText,
+            quotedMessageId: quotedMessageId,
+            pendingAttachments: mediaToUpload,
+          );
     if (!_isCurrentSendLane(sendLane)) return;
     if (restoredResolution.handled) return;
     if (!_validatePendingGroupMediaDescriptors(mediaToUpload)) {
@@ -2939,8 +2964,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       _clearRestoredMediaContinuationTracking();
     }
     final composerSnapshot = _composerController.snapshot(
-      draftText: draftText,
-      quotedMessageId: quotedMessageId,
+      draftText: sticker != null ? _draftText : draftText,
+      quotedMessageId: sticker != null
+          ? _activeQuoteMessageId
+          : quotedMessageId,
     );
 
     // 1. Generate IDs upfront for optimistic display
@@ -2973,6 +3000,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             m.file.path,
             mediaType: MediaAttachment.mediaTypeFromMime(mime),
           ),
+          stickerId: sticker?.id,
         );
       }).toList();
       uploadLease = mediaUploadInFlightTracker.tryClaimAll(
@@ -2985,13 +3013,15 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
     }
 
-    _draftText = '';
-    _updateComposerState(
-      pendingAttachments: const <PendingComposerMedia>[],
-      isUploading: mediaToUpload.isNotEmpty,
-    );
-    if (_activeQuoteMessageId != null && mounted) {
-      setState(() => _activeQuoteMessageId = null);
+    if (sticker == null) {
+      _draftText = '';
+      _updateComposerState(
+        pendingAttachments: const <PendingComposerMedia>[],
+        isUploading: mediaToUpload.isNotEmpty,
+      );
+      if (_activeQuoteMessageId != null && mounted) {
+        setState(() => _activeQuoteMessageId = null);
+      }
     }
 
     // 3. Create optimistic message and display immediately
@@ -3027,6 +3057,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
       });
       optimisticDisplayed = true;
+      if (sticker != null) _recordStickerSent(sticker.id);
       _scrollToLiveEdge();
     }
 
@@ -3172,6 +3203,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 attachmentIds: optimisticMedia!
                     .map((attachment) => attachment.id)
                     .toList(growable: false),
+                stickerId: sticker?.id,
               );
               if (!_canContinueSendOperation(
                 sendLane,
@@ -4756,6 +4788,39 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // Attachment picker
   // -------------------------------------------------------------------------
 
+  void _openStickerPanel() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _stickerPanelOpen = true);
+  }
+
+  void _closeStickerPanel() {
+    if (_stickerPanelOpen) setState(() => _stickerPanelOpen = false);
+  }
+
+  Future<void> _sendSticker(StickerEntry sticker) async {
+    final PendingComposerMedia media;
+    try {
+      media = await prepareStickerMedia(sticker);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_CONV_FL_STICKER_PREPARE_ERROR',
+        details: {'errorType': e.runtimeType.toString()},
+      );
+      return;
+    }
+    if (!mounted) return;
+    await _onSend('', sticker: (id: sticker.id, media: media));
+  }
+
+  void _recordStickerSent(String stickerId) {
+    unawaited(
+      Future<void>.sync(
+        () => widget.stickerUsageRecorder.recordSent(stickerId),
+      ).catchError((Object _) {}),
+    );
+  }
+
   void _onAttach() {
     if (!_canWrite) return;
     final readableColors = context.backgroundReadableColors;
@@ -4816,6 +4881,21 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 onTap: () {
                   Navigator.pop(ctx);
                   _pickVideoFromCamera();
+                },
+              ),
+              ListTile(
+                key: const ValueKey('group-attach-stickers-action'),
+                leading: Icon(
+                  Icons.emoji_emotions_outlined,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  AppLocalizations.of(context)!.stickers_title,
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openStickerPanel();
                 },
               ),
               if (widget.documentAttachmentsEnabled)
@@ -6067,6 +6147,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       quoted: quoted,
       quotedMedia: quotedMedia,
       privatePlaceholder: AppLocalizations.of(context)!.media_unavailable,
+      stickerLabel: AppLocalizations.of(context)!.sticker_preview,
     );
   }
 
@@ -8478,6 +8559,10 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             composerStateListenable: _composerController,
             onRemoveAttachment: _canWrite ? _removeAttachment : null,
             onAttach: _canWrite ? _onAttach : null,
+            stickerPanel: _stickerPanelOpen && _canWrite
+                ? BundledStickerPanel(onSend: _sendSticker)
+                : null,
+            onComposerTextTap: _closeStickerPanel,
             onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
                 ? _onRecordStart
                 : null,

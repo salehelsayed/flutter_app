@@ -1,10 +1,16 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
+import 'package:flutter_app/features/stickers/data/sticker_recents_store.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_selection.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+/// The panel's height on a tall screen; it takes at most 40% of a short one.
 const double kStickerPanelHeight = 300;
 
 /// The sticker picker that takes the keyboard's place under the composer.
@@ -76,7 +82,10 @@ class _StickerPanelState extends State<StickerPanel> {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: kStickerPanelHeight,
+          height: math.min(
+            kStickerPanelHeight,
+            MediaQuery.sizeOf(context).height * 0.4,
+          ),
           child: Column(
             children: [
               _buildTabs(l10n, colors),
@@ -287,6 +296,54 @@ class _StickerImage extends StatelessWidget {
       fit: BoxFit.contain,
       cacheWidth: 256,
       errorBuilder: (_, _, _) => const SizedBox.shrink(),
+    );
+  }
+}
+
+/// [StickerPanel] over the bundled catalog and this phone's Recent list.
+/// Tapping a sticker moves it to the front of Recent, then calls [onSend].
+class BundledStickerPanel extends StatefulWidget {
+  const BundledStickerPanel({super.key, required this.onSend, this.recents});
+
+  final ValueChanged<StickerEntry> onSend;
+  final StickerRecentsStore? recents;
+
+  @override
+  State<BundledStickerPanel> createState() => _BundledStickerPanelState();
+}
+
+class _BundledStickerPanelState extends State<BundledStickerPanel> {
+  late final StickerRecentsStore _recents =
+      widget.recents ?? StickerRecentsStore.shared;
+  late final Future<(StickerCatalog, List<String>)> _loaded = (
+    loadBundledStickerCatalog(),
+    _recents.load(),
+  ).wait;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<(StickerCatalog, List<String>)>(
+      future: _loaded,
+      builder: (context, snapshot) {
+        final data = snapshot.data;
+        if (data == null) {
+          return SizedBox(
+            height: kStickerPanelHeight,
+            child: ColoredBox(
+              color: context.backgroundReadableColors.surfaceBase,
+            ),
+          );
+        }
+        final (catalog, recentIds) = data;
+        return StickerPanel(
+          catalog: catalog,
+          recentIds: recentIds,
+          onSend: (sticker) {
+            unawaited(_recents.recordSent(sticker.id));
+            widget.onSend(sticker);
+          },
+        );
+      },
     );
   }
 }

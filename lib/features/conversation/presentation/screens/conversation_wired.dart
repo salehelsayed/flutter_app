@@ -150,6 +150,10 @@ import 'package:flutter_app/features/translate_preview/private_translator_sheet.
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
 import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'conversation_screen.dart';
 import 'direct_shared_media_library_screen.dart';
 import 'direct_private_media_viewer.dart';
@@ -495,6 +499,9 @@ class ConversationWired extends StatefulWidget {
   /// 414 (D3): shows the attach sheet's "Document" (PDF) row. Defaults to the
   /// `MKNOON_ENABLE_DOCUMENT_ATTACHMENTS` build define.
   final bool documentAttachmentsEnabled;
+
+  /// Told once per sticker message, after its optimistic row exists.
+  final StickerUsageRecorder stickerUsageRecorder;
   final ImageQualityPreference qualityPreference;
   final ImageQualityPreference videoQualityPreference;
   final int maxAttachmentBudgetBytes;
@@ -639,6 +646,7 @@ class ConversationWired extends StatefulWidget {
     this.imageProcessor,
     this.mediaPicker,
     this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
+    this.stickerUsageRecorder = const NoopStickerUsageRecorder(),
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
@@ -743,6 +751,7 @@ class _ConversationWiredState extends State<ConversationWired>
   StreamSubscription<String>? _thoughtChanges;
   Timer? _thoughtExpiryTimer;
   bool _isSending = false;
+  bool _stickerPanelOpen = false;
 
   final _composerController = ConversationComposerController();
   late final ConversationUploadActivityController<_DirectComposerSnapshot>
@@ -3746,7 +3755,15 @@ class _ConversationWiredState extends State<ConversationWired>
       );
     }
     if (quoted.text.isNotEmpty) return (quoted.text, false);
-    if (quoted.media.isNotEmpty) return (mediaPreviewText(quoted.media), false);
+    if (quoted.media.isNotEmpty) {
+      return (
+        mediaPreviewText(
+          quoted.media,
+          stickerLabel: AppLocalizations.of(context)!.sticker_preview,
+        ),
+        false,
+      );
+    }
     return (null, true);
   }
 
@@ -3775,7 +3792,13 @@ class _ConversationWiredState extends State<ConversationWired>
         );
   }
 
-  Future<void> _onSend(String text) async {
+  /// Sends the composer's draft, or, with [sticker], that one sticker as an
+  /// ordinary image with no text, no quote and no private policy, leaving the
+  /// composer's own draft, quote and staged media untouched.
+  Future<void> _onSend(
+    String text, {
+    ({String id, PendingComposerMedia media})? sticker,
+  }) async {
     final identity = _identity;
     if (identity == null) return;
     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -3783,25 +3806,29 @@ class _ConversationWiredState extends State<ConversationWired>
     // this State may already be unmounted.
     final l10n = AppLocalizations.of(context)!;
 
-    final hasAttachments = _composerController.pendingAttachments.isNotEmpty;
-    final sanitizedText = sanitizeMessageText(text);
+    final hasAttachments =
+        sticker != null || _composerController.pendingAttachments.isNotEmpty;
+    final sanitizedText = sticker != null ? '' : sanitizeMessageText(text);
     final submittedDraftText = _draftText;
-    final editingMessage = _editingMessageId == null
+    final editingMessage = sticker != null || _editingMessageId == null
         ? null
         : _messages.where((m) => m.id == _editingMessageId).firstOrNull;
     if (sanitizedText.isEmpty && !hasAttachments) return;
     if (_isSending) return;
 
-    final privateMediaPolicy = _privateMediaPolicy;
+    final privateMediaPolicy = sticker != null
+        ? const PrivateMediaPolicy.ordinary()
+        : _privateMediaPolicy;
     final privateEligibility = _currentPrivateMediaEligibility(
       draftText: sanitizedText,
     );
-    if (_privateMediaPolicyInvalidated ||
-        (privateMediaPolicy.isPrivate &&
-            !isPrivateMediaComposerPolicyEligible(
-              selectedPolicy: privateMediaPolicy,
-              eligibility: privateEligibility,
-            ))) {
+    if (sticker == null &&
+        (_privateMediaPolicyInvalidated ||
+            (privateMediaPolicy.isPrivate &&
+                !isPrivateMediaComposerPolicyEligible(
+                  selectedPolicy: privateMediaPolicy,
+                  eligibility: privateEligibility,
+                )))) {
       // 362: this gate is the ONLY thing standing between a multi-attachment
       // Protected/View-Once send and persistence — `allowsNewPrivateMedia`
       // requires exactly one attachment, and `_currentPrivateMediaEligibility`
@@ -3830,6 +3857,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
 
     if (editingMessage == null &&
+        sticker == null &&
         _shouldRetryRestoredFailedDraft(
           sanitizedText: sanitizedText,
           hasAttachments: hasAttachments,
@@ -3902,7 +3930,9 @@ class _ConversationWiredState extends State<ConversationWired>
     // intact (no optimistic message, no upload).
     if (hasAttachments) {
       final rejections = _validatePendingMediaSizes(
-        _composerController.pendingAttachments,
+        sticker != null
+            ? [sticker.media]
+            : _composerController.pendingAttachments,
       );
       if (rejections.isNotEmpty) {
         for (final rejection in rejections) {
@@ -3947,9 +3977,11 @@ class _ConversationWiredState extends State<ConversationWired>
       // down because this boundary awaits: `_attemptAddPendingMedia` publishes
       // without an `_isSending` guard, so a second attachment could otherwise
       // land during the await and invalidate the shape we just validated.
-      final mediaToUpload = List<PendingComposerMedia>.from(
-        _composerController.pendingAttachments,
-      );
+      final mediaToUpload = sticker != null
+          ? [sticker.media]
+          : List<PendingComposerMedia>.from(
+              _composerController.pendingAttachments,
+            );
       DirectMediaFanoutAdmission? mediaAdmission;
       if (mediaToUpload.isNotEmpty) {
         // Text-only sends are NOT admitted here: their route is already
@@ -4008,11 +4040,13 @@ class _ConversationWiredState extends State<ConversationWired>
       }
 
       final draftText = sanitizedText;
-      final quotedMessageId = _activeQuoteMessageId;
+      final quotedMessageId = sticker != null ? null : _activeQuoteMessageId;
       final composerSnapshot = _DirectComposerSnapshot(
         common: _composerController.snapshot(
-          draftText: draftText,
-          quotedMessageId: quotedMessageId,
+          draftText: sticker != null ? _draftText : draftText,
+          quotedMessageId: sticker != null
+              ? _activeQuoteMessageId
+              : quotedMessageId,
         ),
         privateMediaPolicy: privateMediaPolicy,
       );
@@ -4044,6 +4078,7 @@ class _ConversationWiredState extends State<ConversationWired>
               m.file.path,
               mediaType: MediaAttachment.mediaTypeFromMime(mime),
             ),
+            stickerId: sticker?.id,
           );
         }).toList();
         // 127-Bug-B: own these blobs from the EARLIEST point — BEFORE durable
@@ -4142,20 +4177,22 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
       }
-      if (_activeQuoteMessageId == quotedMessageId &&
-          quotedMessageId != null &&
-          mounted) {
-        setState(() => _activeQuoteMessageId = null);
+      if (sticker == null) {
+        if (_activeQuoteMessageId == quotedMessageId &&
+            quotedMessageId != null &&
+            mounted) {
+          setState(() => _activeQuoteMessageId = null);
+        }
+        if (_draftText == submittedDraftText &&
+            sanitizeMessageText(_draftText.trim()) == sanitizedText) {
+          _draftText = '';
+        }
+        _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
+        _updateComposerState(
+          pendingAttachments: const [],
+          isUploading: mediaToUpload.isNotEmpty,
+        );
       }
-      if (_draftText == submittedDraftText &&
-          sanitizeMessageText(_draftText.trim()) == sanitizedText) {
-        _draftText = '';
-      }
-      _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
-      _updateComposerState(
-        pendingAttachments: const [],
-        isUploading: mediaToUpload.isNotEmpty,
-      );
 
       if (mounted) {
         setState(() {
@@ -4229,6 +4266,8 @@ class _ConversationWiredState extends State<ConversationWired>
           return;
         }
       }
+
+      if (sticker != null) _recordStickerSent(sticker.id);
 
       if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
         try {
@@ -5822,6 +5861,21 @@ class _ConversationWiredState extends State<ConversationWired>
                   _pickVideoFromCamera();
                 },
               ),
+              ListTile(
+                key: const ValueKey('conversation-attach-stickers-action'),
+                leading: Icon(
+                  Icons.emoji_emotions_outlined,
+                  color: sheetColors.iconPrimary,
+                ),
+                title: Text(
+                  AppLocalizations.of(context)!.stickers_title,
+                  style: TextStyle(color: sheetColors.textPrimary),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openStickerPanel();
+                },
+              ),
               if (widget.documentAttachmentsEnabled)
                 ListTile(
                   key: ConversationWired.attachSheetDocumentKey,
@@ -5857,6 +5911,39 @@ class _ConversationWiredState extends State<ConversationWired>
           ),
         );
       },
+    );
+  }
+
+  void _openStickerPanel() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _stickerPanelOpen = true);
+  }
+
+  void _closeStickerPanel() {
+    if (_stickerPanelOpen) setState(() => _stickerPanelOpen = false);
+  }
+
+  Future<void> _sendSticker(StickerEntry sticker) async {
+    final PendingComposerMedia media;
+    try {
+      media = await prepareStickerMedia(sticker);
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_STICKER_PREPARE_ERROR',
+        details: {'errorType': e.runtimeType.toString()},
+      );
+      return;
+    }
+    if (!mounted) return;
+    await _onSend('', sticker: (id: sticker.id, media: media));
+  }
+
+  void _recordStickerSent(String stickerId) {
+    unawaited(
+      Future<void>.sync(
+        () => widget.stickerUsageRecorder.recordSent(stickerId),
+      ).catchError((Object _) {}),
     );
   }
 
@@ -9148,6 +9235,10 @@ class _ConversationWiredState extends State<ConversationWired>
           isSending: _isSending,
           recordingState: _composerController.value.recordingState,
           onAttach: _onAttach,
+          stickerPanel: _stickerPanelOpen
+              ? BundledStickerPanel(onSend: _sendSticker)
+              : null,
+          onComposerTextTap: _closeStickerPanel,
           onRemoveAttachment: _removeAttachment,
           onRecordStart: widget.audioRecorderService != null
               ? _onRecordStart

@@ -5,9 +5,13 @@ import 'media_display_helpers.dart';
 /// Returns a human-readable summary for a list of media attachments.
 ///
 /// Examples: "Photo", "3 photos", "Video", "Audio \u00B7 0:24",
-/// "2 photos \u00B7 Video" (mixed types).
-String mediaPreviewText(List<MediaAttachment> media) {
+/// "2 photos \u00B7 Video" (mixed types). A sticker reads as [stickerLabel].
+String mediaPreviewText(
+  List<MediaAttachment> media, {
+  String stickerLabel = 'Sticker',
+}) {
   if (media.isEmpty) return '';
+  if (media.length == 1 && media.single.stickerId != null) return stickerLabel;
 
   final gifCount = media.where((a) => a.isAnimated).length;
   final imageCount = media

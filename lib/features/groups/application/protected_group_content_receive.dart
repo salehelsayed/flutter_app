@@ -668,6 +668,7 @@ _buildIncomingProtectedGroupMediaProjection({
       groupMediaBlobCustodyFingerprint: custodyFingerprint,
       ownerLane: MediaOwnerLane.group,
       fileName: commitment.fileName,
+      stickerId: commitment.stickerId,
     );
     attachmentRows.add(attachment.toMap());
     custodyRows.add(

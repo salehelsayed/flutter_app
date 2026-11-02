@@ -50,12 +50,15 @@ import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
   required GroupMessage quoted,
   required List<MediaAttachment> quotedMedia,
   required String privatePlaceholder,
+  String stickerLabel = 'Sticker',
 }) {
   if (quoted.privateMediaPolicy.requiresRedaction) {
     return (privatePlaceholder, false);
   }
   if (quoted.text.isNotEmpty) return (quoted.text, false);
-  if (quotedMedia.isNotEmpty) return (mediaPreviewText(quotedMedia), false);
+  if (quotedMedia.isNotEmpty) {
+    return (mediaPreviewText(quotedMedia, stickerLabel: stickerLabel), false);
+  }
   return (null, true);
 }
 
@@ -95,6 +98,12 @@ class GroupConversationScreen extends StatelessWidget {
   final int processingTotal;
   final ValueChanged<int>? onRemoveAttachment;
   final VoidCallback? onAttach;
+
+  /// Shown under the composer in place of the keyboard while open.
+  final Widget? stickerPanel;
+
+  /// Called when the composer's text field is tapped.
+  final VoidCallback? onComposerTextTap;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
@@ -192,6 +201,8 @@ class GroupConversationScreen extends StatelessWidget {
     this.processingTotal = 0,
     this.onRemoveAttachment,
     this.onAttach,
+    this.stickerPanel,
+    this.onComposerTextTap,
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
@@ -368,7 +379,9 @@ class GroupConversationScreen extends StatelessWidget {
                 quotedText: activeQuoteText,
                 isQuoteUnavailable: isActiveQuoteUnavailable,
                 onClearQuote: onClearQuote,
+                onTextFieldTap: onComposerTextTap,
               ),
+              ?stickerPanel,
             ],
           ),
       ],
@@ -727,6 +740,7 @@ class GroupConversationScreen extends StatelessWidget {
           message,
           messagesById,
           privatePlaceholder: AppLocalizations.of(context)!.media_unavailable,
+          stickerLabel: AppLocalizations.of(context)!.sticker_preview,
         );
         final quotedText = redactsPrivateMedia ? null : resolvedQuotedText;
         final isQuoteUnavailable =
@@ -1263,6 +1277,7 @@ class GroupConversationScreen extends StatelessWidget {
     GroupMessage message,
     Map<String, GroupMessage> messagesById, {
     required String privatePlaceholder,
+    required String stickerLabel,
   }) {
     final quotedMessageId = message.quotedMessageId;
     if (quotedMessageId == null || quotedMessageId.isEmpty) {
@@ -1279,6 +1294,7 @@ class GroupConversationScreen extends StatelessWidget {
       quoted: quoted,
       quotedMedia: quotedMedia,
       privatePlaceholder: privatePlaceholder,
+      stickerLabel: stickerLabel,
     );
   }
 

@@ -304,6 +304,12 @@ class ConversationScreen extends StatefulWidget {
   // [isLoadingMore], which is the older-pagination (scroll-up) spinner.
   final bool isSyncingNewMessages;
   final VoidCallback? onAttach;
+
+  /// Shown under the composer in place of the keyboard while open.
+  final Widget? stickerPanel;
+
+  /// Called when the composer's text field is tapped.
+  final VoidCallback? onComposerTextTap;
   final List<File> pendingAttachments;
   final bool isUploading;
   final ValueChanged<int>? onRemoveAttachment;
@@ -425,6 +431,8 @@ class ConversationScreen extends StatefulWidget {
     this.initialLoadDone = false,
     this.isSyncingNewMessages = false,
     this.onAttach,
+    this.stickerPanel,
+    this.onComposerTextTap,
     this.pendingAttachments = const [],
     this.isUploading = false,
     this.onRemoveAttachment,
@@ -1032,7 +1040,9 @@ class _ConversationScreenState extends State<ConversationScreen>
           privateMediaPolicy: composerState.privateMediaPolicy,
           privateMediaRecipientName: widget.contactUsername,
           onPrivateMediaPolicyChanged: widget.onPrivateMediaPolicyChanged,
+          onTextFieldTap: widget.onComposerTextTap,
         ),
+        ?widget.stickerPanel,
       ],
     );
   }
@@ -1266,7 +1276,10 @@ class _ConversationScreenState extends State<ConversationScreen>
                 } else if (quoted.text.isNotEmpty) {
                   quotedText = quoted.text;
                 } else if (quoted.media.isNotEmpty) {
-                  quotedText = mediaPreviewText(quoted.media);
+                  quotedText = mediaPreviewText(
+                    quoted.media,
+                    stickerLabel: l10n.sticker_preview,
+                  );
                 }
               } else {
                 isQuoteUnavailable = true;

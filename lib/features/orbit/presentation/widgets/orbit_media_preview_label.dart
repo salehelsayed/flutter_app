@@ -37,6 +37,7 @@ String orbitMediaPreviewLabel({
 
   if (media == null || media.count == 0) return '';
   if (media.isMixed) return l10n.orbit_preview_attachment(media.count);
+  if (media.isSticker) return l10n.sticker_preview;
 
   switch (media.type) {
     case 'image':

@@ -76,6 +76,9 @@ class ComposeArea extends StatefulWidget {
   final TextEditingController? controller;
   final FocusNode? focusNode;
 
+  /// Called when the text field is tapped, e.g. to close the sticker panel.
+  final VoidCallback? onTextFieldTap;
+
   /// Replaces the chat hint, as the Thought card's "Reply to `name`" does.
   final String? hintText;
 
@@ -119,6 +122,7 @@ class ComposeArea extends StatefulWidget {
     this.compact = false,
     this.controller,
     this.focusNode,
+    this.onTextFieldTap,
     this.hintText,
     this.showAttachButton = true,
   });
@@ -714,6 +718,7 @@ class _ComposeAreaState extends State<ComposeArea>
                                 child: TextField(
                                   controller: _controller,
                                   focusNode: _focusNode,
+                                  onTap: widget.onTextFieldTap,
                                   textDirection: _inputDirection,
                                   maxLines: null,
                                   maxLength: maxMessageLength,

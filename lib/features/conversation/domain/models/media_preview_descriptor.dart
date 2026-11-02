@@ -22,11 +22,15 @@ class MediaPreviewDescriptor {
   /// True when the message's attachments span more than one logical type.
   final bool isMixed;
 
+  /// True for a single sticker image, which previews as "Sticker".
+  final bool isSticker;
+
   const MediaPreviewDescriptor({
     required this.type,
     required this.count,
     this.isGif = false,
     this.isMixed = false,
+    this.isSticker = false,
   });
 
   /// Builds a descriptor from a message's attachments, or null when there are
@@ -48,6 +52,7 @@ class MediaPreviewDescriptor {
       type: firstType,
       count: media.length,
       isGif: isGif,
+      isSticker: media.length == 1 && media.single.stickerId != null,
     );
   }
 }

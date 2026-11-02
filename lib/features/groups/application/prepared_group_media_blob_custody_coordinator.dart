@@ -904,6 +904,7 @@ final class PreparedGroupMediaBlobCustodyCoordinator {
           durationMs: attachment.durationMs,
           waveform: attachment.waveform,
           fileName: attachment.fileName,
+          stickerId: attachment.stickerId,
           encryptionKeyBase64: attachment.encryptionKeyBase64!,
           encryptionNonce: attachment.encryptionNonce!,
           encryptionScheme: attachment.encryptionScheme!,

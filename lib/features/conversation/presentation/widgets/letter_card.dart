@@ -10,6 +10,8 @@ import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
+import 'package:flutter_app/features/stickers/presentation/sticker_labels.dart';
 
 /// Fully-rounded outer corner radius for a bubble (136 Phase 2).
 const double kBubbleRadius = 18.0;
@@ -38,6 +40,9 @@ const double _kBubbleAvatarGutterTopInset = 2.0; // nudge avatar toward the name
 /// group consecutive same-sender messages into a single run (136). All
 /// bubble-layout params are OPTIONAL with defaults that preserve the legacy
 /// full-width card, so existing call sites (incl. Feed wrappers) are untouched.
+/// A sticker message is this many logical pixels wide, with no bubble.
+const double kStickerMessageWidth = 160;
+
 class LetterCard extends StatelessWidget {
   final String senderPeerId;
   final String senderName;
@@ -202,6 +207,18 @@ class LetterCard extends StatelessWidget {
       .toList();
   List<MediaAttachment> get _audioMedia =>
       media.where((a) => a.mediaType == 'audio').toList();
+
+  /// A sticker message: one sticker image, no text. It draws without a bubble.
+  MediaAttachment? get _sticker {
+    if (media.length != 1 || text.isNotEmpty || isDeleted) return null;
+    final attachment = media.single;
+    return attachment.stickerId != null &&
+            attachment.mediaType == 'image' &&
+            privateContentSlot == null
+        ? attachment
+        : null;
+  }
+
   // 414: documents (PDF) and any other `file` attachment.
   List<MediaAttachment> get _documentMedia =>
       media.where((a) => a.mediaType == 'file').toList();
@@ -463,8 +480,13 @@ class LetterCard extends StatelessWidget {
           child: _buildQuoteBar(readableColors),
         ),
       ?privateContentSlot,
+      if (_sticker case final sticker?)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+          child: _buildSticker(l10n, sticker),
+        )
       // Media grid (images/videos)
-      if (privateContentSlot == null && _imageVideoMedia.isNotEmpty)
+      else if (privateContentSlot == null && _imageVideoMedia.isNotEmpty)
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
           child: MediaGrid(
@@ -822,13 +844,15 @@ class LetterCard extends StatelessWidget {
       borderRadius: radius,
       child: Container(
         key: decoratedBodyKey,
-        decoration: BoxDecoration(
-          borderRadius: radius,
-          color: isIncoming
-              ? readableColors.surfaceRaised
-              : readableColors.surfaceSubtle,
-          border: Border.all(color: readableColors.border),
-        ),
+        decoration: _sticker != null
+            ? null
+            : BoxDecoration(
+                borderRadius: radius,
+                color: isIncoming
+                    ? readableColors.surfaceRaised
+                    : readableColors.surfaceSubtle,
+                border: Border.all(color: readableColors.border),
+              ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -960,6 +984,36 @@ class LetterCard extends StatelessWidget {
       onLongPress: onLongPress,
       behavior: HitTestBehavior.opaque,
       child: aligned,
+    );
+  }
+
+  Widget _buildSticker(AppLocalizations l10n, MediaAttachment sticker) {
+    final width = sticker.width ?? 0;
+    final height = sticker.height ?? 0;
+    return SizedBox(
+      width: kStickerMessageWidth,
+      height: width > 0 && height > 0
+          ? kStickerMessageWidth * height / width
+          : kStickerMessageWidth,
+      child: Semantics(
+        image: true,
+        label: stickerSemanticsLabel(l10n, sticker.stickerId!),
+        excludeSemantics: true,
+        child: MediaGridCell(
+          attachment: sticker,
+          borderRadius: 0,
+          fit: BoxFit.contain,
+          cacheWidth: 480,
+          onLongPress: onMediaLongPress != null
+              ? () => onMediaLongPress!(0)
+              : null,
+          onRetryUnavailableMedia: onRetryUnavailableMedia != null
+              ? () => onRetryUnavailableMedia!(sticker.id)
+              : null,
+          requireVerifiedContentHash: requireVerifiedContentHash,
+          ownedMediaPeerId: ownedMediaPeerId,
+        ),
+      ),
     );
   }
 

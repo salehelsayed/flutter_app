@@ -134,6 +134,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
     List<double>? waveform,
     String? caption,
     String? fileName,
+    this.stickerId,
     required Iterable<GroupMediaBlobTargetCommitment> targets,
   }) : attachmentId = _canonicalString(attachmentId, 'attachmentId'),
        custodyBlobId = _canonicalString(custodyBlobId, 'custodyBlobId'),
@@ -194,6 +195,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
         'encryptionNonce',
         'caption',
         'fileName',
+        'sticker',
         'expiresAtMs',
       },
       required: const <String>{
@@ -247,6 +249,10 @@ final class ProtectedGroupMediaAttachmentCommitment {
       encryptionNonce: map['encryptionNonce'] as String,
       caption: map['caption'] as String?,
       fileName: map['fileName'] as String?,
+      stickerId: switch (map['sticker']) {
+        {'id': final String id} => id,
+        _ => null,
+      },
       targets: List<GroupMediaBlobTargetCommitment>.generate(
         recipientPeerIds.length,
         (index) => GroupMediaBlobTargetCommitment(
@@ -278,6 +284,9 @@ final class ProtectedGroupMediaAttachmentCommitment {
   /// 414: display name of a document attachment. Sent only for documents, so
   /// image/video/audio manifests keep the exact pre-414 key set.
   final String? fileName;
+
+  /// Stickers v1: the pack-list id, carried as `"sticker": {"id": ...}`.
+  final String? stickerId;
   final List<GroupMediaBlobTargetCommitment> targets;
 
   Set<String> get recipientPeerIds =>
@@ -306,6 +315,7 @@ final class ProtectedGroupMediaAttachmentCommitment {
     'encryptionNonce': encryptionNonce,
     if (caption != null) 'caption': caption,
     if (fileName != null) 'fileName': fileName,
+    if (stickerId != null) 'sticker': {'id': stickerId},
     'expiresAtMs': targets.map((target) => target.expiresAtMs).toList(),
   };
 }
