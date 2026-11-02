@@ -517,6 +517,43 @@ void main() {
     await finish(tester);
   });
 
+  for (final (how, hide) in <(String, void Function(WidgetTester))>[
+    (
+      'the keyboard inset drops',
+      (t) => t.view.viewInsets = FakeViewPadding.zero,
+    ),
+    (
+      'the field loses focus',
+      (t) => FocusManager.instance.primaryFocus?.unfocus(),
+    ),
+  ]) {
+    testWidgets('a system Back in the same frame as $how closes only the '
+        'composer: 3D stays and the draft is kept', (tester) async {
+      await mount(tester);
+      await enter(tester);
+      await tap(tester, replyButton);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await rest(tester);
+      await tester.enterText(composerField, 'half a thought');
+      await tester.pump();
+      hide(tester);
+      await tester.binding.handlePopRoute();
+      await rest(tester);
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await rest(tester);
+      expect(composer, findsNothing);
+      expect(find.byKey(const ValueKey('orbit-depth-stage')), findsOneWidget);
+      expect(bar(0), findsOneWidget);
+      await tap(tester, replyButton);
+      expect(
+        tester.widget<TextField>(composerField).controller!.text,
+        'half a thought',
+      );
+      tester.view.resetViewInsets();
+      await finish(tester);
+    });
+  }
+
   testWidgets('the avatar tap still opens the chat', (tester) async {
     await mount(tester);
     await enter(tester);
