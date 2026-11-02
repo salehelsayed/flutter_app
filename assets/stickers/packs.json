@@ -1,0 +1,1175 @@
+{
+  "version": 1,
+  "reservedIds": [
+    "custom",
+    "unknown"
+  ],
+  "packs": [
+    {
+      "id": "orbit_crew",
+      "order": 1,
+      "status": "ship",
+      "statusNote": "",
+      "groups": [
+        {
+          "id": "planet",
+          "order": 1,
+          "stickers": [
+            {
+              "id": "orbit_crew.planet.angry",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/planet/angry.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.crying",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/planet/crying.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.goodnight",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/planet/goodnight.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.hello",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/planet/hello.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.laughing",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/planet/laughing.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.love",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/planet/love.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.party",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/planet/party.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.shocked",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/planet/shocked.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.sideeye",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/planet/sideeye.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.thinking",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/planet/thinking.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.planet.thumbsup",
+              "order": 11,
+              "file": "assets/stickers/orbit_crew/planet/thumbsup.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "capybara",
+          "order": 2,
+          "stickers": [
+            {
+              "id": "orbit_crew.capybara.crying",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/capybara/crying.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.exhausted",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/capybara/exhausted.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.hello",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/capybara/hello.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.hotspring",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/capybara/hotspring.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.laughing",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/capybara/laughing.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.love",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/capybara/love.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.shocked",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/capybara/shocked.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.sideeye",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/capybara/sideeye.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.thumbsup",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/capybara/thumbsup.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.capybara.unbothered",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/capybara/unbothered.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "nerd_duck",
+          "order": 3,
+          "stickers": [
+            {
+              "id": "orbit_crew.nerd_duck.approved",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/nerd_duck/approved.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.bluescreen",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/nerd_duck/bluescreen.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.bugsquashed",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/nerd_duck/bugsquashed.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.coffeedrip",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/nerd_duck/coffeedrip.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.mergeconflict",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/nerd_duck/mergeconflict.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.onit",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/nerd_duck/onit.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.restart",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/nerd_duck/restart.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.shipped",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/nerd_duck/shipped.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.thisisfine",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/nerd_duck/thisisfine.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.nerd_duck.worksonmymachine",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/nerd_duck/worksonmymachine.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "pearl",
+          "order": 4,
+          "stickers": [
+            {
+              "id": "orbit_crew.pearl.angry",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/pearl/angry.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.crying",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/pearl/crying.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.goodnight",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/pearl/goodnight.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.hello",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/pearl/hello.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.laughing",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/pearl/laughing.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.love",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/pearl/love.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.popstar",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/pearl/popstar.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.shocked",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/pearl/shocked.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.thinking",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/pearl/thinking.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.pearl.thumbsup",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/pearl/thumbsup.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "new_baby",
+          "order": 5,
+          "stickers": [
+            {
+              "id": "orbit_crew.new_baby.arms",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/new_baby/arms.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.arrived",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/new_baby/arrived.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.awake",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/new_baby/awake.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.bracelet",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/new_baby/bracelet.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.gift",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/new_baby/gift.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.hello",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/new_baby/hello.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.here",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/new_baby/here.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.milk",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/new_baby/milk.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.sleeping",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/new_baby/sleeping.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.new_baby.thanks",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/new_baby/thanks.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "otter",
+          "order": 6,
+          "stickers": [
+            {
+              "id": "orbit_crew.otter.bestie",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/otter/bestie.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.crying",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/otter/crying.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.goodnight",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/otter/goodnight.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.hello",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/otter/hello.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.hyped",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/otter/hyped.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.laughing",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/otter/laughing.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.love",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/otter/love.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.shocked",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/otter/shocked.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.sideeye",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/otter/sideeye.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter.thumbsup",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/otter/thumbsup.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "otter_family",
+          "order": 7,
+          "stickers": [
+            {
+              "id": "orbit_crew.otter_family.asleep",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/otter_family/asleep.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.bath",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/otter_family/bath.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.blowout",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/otter_family/blowout.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.dontwake",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/otter_family/dontwake.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.foodmess",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/otter_family/foodmess.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.overwhelmed",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/otter_family/overwhelmed.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.pee",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/otter_family/pee.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.spitup",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/otter_family/spitup.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.otter_family.zombie",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/otter_family/zombie.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output)",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "tux",
+          "order": 8,
+          "stickers": [
+            {
+              "id": "orbit_crew.tux.approved",
+              "order": 1,
+              "file": "assets/stickers/orbit_crew/tux/approved.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.bluescreen",
+              "order": 2,
+              "file": "assets/stickers/orbit_crew/tux/bluescreen.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.bugsquashed",
+              "order": 3,
+              "file": "assets/stickers/orbit_crew/tux/bugsquashed.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.coffeedrip",
+              "order": 4,
+              "file": "assets/stickers/orbit_crew/tux/coffeedrip.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.loading",
+              "order": 5,
+              "file": "assets/stickers/orbit_crew/tux/loading.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.mergeconflict",
+              "order": 6,
+              "file": "assets/stickers/orbit_crew/tux/mergeconflict.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.restart",
+              "order": 7,
+              "file": "assets/stickers/orbit_crew/tux/restart.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.shipped",
+              "order": 8,
+              "file": "assets/stickers/orbit_crew/tux/shipped.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.thisisfine",
+              "order": 9,
+              "file": "assets/stickers/orbit_crew/tux/thisisfine.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            },
+            {
+              "id": "orbit_crew.tux.worksonmymachine",
+              "order": 10,
+              "file": "assets/stickers/orbit_crew/tux/worksonmymachine.webp",
+              "source": "higgsfield",
+              "licence": "owner (Higgsfield output); Tux by Larry Ewing with The GIMP, credit on licenses page",
+              "consent": "n/a"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "big_mood",
+      "order": 2,
+      "status": "ship",
+      "statusNote": "",
+      "groups": [
+        {
+          "id": "en",
+          "order": 1,
+          "stickers": [
+            {
+              "id": "big_mood.en.hi",
+              "order": 1,
+              "file": "assets/stickers/big_mood/en/hi.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.hug",
+              "order": 2,
+              "file": "assets/stickers/big_mood/en/hug.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.huh",
+              "order": 3,
+              "file": "assets/stickers/big_mood/en/huh.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.im_fine",
+              "order": 4,
+              "file": "assets/stickers/big_mood/en/im_fine.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.lol",
+              "order": 5,
+              "file": "assets/stickers/big_mood/en/lol.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.on_it",
+              "order": 6,
+              "file": "assets/stickers/big_mood/en/on_it.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.thanks",
+              "order": 7,
+              "file": "assets/stickers/big_mood/en/thanks.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.en.yay",
+              "order": 8,
+              "file": "assets/stickers/big_mood/en/yay.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "ar",
+          "order": 2,
+          "stickers": [
+            {
+              "id": "big_mood.ar.bird",
+              "order": 1,
+              "file": "assets/stickers/big_mood/ar/bird.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.ar.blob",
+              "order": 2,
+              "file": "assets/stickers/big_mood/ar/blob.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.ar.cloud",
+              "order": 3,
+              "file": "assets/stickers/big_mood/ar/cloud.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.ar.comet",
+              "order": 4,
+              "file": "assets/stickers/big_mood/ar/comet.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.ar.teacup",
+              "order": 5,
+              "file": "assets/stickers/big_mood/ar/teacup.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            }
+          ]
+        },
+        {
+          "id": "de",
+          "order": 3,
+          "stickers": [
+            {
+              "id": "big_mood.de.alien",
+              "order": 1,
+              "file": "assets/stickers/big_mood/de/alien.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.ghost",
+              "order": 2,
+              "file": "assets/stickers/big_mood/de/ghost.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.potato",
+              "order": 3,
+              "file": "assets/stickers/big_mood/de/potato.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.gecko",
+              "order": 4,
+              "file": "assets/stickers/big_mood/de/gecko.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.cactus",
+              "order": 5,
+              "file": "assets/stickers/big_mood/de/cactus.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.octopus",
+              "order": 6,
+              "file": "assets/stickers/big_mood/de/octopus.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.moon",
+              "order": 7,
+              "file": "assets/stickers/big_mood/de/moon.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            },
+            {
+              "id": "big_mood.de.raccoon",
+              "order": 8,
+              "file": "assets/stickers/big_mood/de/raccoon.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "n/a"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nujoom",
+      "order": 3,
+      "status": "test_only",
+      "statusNote": "test only, pending legal check (PL-5)",
+      "groups": [
+        {
+          "id": "arab",
+          "order": 1,
+          "stickers": [
+            {
+              "id": "nujoom.arab.abbas_chahine",
+              "order": 1,
+              "file": "assets/stickers/nujoom/arab/abbas_chahine.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.abbas_jaafar",
+              "order": 2,
+              "file": "assets/stickers/nujoom/arab/abbas_jaafar.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.abla_kamel",
+              "order": 3,
+              "file": "assets/stickers/nujoom/arab/abla_kamel.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.abu_julia",
+              "order": 4,
+              "file": "assets/stickers/nujoom/arab/abu_julia.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.adel_emam",
+              "order": 5,
+              "file": "assets/stickers/nujoom/arab/adel_emam.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.adel_karam",
+              "order": 6,
+              "file": "assets/stickers/nujoom/arab/adel_karam.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.ahmed_helmy",
+              "order": 7,
+              "file": "assets/stickers/nujoom/arab/ahmed_helmy.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.ahmed_mekky_hazalqoum",
+              "order": 8,
+              "file": "assets/stickers/nujoom/arab/ahmed_mekky_hazalqoum.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.ayman_rida",
+              "order": 9,
+              "file": "assets/stickers/nujoom/arab/ayman_rida.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.bassem_yakhour_joudeh",
+              "order": 10,
+              "file": "assets/stickers/nujoom/arab/bassem_yakhour_joudeh.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.duraid_lahham",
+              "order": 11,
+              "file": "assets/stickers/nujoom/arab/duraid_lahham.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.elissa",
+              "order": 12,
+              "file": "assets/stickers/nujoom/arab/elissa.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.hayat_al_fahad",
+              "order": 13,
+              "file": "assets/stickers/nujoom/arab/hayat_al_fahad.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.imad_farajin",
+              "order": 14,
+              "file": "assets/stickers/nujoom/arab/imad_farajin.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.mohamed_henedy",
+              "order": 15,
+              "file": "assets/stickers/nujoom/arab/mohamed_henedy.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.mohamed_saad",
+              "order": 16,
+              "file": "assets/stickers/nujoom/arab/mohamed_saad.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.mohammed_al_titi",
+              "order": 17,
+              "file": "assets/stickers/nujoom/arab/mohammed_al_titi.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.mohammed_assaf",
+              "order": 18,
+              "file": "assets/stickers/nujoom/arab/mohammed_assaf.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.najwa_karam",
+              "order": 19,
+              "file": "assets/stickers/nujoom/arab/najwa_karam.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.nasser_al_qasabi",
+              "order": 20,
+              "file": "assets/stickers/nujoom/arab/nasser_al_qasabi.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.nidal_sejari",
+              "order": 21,
+              "file": "assets/stickers/nujoom/arab/nidal_sejari.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.arab.yasser_al_azmeh",
+              "order": 22,
+              "file": "assets/stickers/nujoom/arab/yasser_al_azmeh.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            }
+          ]
+        },
+        {
+          "id": "german",
+          "order": 2,
+          "stickers": [
+            {
+              "id": "nujoom.german.stromberg",
+              "order": 1,
+              "file": "assets/stickers/nujoom/german/stromberg.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.horst_schlaemmer",
+              "order": 2,
+              "file": "assets/stickers/nujoom/german/horst_schlaemmer.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.martina_hill",
+              "order": 3,
+              "file": "assets/stickers/nujoom/german/martina_hill.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.anke_engelke",
+              "order": 4,
+              "file": "assets/stickers/nujoom/german/anke_engelke.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.detlef_steves",
+              "order": 5,
+              "file": "assets/stickers/nujoom/german/detlef_steves.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.dieter_bohlen",
+              "order": 6,
+              "file": "assets/stickers/nujoom/german/dieter_bohlen.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.heidi_klum",
+              "order": 7,
+              "file": "assets/stickers/nujoom/german/heidi_klum.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.thomas_mueller",
+              "order": 8,
+              "file": "assets/stickers/nujoom/german/thomas_mueller.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.juergen_klopp",
+              "order": 9,
+              "file": "assets/stickers/nujoom/german/juergen_klopp.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            },
+            {
+              "id": "nujoom.german.knossi",
+              "order": 10,
+              "file": "assets/stickers/nujoom/german/knossi.webp",
+              "source": "owner via ChatGPT",
+              "licence": "owner",
+              "consent": "pending legal check (PL-5)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

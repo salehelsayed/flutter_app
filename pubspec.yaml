@@ -146,6 +146,20 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/icons/
+    - assets/stickers/packs.json
+    - assets/stickers/orbit_crew/planet/
+    - assets/stickers/orbit_crew/capybara/
+    - assets/stickers/orbit_crew/nerd_duck/
+    - assets/stickers/orbit_crew/pearl/
+    - assets/stickers/orbit_crew/new_baby/
+    - assets/stickers/orbit_crew/otter/
+    - assets/stickers/orbit_crew/otter_family/
+    - assets/stickers/orbit_crew/tux/
+    - assets/stickers/big_mood/en/
+    - assets/stickers/big_mood/ar/
+    - assets/stickers/big_mood/de/
+    - assets/stickers/nujoom/arab/
+    - assets/stickers/nujoom/german/
     - integration_test/fixtures/received_media_egress_fixture.jpg
     - integration_test/fixtures/received_media_egress_fixture.mp4
 
