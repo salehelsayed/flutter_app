@@ -680,17 +680,17 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String orbit_thought_note_semantics(String name, String preview) {
-    return 'فكرة من $name: $preview';
+    return 'خاطرة من $name: $preview';
   }
 
   @override
   String orbit_thought_note_new_semantics(String name, String preview) {
-    return 'فكرة جديدة من $name: $preview';
+    return 'خاطرة جديدة من $name: $preview';
   }
 
   @override
   String orbit_thought_note_self_semantics(String preview) {
-    return 'فكرتك: $preview';
+    return 'خاطرتك: $preview';
   }
 
   @override
@@ -4833,7 +4833,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get translator_settings_not_downloaded =>
-      'ترجمة الأفكار والرسائل الصوتية. تبقى على هاتفك.';
+      'ترجمة الخواطر والرسائل الصوتية. تبقى على هاتفك.';
 
   @override
   String get translator_settings_ready => 'على هذا الهاتف · تعمل بدون إنترنت';
