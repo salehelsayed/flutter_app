@@ -17,6 +17,7 @@ class OrbitDepthMedia extends StatefulWidget {
     required this.load,
     required this.download,
     required this.onOpen,
+    this.onActivate,
     this.lastLoaded,
   });
   final String postId;
@@ -24,6 +25,9 @@ class OrbitDepthMedia extends StatefulWidget {
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
   download;
   final VoidCallback onOpen;
+
+  /// The screen reader's open, when it must differ from a finger's [onOpen].
+  final VoidCallback? onActivate;
 
   /// Media this card showed before, by post id. The card is rebuilt on every
   /// entry into depth; starting from it avoids a spinner flash before the
@@ -149,22 +153,25 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
         // The whole photo, as large as the space allows, on black.
         if (visual.isNotEmpty)
           Expanded(
-            child: GestureDetector(
-              key: const ValueKey('orbit-depth-photo-frame'),
-              onTap: widget.onOpen,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: ColoredBox(
-                  color: Colors.black,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) => Center(
-                      child: MediaGrid(
-                        media: visual
-                            .map((item) => item.toSharedMediaAttachment())
-                            .toList(),
-                        singleMaxHeight: constraints.maxHeight,
-                        onTap: (_) => widget.onOpen(),
-                        onRetryUnavailableMedia: (_) => unawaited(_load()),
+            child: Semantics(
+              onTap: widget.onActivate ?? widget.onOpen,
+              child: GestureDetector(
+                key: const ValueKey('orbit-depth-photo-frame'),
+                onTap: widget.onOpen,
+                excludeFromSemantics: true,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: ColoredBox(
+                    color: Colors.black,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) => Center(
+                        child: MediaGrid(
+                          media: visual
+                              .map((item) => item.toSharedMediaAttachment())
+                              .toList(),
+                          singleMaxHeight: constraints.maxHeight,
+                          onRetryUnavailableMedia: (_) => unawaited(_load()),
+                        ),
                       ),
                     ),
                   ),

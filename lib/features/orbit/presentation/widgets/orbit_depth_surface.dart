@@ -716,6 +716,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     }
   }
 
+  void _retry(String messageId) {
+    if (_answerable) _dispatch(_visit.retry(messageId));
+  }
+
   void _sendTyped(String postId, String text) {
     final dispatch = _visit.reply(postId, text, const Uuid().v4());
     if (dispatch == null) return;
@@ -1258,13 +1262,17 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
           ),
         ),
         if (send.canRetry)
-          TextButton(
-            key: const ValueKey('orbit-depth-answer-retry'),
-            style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-            onPressed: () {
-              if (_answerable) _dispatch(_visit.retry(send.messageId));
-            },
-            child: Text(l10n.btn_retry),
+          Semantics(
+            button: true,
+            label: l10n.btn_retry,
+            excludeSemantics: true,
+            onTap: _bySemantics(() => _retry(send.messageId)),
+            child: TextButton(
+              key: const ValueKey('orbit-depth-answer-retry'),
+              style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+              onPressed: () => _retry(send.messageId),
+              child: Text(l10n.btn_retry),
+            ),
           ),
       ],
     );
@@ -1360,42 +1368,47 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             load: widget.loadMedia!,
             download: widget.downloadMedia!,
             onOpen: open,
+            onActivate: _bySemantics(open),
             lastLoaded: _lastLoadedMedia,
           )
         : null;
     // A photo fills the slot below the text, shown whole. Voice and text
     // thoughts keep their own height.
     final photo = media != null && post.mediaKind != 'voice';
-    final words = GestureDetector(
-      onTap: open,
-      behavior: HitTestBehavior.opaque,
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: 8 * k),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              ageText,
-              style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
-            ),
-            if (post.text.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.only(top: 12 * k),
-                // Full width, so the text sits on its own side: an Arabic
-                // thought on the right even in an English app.
-                child: SizedBox(
-                  width: double.infinity,
-                  child: Text(
-                    post.text,
-                    key: ValueKey('orbit-depth-text-${post.id}'),
-                    textDirection: detectTextDirection(post.text),
-                    maxLines: photo ? 3 : null,
-                    overflow: photo ? TextOverflow.ellipsis : null,
-                    style: TextStyle(fontSize: 22 * k, height: 1.3),
+    final words = Semantics(
+      onTap: _bySemantics(open),
+      child: GestureDetector(
+        onTap: open,
+        behavior: HitTestBehavior.opaque,
+        excludeFromSemantics: true,
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 8 * k),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                ageText,
+                style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
+              ),
+              if (post.text.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(top: 12 * k),
+                  // Full width, so the text sits on its own side: an Arabic
+                  // thought on the right even in an English app.
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: Text(
+                      post.text,
+                      key: ValueKey('orbit-depth-text-${post.id}'),
+                      textDirection: detectTextDirection(post.text),
+                      maxLines: photo ? 3 : null,
+                      overflow: photo ? TextOverflow.ellipsis : null,
+                      style: TextStyle(fontSize: 22 * k, height: 1.3),
+                    ),
                   ),
                 ),
-              ),
-          ],
+            ],
+          ),
         ),
       ),
     );
