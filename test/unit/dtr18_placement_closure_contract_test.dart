@@ -250,7 +250,9 @@ const _relocations = <String, List<String>>{
     // Thoughts 128 adds view receipts and photo previews in this same data
     // adapter; placement is unchanged. Thoughts 129 adds the metrics opt-out
     // mark through the same injected insert; imports are unchanged.
-    'f84f43f4f202d26e384ae10c6ff7dad833bd2b986491733d67c02b09d2253f6f',
+    // Round 9 keeps expired own Thoughts in the same adapter; imports are
+    // unchanged.
+    'fc420c8601cf868be61781857d17005bac4c999b51895c0ac7c1b09f19d5917b',
   ],
 };
 

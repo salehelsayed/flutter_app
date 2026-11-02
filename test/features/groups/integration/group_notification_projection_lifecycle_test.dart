@@ -1420,7 +1420,7 @@ void main() {
       );
 
       final pushRegistration = productionSource.indexOf(
-        'registerPushToken: () async {',
+        'Future<push_registration.RegisterPushTokenResult> registerToken({',
       );
       final pushRegistrationEnd = productionSource.indexOf(
         'return push_registration.registerPushToken(',
