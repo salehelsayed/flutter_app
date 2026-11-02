@@ -71,6 +71,7 @@ class SettingsWired extends StatefulWidget {
   final ContactRepository contactRepo;
   final P2PService p2pService;
   final SecureKeyStore secureKeyStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
   final PostsPrivacySettingsRepository postsPrivacySettingsRepository;
@@ -111,6 +112,7 @@ class SettingsWired extends StatefulWidget {
     required this.contactRepo,
     required this.p2pService,
     required this.secureKeyStore,
+    this.onThoughtNotificationsChanged,
     required this.imageProcessor,
     required this.appShellController,
     required this.postsPrivacySettingsRepository,

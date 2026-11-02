@@ -143,10 +143,13 @@ void main() {
   late RecordingFakeBridge bridge;
   late Directory cardsDir;
   late PostListener listener;
+  late FakeSecureKeyStore notificationPreferences;
+  const notificationPreferenceKey = 'thought_notifications_enabled_v1';
   var foreground = false;
 
   setUp(() {
     foreground = false;
+    notificationPreferences = FakeSecureKeyStore();
     controller = StreamController<ChatMessage>.broadcast();
     retracts = StreamController<ChatMessage>.broadcast();
     contacts = InMemoryContactRepository();
@@ -169,6 +172,8 @@ void main() {
       bridge: bridge,
       notificationService: notifications,
       isAppForegroundActive: () async => foreground,
+      loadThoughtNotificationsEnabled: () async =>
+          await notificationPreferences.read(notificationPreferenceKey) != '0',
       remoteNotificationGate: remoteGate,
       friendThoughtCards: FriendThoughtCardRegistry(directory: cardsDir),
     )..start();
@@ -248,6 +253,120 @@ void main() {
       ThoughtLifetime.expiresAt(created),
     );
   });
+
+  test(
+    'Thought notification OFF preserves storage ACK media and Orbit publication',
+    () async {
+      await notificationPreferences.write(notificationPreferenceKey, '0');
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final downloadStarted = Completer<PostMediaAttachmentModel>();
+      final download = Completer<PostMediaAttachmentModel>();
+      listener.dispose();
+      listener = PostListener(
+        postCreateStream: controller.stream,
+        postRepo: posts,
+        contactRepo: contacts,
+        bridge: bridge,
+        notificationService: notifications,
+        isAppForegroundActive: () async => false,
+        loadThoughtNotificationsEnabled: () async =>
+            await notificationPreferences.read(notificationPreferenceKey) !=
+            '0',
+        hydratePostMediaFn: ({required attachment, required postId}) {
+          downloadStarted.complete(attachment);
+          return download.future;
+        },
+      )..start();
+      final emitted = listener.incomingPostStream.first;
+
+      controller.add(
+        _message(
+          'peer-bob',
+          'Bob',
+          postId: 'silent-photo',
+          mediaKind: 'image',
+          confirmNonce: 'nonce-silent-photo',
+        ),
+      );
+      final attachment = await downloadStarted.future;
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(
+        (await posts.loadPostMediaAttachments(
+          'silent-photo',
+        )).single.downloadStatus,
+        'pending',
+      );
+      expect(bridge.payloadsFor('message:confirm'), [
+        {'nonce': 'nonce-silent-photo', 'ok': true},
+      ]);
+
+      download.complete(attachment.copyWith(downloadStatus: 'done'));
+      final received = await emitted;
+      expect(received.id, 'silent-photo');
+      expect(received.media.single.downloadStatus, 'done');
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(thoughtsEnabled, isTrue);
+      expect(notifications.shownThoughts, isEmpty);
+      expect(notifications.shownGeneric, isEmpty);
+    },
+  );
+
+  test(
+    'Thought notification OFF ON OFF applies on the same listener',
+    () async {
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      Future<void> receive(String id) async {
+        final emitted = listener.incomingPostStream.first;
+        controller.add(_message('peer-bob', 'Bob', postId: id));
+        expect((await emitted).id, id);
+      }
+
+      await notificationPreferences.write(notificationPreferenceKey, '0');
+      await receive('silent-1');
+      await notificationPreferences.write(notificationPreferenceKey, '1');
+      await receive('audible-2');
+      await notificationPreferences.write(notificationPreferenceKey, '0');
+      await receive('silent-3');
+
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(notifications.shownThoughts.map((n) => n.payload), [
+        'post:audible-2',
+      ]);
+    },
+  );
+
+  test(
+    'Thought notification OFF saved during card preparation prevents a late card',
+    () async {
+      await notificationPreferences.write(notificationPreferenceKey, '1');
+      contacts.addTestContact(_contact('peer-bob', 'Bob'));
+      final preparing = Completer<void>();
+      final resume = Completer<bool>();
+      listener.dispose();
+      listener = PostListener(
+        postCreateStream: controller.stream,
+        postRepo: posts,
+        contactRepo: contacts,
+        notificationService: notifications,
+        loadThoughtNotificationsEnabled: () async =>
+            await notificationPreferences.read(notificationPreferenceKey) !=
+            '0',
+        isAppForegroundActive: () {
+          preparing.complete();
+          return resume.future;
+        },
+      )..start();
+      final emitted = listener.incomingPostStream.first;
+      controller.add(_message('peer-bob', 'Bob', postId: 'late-card'));
+      await preparing.future;
+      await notificationPreferences.write(notificationPreferenceKey, '0');
+      resume.complete(false);
+
+      expect((await emitted).id, 'late-card');
+      expect(await posts.loadFeed(), hasLength(1));
+      expect(notifications.shownThoughts, isEmpty);
+    },
+  );
 
   test(
     'switched off: with thoughts switched off it stores the thought and posts no card',

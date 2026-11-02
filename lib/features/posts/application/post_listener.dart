@@ -38,6 +38,7 @@ class PostListener {
   final Future<String?> Function()? getOwnMlKemSecretKey;
   final NotificationService? notificationService;
   final Future<bool> Function()? isAppForegroundActive;
+  final Future<bool> Function()? loadThoughtNotificationsEnabled;
 
   /// The background push isolate marks each thought card it shows here, so
   /// the inbox drain that follows does not post a second one.
@@ -71,6 +72,7 @@ class PostListener {
     this.getOwnMlKemSecretKey,
     this.notificationService,
     this.isAppForegroundActive,
+    this.loadThoughtNotificationsEnabled,
     this.remoteNotificationGate,
     this.friendThoughtCards,
     this.hydratePostMediaFn,

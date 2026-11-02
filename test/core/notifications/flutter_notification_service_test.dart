@@ -19,11 +19,17 @@ import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/missed_call_action_payload.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
+  const preferenceChannel = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
+  const thoughtNotificationPreferenceKey = 'thought_notifications_enabled_v1';
+  late Map<String, String> persistedPreferences;
   final List<MethodCall> log = <MethodCall>[];
   late Directory notificationIdDirectory;
   late String? launchPayload;
@@ -83,6 +89,21 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     AndroidFlutterLocalNotificationsPlugin.registerWith();
     log.clear();
+    persistedPreferences = <String, String>{};
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(preferenceChannel, (call) async {
+          final arguments = call.arguments as Map;
+          final key = arguments['key'] as String?;
+          switch (call.method) {
+            case 'read':
+              return persistedPreferences[key];
+            case 'write':
+              persistedPreferences[key!] = arguments['value'] as String;
+              return null;
+            default:
+              return null;
+          }
+        });
     launchPayload = 'peer-123';
     launchNotificationId = 7;
     launchActionId = null;
@@ -125,6 +146,8 @@ void main() {
   });
 
   tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(preferenceChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     debugDefaultTargetPlatformOverride = null;
@@ -930,6 +953,142 @@ void main() {
       final cancellation = log.lastWhere((call) => call.method == 'cancel');
       expect((cancellation.arguments as Map)['id'], thought['id']);
       expect(log.where((call) => call.method == 'cancelAll'), isEmpty);
+    },
+  );
+
+  test(
+    'Thought notification default ON and OFF ON OFF apply on the same service',
+    () async {
+      final service = buildService();
+      await service.initialize();
+      final store = FlutterSecureKeyStore();
+      Future<void> show(String id) => service.showThoughtNotification(
+        postId: id,
+        title: 'Friend shared a thought',
+        body: 'Private thought',
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+
+      await show('default-on');
+      await store.write(thoughtNotificationPreferenceKey, '0');
+      await show('off-1');
+      await store.write(thoughtNotificationPreferenceKey, '1');
+      await show('on-2');
+      await store.write(thoughtNotificationPreferenceKey, '0');
+      await show('off-3');
+
+      final shows = log.where((call) => call.method == 'show');
+      expect(shows.map((call) => (call.arguments as Map)['payload']), [
+        'post:default-on',
+        'post:on-2',
+      ]);
+      for (final call in shows) {
+        expect(
+          ((call.arguments as Map)['platformSpecifics'] as Map)['channelId'],
+          mknoonThoughtsChannelId,
+        );
+      }
+    },
+  );
+
+  test(
+    'Thought notification persisted OFF survives a new service owner',
+    () async {
+      await FlutterSecureKeyStore().write(
+        thoughtNotificationPreferenceKey,
+        '0',
+      );
+      final service = buildService();
+      await service.initialize();
+
+      await service.showThoughtNotification(
+        postId: 'reopened-silent',
+        title: 'Friend shared a thought',
+        body: 'Private thought',
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+
+      expect(log.where((call) => call.method == 'show'), isEmpty);
+    },
+  );
+
+  test(
+    'Thought notification OFF during id allocation prevents late native show',
+    () async {
+      final preparing = Completer<void>();
+      final resume = Completer<int>();
+      final service = FlutterNotificationService(
+        notificationIdRegistryResolver: () async =>
+            DurableConversationNotificationIdRegistry(
+              directory: notificationIdDirectory,
+            ),
+        notificationIdResolver: (_) {
+          preparing.complete();
+          return resume.future;
+        },
+      );
+      await service.initialize();
+      await FlutterSecureKeyStore().write(
+        thoughtNotificationPreferenceKey,
+        '1',
+      );
+      final showing = service.showThoughtNotification(
+        postId: 'late-silent',
+        title: 'Friend shared a thought',
+        body: 'Private thought',
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+      await preparing.future;
+      await FlutterSecureKeyStore().write(
+        thoughtNotificationPreferenceKey,
+        '0',
+      );
+      resume.complete(9876);
+      await showing;
+
+      expect(log.where((call) => call.method == 'show'), isEmpty);
+    },
+  );
+
+  test(
+    'Thought notification OFF preserves chat post reactions and missed calls',
+    () async {
+      await FlutterSecureKeyStore().write(
+        thoughtNotificationPreferenceKey,
+        '0',
+      );
+      final service = buildService();
+      await service.initialize();
+
+      await service.showMessageNotification(
+        contactPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        messageText: 'Reply to your thought',
+      );
+      await service.showNotification(
+        title: 'Alice',
+        body: 'Reacted to your thought',
+        payload: 'post:thought-1',
+      );
+      await service.showMissedCallNotification(
+        contactAccountPeerId: 'peer-alice',
+        title: 'Missed call',
+        body: 'Alice called',
+      );
+
+      final shows = log.where((call) => call.method == 'show').toList();
+      expect(shows, hasLength(3));
+      expect(
+        ((shows.first.arguments as Map)['platformSpecifics']
+            as Map)['channelId'],
+        mknoonMessagesChannelId,
+      );
+      expect((shows[1].arguments as Map)['payload'], 'post:thought-1');
+      expect(
+        ((shows.last.arguments as Map)['platformSpecifics']
+            as Map)['channelId'],
+        mknoonCallsChannelId,
+      );
     },
   );
 

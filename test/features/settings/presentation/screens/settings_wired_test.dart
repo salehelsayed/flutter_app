@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_app/features/identity/data/repositories/identity_reposit
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -39,9 +41,14 @@ import 'package:flutter_app/features/settings/domain/models/media_download_prefe
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/image_quality_toggle.dart';
 import 'package:flutter_app/features/settings/presentation/widgets/media_download_matrix_control.dart';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
+    as registration;
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../shared/fakes/in_memory_introduction_repository.dart';
 import '../../../../shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '../../../../shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../../../../shared/fakes/recording_fake_bridge.dart';
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class FakeIdentityRepository implements IdentityRepository {
@@ -317,6 +324,31 @@ class _DeferredMotionReadStore extends FakeSecureKeyStore {
       : super.read(key);
 }
 
+const _thoughtNotificationPreferenceKey = 'thought_notifications_enabled_v1';
+
+class _DeferredThoughtNotificationWriteStore extends FakeSecureKeyStore {
+  final pending = Completer<void>();
+  int writes = 0;
+
+  @override
+  Future<void> write(String key, String value) async {
+    if (key == _thoughtNotificationPreferenceKey) {
+      writes++;
+      await pending.future;
+    }
+    await super.write(key, value);
+  }
+}
+
+class _DeferredThoughtNotificationReadStore extends FakeSecureKeyStore {
+  final pending = Completer<String?>();
+
+  @override
+  Future<String?> read(String key) => key == _thoughtNotificationPreferenceKey
+      ? pending.future
+      : super.read(key);
+}
+
 void main() {
   IdentityModel makeIdentity() {
     return IdentityModel(
@@ -338,11 +370,14 @@ void main() {
     ContactRepository? contactRepo,
     P2PService? p2pService,
     SecureKeyStore? secureKeyStore,
+    Future<void> Function()? onThoughtNotificationsChanged,
     InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
     AppShellController? appShellController,
     WidgetBuilder? moveAccountRouteBuilder,
     AccountMigrationTransferRunFn? accountMigrationRunTransfer,
+    Locale locale = const Locale('en'),
+    double textScale = 1,
   }) async {
     final shellController = appShellController ?? AppShellController();
     if (appShellController == null) {
@@ -360,7 +395,13 @@ void main() {
     addTearDown(protection.dispose);
     await tester.pumpWidget(
       MaterialApp(
-        locale: const Locale('en'),
+        locale: locale,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: SettingsWired(
@@ -370,6 +411,7 @@ void main() {
           contactRepo: contactRepo ?? _FakeContactRepo(),
           p2pService: p2pService ?? _FakeP2PService(),
           secureKeyStore: secureKeyStore ?? FakeSecureKeyStore(),
+          onThoughtNotificationsChanged: onThoughtNotificationsChanged,
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: shellController,
           introductionRepository: introductionRepository,
@@ -398,6 +440,276 @@ void main() {
   Future<void> settleSheetClose(WidgetTester tester) async {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  testWidgets(
+    'Thought notifications default ON persist OFF and survive Settings reopen',
+    (tester) async {
+      final store = FakeSecureKeyStore();
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        secureKeyStore: store,
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      expect(find.text('Thought notifications'), findsOneWidget);
+      expect(
+        find.text('Get a notification when a friend shares a thought.'),
+        findsOneWidget,
+      );
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        secureKeyStore: store,
+      );
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await store.read(_thoughtNotificationPreferenceKey), '1');
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications change resends the same token through the registration owner',
+    (tester) async {
+      final store = FakeSecureKeyStore();
+      final bridge = RecordingFakeBridge();
+      final frames = <Map<String, dynamic>>[];
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'isStarted': true,
+          'peerId': 'self-peer',
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <Object?>[],
+        }),
+      );
+      bridge.whenCommand('inbox:register_token', (payload) {
+        frames.add(Map<String, dynamic>.from(payload!));
+        return jsonEncode({'ok': true});
+      });
+      final node = P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: InMemoryInboxStagingRepository(),
+        loadThoughtNotificationsEnabled: () async =>
+            await store.read(_thoughtNotificationPreferenceKey) != '0',
+      );
+      addTearDown(node.dispose);
+      await tester.runAsync(
+        () => node.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
+      );
+      final coordinator = PushRegistrationCoordinator(
+        requestPermission: () async => true,
+        readPermission: () async => true,
+        registerPushToken: () => registration.registerPushToken(
+          p2pService: node,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'same-device-token',
+          getPlatformFn: () => 'android',
+        ),
+        tokenRefreshStream: const Stream<String>.empty(),
+      );
+      addTearDown(coordinator.dispose);
+      await tester.runAsync(coordinator.ensureStarted);
+      expect(frames, hasLength(1));
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        p2pService: node,
+        onThoughtNotificationsChanged: () async {
+          // The relay publication can only follow the durable local choice.
+          expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+          await coordinator.retryNow();
+        },
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(frames.map((frame) => frame['token']), [
+        'same-device-token',
+        'same-device-token',
+      ]);
+      expect(frames.map((frame) => frame['thought_notifications_enabled']), [
+        true,
+        false,
+      ]);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications keep durable OFF when relay synchronization fails',
+    (tester) async {
+      final store = FakeSecureKeyStore();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        onThoughtNotificationsChanged: () async =>
+            throw StateError('relay unavailable'),
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+      expect(find.text("Couldn't save. Try again."), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications failed save retains persisted choice and reports error',
+    (tester) async {
+      final store = _FailingWriteSecureKeyStore();
+      var registrations = 0;
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        onThoughtNotificationsChanged: () async {
+          registrations++;
+        },
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+      expect(await store.read(_thoughtNotificationPreferenceKey), isNull);
+      expect(registrations, 0);
+      expect(find.text("Couldn't save. Try again."), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications serialize pending saves before reporting the new choice',
+    (tester) async {
+      final store = _DeferredThoughtNotificationWriteStore();
+      var registrations = 0;
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+        onThoughtNotificationsChanged: () async {
+          expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+          registrations++;
+        },
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      final change = tester.widget<Switch>(toggle).onChanged!;
+      change(false);
+      change(true);
+      await tester.pump();
+      expect(store.writes, 1);
+      expect(tester.widget<Switch>(toggle).onChanged, isNull);
+      expect(await store.read(_thoughtNotificationPreferenceKey), isNull);
+      expect(registrations, 0);
+
+      store.pending.complete();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+      expect(registrations, 1);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications initial load disables the switch until durable OFF is read',
+    (tester) async {
+      final store = _DeferredThoughtNotificationReadStore();
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: store,
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(toggle, findsOneWidget);
+      expect(tester.widget<Switch>(toggle).onChanged, isNull);
+      store.pending.complete('0');
+      await tester.pump();
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
+    },
+  );
+
+  for (final copy in const [
+    (
+      'en',
+      'Thought notifications',
+      'Get a notification when a friend shares a thought.',
+    ),
+    (
+      'de',
+      'Benachrichtigungen für Gedanken',
+      'Benachrichtigung, wenn jemand einen Gedanken teilt.',
+    ),
+    ('ar', 'إشعارات الخواطر', 'تلقَّ إشعارًا عندما يشارك صديق خاطرة.'),
+  ]) {
+    testWidgets(
+      'Thought notifications approved ${copy.$1} copy remains readable at large text',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 844));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          locale: Locale(copy.$1),
+          textScale: 2,
+        );
+        final toggle = find.byKey(
+          const ValueKey('settings-thought-notifications-switch'),
+        );
+        expect(toggle, findsOneWidget);
+        await tester.ensureVisible(toggle);
+        expect(find.text(copy.$2), findsOneWidget);
+        final subtitle = find.text(copy.$3);
+        expect(subtitle, findsOneWidget);
+        expect(
+          tester.renderObject<RenderParagraph>(subtitle).didExceedMaxLines,
+          isFalse,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 
   testWidgets(

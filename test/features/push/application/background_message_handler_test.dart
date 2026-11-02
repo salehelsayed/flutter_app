@@ -29,6 +29,7 @@ import 'package:flutter_app/core/notifications/notification_completed_outcome_co
 import 'package:flutter_app/core/notifications/recent_background_notification_gate.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
@@ -98,6 +99,11 @@ void main() {
 
   const channel = MethodChannel('dexterous.com/flutter/local_notifications');
   const cryptoChannel = MethodChannel('com.mknoon/background_push_crypto');
+  const preferenceChannel = MethodChannel(
+    'plugins.it_nomads.com/flutter_secure_storage',
+  );
+  const thoughtNotificationPreferenceKey = 'thought_notifications_enabled_v1';
+  late Map<String, String> persistedPreferences;
   final List<MethodCall> log = <MethodCall>[];
 
   test('TC-393-14 direct post-show completion cannot be skipped', () async {
@@ -637,6 +643,24 @@ void main() {
   setUp(() async {
     flowEventLoggingEnabled = false;
     log.clear();
+    persistedPreferences = <String, String>{};
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(preferenceChannel, (call) async {
+          final arguments = call.arguments as Map;
+          final key = arguments['key'] as String?;
+          switch (call.method) {
+            case 'read':
+              return persistedPreferences[key];
+            case 'write':
+              persistedPreferences[key!] = arguments['value'] as String;
+              return null;
+            case 'delete':
+              persistedPreferences.remove(key);
+              return null;
+            default:
+              return null;
+          }
+        });
     debugResetBackgroundDirectNotificationPostShowValidator();
 
     final backgroundGate = RecentBackgroundNotificationGate(
@@ -786,6 +810,8 @@ void main() {
   });
 
   tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(preferenceChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -3742,8 +3768,12 @@ void main() {
     );
 
     test(
-      'missing outer direct reaction id decrypts, promotes staged identity, and shows',
+      'Thought notification OFF leaves direct reactions staged and shown',
       () async {
+        await FlutterSecureKeyStore().write(
+          thoughtNotificationPreferenceKey,
+          '0',
+        );
         debugDefaultTargetPlatformOverride = TargetPlatform.android;
         AndroidFlutterLocalNotificationsPlugin.registerWith();
         final staged = <StagedPushEnvelope>[];
@@ -6498,6 +6528,197 @@ void main() {
             });
         return registry;
       }
+
+      test(
+        'Thought notification persisted OFF prevents native show and false announcement',
+        () async {
+          mockClosedAppWithFriends();
+          await FlutterSecureKeyStore().write(
+            thoughtNotificationPreferenceKey,
+            '0',
+          );
+          // A new adapter and freshly initialized handler must see the durable
+          // value rather than a preference cached by another notification owner.
+          expect(
+            await FlutterSecureKeyStore().read(
+              thoughtNotificationPreferenceKey,
+            ),
+            '0',
+          );
+          debugResetBackgroundNotificationsInitialization();
+
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'silent-thought'),
+          );
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:silent-thought',
+              messageId: 'evt-silent-thought',
+            ),
+            isFalse,
+          );
+        },
+      );
+
+      test(
+        'Thought notification default ON and OFF ON OFF use fresh background decisions',
+        () async {
+          mockClosedAppWithFriends();
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'default-on'),
+          );
+          final store = FlutterSecureKeyStore();
+          await store.write(thoughtNotificationPreferenceKey, '0');
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'off-1'),
+          );
+          await store.write(thoughtNotificationPreferenceKey, '1');
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'on-2'),
+          );
+          await store.write(thoughtNotificationPreferenceKey, '0');
+          await firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'off-3'),
+          );
+
+          final shows = log.where((call) => call.method == 'show');
+          expect(shows.map((call) => (call.arguments as Map)['payload']), [
+            'post:default-on',
+            'post:on-2',
+          ]);
+          for (final call in shows) {
+            expect(
+              ((call.arguments as Map)['platformSpecifics']
+                  as Map)['channelId'],
+              mknoonThoughtsChannelId,
+            );
+          }
+        },
+      );
+
+      test(
+        'Thought notification OFF during background id preparation prevents late native show',
+        () async {
+          final registry = mockClosedAppWithFriends();
+          final preparing = Completer<void>();
+          final resume = Completer<void>();
+          debugSetBackgroundConversationNotificationIdRegistryResolver(
+            () async {
+              if (!preparing.isCompleted) preparing.complete();
+              await resume.future;
+              return registry;
+            },
+          );
+          await FlutterSecureKeyStore().write(
+            thoughtNotificationPreferenceKey,
+            '1',
+          );
+          final handling = firebaseMessagingBackgroundHandler(
+            thoughtPush(sender: 'peer-alice', postId: 'late-thought'),
+          );
+          await preparing.future;
+          await FlutterSecureKeyStore().write(
+            thoughtNotificationPreferenceKey,
+            '0',
+          );
+          resume.complete();
+          await handling;
+
+          expect(log.where((call) => call.method == 'show'), isEmpty);
+          expect(
+            await recentRemoteNotificationGate.consumeIfRecentAnnouncement(
+              payload: 'post:late-thought',
+              messageId: 'evt-late-thought',
+            ),
+            isFalse,
+          );
+        },
+      );
+
+      test(
+        'Thought notification OFF preserves quoted chat and emoji reply staging and display',
+        () async {
+          mockNotificationsPlugin();
+          await FlutterSecureKeyStore().write(
+            thoughtNotificationPreferenceKey,
+            '0',
+          );
+          final staged = <StagedPushEnvelope>[];
+          debugSetBackgroundPushEnvelopeStager(
+            (entry) async => staged.add(entry),
+          );
+          debugSetBackgroundDirectMessageLocalStateResolver((message) async {
+            return BackgroundDirectMessageLocalState(
+              previewContext: DirectMessageNotificationContext(
+                senderPeerId: 'peer-alice',
+                senderUsername: 'Trusted Alice',
+                expectedMessageId: message.data['message_id'] as String?,
+              ),
+              mlKemSecretKeys: const ['current-key'],
+            );
+          });
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(cryptoChannel, (call) async {
+                final arguments = jsonDecode(call.arguments as String) as Map;
+                final id = arguments['ciphertext'] as String;
+                return jsonEncode({
+                  'ok': true,
+                  'plaintext': jsonEncode({
+                    'id': id,
+                    'text': id == 'quoted-reply' ? 'See you there' : '❤️',
+                    'senderPeerId': 'peer-alice',
+                    'senderUsername': 'Alice',
+                    'timestamp': '2026-11-02T09:00:00.000Z',
+                    'quotedMessageId': 'thought:post-1',
+                  }),
+                });
+              });
+
+          for (final id in ['quoted-reply', 'emoji-reply']) {
+            await firebaseMessagingBackgroundHandler(
+              RemoteMessage(
+                messageId: 'provider-$id',
+                data: {
+                  'type': 'new_message',
+                  'sender_id': 'peer-alice',
+                  'message_id': id,
+                  'post_id': 'post-1',
+                  'kem': 'kem-$id',
+                  'ciphertext': id,
+                  'nonce': 'nonce-$id',
+                },
+              ),
+            );
+          }
+
+          expect(staged.map((entry) => entry.messageId).toSet(), {
+            'quoted-reply',
+            'emoji-reply',
+          });
+          expect(staged.every((entry) => entry.kind == 'chat'), isTrue);
+          final shows = log.where((call) => call.method == 'show').toList();
+          expect(shows, hasLength(2));
+          expect(
+            shows.map(
+              (call) => ((call.arguments as Map)['platformSpecifics'] as Map)
+                  ['channelId'],
+            ),
+            [mknoonMessagesChannelId, mknoonMessagesSilentChannelId],
+            reason: 'the second reply retains the existing chat tone debounce',
+          );
+          for (final call in shows) {
+            final arguments = call.arguments as Map;
+            expect(
+              decodeConversationNotificationPayload(
+                arguments['payload'] as String?,
+              )?.routePayload,
+              'peer-alice',
+            );
+          }
+        },
+      );
 
       List<(String, Object?)> cardCalls() => log
           .where((call) => call.method == 'show' || call.method == 'cancel')

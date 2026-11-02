@@ -174,6 +174,7 @@ class P2PServiceImpl
         PeerLivenessProbe,
         PeerDropSignal {
   final Bridge _bridge;
+  final Future<bool> Function()? loadThoughtNotificationsEnabled;
   final PushTokenStore? _pushTokenStore;
 
   /// Plan 320 P2: reads the CURRENT provider token. Relay-health re-registration
@@ -383,6 +384,7 @@ class P2PServiceImpl
 
   P2PServiceImpl({
     required Bridge bridge,
+    this.loadThoughtNotificationsEnabled,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
     ReceivedWakeTokenStore? receivedWakeTokenStore,

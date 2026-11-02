@@ -24,8 +24,12 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/features/push/application/push_registration_coordinator.dart';
+import 'package:flutter_app/features/push/application/register_push_token_use_case.dart'
+    as registration;
 
 import '../../shared/fakes/in_memory_inbox_staging_repository.dart';
+import '../../core/secure_storage/fake_secure_key_store.dart';
 
 /// A fake bridge that records commands and returns configurable responses.
 class _FakeBridge extends Bridge {
@@ -110,12 +114,17 @@ Future<List<String>> _capturePrints(Future<void> Function() action) async {
 void main() {
   late _FakeBridge bridge;
   late List<String> registeredTokens;
+  late List<Map<String, dynamic>> registeredPayloads;
+  late FakeSecureKeyStore preferences;
+  const thoughtNotificationPreferenceKey = 'thought_notifications_enabled_v1';
   late String stickyStatus;
   P2PServiceImpl? service;
 
   setUp(() {
     bridge = _FakeBridge();
     registeredTokens = [];
+    registeredPayloads = [];
+    preferences = FakeSecureKeyStore();
     stickyStatus = _statusJson(relayState: 'online');
     bridge.whenCommand('node:status', (_) => stickyStatus);
     bridge.whenCommand('node:start', (_) => _statusJson(relayState: 'online'));
@@ -135,6 +144,7 @@ void main() {
     );
     bridge.whenCommand('inbox:register_token', (payload) {
       registeredTokens.add(payload?['token'] as String? ?? '<missing>');
+      registeredPayloads.add(Map<String, dynamic>.from(payload!));
       return jsonEncode({'ok': true, 'status': 'registered'});
     });
   });
@@ -147,11 +157,149 @@ void main() {
   P2PServiceImpl buildService() {
     final built = P2PServiceImpl(
       bridge: bridge,
+      loadThoughtNotificationsEnabled: () async =>
+          await preferences.read(thoughtNotificationPreferenceKey) != '0',
       inboxStagingRepository: InMemoryInboxStagingRepository(),
     );
     service = built;
     return built;
   }
+
+  test(
+    'Thought notification registration carries exact default ON and OFF ON OFF booleans',
+    () async {
+      final svc = buildService();
+      await svc.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      expect(await svc.registerPushToken('same-token', 'android'), isTrue);
+      for (final value in ['0', '1', '0']) {
+        await preferences.write(thoughtNotificationPreferenceKey, value);
+        expect(await svc.registerPushToken('same-token', 'android'), isTrue);
+      }
+
+      expect(
+        registeredPayloads.map(
+          (payload) => payload['thought_notifications_enabled'],
+        ),
+        [true, false, true, false],
+      );
+      expect(
+        registeredPayloads.every(
+          (payload) => payload['thought_notifications_enabled'] is bool,
+        ),
+        isTrue,
+      );
+      expect(
+        registeredPayloads.every((payload) => payload['token'] == 'same-token'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'Thought notification registration startup refresh and preference retry read durable choice',
+    () async {
+      final svc = buildService();
+      await svc.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      await preferences.write(thoughtNotificationPreferenceKey, '0');
+      final refresh = StreamController<String>.broadcast();
+      addTearDown(refresh.close);
+      var liveToken = 'startup-token';
+      final coordinator = PushRegistrationCoordinator(
+        requestPermission: () async => true,
+        readPermission: () async => true,
+        registerPushToken: () => registration.registerPushToken(
+          p2pService: svc,
+          isIOSFn: () => false,
+          getTokenFn: () async => liveToken,
+          getPlatformFn: () => 'android',
+        ),
+        tokenRefreshStream: refresh.stream,
+      );
+      addTearDown(coordinator.dispose);
+      await coordinator.ensureStarted();
+      expect(registeredPayloads, hasLength(1));
+
+      await preferences.write(thoughtNotificationPreferenceKey, '1');
+      liveToken = 'fresh-token';
+      refresh.add(liveToken);
+      for (var i = 0; i < 100 && registeredPayloads.length < 2; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+      expect(registeredPayloads, hasLength(2));
+      await preferences.write(thoughtNotificationPreferenceKey, '0');
+      await coordinator.retryNow();
+
+      expect(registeredPayloads.map((payload) => payload['token']), [
+        'startup-token',
+        'fresh-token',
+        'fresh-token',
+      ]);
+      expect(
+        registeredPayloads.map(
+          (payload) => payload['thought_notifications_enabled'],
+        ),
+        [false, true, false],
+      );
+    },
+  );
+
+  test(
+    'Thought notification OFF queued during registration is sent last with the same token',
+    () async {
+      final svc = buildService();
+      await svc.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+      final firstFrame = Completer<void>();
+      final firstResponse = Completer<void>();
+      var activeFrames = 0;
+      bridge.whenCommand('inbox:register_token', (payload) async {
+        activeFrames++;
+        expect(
+          activeFrames,
+          1,
+          reason: 'the registration owner serializes writes',
+        );
+        registeredPayloads.add(Map<String, dynamic>.from(payload!));
+        if (registeredPayloads.length == 1) {
+          firstFrame.complete();
+          await firstResponse.future;
+        }
+        activeFrames--;
+        return jsonEncode({'ok': true});
+      });
+      final coordinator = PushRegistrationCoordinator(
+        requestPermission: () async => true,
+        readPermission: () async => true,
+        registerPushToken: () => registration.registerPushToken(
+          p2pService: svc,
+          isIOSFn: () => false,
+          getTokenFn: () async => 'same-token',
+          getPlatformFn: () => 'android',
+        ),
+        tokenRefreshStream: const Stream<String>.empty(),
+      );
+      addTearDown(coordinator.dispose);
+      final startup = coordinator.ensureStarted();
+      await firstFrame.future;
+      await preferences.write(thoughtNotificationPreferenceKey, '0');
+      final preferenceRetry = coordinator.retryNow();
+      await pumpEventQueue();
+      expect(registeredPayloads, hasLength(1));
+      firstResponse.complete();
+      await Future.wait([startup, preferenceRetry]);
+
+      expect(registeredPayloads.map((payload) => payload['token']), [
+        'same-token',
+        'same-token',
+      ]);
+      expect(
+        registeredPayloads.map(
+          (payload) => payload['thought_notifications_enabled'],
+        ),
+        [true, false],
+        reason: 'an old ON response cannot cover the newer durable OFF',
+      );
+    },
+  );
 
   /// Starts the node online and seeds the cached token state
   /// (`_lastFcmToken`/`_lastFcmPlatform`) via a normal registration.
