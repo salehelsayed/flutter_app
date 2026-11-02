@@ -1,9 +1,13 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -44,6 +48,7 @@ void main() {
     double topClearance = 0,
     double bottomClearance = 0,
     bool answers = true,
+    Future<List<PostMediaAttachmentModel>> Function(String)? load,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -82,6 +87,8 @@ void main() {
                   }
                 : null,
             replyStatusChanges: statuses.stream,
+            loadMedia: load,
+            downloadMedia: load == null ? null : (item) async => item,
             child: const SizedBox.expand(child: Text('Flat circle')),
           ),
         ),
@@ -131,6 +138,23 @@ void main() {
 
   Future<void> tap(WidgetTester tester, Finder target) async {
     await tester.tap(target, warnIfMissed: false);
+    await rest(tester);
+  }
+
+  Future<void> activate(WidgetTester tester, Finder target) async {
+    final node = tester.getSemantics(target);
+    expect(
+      node.getSemanticsData().hasAction(SemanticsAction.tap),
+      isTrue,
+      reason: '$target has no tap action',
+    );
+    tester.binding.performSemanticsAction(
+      SemanticsActionEvent(
+        type: SemanticsAction.tap,
+        nodeId: node.id,
+        viewId: tester.view.viewId,
+      ),
+    );
     await rest(tester);
   }
 
@@ -304,37 +328,24 @@ void main() {
     final handle = tester.ensureSemantics();
     await mount(tester);
     await enter(tester);
-    Future<void> activate(Finder target) async {
-      final node = tester.getSemantics(target);
-      expect(
-        node.getSemanticsData().hasAction(SemanticsAction.tap),
-        isTrue,
-        reason: '$target has no tap action',
-      );
-      tester.binding.performSemanticsAction(
-        SemanticsActionEvent(
-          type: SemanticsAction.tap,
-          nodeId: node.id,
-          viewId: tester.view.viewId,
-        ),
-      );
-      await rest(tester);
-    }
-
     for (final name in ['love', 'laugh', 'fire', 'applause']) {
-      await activate(react(name));
+      await activate(tester, react(name));
     }
     expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏']);
 
-    await activate(replyButton);
+    await activate(tester, replyButton);
     expect(composer, findsOneWidget);
-    await activate(find.byKey(const ValueKey('orbit-depth-composer-dismiss')));
+    await activate(
+      tester,
+      find.byKey(const ValueKey('orbit-depth-composer-dismiss')),
+    );
     expect(composer, findsNothing);
 
-    await activate(replyButton);
+    await activate(tester, replyButton);
     await tester.enterText(composerField, 'by voice over');
     await rest(tester);
     await activate(
+      tester,
       find.descendant(
         of: composer,
         matching: find.byIcon(Icons.arrow_upward_rounded),
@@ -342,6 +353,82 @@ void main() {
     );
     expect(sent.map((s) => s.text), ['❤️', '😂', '🔥', '👏', 'by voice over']);
     expect(composer, findsNothing);
+    await finish(tester);
+    handle.dispose();
+  });
+
+  testWidgets('a screen reader Retry after a drag in 3D resends the failed '
+      'reaction once with the same message id', (tester) async {
+    final handle = tester.ensureSemantics();
+    await mount(tester);
+    await enter(tester);
+    result = ThoughtReplyStatus.failed;
+    await tap(tester, react('applause'));
+    expect(retry, findsOneWidget);
+    result = ThoughtReplyStatus.sent;
+    await enter(tester);
+    expect(bar(0), findsOneWidget);
+    await activate(tester, retry);
+    expect(sent.map((s) => s.text), ['👏', '👏']);
+    expect(sent[1].messageId, sent[0].messageId);
+    expect(
+      find.descendant(of: status, matching: find.text('sent')),
+      findsOneWidget,
+    );
+    await finish(tester);
+    handle.dispose();
+  });
+
+  testWidgets('a screen reader tap on the focused thought card opens it once', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    await mount(tester);
+    await enter(tester);
+    await activate(
+      tester,
+      find.byKey(const ValueKey('orbit-depth-card-post-0')),
+    );
+    expect(opened, ['post-0']);
+    expect(sent, isEmpty);
+    await finish(tester);
+    handle.dispose();
+  });
+
+  testWidgets('a screen reader tap on the focused thought\'s photo opens it '
+      'once', (tester) async {
+    final temp = Directory.systemTemp.createTempSync('orbit-depth-answers-');
+    MediaFileManager.cacheDocumentsDir(temp.path);
+    addTearDown(() {
+      MediaFileManager.debugResetDocumentsDirCache();
+      temp.deleteSync(recursive: true);
+    });
+    final file = File('${temp.path}/photo.png')
+      ..writeAsBytesSync(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+        ),
+      );
+    final photo = PostMediaAttachmentModel(
+      mediaId: 'photo-0',
+      postId: 'post-0',
+      blobId: 'blob-0',
+      kind: 'image',
+      mime: 'image/png',
+      sizeBytes: 68,
+      localPath: file.path,
+      downloadStatus: 'done',
+      createdAt: depthNow.toIso8601String(),
+    );
+    thoughts['peer-0'] = depthThought(0, mediaKind: 'image');
+    final handle = tester.ensureSemantics();
+    await mount(tester, load: (_) async => [photo]);
+    await enter(tester);
+    await activate(
+      tester,
+      find.byKey(const ValueKey('media-grid-cell-post-0-blob-0')),
+    );
+    expect(opened, ['post-0']);
     await finish(tester);
     handle.dispose();
   });
