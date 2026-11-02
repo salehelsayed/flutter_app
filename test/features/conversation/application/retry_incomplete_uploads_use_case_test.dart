@@ -1234,6 +1234,133 @@ void main() {
       },
     );
 
+    test('stickers v1: a sticker left upload_pending is still a sticker on '
+        'the wire after a successful retry', () async {
+      const messageId = 'msg-b6-sticker-retry';
+      const attachmentId = 'att-b6-sticker-retry';
+      const stickerId = 'orbit_crew.planet.angry';
+      final source = File(
+        '${Directory.systemTemp.path}/$attachmentId-${DateTime.now().microsecondsSinceEpoch}.webp',
+      );
+      await source.writeAsBytes(<int>[1, 2, 3, 4]);
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
+      final intent = computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: const <String>[attachmentId],
+      );
+      messageRepo.seed(<ConversationMessage>[
+        ConversationMessage(
+          id: messageId,
+          contactPeerId: 'peer-bob-001',
+          senderPeerId: 'my-peer-id',
+          text: '',
+          timestamp: '2026-11-02T12:00:00.000Z',
+          status: 'sending',
+          isIncoming: false,
+          createdAt: '2026-11-02T12:00:00.000Z',
+          directMediaCustodyIntentId: intent,
+        ),
+      ]);
+      mediaRepo.seed(<MediaAttachment>[
+        _pendingAtt(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/webp',
+          mediaType: 'image',
+          durationMs: null,
+          localPath: MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: 'image/webp',
+          ),
+        ).copyWith(width: 512, height: 512, stickerId: stickerId),
+      ]);
+      identityRepo.seed(FakeIdentityRepository.makeIdentity());
+      fakeUploadFn.willReturn(
+        _doneAttachment(
+          attachmentId,
+          messageId,
+          mime: 'image/webp',
+        ).copyWith(width: 512, height: 512),
+      );
+      final stagedAttachmentJson = <Map<String, dynamic>>[];
+      final stagedWireEnvelopes = <String>[];
+      mediaRepo.onStageOutgoingDirectMediaInboxCustody =
+          ({
+            required expected,
+            required staged,
+            required attachments,
+            required kind,
+            required recipientPeerId,
+            required wireEnvelope,
+          }) async {
+            stagedAttachmentJson.addAll(
+              attachments.map((attachment) => attachment.toJson()),
+            );
+            stagedWireEnvelopes.add(wireEnvelope);
+            final committed = staged.copyWith(
+              directMediaCustodyIntentId: null,
+              media: attachments,
+            );
+            await messageRepo.saveMessage(committed);
+            mediaRepo.seed(attachments);
+            final custody = DirectInboxCustodyOutboxEntry(
+              recipientPeerId: recipientPeerId,
+              messageId: staged.id,
+              incarnationId: intent,
+              wireEnvelope: wireEnvelope,
+              retryCount: 0,
+              lastAttemptAt: null,
+              lastErrorCode: null,
+              createdAt: committed.createdAt,
+              updatedAt: committed.createdAt,
+            );
+            messageRepo.seedDirectInboxCustody(custody);
+            return OutgoingDirectMediaCustodyStageResult(
+              outcome: OutgoingOrdinaryMutationOutcome.applied,
+              message: committed,
+              custody: custody,
+            );
+          };
+
+      final count = await retryIncompleteUploads(
+        mediaAttachmentRepo: mediaRepo,
+        messageRepo: messageRepo,
+        bridge: bridge,
+        p2pService: DirectReactionCustodyP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        ),
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        uploadMediaFn: fakeUploadFn.call,
+        mediaFileManager: FakeMediaFileManager()..resolveResult = source.path,
+      );
+
+      Iterable<Object?> stickerMarkers(Object? node) sync* {
+        if (node is Map) {
+          if (node.containsKey('sticker')) yield node['sticker'];
+          for (final value in node.values) {
+            yield* stickerMarkers(value);
+          }
+        } else if (node is List) {
+          for (final value in node) {
+            yield* stickerMarkers(value);
+          }
+        } else if (node is String && node.startsWith('{')) {
+          yield* stickerMarkers(jsonDecode(node));
+        }
+      }
+
+      expect(count, 1);
+      expect(fakeUploadFn.callCount, 1);
+      expect(stagedAttachmentJson.single['sticker'], {'id': stickerId});
+      expect(stickerMarkers(jsonDecode(stagedWireEnvelopes.single)).toList(), [
+        {'id': stickerId},
+      ]);
+    });
+
     test(
       'TC-345-07f token-bearing upload failure uses only exact manifest authority',
       () async {

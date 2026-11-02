@@ -7707,6 +7707,154 @@ void main() {
       },
     );
 
+    testWidgets(
+      'stickers v1: a refused sticker keeps the restored failed text retry, '
+      'so the settled draft is not sent again',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync('b6_sticker_');
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+        addTearDown(() {
+          PathProviderPlatform.instance = previousPathProvider;
+          tempDir.deleteSync(recursive: true);
+        });
+        final refusingRepo = _RefusingStickerAdmissionRepository();
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final contactRepo = FakeContactRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+        );
+        // 185×187/192: restored-failed-draft retry is a GENUINE-failure flow.
+        // Post-192 a connectivity-class result carrying an envelope is kept
+        // 'sent' (self-healing lane) even when the relay reads online, so the
+        // terminal failed+restored-draft state is reached via the exception
+        // path: the use case persisted the envelope, then the send flow threw.
+        final p2pService = InboxRetryP2PService(relayOnline: true);
+        var sendCalls = 0;
+        String? failedMessageId;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> failFirstSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          String? authoredTextIntentToken,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          sendCalls++;
+          if (sendCalls > 1) {
+            fail('settled restored failed draft should not send a new row');
+          }
+          failedMessageId = messageId;
+          final failed = ConversationMessage(
+            id: messageId!,
+            contactPeerId: targetPeerId,
+            senderPeerId: senderPeerId,
+            text: text,
+            timestamp: timestamp!,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: timestamp,
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}',
+          );
+          await messageRepo.saveMessage(failed);
+          throw Exception('send flow threw after envelope persist');
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: failFirstSend,
+          p2pService: p2pService,
+          bridge: FakeBridge(),
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: refusingRepo,
+        );
+
+        await tester.enterText(find.byType(TextField), 'Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(failedMessageId, isNotNull);
+        expect(messageRepo.store[failedMessageId]?.status, 'failed');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry this message',
+        );
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(
+              find.byKey(const ValueKey('conversation-attach-stickers-action')),
+            )
+            .onTap!();
+        await pumpUntilAsyncIo(
+          tester,
+          () => find.byType(StickerPanel).evaluate().isNotEmpty,
+        );
+        await tester.tap(
+          find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.angry')),
+        );
+        await pumpUntilAsyncIo(tester, () => refusingRepo.snapshotReads == 1);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(sendCalls, 1);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Retry this message',
+        );
+
+        await messageRepo.saveMessage(
+          messageRepo.store[failedMessageId]!.copyWith(
+            status: 'delivered',
+            transport: 'inbox',
+            wireEnvelope: null,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+
+        tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .onSend('Retry this message');
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(sendCalls, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.store.keys.toList(), [failedMessageId]);
+        expect(messageRepo.store[failedMessageId]?.status, 'delivered');
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          '',
+        );
+        expect(find.text('Could not retry message.'), findsNothing);
+        await pumpUntilAsyncIo(
+          tester,
+          () => mediaUploadInFlightTracker.inFlightCount == 0,
+        );
+      },
+    );
+
     testWidgets('shows delivered status when inbox fallback returns success', (
       tester,
     ) async {
@@ -19944,6 +20092,25 @@ ConversationCallTimelineEntry _callEntry({
     endedAt: startedAt.add(const Duration(seconds: 20)),
     duration: duration,
   );
+}
+
+class _RefusingStickerAdmissionRepository extends FakeMediaAttachmentRepository
+    implements OutgoingDirectLinkedMediaBlobFanoutRepository {
+  int snapshotReads = 0;
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async {
+    snapshotReads++;
+    return null;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _StickerTempPath extends PathProviderPlatform {

@@ -2395,6 +2395,222 @@ void main() {
       expect(saved.single.stickerId, isNull);
     });
 
+    for (final leaveChat in <bool>[true, false]) {
+      testWidgets('stickers v1: a protected group sticker counts once in the '
+          'tally when the chat is ${leaveChat ? 'left' : 'kept open'} '
+          'during upload', (tester) async {
+        final diagnosticsDir = await installStickerDiagnostics(tester);
+        final uploadEntered = Completer<void>();
+        final uploadRelease = Completer<void>();
+        tester.view.physicalSize = const Size(1170, 2532);
+        tester.view.devicePixelRatio = 3;
+        addTearDown(tester.view.reset);
+        FlutterSecureStorage.setMockInitialValues(<String, String>{});
+        final tempDir = Directory.systemTemp.createTempSync('strict_sticker_');
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final previousPathProvider = PathProviderPlatform.instance;
+        PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+        addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+        final group = makeChatGroup();
+        await groupRepo.saveGroup(group);
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: testIdentity.peerId,
+            username: testIdentity.username,
+            role: MemberRole.admin,
+            publicKey: testIdentity.publicKey,
+            mlKemPublicKey: testIdentity.mlKemPublicKey,
+            devices: <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'me',
+                transportPeerId: 'me',
+                deviceSigningPublicKey: testIdentity.publicKey,
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-peer-bob',
+            mlKemPublicKey: 'mlkem-peer-bob',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-bob',
+                transportPeerId: 'transport-bob',
+                deviceSigningPublicKey: 'pk-peer-bob',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 5, 1, 10, 1),
+          ),
+        );
+        setGroupContentAuthoringResolver(
+          groupRepo,
+          ({
+            required groupId,
+            required senderPeerId,
+            required senderPublicKey,
+            senderDeviceId,
+            senderTransportPeerId,
+          }) async => (
+            kind: GroupContentAuthoringResolutionKind.strict,
+            context: GroupContentAuthoringContext(
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.enabled(),
+              multiDeviceSyncEnabled: true,
+              authorityVersion: GroupContentAuthorityVersion(
+                eventAt: DateTime.utc(2026, 5, 1, 10, 2),
+                eventId: 'authority-sticker',
+                keyEpoch: 1,
+              ),
+              inboxStore: _StoredStrictInbox(),
+            ),
+          ),
+        );
+        addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+        final strictMedia = _StrictStickerCustodyRepository();
+        final strictMessages = _StrictPreparedGroupMessageRepository();
+        final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+          artifactStore: GroupMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async => tempDir,
+          ),
+          prepareArtifact: ({required bridge, required localFilePath}) async {
+            final plaintext = await File(localFilePath).readAsBytes();
+            final ciphertext = <int>[
+              ...List<int>.filled(16, 0xa5),
+              ...plaintext,
+            ];
+            final encrypted = File(
+              p.join(tempDir.path, 'cipher_${p.basename(localFilePath)}.bin'),
+            )..writeAsBytesSync(ciphertext);
+            return EncryptedMediaArtifact(
+              encryptedPath: encrypted.path,
+              keyBase64: 'sticker-key',
+              nonce: 'sticker-nonce',
+              scheme: groupMediaBlobEncryptionScheme,
+              contentHash: sha256.convert(ciphertext).toString(),
+              plaintextSize: plaintext.length,
+            );
+          },
+          strictUpload:
+              ({
+                required bridge,
+                required custodyBlobId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                uploadEntered.complete();
+                await uploadRelease.future;
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': custodyBlobId,
+                  'storeStatus': 'stored',
+                  'custodyKind': groupMediaBlobCustodyKind,
+                  'custodyContract': groupMediaBlobCustodyContract,
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': groupMediaBlobTransportMime,
+                  'expiresAtMs': DateTime.now()
+                      .add(const Duration(days: 7))
+                      .millisecondsSinceEpoch,
+                  'custodyRelayPeerId': 'relay-$recipientPeerId',
+                };
+              },
+        );
+
+        await tester.pumpWidget(
+          buildWidget(
+            group: group,
+            messageRepo: strictMessages,
+            mediaRepo: strictMedia,
+            mediaFileManager: _CopyingMediaFileManager(),
+            preparedGroupMediaBlobCustodyCoordinator: coordinator,
+          ),
+        );
+        await pumpFrames(tester, count: 20);
+
+        await tester.tap(find.byIcon(Icons.add_rounded));
+        await tester.pump(const Duration(milliseconds: 500));
+        tester
+            .widget<ListTile>(
+              find.byKey(const ValueKey('group-attach-stickers-action')),
+            )
+            .onTap!();
+        for (
+          var i = 0;
+          i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
+          i++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+        await tester.pump();
+        await tester.tap(
+          find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+        );
+        for (var i = 0; i < 300 && !uploadEntered.isCompleted; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        expect(uploadEntered.isCompleted, isTrue);
+        if (leaveChat) await tester.pumpWidget(const SizedBox.shrink());
+        uploadRelease.complete();
+        for (
+          var i = 0;
+          i < 300 &&
+              (_sentMediaManifests(bridge).isEmpty ||
+                  mediaUploadInFlightTracker.inFlightCount > 0);
+          i++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump(const Duration(milliseconds: 10));
+        }
+        await pumpFrames(tester, count: 10);
+        expect(mediaUploadInFlightTracker.inFlightCount, 0);
+
+        expect(groupPublishPayloads(bridge), isEmpty);
+        final manifestJson = _sentMediaManifests(bridge).first;
+        final attachmentJson =
+            ((jsonDecode(manifestJson) as Map<String, dynamic>)['attachments']
+                        as List)
+                    .single
+                as Map<String, dynamic>;
+        expect(attachmentJson.keys, isNot(contains('sticker')));
+        expect(attachmentJson['mime'], 'image/webp');
+        expect(attachmentJson['width'], 512);
+        final manifest = ProtectedGroupMediaManifest.decode(manifestJson);
+        expect(manifest.attachments.single.mime, 'image/webp');
+        final saved = await strictMedia.getAttachmentsForMessage(
+          manifest.messageId,
+          owner: MediaOwnerLane.group,
+        );
+        expect(saved.single.mime, 'image/webp');
+        expect(saved.single.stickerId, isNull);
+        expect(await stickerUsageTally(tester, diagnosticsDir), [
+          {
+            'intervalEndMs': stickerTallyDayEndMs,
+            'counts': {'big_mood.en.hug': 1},
+          },
+        ]);
+      });
+    }
+
     Future<void> openStickerPanel(WidgetTester tester) async {
       await tester.tap(find.byIcon(Icons.add_rounded));
       await tester.pump(const Duration(milliseconds: 500));
