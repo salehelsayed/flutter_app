@@ -13,6 +13,7 @@ Future<List<String>> sweepExpiredPosts({
   final deletedPostIds = <String>[];
 
   for (final post in expiredPosts) {
+    if (!post.isIncoming) continue;
     // One post that cannot be deleted must not keep every later one alive.
     try {
       await deleteStoredThought(

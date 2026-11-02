@@ -1,8 +1,20 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/post_feed_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/post_recipients_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/posts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/post_media_upload_recovery_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
+import 'package:flutter_app/features/posts/data/repositories/post_repository_impl.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../../services/fake_p2p_service.dart';
 
 void main() {
   sqfliteFfiInit();
@@ -12,23 +24,40 @@ void main() {
     db = await databaseFactoryFfiNoIsolate.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 122,
+        version: currentIdentityDatabaseVersion,
         onCreate: runProductionOnCreate,
       ),
     );
   });
   tearDown(() => db.close());
+  PostRepositoryImpl repository() {
+    final posts = PostRepositoryImpl(
+      dbInsertPost: (row) => dbInsertPost(db, row),
+      dbLoadPost: (id) => dbLoadPost(db, id, nowProvider: () => now),
+      dbLoadPostsFeed: () => dbLoadPostsFeed(db, nowProvider: () => now),
+      dbLoadExpiredPosts: (iso) => dbLoadExpiredPosts(db, iso),
+      dbDeletePostCascade: (id) => dbDeletePostCascade(db, id),
+      dbUpsertRecipientDelivery: (row) =>
+          dbUpsertPostRecipientDelivery(db, row),
+      dbLoadRecipientDeliveries: (id) => dbLoadPostRecipientDeliveries(db, id),
+      dbMarkPostFocused: (id) => dbMarkPostFocused(db, id),
+    );
+    addTearDown(posts.dispose);
+    return posts;
+  }
+
   Future<void> seed(
     String id,
     DateTime created, {
     bool keep = false,
     bool incoming = false,
+    String author = 'author',
     String status = 'partial',
   }) => dbInsertPost(db, <String, Object?>{
     'post_id': id,
     'event_id': 'evt-$id',
-    'sender_peer_id': 'author',
-    'author_peer_id': 'author',
+    'sender_peer_id': author,
+    'author_peer_id': author,
     'author_username': 'Author',
     'text': 'private',
     'audience_kind': 'all_friends',
@@ -39,6 +68,142 @@ void main() {
     'delivery_status': status,
     'keep_available': keep ? 1 : 0,
   });
+  test(
+    'own history repository read keeps expired authors out of public reads',
+    () async {
+      await seed('own-older', now.subtract(const Duration(hours: 48)));
+      await seed('own-newer', now.subtract(const Duration(hours: 25)));
+      await seed('own-live', now.subtract(const Duration(hours: 1)));
+      await seed(
+        'friend-expired',
+        now.subtract(const Duration(hours: 26)),
+        incoming: true,
+      );
+      final posts = repository();
+
+      expect(
+        (await posts.loadExpiredOwnPosts(
+          now.toIso8601String(),
+        )).map((post) => post.id),
+        ['own-newer', 'own-older'],
+      );
+      expect(await posts.getPost('own-newer'), isNull);
+      expect((await posts.loadFeed()).map((post) => post.id), ['own-live']);
+      expect(
+        (await posts.loadPostsByIds([
+          'own-newer',
+          'own-live',
+        ])).map((post) => post.id),
+        ['own-live'],
+      );
+    },
+  );
+
+  test(
+    'expired own history retracts locally with its file but cannot retract friends',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'own-history-delete-',
+      );
+      final originalPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _ThoughtHistoryPathProvider(
+        directory.path,
+      );
+      addTearDown(() async {
+        PathProviderPlatform.instance = originalPathProvider;
+        await directory.delete(recursive: true);
+      });
+      for (final id in ['own-history', 'friend-expired']) {
+        await seed(
+          id,
+          now.subtract(const Duration(hours: 25)),
+          incoming: id == 'friend-expired',
+          author: id == 'friend-expired' ? 'friend' : 'author',
+        );
+        final relative = 'post_media/$id/image.jpg';
+        final file = File('${directory.path}/$relative');
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes([7, 8, 9]);
+        await db.insert(
+          'post_media_attachments',
+          PostMediaAttachmentModel(
+            mediaId: 'media-$id',
+            postId: id,
+            blobId: 'blob-$id',
+            kind: 'image',
+            mime: 'image/jpeg',
+            sizeBytes: 3,
+            localPath: relative,
+            downloadStatus: 'done',
+            createdAt: now
+                .subtract(const Duration(hours: 25))
+                .toIso8601String(),
+          ).toMap(),
+        );
+      }
+      final posts = repository();
+      final service = FakeP2PService();
+      Future<ThoughtRetraction> retract(String id, String sender) =>
+          retractThought(
+            postRepo: posts,
+            p2pService: service,
+            mediaFileManager: MediaFileManager(),
+            postId: id,
+            senderPeerId: sender,
+            nowProvider: () => now,
+          );
+      expect(await posts.getPost('own-history'), isNull);
+      expect(
+        (await retract('own-history', 'not-author')).result,
+        RetractThoughtResult.notAuthor,
+      );
+      expect(
+        (await retract('friend-expired', 'author')).result,
+        RetractThoughtResult.postNotFound,
+      );
+      expect(
+        (await retract('own-history', 'author')).result,
+        RetractThoughtResult.deleted,
+      );
+      expect(
+        await db.query(
+          'posts',
+          where: 'post_id = ?',
+          whereArgs: ['own-history'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          'post_media_attachments',
+          where: 'post_id = ?',
+          whereArgs: ['own-history'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await File(
+          '${directory.path}/post_media/own-history/image.jpg',
+        ).exists(),
+        isFalse,
+      );
+      expect(
+        await db.query(
+          'posts',
+          where: 'post_id = ?',
+          whereArgs: ['friend-expired'],
+        ),
+        hasLength(1),
+      );
+      expect(
+        await File(
+          '${directory.path}/post_media/friend-expired/image.jpg',
+        ).readAsBytes(),
+        [7, 8, 9],
+      );
+    },
+  );
+
   test(
     'next expiry ignores retained own history and keeps incoming deadline',
     () async {
@@ -144,4 +309,12 @@ void main() {
       );
     },
   );
+}
+
+class _ThoughtHistoryPathProvider extends PathProviderPlatform {
+  _ThoughtHistoryPathProvider(this.documentsPath);
+  final String documentsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => documentsPath;
 }

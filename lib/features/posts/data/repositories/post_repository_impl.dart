@@ -378,6 +378,18 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   }
 
   @override
+  Future<List<PostModel>> loadExpiredOwnPosts(String nowIso) async {
+    return (await loadExpiredPosts(
+      nowIso,
+    )).where((post) => !post.isIncoming).toList(growable: false)..sort((a, b) {
+      final created = DateTime.parse(
+        b.createdAt,
+      ).compareTo(DateTime.parse(a.createdAt));
+      return created != 0 ? created : b.id.compareTo(a.id);
+    });
+  }
+
+  @override
   Future<void> deletePostCascade(String postId) async {
     final dbDelete = _require(
       dbDeletePostCascade,

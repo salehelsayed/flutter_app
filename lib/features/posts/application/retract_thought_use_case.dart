@@ -35,7 +35,18 @@ Future<ThoughtRetraction> retractThought({
   required String senderPeerId,
   DateTime Function()? nowProvider,
 }) async {
-  final post = await postRepo.getPost(postId);
+  final now = (nowProvider ?? DateTime.now)().toUtc();
+  var post = await postRepo.getPost(postId);
+  if (post == null) {
+    for (final candidate in await postRepo.loadExpiredOwnPosts(
+      now.toIso8601String(),
+    )) {
+      if (candidate.id == postId) {
+        post = candidate;
+        break;
+      }
+    }
+  }
   if (post == null) {
     return const ThoughtRetraction(RetractThoughtResult.postNotFound);
   }
@@ -47,7 +58,6 @@ Future<ThoughtRetraction> retractThought({
     for (final delivery in await postRepo.getRecipientDeliveries(postId))
       if (delivery.recipientPeerId.isNotEmpty) delivery.recipientPeerId,
   }.toList(growable: false);
-  final now = (nowProvider ?? DateTime.now)().toUtc();
   final envelope = PostRetractEnvelope(
     eventId: 'evt_${_uuid.v4()}',
     createdAt: now,

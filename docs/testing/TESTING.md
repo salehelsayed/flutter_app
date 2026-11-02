@@ -4157,6 +4157,29 @@ described in the microphone preflight guidance below. Focused verification and
 the preserved initial failures are under `.codex-test-logs/plan407-step1/`; full host and native gate
 closure must use the current run evidence.
 
+Expired author Thoughts now keep their stored rows and media as own history;
+the expiry sweep removes only incoming friend copies. The next sweep deadline
+also selects only incoming rows so retained past author deadlines cannot loop
+the foreground timer. Public single/by-ID/feed reads, Orbit, and the current You
+page still enforce live expiry. `loadExpiredOwnPosts` is a separate newest-first
+repository read; `loadOwnThoughtHistory` reuses `hydratePostSurfaceItems` so its
+existing `PostModel` results include retained media and resolved paths. Local
+retraction can fall back only to expired own rows and still applies the author
+check and real media/cascade deletion. Replacement continues reading the live
+feed, so it does not remove already-expired stored own history.
+
+Move Account already exports the whole portable database and all stored post
+media paths without an expiry filter; no schema or migration production change
+is needed for own history. The sweep-before-Move regression exercises production
+bundle/receiver/import logic, actual post-media bytes, and disk reopen. This is
+host SQLite-copy/FakeBridge proof, not handset SQLCipher or signed-build proof.
+The lifetime-query fixture must use `currentIdentityDatabaseVersion`: schema 122
+can exercise old reads but lacks the v124 `post_view_receipts` table required by
+the current strict deletion cascade. All 54 focused host tests passed after that
+fixture correction; the inherited native SQLCipher capability case remains an
+explicit host-only skip. The original failure remains alongside the causal REDs in
+`.codex-test-logs/own-thought-history-20261102/`.
+
 Thought replacement must use creation order, not the order asynchronous sends
 finish. Equal creation times use the orbit's post-ID tie-break. A local creation
 that finishes after its newer replacement removes its late rows and returns no

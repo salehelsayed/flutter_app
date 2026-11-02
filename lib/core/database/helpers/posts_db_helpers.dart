@@ -516,10 +516,10 @@ Future<void> _deleteRequiredPostRows(
   await txn.delete(table, where: 'post_id = ?', whereArgs: <Object?>[postId]);
 }
 
-/// Includes hidden thoughts: their media and notifications still need expiry.
+/// Includes hidden incoming thoughts; the author's own history is retained.
 Future<DateTime?> dbLoadNextPostExpiry(Database db) async {
   final rows = await db.rawQuery(
-    'SELECT MIN(expires_at) AS expires_at FROM posts',
+    'SELECT MIN(expires_at) AS expires_at FROM posts WHERE is_incoming = 1',
   );
   final value = rows.first['expires_at'] as String?;
   return value == null ? null : DateTime.tryParse(value)?.toUtc();
