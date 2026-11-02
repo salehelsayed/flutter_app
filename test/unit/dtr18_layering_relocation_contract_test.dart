@@ -257,7 +257,8 @@ const _privacySha256 =
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
-    'c4ced3e102bdcc984752b2b73bb57df778db7a3523f13e33fd94f85ccce4e43e';
+    // Round 9 combines the sticker and Thought-notification switch wiring.
+    '5d3f69c455eb2172226ebd7f592a85000eefd1549092ba06ae7cd3572f983f4b';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
