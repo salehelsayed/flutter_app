@@ -425,6 +425,173 @@ Future<Map<String, dynamic>> _publishUiMembershipTransition({
 }
 
 void main() {
+  test(
+    'GC008 creator leave key reaches every member when leave overtakes key delivery',
+    () async {
+      final a = _Peer('Alice');
+      final b = _Peer('Bob');
+      final c = _Peer('Charlie');
+      final d = _Peer('Dana');
+      final peers = [a, b, c, d];
+      const groupId = 'gc008-creator-leave-key-order';
+      addTearDown(() async {
+        debugSetFlowEventSink(null);
+        for (final peer in peers) {
+          await peer.close();
+        }
+      });
+      for (final peer in peers) {
+        peer.contacts.seed(peers.map((other) => other.contact).toList());
+      }
+      a.bridge.responses['group:create'] = {
+        'ok': true,
+        'groupId': groupId,
+        'groupKey': 'gc008-initial-key',
+        'keyEpoch': 1,
+      };
+      final created = await a.process.run(
+        () => createGroupWithMembers(
+          bridge: a.bridge,
+          groupRepo: a.groups,
+          p2pService: a.p2p,
+          identity: a.identity,
+          selectedContacts: [b.contact, c.contact, d.contact],
+          type: GroupType.chat,
+          name: 'GC008 creator leave',
+        ),
+      );
+      expect(created.membersAdded, 3);
+      expect(created.invitesSent, 3);
+      for (final joining in [b, c, d]) {
+        await _acceptInvite(a, joining, groupId);
+        final joined = _lastInboxEnvelope(joining);
+        for (final receiver in peers.where((peer) => peer != joining)) {
+          if (await receiver.groups.getGroup(groupId) != null) {
+            await _deliver(joining, receiver, groupId, joined);
+          }
+        }
+      }
+
+      final pending = <String, GroupPendingBroadcast>{};
+      final promotion = await a.process.run(
+        () => changeGroupMemberRoleAndBroadcast(
+          bridge: a.bridge,
+          groupRepo: a.groups,
+          identityRepo: a.identities,
+          messageRepo: a.messages,
+          groupId: groupId,
+          memberPeerId: b.id,
+          role: MemberRole.admin,
+          enqueuePending: (row) async {
+            pending[row.id] = row;
+          },
+          loadPending: (id) async =>
+              pending.values.where((row) => row.groupId == id).toList(),
+          removePending: (id) async {
+            pending.remove(id);
+          },
+        ),
+      );
+      expect(promotion.updatedMember.role, MemberRole.admin);
+      expect(pending, isEmpty);
+      final promoted = _lastInboxEnvelope(a);
+      for (final receiver in [b, c, d]) {
+        await _deliver(a, receiver, groupId, promoted);
+      }
+      // A prior successful creator rotation establishes the observed epoch 2
+      // baseline without seeding any recipient key or bypassing its listener.
+      await _rotateAsPeer(a, peers, groupId, []);
+      for (final peer in peers) {
+        expect((await peer.groups.getLatestKey(groupId))!.keyGeneration, 2);
+      }
+
+      a.bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': 'gc008-departing-creator-key-3',
+        'keyEpoch': 3,
+      };
+      final keyFrames = <String, String>{};
+      late Map<String, dynamic> left;
+      final leaveAt = DateTime.now().toUtc();
+      final exit = await a.process.run(
+        () => DurableGroupExitSurfaceHarness.createForSurface(
+          groupId: groupId,
+          bridge: a.bridge,
+          groupRepository: a.groups,
+          identityRepository: a.identities,
+          messageRepository: a.messages,
+          now: () => leaveAt,
+          sendP2PMessage: (peerId, content) async {
+            final accepted = await a.p2p.sendMessage(peerId, content);
+            if (accepted) keyFrames[peerId] = content;
+            return accepted;
+          },
+          storeP2PMessageInInbox: a.p2p.storeInInbox,
+          afterNoticeAttempt: (_) async {
+            left = _lastInboxEnvelope(a);
+          },
+        ),
+      );
+      try {
+        final result = await a.process.run(exit.requestLeaveForTest);
+        expect(result.status.name, 'started');
+        expect(await exit.hasDurableGroup(), isFalse);
+        expect(await a.groups.getGroup(groupId), isNull);
+      } finally {
+        await exit.close();
+      }
+      expect(keyFrames.keys, unorderedEquals([b.id, c.id, d.id]));
+      expect(left['recipientPeerIds'], unorderedEquals([b.id, c.id, d.id]));
+      for (final frame in keyFrames.values) {
+        expect((jsonDecode(frame) as Map)['type'], 'group_key_update');
+      }
+
+      String? receiving;
+      final unauthorized = <String>[];
+      debugSetFlowEventSink((event) {
+        if (event['event'] == 'GROUP_KEY_UPDATE_LISTENER_UNAUTHORIZED_SENDER') {
+          unauthorized.add(receiving!);
+        }
+      });
+      Future<void> deliverKey(_Peer receiver) => receiver.process.run(() async {
+        receiving = receiver.id;
+        await receiver.keyListener.handleProtectedEnvelope(
+          ChatMessage(
+            from: a.id,
+            to: receiver.id,
+            content: keyFrames[receiver.id]!,
+            timestamp: leaveAt.toIso8601String(),
+            isIncoming: true,
+          ),
+        );
+      });
+
+      // Every exact producer frame is delivered. B processes its key first;
+      // C/D process the signed leave first, matching the split observed on P0.
+      await deliverKey(b);
+      await _deliver(a, b, groupId, left);
+      for (final receiver in [c, d]) {
+        await _deliver(a, receiver, groupId, left);
+        expect(await receiver.groups.getMember(groupId, a.id), isNull);
+        await deliverKey(receiver);
+      }
+      final epochs = <String, int>{
+        for (final peer in [b, c, d])
+          peer.id: (await peer.groups.getLatestKey(groupId))!.keyGeneration,
+      };
+      print(
+        jsonEncode({
+          'case': 'GC008',
+          'keyProducer': a.id,
+          'deliveredRecipients': keyFrames.keys.toList(),
+          'epochs': epochs,
+          'unauthorizedKeyReceivers': unauthorized,
+        }),
+      );
+      expect(epochs, {b.id: 3, c.id: 3, d.id: 3});
+    },
+  );
+
   for (final rejoined in [false, true]) {
     testWidgets(
       rejoined
