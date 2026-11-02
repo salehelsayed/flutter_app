@@ -2506,7 +2506,6 @@ final class _ProtectedGroupMediaAttachmentProjection {
     required this.encryptionNonce,
     required this.caption,
     required this.fileName,
-    required this.stickerId,
     required this.targets,
   });
 
@@ -2525,7 +2524,6 @@ final class _ProtectedGroupMediaAttachmentProjection {
   final String encryptionNonce;
   final String? caption;
   final String? fileName;
-  final String? stickerId;
   final List<_ProtectedGroupMediaTargetProjection> targets;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -2544,7 +2542,6 @@ final class _ProtectedGroupMediaAttachmentProjection {
     'encryptionNonce': encryptionNonce,
     if (caption != null) 'caption': caption,
     if (fileName != null) 'fileName': fileName,
-    if (stickerId != null) 'sticker': {'id': stickerId},
     'expiresAtMs': targets.map((target) => target.expiresAtMs).toList(),
   };
 }
@@ -2603,7 +2600,6 @@ const Set<String> _protectedGroupMediaAttachmentAllowedKeys = <String>{
   'waveform',
   'caption',
   'fileName',
-  'sticker',
 };
 final RegExp _protectedGroupMediaSha256 = RegExp(r'^[0-9a-f]{64}$');
 final RegExp _protectedGroupMediaBlobId = RegExp(r'^[A-Za-z0-9_-]{1,128}$');
@@ -2689,11 +2685,6 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
       final rawWaveform = attachment['waveform'];
       final caption = attachment['caption'];
       final fileName = attachment['fileName'];
-      final stickerId = switch (attachment['sticker']) {
-        null => null,
-        {'id': final String id} => id,
-        _ => '',
-      };
       final rawExpiries = attachment['expiresAtMs'];
       if (attachmentId == null ||
           custodyBlobId == null ||
@@ -2715,7 +2706,6 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
           (fileName != null &&
               (fileName is! String ||
                   sanitizeAttachmentFileName(fileName) != fileName)) ||
-          stickerId == '' ||
           (rawWaveform != null && rawWaveform is! List) ||
           rawExpiries is! List ||
           rawExpiries.length != targetRecipients.length ||
@@ -2765,7 +2755,6 @@ _ProtectedGroupMediaProjection? _parseProtectedGroupMediaProjection({
           encryptionNonce: encryptionNonce,
           caption: caption as String?,
           fileName: fileName as String?,
-          stickerId: stickerId,
           targets: List<_ProtectedGroupMediaTargetProjection>.unmodifiable(
             targets,
           ),

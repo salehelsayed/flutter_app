@@ -2958,6 +2958,12 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
       }
     }
+    // Builds 127 to 129 refuse a protected media manifest with any extra key,
+    // so in a protected group a sticker is sent and kept as an ordinary photo.
+    final stickerId =
+        groupMediaAdmission?.kind == GroupContentAuthoringResolutionKind.strict
+        ? null
+        : sticker?.id;
     if (!_tryBeginSendFlow()) return;
     final restoredContinuation = restoredResolution.continuation;
     if (restoredContinuation != null) {
@@ -3000,7 +3006,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             m.file.path,
             mediaType: MediaAttachment.mediaTypeFromMime(mime),
           ),
-          stickerId: sticker?.id,
+          stickerId: stickerId,
         );
       }).toList();
       uploadLease = mediaUploadInFlightTracker.tryClaimAll(
@@ -3203,7 +3209,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 attachmentIds: optimisticMedia!
                     .map((attachment) => attachment.id)
                     .toList(growable: false),
-                stickerId: sticker?.id,
+                stickerId: stickerId,
               );
               if (!_canContinueSendOperation(
                 sendLane,
