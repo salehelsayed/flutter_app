@@ -133,7 +133,7 @@ func TestInboxRegisterToken_ThoughtPreferencePartialRelayAckRetriesCurrentOff(t 
 		"privateKeyHex": generateTestKeyHex(t),
 		// Duplicate addresses for one peer must not become another ACK target.
 		"relayAddresses": []string{addresses[0], addresses[0], addresses[1]},
-		"autoRegister": false,
+		"autoRegister":   false,
 	})
 	if err != nil {
 		t.Fatal(err)

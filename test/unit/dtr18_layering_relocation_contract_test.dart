@@ -251,6 +251,9 @@ const _privacySha256 =
 // Application, notification routing, pause, detach and resume owners remain in place.
 // Thoughts 128: one owner-approved Orbit retry binding reuses the existing
 // post-delivery worker and its media-upload prerequisite.
+// Thought notification preference wiring stays on these existing app owners.
+// Reverse owner-diff proof retains all 25 URI rewrites and the single historical
+// notification callback: thought-notifications-switch-20261102/dtr18-pin-proof.json.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
@@ -459,7 +462,7 @@ const _productionBootstrapNormalizedSha256 =
     // argument at the existing call site; no owner moves.
     // Push round 4 combines the CR-008/IN-008 retirement wiring with the
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
-    'c1e1dff7a446534faea254f0072225817774379b9c527eb1ad67cd532c0b7986';
+    '720e69c4ee4ab3e67bff6be0af280dc6a199e9a320b6df83948f8cade450c04a';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -498,7 +501,7 @@ const _productionBootstrapNormalizedSha256 =
 // Local intro dismissal injects the existing settings store into the same
 // adapter; both reviewed notification callbacks remain exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'c91fa6de2542f7d0d0ccb304f24bb0805bce13c9cd726a291b6b88eaaaafc63e';
+    'ba4200e5a9db9852b9dfb10678a6e8a7ca86eaec8a6bfdf322f30cf19f2d7256';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

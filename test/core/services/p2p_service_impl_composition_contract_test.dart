@@ -37,6 +37,8 @@ const _implements = <String>[
 
 const _constructorParameters = <String>[
   'required Bridge bridge',
+  // Read the current durable Thought alert choice when registering a token.
+  'Future<bool> Function()? loadThoughtNotificationsEnabled',
   'LocalP2PService? localP2PService',
   'PushTokenStore? pushTokenStore',
   'ReceivedWakeTokenStore? receivedWakeTokenStore',
@@ -674,7 +676,10 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // The "couldn't display N messages" banner was removed: stuck inbox rows are
 // now retried and given up in the background, so the InboxAttentionSignal
 // count method is gone from the facade.
-const _expectedFacadeApiFingerprint = '164a877e';
+// Thought alert registration adds one optional durable-preference reader;
+// its backing field stays private and every prior public member is retained.
+// Exact AST delta: thought-notifications-switch-20261102/p2p-api-pin-proof.json.
+const _expectedFacadeApiFingerprint = 'ce285a77';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -918,7 +923,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(29));
+      expect(constructor.parameters.parameters, hasLength(30));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
