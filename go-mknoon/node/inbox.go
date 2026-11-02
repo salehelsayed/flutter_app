@@ -72,6 +72,8 @@ type inboxRequest struct {
 	// Plan 256: additive push-token capabilities. Omitted for legacy clients so
 	// their register_token frame remains byte-compatible with old relays.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// Nil preserves the old public registration frame; a pointer includes false.
+	ThoughtNotificationsEnabled *bool `json:"thought_notifications_enabled,omitempty"`
 	// FDC-09 presence_set write field (additive): carries {state, ttlMs} for the
 	// self-publish action. omitempty keeps every other action's frame unchanged.
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
@@ -1828,6 +1830,27 @@ func (n *Node) InboxRegisterToken(
 	platform string,
 	capabilities ...string,
 ) error {
+	return n.inboxRegisterToken(token, platform, nil, capabilities...)
+}
+
+// InboxRegisterTokenWithThoughtNotifications includes this installation's
+// current preference. Every configured relay must accept it so a partial
+// update stays retryable; successful relay writes are retained.
+func (n *Node) InboxRegisterTokenWithThoughtNotifications(
+	token string,
+	platform string,
+	thoughtNotificationsEnabled bool,
+	capabilities ...string,
+) error {
+	return n.inboxRegisterToken(token, platform, &thoughtNotificationsEnabled, capabilities...)
+}
+
+func (n *Node) inboxRegisterToken(
+	token string,
+	platform string,
+	thoughtNotificationsEnabled *bool,
+	capabilities ...string,
+) error {
 	n.mu.RLock()
 	h := n.host
 	n.mu.RUnlock()
@@ -1837,8 +1860,10 @@ func (n *Node) InboxRegisterToken(
 	}
 
 	rs := n.buildRelaySelector(nil)
+	var acceptedMu sync.Mutex
+	accepted := make(map[peer.ID]struct{})
 
-	return rs.FanOut(func(relay RelayInfo) error {
+	err := rs.FanOut(func(relay RelayInfo) error {
 		timeout := InboxTimeout
 		ctx, cancel := context.WithTimeout(n.ctx, timeout)
 		defer cancel()
@@ -1856,10 +1881,11 @@ func (n *Node) InboxRegisterToken(
 		setStreamDeadline(s, timeout)
 
 		req := inboxRequest{
-			Action:       "register_token",
-			Token:        token,
-			Platform:     platform,
-			Capabilities: append([]string(nil), capabilities...),
+			Action:                      "register_token",
+			Token:                       token,
+			Platform:                    platform,
+			Capabilities:                append([]string(nil), capabilities...),
+			ThoughtNotificationsEnabled: thoughtNotificationsEnabled,
 		}
 
 		reqBytes, err := json.Marshal(req)
@@ -1887,9 +1913,21 @@ func (n *Node) InboxRegisterToken(
 
 		log.Printf("[INBOX] Push token registered on relay %s (%s)",
 			relay.ID.String()[:min(20, len(relay.ID.String()))], platform)
+		acceptedMu.Lock()
+		accepted[relay.ID] = struct{}{}
+		acceptedMu.Unlock()
 		streamOK = true
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// FanOut joins every peer/address attempt. Count final successful peer IDs,
+	// rather than addresses, before the coordinator can declare this synchronized.
+	if thoughtNotificationsEnabled != nil && len(accepted) != rs.Len() {
+		return fmt.Errorf("push preference accepted by %d of %d relays", len(accepted), rs.Len())
+	}
+	return nil
 }
 
 // RelayRegisterWakeTokens registers this peer's opaque wake-token SET (the tokens

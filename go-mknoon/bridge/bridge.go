@@ -1703,9 +1703,9 @@ func inboxWakeOutcomeBridgeResponse(outcome node.InboxWakeOutcomeResult, err err
 // InboxRegisterToken registers an FCM push token.
 // Input JSON: { "token": "...", "platform": "ios"|"android",
 //
-//	"capabilities": ["direct_reaction_v1"] }.
+//	"capabilities": ["direct_reaction_v1"], "thought_notifications_enabled": true }.
 //
-// Capabilities are optional so legacy clients retain their old frame shape.
+// Capabilities are optional. Thought notifications default on when omitted.
 // Returns JSON: { "ok": true }
 func InboxRegisterToken(paramsJSON string) (result string) {
 	defer func() {
@@ -1723,9 +1723,10 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		Token        string   `json:"token"`
-		Platform     string   `json:"platform"`
-		Capabilities []string `json:"capabilities,omitempty"`
+		Token                       string   `json:"token"`
+		Platform                    string   `json:"platform"`
+		Capabilities                []string `json:"capabilities,omitempty"`
+		ThoughtNotificationsEnabled *bool    `json:"thought_notifications_enabled"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1734,9 +1735,14 @@ func InboxRegisterToken(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing token or platform")
 	}
 
-	if err := n.InboxRegisterToken(
+	thoughtNotificationsEnabled := true
+	if params.ThoughtNotificationsEnabled != nil {
+		thoughtNotificationsEnabled = *params.ThoughtNotificationsEnabled
+	}
+	if err := n.InboxRegisterTokenWithThoughtNotifications(
 		params.Token,
 		params.Platform,
+		thoughtNotificationsEnabled,
 		params.Capabilities...,
 	); err != nil {
 		return errJSON("INBOX_ERROR", err.Error())
