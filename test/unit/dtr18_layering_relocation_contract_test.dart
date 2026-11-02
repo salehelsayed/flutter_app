@@ -254,11 +254,14 @@ const _privacySha256 =
 // Thought notification preference wiring stays on these existing app owners.
 // Reverse owner-diff proof retains all 25 URI rewrites and the single historical
 // notification callback: thought-notifications-switch-20261102/dtr18-pin-proof.json.
+// The iOS Thought switch uses the same coordinator for preference-only resend.
+// Normal registration preparation and all historical ownership stay in place.
+// Evidence: thought-switch-ios-stall-20261102/dtr18-pin-proof.json.
 const _applicationRootNormalizedSha256 =
     // Startup handoff rebuilds the existing translator notice owner after the
     // route Scaffold mounts, including an already-latched notification fallback.
     // Round 9 combines the sticker and Thought-notification switch wiring.
-    '5d3f69c455eb2172226ebd7f592a85000eefd1549092ba06ae7cd3572f983f4b';
+    '874a4e7453c5a29e4f95dd3a2627407bb4793de0e214b81648ec6c2b6ecbd8b4';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -463,7 +466,7 @@ const _productionBootstrapNormalizedSha256 =
     // argument at the existing call site; no owner moves.
     // Push round 4 combines the CR-008/IN-008 retirement wiring with the
     // wrote-back lookup in this same app-owned bootstrap; no owner moves.
-    '720e69c4ee4ab3e67bff6be0af280dc6a199e9a320b6df83948f8cade450c04a';
+    'e0dd3ace398d104df7acb23629f40580d4f0e03090009ddb8115542e1dbe42d7';
 
 // The P269 strict-custody proof forwards two optional debug download hooks
 // at the existing media owner; no application or notification owner moves.
@@ -502,7 +505,7 @@ const _productionBootstrapNormalizedSha256 =
 // Local intro dismissal injects the existing settings store into the same
 // adapter; both reviewed notification callbacks remain exact.
 const _productionBootstrapWithoutHistoricalNotificationSha256 =
-    'ba4200e5a9db9852b9dfb10678a6e8a7ca86eaec8a6bfdf322f30cf19f2d7256';
+    '533eac59efcf0081ed472b98cc4d592fb2af6dd0fc5189d6610d84fceb550cb5';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'
