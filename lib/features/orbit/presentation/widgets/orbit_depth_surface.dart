@@ -7,17 +7,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
+import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_item.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_visit.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
+import 'package:flutter_app/features/posts/domain/thought_quote.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:uuid/uuid.dart';
 import 'orbit_depth_media.dart';
 
 /// The production flat surface remains mounted below this local dial. Data,
@@ -44,6 +49,8 @@ class OrbitDepthSurface extends StatefulWidget {
     this.loadMedia,
     this.downloadMedia,
     this.hostChrome,
+    this.onReply,
+    this.replyStatusChanges,
   });
   final Widget child;
   final List<OrbitItem> items;
@@ -77,6 +84,14 @@ class OrbitDepthSurface extends StatefulWidget {
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadMedia;
+
+  /// Sends a reaction or a typed reply to a friend's thought on the ring as
+  /// an ordinary quoted chat reply. Null leaves the thought without its bar.
+  final ThoughtReplySender? onReply;
+
+  /// Later delivery updates for those replies, by message id.
+  final Stream<({String messageId, ThoughtReplyStatus status})>?
+  replyStatusChanges;
   @override
   State<OrbitDepthSurface> createState() => _OrbitDepthSurfaceState();
 }
@@ -130,6 +145,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   List<String>? _order;
   _FlatSeats? _flat;
   List<String> _seated = const [];
+  OrbitDepthVisit _visit = OrbitDepthVisit.empty;
+  final _replyController = TextEditingController();
+  final _replyFocus = FocusNode();
+  StreamSubscription<({String messageId, ThoughtReplyStatus status})>?
+  _replyStatuses;
+  double _keyboard = 0;
+  bool get _composing => _visit.composingPostId != null;
   bool get _active => widget.active && _foreground;
   bool get _enabled => _active && _routeActive && widget.gesturesEnabled;
   bool get _depth => _layer != OrbitDepthLayer.flat || _vertical.value > 0.01;
@@ -170,6 +192,22 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     WidgetsBinding.instance.addObserver(this);
     widget.resetSignal?.addListener(_reset);
     _vertical.addListener(_publishChrome);
+    _replyFocus.addListener(_onReplyFocus);
+    _listenReplyStatuses();
+  }
+
+  void _listenReplyStatuses() {
+    _replyStatuses?.cancel();
+    _replyStatuses = widget.replyStatusChanges?.listen((update) {
+      if (!mounted || !_visit.sends.containsKey(update.messageId)) return;
+      setState(
+        () => _visit = _visit.settle(
+          update.messageId,
+          update.status,
+          finished: false,
+        ),
+      );
+    });
   }
 
   @override
@@ -202,6 +240,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   // the host its gestures back. Ring, anchor and center friend wait for the
   // pop.
   void _hold() {
+    if (_composing) _closeComposer();
     _gesture = OrbitDepthGesture.idle;
     _pointers.clear();
     _start = null;
@@ -215,6 +254,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (oldWidget.resetSignal != widget.resetSignal) {
       oldWidget.resetSignal?.removeListener(_reset);
       widget.resetSignal?.addListener(_reset);
+    }
+    if (oldWidget.replyStatusChanges != widget.replyStatusChanges) {
+      _listenReplyStatuses();
     }
     if (!_active || !widget.gesturesEnabled) _reset(notifyBuild: false);
     _reseat();
@@ -283,6 +325,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _landedPostId = null;
     _order = null;
     _flat = null;
+    _endVisit();
     _pointers.clear();
     _start = null;
     _sequenceCancelled = false;
@@ -470,6 +513,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     if (_layer == OrbitDepthLayer.flat) {
       _order = null;
       _flat = null;
+      _endVisit();
       _publish(false);
     }
     _armTimers();
@@ -477,6 +521,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 
   void _stepBack() {
+    if (_composing) {
+      _closeComposer();
+      return;
+    }
     if (!_active || !_depth) return;
     unawaited(_settle(OrbitDepthLayer.flat));
   }
@@ -489,7 +537,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   double get _turnSign => _rtl ? 1 : -1;
 
   void _down(PointerDownEvent event) {
-    if (!_enabled) return;
+    if (!_enabled || _composing) return;
     _pointers[event.pointer] = event.localPosition;
     if (_pointers.length > 1) {
       _suppressTap = true;
@@ -618,8 +666,81 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   }
 
   @override
+  void didChangeMetrics() {
+    // Android's back key hides the keyboard but leaves the field focused.
+    final keyboard = View.of(context).viewInsets.bottom;
+    final hidden = _keyboard > 0 && keyboard == 0;
+    _keyboard = keyboard;
+    if (hidden && _composing) _closeComposer();
+  }
+
+  bool get _answerable => _enabled && !_suppressTap && !_composing;
+
+  void _endVisit() {
+    _visit = OrbitDepthVisit.empty;
+    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+  }
+
+  void _onReplyFocus() {
+    if (!_replyFocus.hasFocus && _composing) _closeComposer();
+  }
+
+  void _openComposer(String postId) {
+    if (!_answerable) return;
+    setState(() => _visit = _visit.openComposer(postId));
+    _replyController.text = _visit.drafts[postId] ?? '';
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _visit.composingPostId == postId) {
+        _replyFocus.requestFocus();
+      }
+    });
+  }
+
+  void _closeComposer() {
+    if (!_composing) return;
+    setState(() => _visit = _visit.closeComposer(_replyController.text));
+    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+  }
+
+  void _react(String postId, ThoughtReaction reaction) {
+    if (_answerable) {
+      _dispatch(_visit.react(postId, reaction, const Uuid().v4()));
+    }
+  }
+
+  void _sendTyped(String postId, String text) {
+    final dispatch = _visit.reply(postId, text, const Uuid().v4());
+    if (dispatch == null) return;
+    _dispatch(dispatch);
+    _replyController.clear();
+    if (_replyFocus.hasFocus) _replyFocus.unfocus();
+  }
+
+  /// The send itself belongs to the host; the visit only records its answer.
+  void _dispatch(OrbitDepthDispatch? dispatch) {
+    final onReply = widget.onReply;
+    if (dispatch == null || onReply == null) return;
+    final send = dispatch.send;
+    setState(() => _visit = dispatch.visit);
+    unawaited(() async {
+      ThoughtReplyStatus status;
+      try {
+        status = await onReply(send.text, send.postId, send.messageId);
+      } catch (_) {
+        status = ThoughtReplyStatus.failed;
+      }
+      if (mounted) {
+        setState(() => _visit = _visit.settle(send.messageId, status));
+      }
+    }());
+  }
+
+  @override
   void dispose() {
     widget.resetSignal?.removeListener(_reset);
+    _replyStatuses?.cancel();
+    _replyController.dispose();
+    _replyFocus.dispose();
     WidgetsBinding.instance.removeObserver(this);
     ++_settleGeneration;
     _expiry?.cancel();
@@ -774,6 +895,44 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final slotBottom = top
         ? 20 * k
         : math.max(0.0, size.height - cy + ringDepth + 30 * k);
+    // The bar's row and its status line below it; never under 44 pt.
+    final answers = widget.onReply != null;
+    final target = math.max(44.0, 52 * k);
+    final statusRow = math.max(44.0, 36 * k);
+    final answersHeight = answers ? target + statusRow : 0.0;
+    final answersGap = answers ? 12 * k : 0.0;
+    final composing = _composing;
+    if (composing && shown?.thought.id != _visit.composingPostId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _closeComposer();
+      });
+    }
+    final keyboard = math.max(
+      0.0,
+      MediaQuery.viewInsetsOf(context).bottom - widget.bottomClearance,
+    );
+    // The bar trails the card by about 80 ms as it lands: it is placed where
+    // the card was that long ago.
+    const trail = .08;
+    final trailingTilt = ((_vertical.value - _vertical.velocity * trail) / 320)
+        .clamp(0.0, 1.0);
+    final trailingLift = lifted == null
+        ? 0.0
+        : (orbitCenterFaces(
+                        count: queue.length,
+                        pos: _turn.value - _turn.velocity * trail,
+                        scale: k,
+                        nextOnRight: !_rtl,
+                      )
+                      .where((face) => face.index == lifted.index)
+                      .firstOrNull
+                      ?.lift ??
+                  0.0) *
+              _smooth(trailingTilt);
+    final barReveal = _smooth((trailingTilt - .5) / .5);
+    final barPresence = _reduceMotion
+        ? 1.0
+        : math.pow(trailingLift, 2).toDouble();
     Widget fade(String key, Widget? child) => _reduceMotion
         ? AnimatedSwitcher(
             duration: const Duration(milliseconds: 200),
@@ -857,6 +1016,14 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                   ),
                 ),
               ),
+            if (composing)
+              Positioned.fill(
+                child: GestureDetector(
+                  key: const ValueKey('orbit-depth-composer-dismiss'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _closeComposer,
+                ),
+              ),
             // Faces come and go and re-sort every frame; without a key the
             // card's subtree is rebuilt and its media reloads and flickers.
             Positioned(
@@ -864,42 +1031,227 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               left: 14 * k,
               right: 14 * k,
               top: slotTop,
-              bottom: slotBottom,
-              child: Transform.translate(
-                // The thought slides up into place as the orbit tilts.
-                offset: Offset(0, (1 - reveal) * 40 * k),
-                child: Opacity(
-                  opacity: (presence * reveal).clamp(0.0, 1.0).toDouble(),
-                  child: fade(
-                    'orbit-depth-content',
-                    shown != null
-                        ? _card(shown, k)
-                        : _layer == OrbitDepthLayer.flat ||
-                              _gesture == OrbitDepthGesture.vertical
-                        ? null
-                        : IgnorePointer(
-                            key: const ValueKey('orbit-depth-empty-ring'),
-                            child: Align(
-                              alignment: Alignment.topCenter,
-                              child: Text(
-                                AppLocalizations.of(
-                                  context,
-                                )!.orbit_depth_empty_ring,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 15 * k,
-                                  color: colors.onSurface.withValues(alpha: .7),
-                                ),
-                              ),
-                            ),
+              bottom: composing
+                  ? keyboard
+                  : slotBottom + answersHeight + answersGap,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: IgnorePointer(
+                      ignoring: composing,
+                      child: Transform.translate(
+                        // The thought slides up into place as the orbit tilts.
+                        offset: Offset(0, (1 - reveal) * 40 * k),
+                        child: Opacity(
+                          opacity: (presence * reveal)
+                              .clamp(0.0, 1.0)
+                              .toDouble(),
+                          child: fade(
+                            'orbit-depth-content',
+                            shown != null
+                                ? _card(shown, k)
+                                : _layer == OrbitDepthLayer.flat ||
+                                      _gesture == OrbitDepthGesture.vertical
+                                ? null
+                                : IgnorePointer(
+                                    key: const ValueKey(
+                                      'orbit-depth-empty-ring',
+                                    ),
+                                    child: Align(
+                                      alignment: Alignment.topCenter,
+                                      child: Text(
+                                        AppLocalizations.of(
+                                          context,
+                                        )!.orbit_depth_empty_ring,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 15 * k,
+                                          color: colors.onSurface.withValues(
+                                            alpha: .7,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
                           ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (composing && shown != null)
+                    Padding(
+                      padding: EdgeInsets.only(top: 8 * k),
+                      child: ComposeArea(
+                        key: const ValueKey('orbit-depth-composer'),
+                        controller: _replyController,
+                        focusNode: _replyFocus,
+                        hintText: AppLocalizations.of(
+                          context,
+                        )!.thought_reply_hint(shown.friend.username),
+                        showAttachButton: false,
+                        clearOnSend: false,
+                        onSend: (text) => _sendTyped(shown.thought.id, text),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (answers && !composing)
+              Positioned(
+                key: const ValueKey('orbit-depth-answers-slot'),
+                left: 14 * k,
+                right: 14 * k,
+                bottom: slotBottom,
+                height: answersHeight,
+                child: Transform.translate(
+                  offset: Offset(0, (1 - barReveal) * 40 * k),
+                  child: Opacity(
+                    opacity: (barPresence * barReveal).clamp(0.0, 1.0),
+                    child: IgnorePointer(
+                      ignoring: trailingLift <= .5,
+                      child: fade(
+                        'orbit-depth-answers',
+                        shown == null
+                            ? null
+                            : _answers(shown, k, target, statusRow),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _answers(
+    OrbitDepthSeat seat,
+    double k,
+    double target,
+    double statusRow,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final colors = Theme.of(context).colorScheme;
+    final postId = seat.thought.id;
+    final latest = _visit.latestFor(postId);
+    return SizedBox(
+      key: ValueKey('orbit-depth-answers-$postId'),
+      height: target + statusRow,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            height: target,
+            child: Row(
+              children: [
+                for (final reaction in ThoughtReaction.values) ...[
+                  _ReactionCircle(
+                    key: ValueKey('orbit-depth-react-${reaction.name}'),
+                    glyph: reaction.glyph,
+                    label: switch (reaction) {
+                      ThoughtReaction.love => l10n.thought_react_love,
+                      ThoughtReaction.laugh => l10n.thought_react_laugh,
+                      ThoughtReaction.fire => l10n.thought_react_fire,
+                      ThoughtReaction.applause => l10n.thought_react_applause,
+                    },
+                    size: target,
+                    pressed: _visit.pressed(postId, reaction),
+                    onTap: () => _react(postId, reaction),
+                  ),
+                  SizedBox(width: 8 * k),
+                ],
+                Expanded(
+                  child: Material(
+                    key: const ValueKey('orbit-depth-reply'),
+                    color: _answerGreen,
+                    shape: const StadiumBorder(),
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () => _openComposer(postId),
+                      child: SizedBox(
+                        height: target,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(
+                              Icons.reply_rounded,
+                              size: 18,
+                              color: _onAnswerGreen,
+                            ),
+                            const SizedBox(width: 8),
+                            Flexible(
+                              child: Text(
+                                l10n.conversation_context_reply,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: _onAnswerGreen,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          SizedBox(
+            height: statusRow,
+            child: latest == null ? null : _answerStatus(latest, l10n, colors),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The thought's latest answer, worded as the full-screen card words it.
+  Widget _answerStatus(
+    OrbitDepthSend send,
+    AppLocalizations l10n,
+    ColorScheme colors,
+  ) {
+    final status = send.status;
+    final sent = status == ThoughtReplyStatus.sent;
+    final label = sent
+        ? l10n.message_status_sent
+        : !send.inFlight && status == ThoughtReplyStatus.failed
+        ? l10n.error_send_message
+        : l10n.post_sending;
+    return Row(
+      key: const ValueKey('orbit-depth-answer-status'),
+      children: [
+        if (sent) ...[
+          const Icon(Icons.check_rounded, size: 16, color: _answerGreen),
+          const SizedBox(width: 6),
+        ],
+        Expanded(
+          child: Semantics(
+            liveRegion: true,
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, color: colors.onSurface),
+            ),
+          ),
+        ),
+        if (send.canRetry)
+          TextButton(
+            key: const ValueKey('orbit-depth-answer-retry'),
+            style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+            onPressed: () {
+              if (_answerable) _dispatch(_visit.retry(send.messageId));
+            },
+            child: Text(l10n.btn_retry),
+          ),
+      ],
     );
   }
 
@@ -1089,6 +1441,57 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 children: [caption, ?media],
               ),
             ),
+    );
+  }
+}
+
+const _answerGreen = Color(0xFF1DB954);
+const _onAnswerGreen = Color(0xFF04130A);
+
+class _ReactionCircle extends StatelessWidget {
+  const _ReactionCircle({
+    super.key,
+    required this.glyph,
+    required this.label,
+    required this.size,
+    required this.pressed,
+    required this.onTap,
+  });
+
+  final String glyph;
+  final String label;
+  final double size;
+  final bool pressed;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return Semantics(
+      button: true,
+      selected: pressed,
+      label: label,
+      excludeSemantics: true,
+      child: Material(
+        color: pressed
+            ? _answerGreen.withValues(alpha: .18)
+            : onSurface.withValues(alpha: .08),
+        shape: CircleBorder(
+          side: pressed
+              ? const BorderSide(color: _answerGreen, width: 2)
+              : BorderSide(color: onSurface.withValues(alpha: .10)),
+        ),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox.square(
+            dimension: size,
+            child: Center(
+              child: Text(glyph, style: TextStyle(fontSize: size * .46)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

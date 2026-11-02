@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter/foundation.dart';
@@ -335,6 +336,11 @@ class OrbitScreen extends StatefulWidget {
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadDepthMedia;
+
+  /// Sends a reaction or typed reply from the 3D view's action bar.
+  final ThoughtReplySender? onDepthReply;
+  final Stream<({String messageId, ThoughtReplyStatus status})>?
+  depthReplyStatusChanges;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
@@ -424,6 +430,8 @@ class OrbitScreen extends StatefulWidget {
     this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
+    this.onDepthReply,
+    this.depthReplyStatusChanges,
     this.onThoughtTap,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
@@ -549,6 +557,8 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onDepthSettled: widget.onDepthSettled,
     loadDepthMedia: widget.loadDepthMedia,
     downloadDepthMedia: widget.downloadDepthMedia,
+    onDepthReply: widget.onDepthReply,
+    depthReplyStatusChanges: widget.depthReplyStatusChanges,
     onThoughtTap: widget.onThoughtTap,
     onThoughtsExpired: widget.onThoughtsExpired,
     thoughtNowProvider: widget.thoughtNowProvider,
@@ -638,6 +648,11 @@ class _OrbitScreenView extends StatelessWidget {
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadDepthMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadDepthMedia;
+
+  /// Sends a reaction or typed reply from the 3D view's action bar.
+  final ThoughtReplySender? onDepthReply;
+  final Stream<({String messageId, ThoughtReplyStatus status})>?
+  depthReplyStatusChanges;
   final ValueChanged<String>? onThoughtTap;
   final VoidCallback? onThoughtsExpired;
   final DateTime Function()? thoughtNowProvider;
@@ -737,6 +752,8 @@ class _OrbitScreenView extends StatelessWidget {
     this.onDepthSettled,
     this.loadDepthMedia,
     this.downloadDepthMedia,
+    this.onDepthReply,
+    this.depthReplyStatusChanges,
     this.onThoughtTap,
     this.onThoughtsExpired,
     this.thoughtNowProvider,
@@ -1292,6 +1309,8 @@ class _OrbitScreenView extends StatelessWidget {
             onThoughtsExpired: onThoughtsExpired,
             loadMedia: loadDepthMedia,
             downloadMedia: downloadDepthMedia,
+            onReply: onDepthReply,
+            replyStatusChanges: depthReplyStatusChanges,
             hostChrome: hostChrome,
             child: child!,
           ),

@@ -1281,12 +1281,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  /// [replyInChat] is set when the card opens from a chat quote: a reply goes
-  /// back to that chat instead of opening another one.
+  /// A friend's card only shows the thought: reactions and replies are sent
+  /// from the 3D ring's action bar, or from the chat itself.
   Future<void> _openThought(
     String postId, {
     PendingPostTargetStore? notificationStore,
-    ThoughtReplySender? replyInChat,
   }) async {
     final repository = _thoughtPosts;
     final identity = _identity;
@@ -1362,58 +1361,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               mediaFileManager: widget.mediaFileManager,
               attachment: attachment,
             ),
-            onReply: contact == null
-                ? null
-                : replyInChat ??
-                      (text, postId, messageId) => sendThoughtReply(
-                        messageId: messageId,
-                        postId: postId,
-                        authorPeerId: contact.peerId,
-                        text: text,
-                        postRepo: repository,
-                        messageRepo: widget.messageRepo,
-                        identityRepo: widget.identityRepo,
-                        contactRepo: widget.contactRepo,
-                        p2pService: widget.p2pService,
-                        bridge: widget.bridge,
-                        directEventFanout: widget
-                            .directRouteAuthority
-                            .resolvedDirectEventFanout,
-                        nowProvider: widget.thoughtNowProvider,
-                      ),
             replyChanges: widget.messageRepo is MessageRepositoryChangeSource
                 ? (widget.messageRepo as MessageRepositoryChangeSource)
                       .messageChanges
                 : null,
-            onOpenChat: contact == null
-                ? null
-                : () {
-                    if (replyInChat == null && mounted) {
-                      unawaited(_openConversationForContact(contact));
-                    }
-                  },
-            // A card opened from a chat quote has no way back into that chat
-            // for a recording yet, so it offers text replies only.
-            onVoiceReply:
-                contact == null ||
-                    replyInChat != null ||
-                    !widget
-                        .directRouteAuthority
-                        .resolvedModalityGate
-                        .allowsVoiceAuthoring
-                ? null
-                : (reply) {
-                    if (mounted) {
-                      unawaited(
-                        _openConversationForContact(
-                          contact,
-                          thoughtVoiceReply: reply,
-                        ),
-                      );
-                    }
-                  },
-            audioRecorderService: widget.audioRecorderService,
-            micPermissionGateway: widget.micPermissionGateway,
             retryPosting: isOwn ? widget.retryThoughtPosting : null,
             onShown: isOwn
                 ? null
@@ -1486,6 +1437,45 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       }
     }
   }
+
+  /// A reaction or typed reply from the 3D action bar, through the same
+  /// quoted-reply path the full-screen card used.
+  Future<ThoughtReplyStatus> _sendDepthReply(
+    String text,
+    String postId,
+    String messageId,
+  ) async {
+    final repository = _thoughtPosts;
+    final post = _depthThoughtsByPeerId.values
+        .where((thought) => thought.id == postId)
+        .firstOrNull;
+    if (repository == null || post == null) return ThoughtReplyStatus.failed;
+    return sendThoughtReply(
+      messageId: messageId,
+      postId: postId,
+      authorPeerId: post.authorPeerId,
+      text: text,
+      postRepo: repository,
+      messageRepo: widget.messageRepo,
+      identityRepo: widget.identityRepo,
+      contactRepo: widget.contactRepo,
+      p2pService: widget.p2pService,
+      bridge: widget.bridge,
+      directEventFanout: widget.directRouteAuthority.resolvedDirectEventFanout,
+      nowProvider: widget.thoughtNowProvider,
+    );
+  }
+
+  late final Stream<({String messageId, ThoughtReplyStatus status})>?
+  _depthReplyStatuses = switch (widget.messageRepo) {
+    final MessageRepositoryChangeSource source => source.messageChanges.map(
+      (message) => (
+        messageId: message.id,
+        status: ThoughtReplyStatus.fromMessage(message),
+      ),
+    ),
+    _ => null,
+  };
 
   void _reportThoughtFailure(Object error) {
     emitFlowEvent(
@@ -3483,7 +3473,6 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     ContactModel contact, {
     String? initialText,
     ThoughtReply? thoughtReply,
-    ThoughtVoiceReply? thoughtVoiceReply,
   }) async {
     if (!mounted) return;
     if (!_openingFriendPeerIds.add(contact.peerId)) return;
@@ -3504,9 +3493,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             contact: contact,
             initialText: initialText,
             initialThoughtReply: thoughtReply,
-            initialThoughtVoiceReply: thoughtVoiceReply,
-            onOpenThought: (postId, replyHere) =>
-                _openThought(postId, replyInChat: replyHere),
+            // The chat's own composer answers a quoted thought; its card is
+            // view only, so the in-card sender goes unused.
+            onOpenThought: (postId, _) => _openThought(postId),
             postRepository: _thoughtPosts,
             thoughtNowProvider: widget.thoughtNowProvider,
             identityRepo: widget.identityRepo,
@@ -4011,6 +4000,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
               attachment: attachment,
             ),
       onThoughtTap: (postId) => unawaited(_openThought(postId)),
+      onDepthReply: _thoughtPosts == null ? null : _sendDepthReply,
+      depthReplyStatusChanges: _depthReplyStatuses,
       onComposeThought: _thoughtPosts == null || _identity == null
           ? null
           : () => unawaited(_composeThought()),

@@ -6,19 +6,12 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
-import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
-import 'package:flutter_app/core/permissions/mic_permission_prompt.dart';
-import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/utils/text_direction_utils.dart';
-import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
-import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
-import 'package:flutter_app/features/posts/domain/thought_quote.dart';
-import 'package:flutter_app/features/posts/domain/thought_reply_status.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/translate_preview_widgets.dart';
@@ -28,9 +21,7 @@ import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
-import 'package:flutter_app/shared/widgets/conversation/conversation_voice_capture_controller.dart';
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
-import 'package:uuid/uuid.dart';
 
 /// A Thought photo or video as the full-screen viewer shows it.
 MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
@@ -58,8 +49,8 @@ MediaViewerItem thoughtMediaViewerItem(PostMediaAttachmentModel attachment) =>
 
 /// One author's current thought, full screen.
 ///
-/// The host decides whose thought this is: a friend's card offers reactions
-/// and a reply field, the user's own card offers Delete.
+/// A friend's card only shows the thought; reactions and replies live on the
+/// 3D ring. The user's own card adds its posting status, Seen by and Delete.
 class ThoughtCardScreen extends StatefulWidget {
   const ThoughtCardScreen({
     super.key,
@@ -67,19 +58,14 @@ class ThoughtCardScreen extends StatefulWidget {
     required this.authorName,
     required this.postRepo,
     required this.loadCurrentThought,
-    required this.onReply,
     required this.downloadMedia,
     this.onDelete,
-    this.onOpenChat,
     this.replyChanges,
     this.retryPosting,
     this.onShown,
     this.loadActivity,
     this.eligibilityChanges,
     this.nowProvider,
-    this.onVoiceReply,
-    this.audioRecorderService,
-    this.micPermissionGateway = const PermissionHandlerMicGateway(),
   });
 
   final PostModel initialPost;
@@ -89,9 +75,7 @@ class ThoughtCardScreen extends StatefulWidget {
   /// The author's current live thought, or null once there is none to show.
   final Future<PostModel?> Function() loadCurrentThought;
 
-  /// Sends an ordinary quoted reply in place. Retry keeps the same message ID.
-  final ThoughtReplySender? onReply;
-  final VoidCallback? onOpenChat;
+  /// Replies to the user's own thought, which refresh its activity.
   final Stream<ConversationMessage>? replyChanges;
   final Future<int> Function()? retryPosting;
   final Future<void> Function(String postId)? onShown;
@@ -104,12 +88,6 @@ class ThoughtCardScreen extends StatefulWidget {
   downloadMedia;
   final Stream<void>? eligibilityChanges;
   final DateTime Function()? nowProvider;
-
-  /// Takes a recorded voice reply to the author's chat, which sends it. Null
-  /// hides the mic.
-  final ValueChanged<ThoughtVoiceReply>? onVoiceReply;
-  final AudioRecorderService? audioRecorderService;
-  final MicPermissionGateway micPermissionGateway;
 
   @override
   State<ThoughtCardScreen> createState() => _ThoughtCardScreenState();
@@ -140,26 +118,10 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
   bool _closing = false;
   bool _deleting = false;
   int _mediaReadGeneration = 0;
-  final _replyController = TextEditingController();
-  final _replyFocus = FocusNode();
-  String? _replyMessageId;
-  String? _submittedReply;
 
   /// The photo alone, with every control hidden, after a tap on it.
   bool _immersive = false;
 
-  late final _voice = ConversationVoiceCaptureController(
-    onAutoStopOutcome: (outcome) => _handOffVoice(outcome, autoStopped: true),
-    // An incoming call takes the microphone; the cut recording is dropped.
-    onCallInterruptionOutcome: (outcome) => _deleteRecording(outcome.recording),
-  )..addListener(_onVoiceChanged);
-
-  /// A recording handed to [ThoughtCardScreen.onVoiceReply] once the card has
-  /// closed. Still set at dispose means it never left, so its file goes.
-  AudioRecording? _voiceInHandOff;
-  String? _replyPostId;
-  ThoughtReplyStatus? _replyStatus;
-  bool _sendingReply = false;
   bool _retryingPost = false;
   ThoughtActivity? _activity;
   bool _activityLoading = false;
@@ -185,15 +147,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _eligibilitySubscription = widget.eligibilityChanges?.listen(
       (_) => _requestRefresh(),
     );
-    _replySubscription = widget.replyChanges?.listen((message) {
+    _replySubscription = widget.replyChanges?.listen((_) {
       if (!_post.isIncoming) unawaited(_loadActivity());
-      if (!mounted ||
-          _closing ||
-          message.id != _replyMessageId ||
-          _replyPostId != _post.id) {
-        return;
-      }
-      setState(() => _replyStatus = ThoughtReplyStatus.fromMessage(message));
     });
     _ageTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted || _closing) return;
@@ -205,12 +160,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     });
     _armExpiry();
     _requestRefresh();
-    _replyFocus.addListener(() {
-      if (mounted) setState(() {});
-    });
-    _replyController.addListener(() {
-      if (mounted) setState(() {});
-    });
   }
 
   @override
@@ -282,12 +231,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _loadFailed = false;
           if (changedPost) {
             _media = const [];
-            _replyMessageId = null;
-            _submittedReply = null;
-            _replyPostId = null;
-            _replyStatus = null;
-            _sendingReply = false;
-            _replyController.clear();
             _activity = null;
             _activityExpanded = false;
             _immersive = false;
@@ -503,7 +446,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     if (route != null && route.isActive) _navigator?.removeRoute(route);
   }
 
-  void _close({VoidCallback? afterClose}) {
+  void _close() {
     if (!mounted || _closing) return;
     setState(() => _closing = true);
     _expiryTimer?.cancel();
@@ -525,7 +468,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           navigator.removeRoute(route);
         }
       }
-      afterClose?.call();
     });
   }
 
@@ -612,138 +554,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     _replySubscription?.cancel();
     _expiryTimer?.cancel();
     _ageTimer?.cancel();
-    _replyController.dispose();
-    _replyFocus.dispose();
-    _voice
-      ..removeListener(_onVoiceChanged)
-      ..dispose();
-    _deleteRecording(_voiceInHandOff);
     super.dispose();
-  }
-
-  void _onVoiceChanged() {
-    if (mounted) setState(() {});
-  }
-
-  bool get _canRecordVoice =>
-      widget.onVoiceReply != null &&
-      widget.audioRecorderService != null &&
-      !_sendingReply;
-
-  Future<void> _startVoice() async {
-    final recorder = widget.audioRecorderService;
-    if (recorder == null || _closing || _voice.state.isActive) return;
-    final result = await _voice.start(
-      recorder: recorder,
-      requestPermission: widget.micPermissionGateway.request,
-    );
-    if (!mounted) return;
-    if (result.status == ConversationVoiceCaptureStartStatus.permissionDenied &&
-        result.permissionStatus == MicPermissionStatus.permanentlyDenied) {
-      await showMicPermissionDeniedPrompt(
-        context,
-        gateway: widget.micPermissionGateway,
-      );
-    }
-  }
-
-  Future<void> _stopVoice() async {
-    if (!_voice.state.isActive) return;
-    final outcome = await _voice.stop();
-    if (outcome != null) _handOffVoice(outcome);
-  }
-
-  /// A finished recording goes to the author's chat, quoting this thought,
-  /// the way a typed reply opens that chat after it is sent.
-  void _handOffVoice(
-    ConversationVoiceCaptureOutcome outcome, {
-    bool autoStopped = false,
-  }) {
-    final recording = outcome.recording;
-    final onVoiceReply = widget.onVoiceReply;
-    if (recording == null) return;
-    if (!mounted ||
-        _closing ||
-        !_voice.isCurrentOutcome(outcome) ||
-        onVoiceReply == null ||
-        !_isLive) {
-      _deleteRecording(recording);
-      if (mounted && !_isLive) _close();
-      return;
-    }
-    final reply = ThoughtVoiceReply(
-      recording: recording,
-      waveform: outcome.waveform,
-      postId: _post.id,
-      autoStopped: autoStopped,
-    );
-    _voiceInHandOff = recording;
-    _close(
-      afterClose: () {
-        _voiceInHandOff = null;
-        onVoiceReply(reply);
-      },
-    );
-  }
-
-  /// Removes a finished recording that no chat will send.
-  static void _deleteRecording(AudioRecording? recording) {
-    if (recording == null) return;
-    unawaited(
-      File(recording.filePath).delete().then<void>((_) {}, onError: (_) {}),
-    );
-  }
-
-  Future<void> _sendReply(
-    String text, {
-    bool retry = false,
-    bool openChat = false,
-  }) async {
-    final onReply = widget.onReply;
-    final trimmed = text.trim();
-    if (onReply == null || trimmed.isEmpty || _sendingReply || _closing) return;
-    if (!_isLive) {
-      _close();
-      return;
-    }
-    _replyFocus.unfocus();
-    final postId = _post.id;
-    final messageId = retry ? _replyMessageId : const Uuid().v4();
-    if (messageId == null || (retry && _replyPostId != postId)) return;
-    setState(() {
-      _sendingReply = true;
-      _replyMessageId = messageId;
-      _submittedReply = trimmed;
-      _replyPostId = postId;
-      _replyStatus = ThoughtReplyStatus.queued;
-    });
-    ThoughtReplyStatus result;
-    try {
-      final sending = Future<ThoughtReplyStatus>.sync(
-        () => onReply(trimmed, postId, messageId),
-      );
-      // The same durable send continues after the card closes. Chat projects
-      // its authored intent immediately, then shows normal delivery and retry.
-      // Closing synchronously fences double taps; opening chat never re-sends.
-      if (openChat) _close(afterClose: widget.onOpenChat);
-      result = await sending;
-    } catch (_) {
-      result = ThoughtReplyStatus.failed;
-    }
-    if (!mounted ||
-        _closing ||
-        _post.id != postId ||
-        _replyMessageId != messageId) {
-      return;
-    }
-    setState(() {
-      _sendingReply = false;
-      _replyStatus = result;
-      if (result != ThoughtReplyStatus.failed &&
-          _replyController.text.trim() == trimmed) {
-        _replyController.clear();
-      }
-    });
   }
 
   @override
@@ -754,7 +565,6 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
         .where((item) => item.kind != 'voice')
         .toList(growable: false);
     final hasVisual = visual.isNotEmpty || _expectsVisualMedia;
-    final typing = _replyFocus.hasFocus;
     return Scaffold(
       key: const ValueKey('thought-card-screen'),
       backgroundColor: Colors.black,
@@ -786,28 +596,12 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                 if (!_immersive) ...[
                   const _Scrim(top: true),
                   const _Scrim(top: false),
-                  AnimatedOpacity(
-                    opacity: typing ? 1 : 0,
-                    duration: const Duration(milliseconds: 180),
-                    child: IgnorePointer(
-                      ignoring: !typing,
-                      child: GestureDetector(
-                        key: const ValueKey('thought-reply-dismiss'),
-                        onTap: _replyFocus.unfocus,
-                        child: const ColoredBox(color: Color(0x61000000)),
-                      ),
-                    ),
-                  ),
                   SafeArea(
                     child: Column(
                       children: [
                         _topChrome(l10n),
                         const Spacer(),
-                        _bottomChrome(
-                          l10n,
-                          showText: hasVisual,
-                          typing: typing,
-                        ),
+                        _bottomChrome(l10n, showText: hasVisual),
                       ],
                     ),
                   ),
@@ -1022,13 +816,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     );
   }
 
-  Widget _bottomChrome(
-    AppLocalizations l10n, {
-    required bool showText,
-    required bool typing,
-  }) {
+  Widget _bottomChrome(AppLocalizations l10n, {required bool showText}) {
     final voice = _media.where((item) => item.kind == 'voice');
-    final onReply = widget.onReply;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1046,7 +835,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                     textDirection: detectTextDirection(_post.text),
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: typing ? 18 : 21,
+                      fontSize: 21,
                       height: 1.3,
                       fontWeight: FontWeight.w600,
                       shadows: const [
@@ -1072,84 +861,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _postingStatus(l10n),
           if (widget.loadActivity != null) _ownActivity(l10n),
         ],
-        if (onReply != null) ...[
-          if (!typing)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 12),
-              child: Row(
-                children: [
-                  for (final reaction in ThoughtReaction.values) ...[
-                    _ReactionButton(
-                      key: ValueKey('thought-react-${reaction.name}'),
-                      reaction: reaction,
-                      label: switch (reaction) {
-                        ThoughtReaction.love => l10n.thought_react_love,
-                        ThoughtReaction.laugh => l10n.thought_react_laugh,
-                        ThoughtReaction.fire => l10n.thought_react_fire,
-                        ThoughtReaction.applause => l10n.thought_react_applause,
-                      },
-                      onPressed: _sendingReply
-                          ? null
-                          : () => unawaited(_sendReply(reaction.glyph)),
-                    ),
-                    const SizedBox(width: 10),
-                  ],
-                ],
-              ),
-            ),
-          ComposeArea(
-            key: const ValueKey('thought-reply-composer'),
-            controller: _replyController,
-            focusNode: _replyFocus,
-            hintText: l10n.thought_reply_hint(widget.authorName),
-            showAttachButton: false,
-            clearOnSend: false,
-            isSending: _sendingReply,
-            onSend: (text) => unawaited(_sendReply(text, openChat: true)),
-            onRecordStart: _canRecordVoice
-                ? () => unawaited(_startVoice())
-                : null,
-            onRecordStop: _canRecordVoice
-                ? () => unawaited(_stopVoice())
-                : null,
-            onRecordCancel: () => unawaited(_voice.cancel()),
-            recordingState: switch (_voice.state.phase) {
-              ConversationVoiceCapturePhase.idle => VoiceRecordingState.idle,
-              ConversationVoiceCapturePhase.arming =>
-                VoiceRecordingState.arming,
-              ConversationVoiceCapturePhase.recording =>
-                VoiceRecordingState.recording,
-              ConversationVoiceCapturePhase.stopping =>
-                VoiceRecordingState.stopping,
-            },
-            recordingDuration: _voice.state.duration,
-            amplitudeValues: _voice.state.amplitudeValues,
-          ),
-          if (_replyStatus case final status?)
-            Row(
-              key: const ValueKey('thought-reply-status'),
-              children: [
-                Expanded(
-                  child: Semantics(
-                    liveRegion: true,
-                    child: Text(switch (status) {
-                      ThoughtReplyStatus.sent => l10n.message_status_sent,
-                      ThoughtReplyStatus.queued => l10n.post_sending,
-                      ThoughtReplyStatus.failed => l10n.error_send_message,
-                    }, style: const TextStyle(color: Colors.white)),
-                  ),
-                ),
-                if (!_sendingReply && status != ThoughtReplyStatus.sent)
-                  TextButton(
-                    key: const ValueKey('thought-reply-retry'),
-                    style: TextButton.styleFrom(foregroundColor: Colors.white),
-                    onPressed: () =>
-                        unawaited(_sendReply(_submittedReply!, retry: true)),
-                    child: Text(l10n.btn_retry),
-                  ),
-              ],
-            ),
-        ] else if (widget.onDelete != null)
+        if (widget.onDelete != null)
           OutlinedButton.icon(
             key: const ValueKey('thought-delete'),
             style: OutlinedButton.styleFrom(
@@ -1397,43 +1109,6 @@ class _MediaPlaceholder extends StatelessWidget {
               ),
             ),
         ],
-      ),
-    ),
-  );
-}
-
-class _ReactionButton extends StatelessWidget {
-  const _ReactionButton({
-    super.key,
-    required this.reaction,
-    required this.label,
-    required this.onPressed,
-  });
-
-  final ThoughtReaction reaction;
-  final String label;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) => Semantics(
-    button: true,
-    label: label,
-    excludeSemantics: true,
-    child: Material(
-      color: Colors.white.withValues(alpha: 0.16),
-      shape: CircleBorder(
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.28)),
-      ),
-      child: InkWell(
-        customBorder: const CircleBorder(),
-        onTap: onPressed,
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: Center(
-            child: Text(reaction.glyph, style: const TextStyle(fontSize: 22)),
-          ),
-        ),
       ),
     ),
   );
