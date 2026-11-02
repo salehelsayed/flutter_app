@@ -31,6 +31,8 @@ enum PushSharedKeyNames {
   static let groupReactionLatestStates = "group_reaction_latest_states_v1"
   /// "1" when the app build shows thoughts (Dart iosThoughtsSwitchKey).
   static let thoughtsEnabled = "thoughts_enabled_v1"
+  /// User alert preference; absent means on, separate from content visibility.
+  static let thoughtNotificationsEnabled = "thought_notifications_enabled_v1"
 
   static func groupKey(groupId: String, keyEpoch: Int) -> String {
     "group_key:\(groupId):\(keyEpoch)"
@@ -809,6 +811,11 @@ final class NotificationPreviewResolver {
     else {
       return suppress("thoughts_hidden")
     }
+    guard keyReader.readString(key: PushSharedKeyNames.thoughtNotificationsEnabled) != "0" else {
+      // Backup quieting for an alert already in flight. The relay owns remote
+      // suppression; passive content can still appear in Notification Center.
+      return suppress("thought_notifications_disabled")
+    }
 
     guard let postId = data.exactString("post_id", aliases: "postId") else {
       return suppress("missing_thought_post_id")
@@ -848,6 +855,10 @@ final class NotificationPreviewResolver {
           thought.authorPeerId == senderPeerId,
           thought.postId == postId else {
       return suppress("thought_plaintext_parity_mismatch")
+    }
+
+    guard keyReader.readString(key: PushSharedKeyNames.thoughtNotificationsEnabled) != "0" else {
+      return suppress("thought_notifications_disabled")
     }
 
     emitDecryptOK(kind: "thought")

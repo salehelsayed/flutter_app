@@ -14,6 +14,8 @@ import 'package:flutter_app/core/notifications/local_notification_support.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/notifications/thought_notifications_preferences.dart'
+    as thought_preferences;
 
 typedef ConversationNotificationIdRegistryResolver =
     Future<DurableConversationNotificationIdRegistry> Function();
@@ -40,6 +42,7 @@ class FlutterNotificationService
         ConversationNotificationReadSettlement,
         ConversationNotificationGenerationReplacement {
   final NotificationRequestObserver? _requestObserver;
+  final Future<bool> Function() _loadThoughtNotificationsEnabled;
   final bool _requestApplePermissions;
   final ConversationNotificationIdRegistryResolver
   _notificationIdRegistryResolver;
@@ -64,6 +67,7 @@ class FlutterNotificationService
   bool _initialPayloadConsumed = false;
 
   FlutterNotificationService({
+    Future<bool> Function()? loadThoughtNotificationsEnabled,
     bool requestApplePermissions = true,
     NotificationRequestObserver? requestObserver,
     ConversationNotificationIdRegistryResolver? notificationIdRegistryResolver,
@@ -77,7 +81,13 @@ class FlutterNotificationService
     ConversationNotificationRecoverySettlementCallback?
     onConversationReadSettled,
     NotificationRecoverySettlementCallback? onAllNotificationsCleared,
-  }) : _requestObserver = requestObserver,
+  }) : _loadThoughtNotificationsEnabled =
+           loadThoughtNotificationsEnabled ??
+           (() => thought_preferences.loadThoughtNotificationsEnabled(
+             secureKeyStore: thought_preferences
+                 .createThoughtNotificationsPreferenceStore(),
+           )),
+       _requestObserver = requestObserver,
        _requestApplePermissions = requestApplePermissions,
        _notificationIdResolver = notificationIdResolver,
        _notificationIdLookup = notificationIdLookup,
@@ -615,6 +625,7 @@ class FlutterNotificationService
     required String? payload,
     int? androidNotificationId,
     required NotificationDetails details,
+    Future<bool> Function()? mayPresent,
   }) async {
     final notificationId =
         androidNotificationId ??
@@ -622,6 +633,7 @@ class FlutterNotificationService
           _genericNotificationConversationKey(payload: payload, title: title),
         );
     try {
+      if (mayPresent != null && !await mayPresent()) return;
       observeNotificationRequest(
         _requestObserver,
         NotificationRequestObservation(
@@ -662,7 +674,21 @@ class FlutterNotificationService
     details: mknoonThoughtNotificationDetails(
       remaining: expiresAt.difference(DateTime.now()),
     ),
+    mayPresent: _mayPresentThought,
   );
+
+  Future<bool> _mayPresentThought() async {
+    try {
+      return await _loadThoughtNotificationsEnabled();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'THOUGHT_NOTIFICATION_PREFERENCE_READ_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return false;
+    }
+  }
 
   @override
   Future<void> showMissedCallNotification({

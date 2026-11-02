@@ -81,6 +81,7 @@ class SettingsListRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String? subtitle;
+  final int? subtitleMaxLines;
   final String? value;
   final Widget? trailing;
   final VoidCallback? onTap;
@@ -90,6 +91,7 @@ class SettingsListRow extends StatelessWidget {
     required this.icon,
     required this.label,
     this.subtitle,
+    this.subtitleMaxLines = 2,
     this.value,
     this.trailing,
     this.onTap,
@@ -126,8 +128,10 @@ class SettingsListRow extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: subtitleMaxLines,
+                      overflow: subtitleMaxLines == null
+                          ? TextOverflow.visible
+                          : TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
                         height: 1.3,

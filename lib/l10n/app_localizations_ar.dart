@@ -1383,6 +1383,13 @@ class AppLocalizationsAr extends AppLocalizations {
       'يشارك موقعًا تقريبيًا فقط مع الأصدقاء المباشرين. لا خرائط مباشرة، ولا غرباء أبدًا.';
 
   @override
+  String get settings_thought_notifications_title => 'إشعارات الخواطر';
+
+  @override
+  String get settings_thought_notifications_desc =>
+      'تلقَّ إشعارًا عندما يشارك صديق خاطرة.';
+
+  @override
   String get settings_move_account_title => 'نقل الحساب إلى هاتف جديد';
 
   @override

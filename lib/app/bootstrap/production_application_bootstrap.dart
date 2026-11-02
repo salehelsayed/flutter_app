@@ -144,6 +144,7 @@ import 'package:flutter_app/features/introduction/application/introduction_outbo
 import 'package:flutter_app/features/introduction/application/introduction_listener.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/core/notifications/thought_notifications_preferences.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/core/secure_storage/legacy_group_secret_storage_scrub.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
@@ -687,6 +688,11 @@ final class ProductionApplicationBootstrap
         !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile
         ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
         : null;
+    final thoughtNotificationsStore = sharedPushKeyStore ?? secureKeyStore;
+    Future<bool> readThoughtNotificationsEnabled() =>
+        loadThoughtNotificationsEnabled(
+          secureKeyStore: thoughtNotificationsStore,
+        );
     final droppedPushRecoveryBridge = DroppedPushRecoveryBridge();
     final isMobileNotificationRuntime =
         !kIsWeb && (Platform.isAndroid || Platform.isIOS);
@@ -4584,6 +4590,7 @@ final class ProductionApplicationBootstrap
           )
         : null;
     final notificationService = FlutterNotificationService(
+      loadThoughtNotificationsEnabled: readThoughtNotificationsEnabled,
       requestObserver: debugE2EComposition
           ?.productionJourney
           ?.foregroundPush
@@ -6253,6 +6260,7 @@ final class ProductionApplicationBootstrap
 
     // Create P2P service (uses the same bridge + local P2P)
     p2pService = P2PServiceImpl(
+      loadThoughtNotificationsEnabled: readThoughtNotificationsEnabled,
       shouldSuppressDirectInboxNotification: (recipientPeerId, wireEnvelope) =>
           dbShouldSuppressDeliveredDirectInboxNotification(
             db,
@@ -7036,6 +7044,7 @@ final class ProductionApplicationBootstrap
     }
 
     final postListener = PostListener(
+      loadThoughtNotificationsEnabled: readThoughtNotificationsEnabled,
       postViewStream: messageRouter.postViewStream,
       getOwnPeerId: () async => (await repository.loadIdentity())?.peerId,
       mediaFileManager: mediaFileManager,
@@ -10252,6 +10261,7 @@ final class ProductionApplicationBootstrap
       );
 
       return MyApp(
+        thoughtNotificationsStore: thoughtNotificationsStore,
         repository: repository,
         updateCheckController: debugE2EComposition?.updateCheckController,
         callBackReadinessBarrier: debugE2EComposition?.callBackReadinessBarrier,

@@ -52,6 +52,7 @@ class SettingsScreen extends StatelessWidget {
   final ImageQualityPreference currentVideoQuality;
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
+  final Widget? thoughtNotificationsRow;
   final VoidCallback? onMoveAccountToNewPhone;
   final Widget? groupExitDiagnosticsSection;
   final Widget? callDiagnosticsSection;
@@ -88,6 +89,7 @@ class SettingsScreen extends StatelessWidget {
     this.currentVideoQuality = ImageQualityPreference.compressed,
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
+    this.thoughtNotificationsRow,
     this.onMoveAccountToNewPhone,
     this.groupExitDiagnosticsSection,
     this.callDiagnosticsSection,
@@ -190,6 +192,7 @@ class SettingsScreen extends StatelessWidget {
           label: l10n.settings_always_relay_calls,
           onTap: onOpenCallPrivacySheet,
         ),
+      ?thoughtNotificationsRow,
       if (onNearbySharingChanged != null)
         SettingsListRow(
           key: const ValueKey('settings-row-nearby'),

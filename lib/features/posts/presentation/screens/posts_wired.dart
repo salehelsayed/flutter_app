@@ -74,6 +74,8 @@ class PostsWired extends StatefulWidget {
   final Bridge? bridge;
   final MediaFileManager? mediaFileManager;
   final SecureKeyStore? secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor? imageProcessor;
   final Future<List<PostMediaDraft>> Function()? onAttachMedia;
   final UploadPostMediaFn? uploadPostMediaFn;
@@ -118,6 +120,8 @@ class PostsWired extends StatefulWidget {
     this.bridge,
     this.mediaFileManager,
     this.secureKeyStore,
+    this.thoughtNotificationsStore,
+    this.onThoughtNotificationsChanged,
     this.imageProcessor,
     this.onAttachMedia,
     this.uploadPostMediaFn,
@@ -560,6 +564,8 @@ class _PostsWiredState extends State<PostsWired> {
       await Navigator.of(context).push(
         buildSettingsSlideUpRoute(
           builder: (_) => SettingsWired(
+            thoughtNotificationsStore: widget.thoughtNotificationsStore,
+            onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
             identityRepo: widget.identityRepo,
             bridge: widget.bridge!,
             contactRepo: widget.contactRepo,

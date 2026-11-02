@@ -79,6 +79,8 @@ class QRScannerWired extends StatelessWidget {
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor imageProcessor;
   final String ownPeerId;
   final ActiveConversationTracker? conversationTracker;
@@ -148,6 +150,8 @@ class QRScannerWired extends StatelessWidget {
     required this.p2pService,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
+    this.onThoughtNotificationsChanged,
     required this.imageProcessor,
     required this.ownPeerId,
     this.conversationTracker,
@@ -520,6 +524,9 @@ class QRScannerWired extends StatelessWidget {
                   navigator.pushAndRemoveUntil(
                     buildFeedSlideUpRoute(
                       builder: (_) => FeedWired(
+                        thoughtNotificationsStore: thoughtNotificationsStore,
+                        onThoughtNotificationsChanged:
+                            onThoughtNotificationsChanged,
                         directRouteAuthority: directRouteAuthority,
                         orbitCallActivitySource: orbitCallActivitySource,
                         repository: identityRepository,

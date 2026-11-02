@@ -1307,6 +1307,7 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
   Bridge bridge, {
   required String token,
   required String platform,
+  bool thoughtNotificationsEnabled = true,
   List<String>? capabilities,
   bool wakeOutcomeCoordinatorAdmissionEnabled =
       kWakeOutcomeCoordinatorAdmissionEnabled,
@@ -1342,6 +1343,7 @@ Future<Map<String, dynamic>> callP2PInboxRegisterToken(
     'payload': {
       'token': token,
       'platform': platform,
+      'thought_notifications_enabled': thoughtNotificationsEnabled,
       if (effectiveCapabilities.isNotEmpty)
         'capabilities': effectiveCapabilities,
     },

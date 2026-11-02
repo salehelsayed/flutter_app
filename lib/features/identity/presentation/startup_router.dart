@@ -268,6 +268,7 @@ class StartupRouter extends StatefulWidget {
 
   /// The secure key store for preference storage.
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
   final SecureKeyStore? sharedSecureKeyStore;
 
   /// The image processor for EXIF stripping and compression.
@@ -482,6 +483,7 @@ class StartupRouter extends StatefulWidget {
     this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
     this.sharedSecureKeyStore,
     required this.imageProcessor,
     this.conversationTracker,
@@ -715,6 +717,9 @@ class _StartupRouterState extends State<StartupRouter> {
           _setStartupStage(startupStageOpeningFeed);
           final navigator = Navigator.of(context);
           Widget buildFeed(BuildContext _) => FeedWired(
+            thoughtNotificationsStore: widget.thoughtNotificationsStore,
+            onThoughtNotificationsChanged:
+                widget.pushRegistrationCoordinator?.retryNow,
             directRouteAuthority: widget.directRouteAuthority,
             orbitCallActivitySource: widget.orbitCallActivitySource,
             resolveCallWakeHandle: widget.resolveCallWakeHandle,
@@ -965,6 +970,10 @@ class _StartupRouterState extends State<StartupRouter> {
                       Navigator.of(progressContext).pushAndRemoveUntil(
                         buildStartupReplacementRoute<void>(
                           builder: (_) => FirstTimeExperienceWired(
+                            thoughtNotificationsStore:
+                                widget.thoughtNotificationsStore,
+                            onThoughtNotificationsChanged:
+                                widget.pushRegistrationCoordinator?.retryNow,
                             directRouteAuthority: widget.directRouteAuthority,
                             resolveCallWakeHandle: widget.resolveCallWakeHandle,
                             onCallWakeHandleDistributed:
@@ -1832,6 +1841,9 @@ class _StartupRouterState extends State<StartupRouter> {
   }) async {
     final homeReady = _pushStartupReplacement(
       builder: (_) => FirstTimeExperienceWired(
+        thoughtNotificationsStore: widget.thoughtNotificationsStore,
+        onThoughtNotificationsChanged:
+            widget.pushRegistrationCoordinator?.retryNow,
         directRouteAuthority: widget.directRouteAuthority,
         resolveCallWakeHandle: widget.resolveCallWakeHandle,
         onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,
@@ -1958,6 +1970,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
   StartupRouter _buildRestartedStartupRouter() {
     return StartupRouter(
+      thoughtNotificationsStore: widget.thoughtNotificationsStore,
       directRouteAuthority: widget.directRouteAuthority,
       resolveCallWakeHandle: widget.resolveCallWakeHandle,
       onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,

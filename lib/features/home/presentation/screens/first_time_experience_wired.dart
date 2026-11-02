@@ -84,6 +84,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final MediaFileManager mediaFileManager;
   final ImageProcessor imageProcessor;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
   final ReactionRepository? reactionRepository;
@@ -139,6 +141,8 @@ class FirstTimeExperienceWired extends StatefulWidget {
     required this.mediaFileManager,
     required this.imageProcessor,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
+    this.onThoughtNotificationsChanged,
     this.conversationTracker,
     this.audioRecorderService,
     this.reactionRepository,
@@ -284,6 +288,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
+            thoughtNotificationsStore: widget.thoughtNotificationsStore,
+            onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
             directRouteAuthority: widget.directRouteAuthority,
             orbitCallActivitySource: widget.orbitCallActivitySource,
             resolveCallWakeHandle: widget.resolveCallWakeHandle,
@@ -669,6 +675,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (scannerContext) => QRScannerWired(
+          thoughtNotificationsStore: widget.thoughtNotificationsStore,
+          onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
           directRouteAuthority: widget.directRouteAuthority,
           resolveCallWakeHandle: widget.resolveCallWakeHandle,
           onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,

@@ -523,6 +523,7 @@ class MyApp extends StatefulWidget {
   final TransportMetrics? transportMetrics;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
   final SecureKeyStore? sharedSecureKeyStore;
   final ImageProcessor imageProcessor;
   final AudioRecorderService audioRecorderService;
@@ -706,6 +707,7 @@ class MyApp extends StatefulWidget {
     this.transportMetrics,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
     this.sharedSecureKeyStore,
     required this.imageProcessor,
     required this.audioRecorderService,
@@ -2147,6 +2149,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
+        thoughtNotificationsStore: widget.thoughtNotificationsStore,
+        onThoughtNotificationsChanged:
+            widget.pushRegistrationCoordinator?.retryNow,
         retryThoughtPosting: widget.pendingPostDeliveryRetrier.retryNow,
         directRouteAuthority: _directRouteAuthority,
         callActivitySource: widget.orbitCallActivitySource,
@@ -3599,6 +3604,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         darkTheme: AppTheme.darkTheme,
         themeMode: themeMode,
         home: StartupRouter(
+          thoughtNotificationsStore: widget.thoughtNotificationsStore,
           directRouteAuthority: _directRouteAuthority,
           orbitCallActivitySource: widget.orbitCallActivitySource,
           resolveCallWakeHandle: widget.resolveCallWakeHandle,

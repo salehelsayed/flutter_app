@@ -1051,6 +1051,34 @@ void main() {
   );
 
   test(
+    'Thought notification read failure withholds only the Thought native entry',
+    () async {
+      final service = FlutterNotificationService(
+        loadThoughtNotificationsEnabled: () async =>
+            throw StateError('read failed'),
+        notificationIdRegistryResolver: () async =>
+            DurableConversationNotificationIdRegistry(
+              directory: notificationIdDirectory,
+            ),
+      );
+      await service.initialize();
+      await service.showThoughtNotification(
+        postId: 'unreadable-setting',
+        title: 'Friend shared a thought',
+        body: 'Private thought',
+        expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      );
+      expect(log.where((call) => call.method == 'show'), isEmpty);
+      await service.showNotification(
+        title: 'Alice',
+        body: 'Reacted',
+        payload: 'post:unrelated-reaction',
+      );
+      expect(log.where((call) => call.method == 'show'), hasLength(1));
+    },
+  );
+
+  test(
     'Thought notification OFF preserves chat post reactions and missed calls',
     () async {
       await FlutterSecureKeyStore().write(

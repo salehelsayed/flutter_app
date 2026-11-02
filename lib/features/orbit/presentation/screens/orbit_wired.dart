@@ -182,6 +182,8 @@ class OrbitWired extends StatefulWidget {
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor imageProcessor;
 
   /// 135 B6: threaded through to the embedded [FeedWired] (scan → Feed handoff)
@@ -281,6 +283,8 @@ class OrbitWired extends StatefulWidget {
     required this.p2pService,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
+    this.onThoughtNotificationsChanged,
     required this.imageProcessor,
     required this.feedClearedRepository,
     this.conversationTracker,
@@ -912,6 +916,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           buildSettingsSlideUpRoute<void>(
             builder: (_) => SettingsWired(
+              thoughtNotificationsStore: widget.thoughtNotificationsStore,
+              onThoughtNotificationsChanged:
+                  widget.onThoughtNotificationsChanged,
               identityRepo: widget.identityRepo,
               bridge: widget.bridge,
               contactRepo: widget.contactRepo,
@@ -3790,6 +3797,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
+              thoughtNotificationsStore: widget.thoughtNotificationsStore,
+              onThoughtNotificationsChanged:
+                  widget.onThoughtNotificationsChanged,
               directRouteAuthority: widget.directRouteAuthority,
               resolveCallWakeHandle: widget.resolveCallWakeHandle,
               onCallWakeHandleDistributed: widget.onCallWakeHandleDistributed,

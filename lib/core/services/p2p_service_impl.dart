@@ -174,7 +174,7 @@ class P2PServiceImpl
         PeerLivenessProbe,
         PeerDropSignal {
   final Bridge _bridge;
-  final Future<bool> Function()? loadThoughtNotificationsEnabled;
+  final Future<bool> Function()? _loadThoughtNotificationsEnabled;
   final PushTokenStore? _pushTokenStore;
 
   /// Plan 320 P2: reads the CURRENT provider token. Relay-health re-registration
@@ -384,7 +384,7 @@ class P2PServiceImpl
 
   P2PServiceImpl({
     required Bridge bridge,
-    this.loadThoughtNotificationsEnabled,
+    Future<bool> Function()? loadThoughtNotificationsEnabled,
     LocalP2PService? localP2PService,
     PushTokenStore? pushTokenStore,
     ReceivedWakeTokenStore? receivedWakeTokenStore,
@@ -432,6 +432,7 @@ class P2PServiceImpl
     bool Function()? isAppForeground,
   }) : _isAppForeground = isAppForeground ?? _defaultAppForeground,
        _bridge = bridge,
+       _loadThoughtNotificationsEnabled = loadThoughtNotificationsEnabled,
        _pushTokenStore = pushTokenStore,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _recoveryOnly = recoveryOnly,
@@ -3292,6 +3293,8 @@ class P2PServiceImpl
         _bridge,
         token: token,
         platform: platform,
+        thoughtNotificationsEnabled:
+            await _loadThoughtNotificationsEnabled?.call() ?? true,
         // Ordinary primary keeps its incumbent default set; the linked route
         // advertises exactly the paired opaque/outcome capabilities and never
         // inherits the primary reaction defaults.

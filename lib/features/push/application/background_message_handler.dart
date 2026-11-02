@@ -8,6 +8,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:background_push_crypto/background_push_crypto.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
+import 'package:flutter_app/core/notifications/thought_notifications_preferences.dart'
+    as thought_preferences;
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
@@ -816,6 +818,26 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     );
     return;
   }
+  final isThoughtNotification = message.data['type'] == 'post_create';
+  final thoughtNotificationsStore = isThoughtNotification
+      ? thought_preferences.createThoughtNotificationsPreferenceStore()
+      : null;
+  Future<bool> mayPresentThought() async {
+    if (!isThoughtNotification) return true;
+    try {
+      return await thought_preferences.loadThoughtNotificationsEnabled(
+        secureKeyStore: thoughtNotificationsStore!,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'THOUGHT_NOTIFICATION_PREFERENCE_READ_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return false;
+    }
+  }
+
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
     // A background FlutterEngine has its own module globals. Reinstall the iOS
     // App Group-backed gate here so its marks and the NSE sidecar live in the
@@ -943,6 +965,8 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     );
     return;
   }
+
+  if (isThoughtNotification && !await mayPresentThought()) return;
 
   late final PushFallbackNotificationDisplayEligibility displayEligibility;
   try {
@@ -1444,6 +1468,7 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
             notificationId: notificationId,
             plugin: _backgroundNotificationsPlugin,
           );
+      if (isThoughtNotification && !await mayPresentThought()) return;
       publishedSilently = effectiveSilent;
       await _backgroundNotificationsPlugin.show(
         notificationId,
@@ -1743,6 +1768,9 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
         throw const _BackgroundNotificationClaimOwnershipLost();
       }
     }
+
+    // A late OFF read skipped native entry. It owns no shown/dedupe marker.
+    if (isThoughtNotification && publishedSilently == null) return;
 
     final durableReceipt = durableEffectResult?.receipt;
     if (durableReceipt != null) {

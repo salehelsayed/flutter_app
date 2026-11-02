@@ -8012,7 +8012,30 @@ visible and cannot become an ordinary first-attempt PASS.
   assertions are unchanged. Preserve the first affected-surfaces failure and
   corrected focused pass under
   `.codex-test-logs/contact-request-decisions-20261026/`.
-
+  The Thought alert preference is separate from the content/build switch:
+  `thought_notifications_enabled_v1` stores `0`/`1`, with absence ON. Tests
+  exercise fresh reads after asynchronous preparation and notification-ID
+  allocation, preserving storage, ACK, media, Orbit publication, ordinary chat
+  replies and reactions while OFF. Production uses the existing shared iOS
+  Keychain store and Android primary store. The authenticated token-registration
+  boolean `thought_notifications_enabled` persists atomically in memory and
+  legacy/encrypted Redis records; omitted old records retain ON and their old
+  AAD. Only `post_create` provider sends are filtered. Mixed mailbox wakes and
+  chat/call paths remain independent. Preference-bearing registration requires
+  every distinct configured relay to acknowledge before retry stops; the legacy
+  variadic registration API retains its at-least-one contract. Local OFF remains
+  saved when remote synchronization fails, without a new delivery-status message.
+  NSE reads provide passive, soundless backup content only; relay filtering owns
+  remote suppression. In-flight alerts and synchronization latency remain limits;
+  Swift parsing is not native XCTest or signed-device evidence. Causal RED,
+  corrected host runs and the pending native selectors are retained under
+  `.codex-test-logs/thought-notifications-switch-20261102/`.
+  Its in-memory coordinator/widget fixture must initialize and retry in the same
+  async zone: real-zone initialization followed by fake-zone retry can strand
+  the health-operation tail. Observe actual registration and the rebuilt switch,
+  rather than one pump or assertions inside a production-caught callback. An
+  unlimited subtitle still truncates if it retains `TextOverflow.ellipsis`;
+  EN/DE/AR cases assert `RenderParagraph.didExceedMaxLines == false` at 2x text.
 
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now

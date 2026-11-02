@@ -3565,6 +3565,98 @@ final class NotificationPreviewResolverTests: XCTestCase {
     }
   }
 
+  func testThoughtNotificationPreferenceDefaultsOnAndReadsEveryResolution() throws {
+    let keys = MemoryPushKeyReader([
+      PushSharedKeyNames.thoughtsEnabled: "1",
+      PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+    ])
+    let decryptor = MemoryPushDecryptor()
+    let dedupe = MemoryPushDedupeStore()
+    let resolver = NotificationPreviewResolver(
+      keyReader: keys,
+      decryptor: decryptor,
+      dedupeStore: dedupe
+    )
+    for (index, value) in ([nil, "0", "1", "0"] as [String?]).enumerated() {
+      keys.writeString(key: PushSharedKeyNames.thoughtNotificationsEnabled, value: value)
+      let postId = "preference-\(index)"
+      decryptor.chatPlaintext = try thoughtPlaintextJSON(postId: postId)
+      let result = resolver.resolve(
+        userInfo: thoughtRoute(postId: postId),
+        fallbackTitle: "Provider title",
+        fallbackBody: "Provider body"
+      )
+      let content = UNMutableNotificationContent()
+      content.sound = .default
+      applyNotificationPreviewResult(result, to: content)
+      if value == "0" {
+        XCTAssertEqual(result.reason, "thought_notifications_disabled")
+        XCTAssertTrue(result.suppress)
+        XCTAssertFalse(result.markAsShown)
+        XCTAssertNil(content.sound)
+        if #available(iOS 15.0, *) {
+          XCTAssertEqual(content.interruptionLevel, .passive)
+        }
+      } else {
+        XCTAssertEqual(result.reason, "thought")
+        XCTAssertFalse(result.suppress)
+        XCTAssertTrue(result.markAsShown)
+        XCTAssertNotNil(content.sound)
+      }
+    }
+    XCTAssertEqual(decryptor.chatCalls, 2)
+    XCTAssertEqual(dedupe.claims, ["post_create:preference-0", "post_create:preference-2"])
+  }
+
+  func testThoughtNotificationOffDuringDecryptQuietsWithoutShownClaim() throws {
+    let keys = MemoryPushKeyReader([
+      PushSharedKeyNames.thoughtsEnabled: "1",
+      PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+      PushSharedKeyNames.thoughtNotificationsEnabled: "1",
+    ])
+    let decryptor = MemoryPushDecryptor(
+      chatPlaintext: try thoughtPlaintextJSON(postId: "late-off")
+    )
+    decryptor.onChatDecrypt = {
+      keys.writeString(key: PushSharedKeyNames.thoughtNotificationsEnabled, value: "0")
+    }
+    let dedupe = MemoryPushDedupeStore()
+    let result = NotificationPreviewResolver(
+      keyReader: keys,
+      decryptor: decryptor,
+      dedupeStore: dedupe
+    ).resolve(
+      userInfo: thoughtRoute(postId: "late-off"),
+      fallbackTitle: "Provider title",
+      fallbackBody: "Provider body"
+    )
+    XCTAssertEqual(result.reason, "thought_notifications_disabled")
+    XCTAssertTrue(result.suppress)
+    XCTAssertFalse(result.markAsShown)
+    XCTAssertTrue(dedupe.claims.isEmpty)
+  }
+
+  func testThoughtNotificationOffPreservesOrdinaryChatPreview() throws {
+    let fixture = try loadFixture("one_to_one_text")
+    let decryptor = MemoryPushDecryptor(chatPlaintext: try fixturePlaintextJSON(fixture))
+    let result = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader([
+        PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+        PushSharedKeyNames.thoughtNotificationsEnabled: "0",
+      ]),
+      decryptor: decryptor,
+      dedupeStore: MemoryPushDedupeStore()
+    ).resolve(
+      userInfo: try XCTUnwrap(fixture["routeData"] as? [String: Any]),
+      fallbackTitle: "Provider title",
+      fallbackBody: "Provider body"
+    )
+    XCTAssertTrue(result.didDecrypt)
+    XCTAssertFalse(result.suppress)
+    XCTAssertTrue(result.markAsShown)
+    XCTAssertEqual(decryptor.chatCalls, 1)
+  }
+
   func testThoughtPolicyAndParityFailClosedWithoutClaiming() throws {
     let eligible = try ordinaryDirectContactsJSON()
     let valid = try thoughtPlaintextJSON(postId: "post-policy")
@@ -4299,7 +4391,7 @@ private struct PushPreviewEventRecord {
 }
 
 private final class MemoryPushKeyReader: PushKeyReading {
-  private let values: [String: String]
+  private var values: [String: String]
 
   init(
     _ values: [String: String],
@@ -4319,6 +4411,10 @@ private final class MemoryPushKeyReader: PushKeyReading {
   func readString(key: String) -> String? {
     values[key]
   }
+
+  func writeString(key: String, value: String?) {
+    values[key] = value
+  }
 }
 
 private enum MemoryPushDecryptError: Error {
@@ -4326,6 +4422,7 @@ private enum MemoryPushDecryptError: Error {
 }
 
 private final class MemoryPushDecryptor: PushPayloadDecrypting {
+  var onChatDecrypt: (() -> Void)?
   var chatPlaintext: String?
   var groupPlaintext: String?
   var groupError: Error?
@@ -4353,6 +4450,7 @@ private final class MemoryPushDecryptor: PushPayloadDecrypting {
     nonce: String
   ) throws -> String {
     chatCalls += 1
+    onChatDecrypt?()
     lastChatSecretKey = secretKey
     if let chatError {
       throw chatError

@@ -24,6 +24,8 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/settings/application/image_quality_preference_use_cases.dart';
 import 'package:flutter_app/features/settings/application/thoughts_metrics_preference_use_cases.dart';
+import 'package:flutter_app/core/notifications/thought_notifications_preferences.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_group.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -71,6 +73,7 @@ class SettingsWired extends StatefulWidget {
   final ContactRepository contactRepo;
   final P2PService p2pService;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
   final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor imageProcessor;
   final AppShellController appShellController;
@@ -112,6 +115,7 @@ class SettingsWired extends StatefulWidget {
     required this.contactRepo,
     required this.p2pService,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
     this.onThoughtNotificationsChanged,
     required this.imageProcessor,
     required this.appShellController,
@@ -163,6 +167,10 @@ class _SettingsWiredState extends State<SettingsWired>
   String? _mediaDownloadError;
   PostsPrivacySettings _postsPrivacySettings = const PostsPrivacySettings();
   bool _thoughtsMetricsEnabled = true;
+  bool _thoughtNotificationsEnabled = true;
+  bool _isThoughtNotificationsLoading = true;
+  bool _isThoughtNotificationsSaving = false;
+  String? _thoughtNotificationsError;
   List<IntroductionModel> _debugIntroductions = const [];
   bool _isLoadingDebugIntroductions = false;
   String? _debugIntroductionsError;
@@ -198,6 +206,7 @@ class _SettingsWiredState extends State<SettingsWired>
     _loadMediaDownloadPreferences();
     _loadPostsPrivacySettings();
     _loadThoughtsMetricsEnabled();
+    _loadThoughtNotificationsEnabled();
   }
 
   @override
@@ -592,6 +601,61 @@ class _SettingsWiredState extends State<SettingsWired>
     );
     if (mounted) {
       setState(() => _thoughtsMetricsEnabled = enabled);
+    }
+  }
+
+  SecureKeyStore get _thoughtNotificationsStore =>
+      widget.thoughtNotificationsStore ?? widget.secureKeyStore;
+
+  Future<void> _loadThoughtNotificationsEnabled() async {
+    try {
+      final enabled = await loadThoughtNotificationsEnabled(
+        secureKeyStore: _thoughtNotificationsStore,
+      );
+      if (mounted) setState(() => _thoughtNotificationsEnabled = enabled);
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _thoughtNotificationsError = AppLocalizations.of(
+            context,
+          )!.settings_background_save_fail,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isThoughtNotificationsLoading = false);
+    }
+  }
+
+  Future<void> _onThoughtNotificationsChanged(bool enabled) async {
+    if (_isThoughtNotificationsLoading || _isThoughtNotificationsSaving) return;
+    setState(() {
+      _isThoughtNotificationsSaving = true;
+      _thoughtNotificationsError = null;
+    });
+    try {
+      await saveThoughtNotificationsEnabled(
+        secureKeyStore: _thoughtNotificationsStore,
+        enabled: enabled,
+      );
+      if (mounted) setState(() => _thoughtNotificationsEnabled = enabled);
+      // The coordinator serializes a same-token resend behind any older
+      // registration. A remote failure never rolls the durable choice back.
+      try {
+        await widget.onThoughtNotificationsChanged?.call();
+      } catch (_) {
+        // Local persistence succeeded. Registration owns its retry/health
+        // reporting; a remote retry failure is not a local save failure.
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(
+          () => _thoughtNotificationsError = AppLocalizations.of(
+            context,
+          )!.settings_background_save_fail,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isThoughtNotificationsSaving = false);
     }
   }
 
@@ -1149,6 +1213,7 @@ class _SettingsWiredState extends State<SettingsWired>
   @override
   Widget build(BuildContext context) {
     final identity = _identity;
+    final l10n = AppLocalizations.of(context)!;
     // INV-209-1: the tiles are a capability PAIR — a host supplying only one
     // entry gets no tiles at all (no asymmetric single tile).
     final canHostQr =
@@ -1183,6 +1248,36 @@ class _SettingsWiredState extends State<SettingsWired>
       currentVideoQuality: _currentVideoQuality,
       isNearbySharingEnabled: _postsPrivacySettings.sharingEnabled,
       onNearbySharingChanged: _onNearbySharingChanged,
+      thoughtNotificationsRow: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SettingsListRow(
+            key: const ValueKey('settings-row-thought-notifications'),
+            icon: Icons.notifications_outlined,
+            label: l10n.settings_thought_notifications_title,
+            subtitle: l10n.settings_thought_notifications_desc,
+            subtitleMaxLines: null,
+            trailing: Switch.adaptive(
+              key: const ValueKey('settings-thought-notifications-switch'),
+              value: _thoughtNotificationsEnabled,
+              onChanged:
+                  _isThoughtNotificationsLoading ||
+                      _isThoughtNotificationsSaving
+                  ? null
+                  : _onThoughtNotificationsChanged,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          if (_thoughtNotificationsError != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 6),
+              child: Text(
+                _thoughtNotificationsError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+        ],
+      ),
       onMoveAccountToNewPhone: identity == null
           ? null
           : _onMoveAccountToNewPhone,

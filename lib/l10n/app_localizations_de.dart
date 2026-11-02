@@ -1395,6 +1395,14 @@ class AppLocalizationsDe extends AppLocalizations {
       'Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karte und nie mit Fremden.';
 
   @override
+  String get settings_thought_notifications_title =>
+      'Benachrichtigungen für Gedanken';
+
+  @override
+  String get settings_thought_notifications_desc =>
+      'Benachrichtigung, wenn jemand einen Gedanken teilt.';
+
+  @override
   String get settings_move_account_title => 'Konto auf neues Handy umziehen';
 
   @override

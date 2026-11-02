@@ -582,6 +582,8 @@
   "settings_share_nearby_on": "An",
   "settings_share_nearby_off": "Aus",
   "settings_share_nearby_desc": "Teilt nur einen ungefähren Standort mit direkten Freunden. Keine Live-Karte und nie mit Fremden.",
+  "settings_thought_notifications_title": "Benachrichtigungen für Gedanken",
+  "settings_thought_notifications_desc": "Benachrichtigung, wenn jemand einen Gedanken teilt.",
   "settings_move_account_title": "Konto auf neues Handy umziehen",
   "settings_recovery_title": "WIEDERHERSTELLUNGSPHRASE",
   "settings_recovery_warning": "Teile diese Phrase niemals mit jemandem. Sie gewährt vollen Zugriff auf dein Konto.",

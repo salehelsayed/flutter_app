@@ -1367,6 +1367,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Shares only an approximate location with direct friends. No live maps, and never strangers.';
 
   @override
+  String get settings_thought_notifications_title => 'Thought notifications';
+
+  @override
+  String get settings_thought_notifications_desc =>
+      'Get a notification when a friend shares a thought.';
+
+  @override
   String get settings_move_account_title => 'Move account to new phone';
 
   @override

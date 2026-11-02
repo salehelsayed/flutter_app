@@ -159,6 +159,8 @@ class FeedWired extends StatefulWidget {
   final P2PService p2pService;
   final MediaFileManager mediaFileManager;
   final SecureKeyStore secureKeyStore;
+  final SecureKeyStore? thoughtNotificationsStore;
+  final Future<void> Function()? onThoughtNotificationsChanged;
   final ImageProcessor imageProcessor;
   final ActiveConversationTracker? conversationTracker;
   final AudioRecorderService? audioRecorderService;
@@ -220,6 +222,8 @@ class FeedWired extends StatefulWidget {
     required this.p2pService,
     required this.mediaFileManager,
     required this.secureKeyStore,
+    this.thoughtNotificationsStore,
+    this.onThoughtNotificationsChanged,
     required this.imageProcessor,
     this.conversationTracker,
     this.audioRecorderService,
@@ -3134,6 +3138,8 @@ class _FeedWiredState extends State<FeedWired>
 
   Widget _buildOrbitHost() {
     return OrbitWired(
+      thoughtNotificationsStore: widget.thoughtNotificationsStore,
+      onThoughtNotificationsChanged: widget.onThoughtNotificationsChanged,
       directRouteAuthority: widget.directRouteAuthority,
       callActivitySource: widget.orbitCallActivitySource,
       resolveCallWakeHandle: widget.resolveCallWakeHandle,

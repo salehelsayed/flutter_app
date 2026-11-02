@@ -2326,6 +2326,18 @@ abstract class AppLocalizations {
   /// **'Shares only an approximate location with direct friends. No live maps, and never strangers.'**
   String get settings_share_nearby_desc;
 
+  /// No description provided for @settings_thought_notifications_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Thought notifications'**
+  String get settings_thought_notifications_title;
+
+  /// No description provided for @settings_thought_notifications_desc.
+  ///
+  /// In en, this message translates to:
+  /// **'Get a notification when a friend shares a thought.'**
+  String get settings_thought_notifications_desc;
+
   /// No description provided for @settings_move_account_title.
   ///
   /// In en, this message translates to:

@@ -261,7 +261,9 @@ class PostListener {
                 messageId: post.eventId,
               ) ??
               false);
-      if (showsCard && !announcedByPush) {
+      if (showsCard &&
+          !announcedByPush &&
+          (await loadThoughtNotificationsEnabled?.call() ?? true)) {
         await notificationService!.showThoughtNotification(
           postId: post.id,
           title: localizedThoughtNotificationTitle(sender.username),

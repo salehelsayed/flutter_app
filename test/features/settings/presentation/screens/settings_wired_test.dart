@@ -370,6 +370,7 @@ void main() {
     ContactRepository? contactRepo,
     P2PService? p2pService,
     SecureKeyStore? secureKeyStore,
+    SecureKeyStore? thoughtNotificationsStore,
     Future<void> Function()? onThoughtNotificationsChanged,
     InMemoryIntroductionRepository? introductionRepository,
     InMemoryPostsPrivacySettingsRepository? postsPrivacySettingsRepository,
@@ -411,6 +412,7 @@ void main() {
           contactRepo: contactRepo ?? _FakeContactRepo(),
           p2pService: p2pService ?? _FakeP2PService(),
           secureKeyStore: secureKeyStore ?? FakeSecureKeyStore(),
+          thoughtNotificationsStore: thoughtNotificationsStore,
           onThoughtNotificationsChanged: onThoughtNotificationsChanged,
           imageProcessor: ImageProcessor(compressFile: _noOpCompress),
           appShellController: shellController,
@@ -440,6 +442,24 @@ void main() {
   Future<void> settleSheetClose(WidgetTester tester) async {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  Future<void> pumpUntilObserved(
+    WidgetTester tester,
+    bool Function() observed, {
+    required String reason,
+    String Function()? diagnostic,
+  }) async {
+    // AmbientBackground never settles. Advance bounded frames until the
+    // specific async result is observable instead of waiting for all animation.
+    for (var frame = 0; frame < 50 && !observed(); frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(
+      observed(),
+      isTrue,
+      reason: diagnostic == null ? reason : '$reason; ${diagnostic()}',
+    );
   }
 
   testWidgets(
@@ -480,6 +500,34 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       expect(await store.read(_thoughtNotificationPreferenceKey), '1');
       expect(tester.widget<Switch>(toggle).value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'Thought notifications use the selected durable store independently of primary settings',
+    (tester) async {
+      final primary = FakeSecureKeyStore();
+      final selected = FakeSecureKeyStore();
+      await primary.write(_thoughtNotificationPreferenceKey, '1');
+      await selected.write(_thoughtNotificationPreferenceKey, '0');
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        secureKeyStore: primary,
+        thoughtNotificationsStore: selected,
+      );
+      final toggle = find.byKey(
+        const ValueKey('settings-thought-notifications-switch'),
+      );
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await selected.read(_thoughtNotificationPreferenceKey), '1');
+      await tester.tap(toggle);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(await selected.read(_thoughtNotificationPreferenceKey), '0');
+      expect(await primary.read(_thoughtNotificationPreferenceKey), '1');
     },
   );
 
@@ -526,16 +574,23 @@ void main() {
         tokenRefreshStream: const Stream<String>.empty(),
       );
       addTearDown(coordinator.dispose);
-      await tester.runAsync(coordinator.ensureStarted);
+      // No real I/O is used here. Keep startup and UI retry in the widget
+      // test's zone so the coordinator's serialized Future tail stays there.
+      await coordinator.ensureStarted();
       expect(frames, hasLength(1));
+      var resendEntered = false;
+      String? persistedAtResend;
       await pumpScreen(
         tester,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         secureKeyStore: store,
         p2pService: node,
         onThoughtNotificationsChanged: () async {
+          resendEntered = true;
           // The relay publication can only follow the durable local choice.
-          expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+          persistedAtResend = await store.read(
+            _thoughtNotificationPreferenceKey,
+          );
           await coordinator.retryNow();
         },
       );
@@ -545,9 +600,21 @@ void main() {
       expect(toggle, findsOneWidget);
       await tester.ensureVisible(toggle);
       await tester.tap(toggle);
-      await tester.pump(const Duration(milliseconds: 100));
+      await pumpUntilObserved(
+        tester,
+        () =>
+            frames.length == 2 &&
+            tester.widget<Switch>(toggle).onChanged != null,
+        reason: 'the completed Settings change must resend the same token',
+        diagnostic: () =>
+            'callback=$resendEntered durable=$persistedAtResend '
+            'frames=${frames.length} switch=${tester.widget<Switch>(toggle).value} '
+            'pending=${tester.widget<Switch>(toggle).onChanged == null} '
+            'localError=${find.text("Couldn't save. Try again.").evaluate().isNotEmpty}',
+      );
 
       expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(persistedAtResend, '0');
       expect(frames.map((frame) => frame['token']), [
         'same-device-token',
         'same-device-token',
@@ -563,12 +630,15 @@ void main() {
     'Thought notifications keep durable OFF when relay synchronization fails',
     (tester) async {
       final store = FakeSecureKeyStore();
+      var retries = 0;
       await pumpScreen(
         tester,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         secureKeyStore: store,
-        onThoughtNotificationsChanged: () async =>
-            throw StateError('relay unavailable'),
+        onThoughtNotificationsChanged: () async {
+          retries++;
+          throw StateError('relay unavailable');
+        },
       );
       final toggle = find.byKey(
         const ValueKey('settings-thought-notifications-switch'),
@@ -576,12 +646,19 @@ void main() {
       expect(toggle, findsOneWidget);
       await tester.ensureVisible(toggle);
       await tester.tap(toggle);
-      await tester.pump(const Duration(milliseconds: 100));
+      await pumpUntilObserved(
+        tester,
+        () =>
+            retries == 1 &&
+            !tester.widget<Switch>(toggle).value &&
+            tester.widget<Switch>(toggle).onChanged != null,
+        reason: 'the failed remote retry retains the completed local choice',
+      );
 
       expect(await store.read(_thoughtNotificationPreferenceKey), '0');
       expect(tester.widget<Switch>(toggle).value, isFalse);
       expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
-      expect(find.text("Couldn't save. Try again."), findsOneWidget);
+      expect(find.text("Couldn't save. Try again."), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
@@ -619,12 +696,15 @@ void main() {
     (tester) async {
       final store = _DeferredThoughtNotificationWriteStore();
       var registrations = 0;
+      String? persistedAtRegistration;
       await pumpScreen(
         tester,
         identityRepo: FakeIdentityRepository(makeIdentity()),
         secureKeyStore: store,
         onThoughtNotificationsChanged: () async {
-          expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+          persistedAtRegistration = await store.read(
+            _thoughtNotificationPreferenceKey,
+          );
           registrations++;
         },
       );
@@ -642,8 +722,15 @@ void main() {
       expect(registrations, 0);
 
       store.pending.complete();
-      await tester.pump(const Duration(milliseconds: 100));
+      await pumpUntilObserved(
+        tester,
+        () =>
+            registrations == 1 &&
+            tester.widget<Switch>(toggle).onChanged != null,
+        reason: 'registration follows the completed durable save exactly once',
+      );
       expect(await store.read(_thoughtNotificationPreferenceKey), '0');
+      expect(persistedAtRegistration, '0');
       expect(tester.widget<Switch>(toggle).value, isFalse);
       expect(tester.widget<Switch>(toggle).onChanged, isNotNull);
       expect(registrations, 1);
