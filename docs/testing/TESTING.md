@@ -10965,9 +10965,12 @@ updated receiver. Host schema tests do not establish deployment or device proof.
 
 Sticker usage diagnostics count calls to `StickerUsageRecorder.recordSent` at
 the admitted-message boundary, once per message rather than per recipient or
-retry. The production adapter uses `AppDiagnostics`; it neither waits for disk
-nor propagates observation failures into sending. Counts are closed sticker IDs
-plus `custom` and `unknown`, without message, recipient, group or per-send time.
+retry. The production adapter is const and resolves the current `AppDiagnostics`
+singleton when recording unless a collector is explicitly injected. Construction
+before diagnostics installation therefore cannot capture a stale collector. It
+neither waits for disk nor propagates observation failures into sending. Counts
+are closed sticker IDs plus `custom` and `unknown`, without message, recipient,
+group or per-send time.
 The canonical enum must equal `assets/stickers/packs.json`, including reserved
 IDs, and all generated schema copies must agree.
 
@@ -10984,11 +10987,13 @@ re-enabling cannot revive them. Existing upload consent and retry semantics
 remain authoritative. The one-second write window can lose recent counts on
 abrupt termination; this is a beta signal, not exact delivered-message accounting.
 
-The 20 focused host cases in `sticker_usage_diagnostics_test.dart` cover real-file
+The 21 focused host cases in `sticker_usage_diagnostics_test.dart` cover real-file
 restart, interval timestamps, 270 snapshots across two days, privacy, malformed
-restore, consent races and retry identity. Run seasonal-boundary cases with
-`TZ=Europe/Berlin`; UTC alone does not exercise DST. RED/GREEN receipts are in
-`.codex-test-logs/sticker-tally-20261102/`. Recorder tests do not prove the UI's
+restore, consent races, retry identity and const-adapter late binding. Run
+seasonal-boundary cases with `TZ=Europe/Berlin`; UTC alone does not exercise DST.
+RED/GREEN receipts are in
+`.codex-test-logs/sticker-tally-20261102/` and
+`.codex-test-logs/sticker-tally-const-20261102/`. Recorder tests do not prove the UI's
 send-admission call-site placement, device behavior or signed-build delivery.
 The new optional vocabulary remains on uploads, so the updated relay must precede
 testers receiving the app, under the existing deployment order above.
