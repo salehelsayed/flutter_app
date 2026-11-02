@@ -8,10 +8,12 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/account_migration/presentation/screens/account_migration_journey_wired.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/scan_friend_card.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_diagnostic.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -19,9 +21,11 @@ import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart
 import 'package:flutter_app/features/posts/presentation/screens/you_page_screen.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_screen.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_screen.dart';
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/settings/presentation/screens/settings_wired.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
@@ -278,6 +282,53 @@ void main() {
     await tester.tap(settingsButton());
     await pumpFrames(tester);
   }
+
+  testWidgets(
+    'My QR from Settings omits empty-circle copy for an existing friend',
+    (tester) async {
+      setLargeSurface(tester);
+      suppressOverflowErrors();
+      identityRepo.seed(identityWith());
+      contactRepo.seed([
+        const ContactModel(
+          peerId: 'friend-peer-id',
+          publicKey: 'friend-public-key',
+          rendezvous: '/ip4/127.0.0.1/tcp/4001',
+          username: 'Bob',
+          signature: 'friend-signature',
+          scannedAt: '2026-03-15T10:00:00.000Z',
+          mlKemPublicKey: 'friend-mlkem-key',
+        ),
+      ]);
+      bridge.responses['payload.sign'] = {
+        'ok': true,
+        'signature': 'settings-qr-signature',
+      };
+      expect(await contactRepo.getActiveContacts(), hasLength(1));
+
+      await tester.pumpWidget(
+        buildOrbit(appShellController: freshController()),
+      );
+      await pumpFrames(tester);
+      await openSettings(tester);
+      expect(find.byType(SettingsWired), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('settings-my-qr-tile')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.byType(QrImageView), findsOneWidget);
+      final qr = tester.widget<QRDisplayScreen>(find.byType(QRDisplayScreen));
+      expect(qr.qrData, contains('settings-qr-signature'));
+      expect(find.byType(ScanFriendCard), findsOneWidget);
+      expect(
+        tester.widget<ScanFriendCard>(find.byType(ScanFriendCard)).onTap,
+        isNotNull,
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(QRDisplayScreen)),
+      )!;
+      expect(find.text(l10n.home_empty_circle_title), findsNothing);
+    },
+  );
 
   testWidgets('TC-206-01 settings button opens Settings via slide-up', (
     tester,
