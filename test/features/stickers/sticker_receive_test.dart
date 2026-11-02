@@ -4,6 +4,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
 import 'package:flutter_app/shared/widgets/media/media_preview_text.dart';
@@ -27,8 +28,9 @@ Map<String, dynamic> _incomingWire({String id = 'att-1', Object? sticker}) => {
   'sticker': ?sticker,
 };
 
-Future<void> _pumpCard(WidgetTester tester, List<MediaAttachment> media) {
-  return tester.pumpWidget(
+Future<void> _pumpCard(WidgetTester tester, List<MediaAttachment> media) async {
+  await tester.runAsync(loadBundledStickerCatalog);
+  await tester.pumpWidget(
     MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -47,6 +49,7 @@ Future<void> _pumpCard(WidgetTester tester, List<MediaAttachment> media) {
       ),
     ),
   );
+  await tester.pump();
 }
 
 void _expectRendersAsSticker(WidgetTester tester, String label) {
@@ -84,29 +87,29 @@ void main() {
     ).copyWith(messageId: 'msg-1');
 
     await _pumpCard(tester, [incoming]);
-    _expectRendersAsSticker(tester, 'Planet sticker');
+    _expectRendersAsSticker(tester, 'Planet sticker, 1 of 11');
 
     final reloaded = (await tester.runAsync(
       () => roundTrip(incoming, MediaOwnerLane.direct),
     ))!;
     expect(reloaded.single.stickerId, 'orbit_crew.planet.angry');
     await _pumpCard(tester, reloaded);
-    _expectRendersAsSticker(tester, 'Planet sticker');
+    _expectRendersAsSticker(tester, 'Planet sticker, 1 of 11');
   });
 
   testWidgets('an incoming group sticker renders as a sticker after a reload '
       'from the database', (tester) async {
     final incoming = GroupMediaMimePolicy.sanitizeWireAttachment(
-      _incomingWire(sticker: {'id': 'big_mood.de.ja', 'extra': true}),
+      _incomingWire(sticker: {'id': 'big_mood.de.alien', 'extra': true}),
       messageId: 'group-msg-1',
     );
 
     final reloaded = (await tester.runAsync(
       () => roundTrip(incoming, MediaOwnerLane.group),
     ))!;
-    expect(reloaded.single.stickerId, 'big_mood.de.ja');
+    expect(reloaded.single.stickerId, 'big_mood.de.alien');
     await _pumpCard(tester, reloaded);
-    _expectRendersAsSticker(tester, 'German sticker');
+    _expectRendersAsSticker(tester, 'Nicht dein Ernst!');
   });
 
   testWidgets('an unknown sticker id still renders as a sticker', (

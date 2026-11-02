@@ -36,6 +36,49 @@ void main() {
       expect(catalog.byId('orbit_crew.planet.nope'), isNull);
     });
 
+    test('every Big Mood sticker except hug carries its printed words', () {
+      final catalog = StickerCatalog.parse(packsJson, includeTestOnly: true);
+      final bigMood = catalog.packs.singleWhere((p) => p.id == 'big_mood');
+
+      expect(
+        {
+          for (final sticker in bigMood.groups.expand((g) => g.stickers))
+            sticker.id: sticker.printedText,
+        },
+        {
+          'big_mood.en.hi': 'hi.',
+          'big_mood.en.hug': null,
+          'big_mood.en.huh': 'Huh?',
+          'big_mood.en.im_fine': "I'm fine.",
+          'big_mood.en.lol': 'LOL',
+          'big_mood.en.on_it': 'On it',
+          'big_mood.en.thanks': 'Thanks!',
+          'big_mood.en.yay': 'Yay!',
+          'big_mood.ar.bird': 'يا زلمة!',
+          'big_mood.ar.blob': 'اشطا',
+          'big_mood.ar.cloud': 'معلش',
+          'big_mood.ar.comet': 'مطفي عالآخر',
+          'big_mood.ar.teacup': 'روق',
+          'big_mood.de.alien': 'Nicht dein Ernst!',
+          'big_mood.de.ghost': 'Vermiss dich.',
+          'big_mood.de.potato': 'Was geht mich das an?',
+          'big_mood.de.gecko': 'Erzähl!',
+          'big_mood.de.cactus': 'War nicht so gemeint.',
+          'big_mood.de.octopus': 'Eins nach dem anderen!',
+          'big_mood.de.moon': 'Bin durch.',
+          'big_mood.de.raccoon': "Ich war's nicht!",
+        },
+      );
+      expect(
+        catalog.packs
+            .where((p) => p.id != 'big_mood')
+            .expand((p) => p.groups)
+            .expand((g) => g.stickers)
+            .where((s) => s.printedText != null),
+        isEmpty,
+      );
+    });
+
     test('test_only packs are hidden unless the define is set', () {
       final shipped = StickerCatalog.parse(packsJson, includeTestOnly: false);
 

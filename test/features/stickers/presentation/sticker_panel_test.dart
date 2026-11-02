@@ -72,12 +72,73 @@ void main() {
       'orbit_crew.planet.crying',
       'orbit_crew.planet.goodnight',
     ]);
-    expect(find.bySemanticsLabel('Planet sticker'), findsWidgets);
 
     await tester.tap(
       find.byKey(const ValueKey('sticker-cell-orbit_crew.planet.crying')),
     );
     expect(sent, ['orbit_crew.planet.crying']);
+  });
+
+  testWidgets('different Planet stickers have different accessible names', (
+    tester,
+  ) async {
+    await _pumpPanel(tester);
+
+    expect(find.bySemanticsLabel('Planet sticker, 1 of 11'), findsOneWidget);
+    expect(find.bySemanticsLabel('Planet sticker, 2 of 11'), findsOneWidget);
+    expect(find.bySemanticsLabel('Planet sticker, 4 of 11'), findsOneWidget);
+    expect(find.bySemanticsLabel('Planet sticker'), findsNothing);
+  });
+
+  testWidgets('a Big Mood sticker announces the words printed on it', (
+    tester,
+  ) async {
+    await _pumpPanel(tester);
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('hi.'), findsOneWidget);
+    expect(find.bySemanticsLabel('Huh?'), findsOneWidget);
+    expect(find.bySemanticsLabel('English sticker, 1 of 8'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('sticker-group-de')));
+    await tester.pump();
+    expect(find.bySemanticsLabel('Nicht dein Ernst!'), findsOneWidget);
+  });
+
+  testWidgets('big_mood.en.hug, which has no words, announces its place', (
+    tester,
+  ) async {
+    await _pumpPanel(tester);
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+    await tester.pump();
+
+    expect(
+      tester
+          .getSemantics(
+            find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')),
+          )
+          .label,
+      'English sticker, 2 of 8',
+    );
+  });
+
+  testWidgets('German and Arabic use the approved patterns', (tester) async {
+    await _pumpPanel(tester, locale: const Locale('de'));
+    expect(find.bySemanticsLabel('Planet-Sticker, 1 von 11'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+    await tester.pump();
+    expect(find.bySemanticsLabel('Englisch-Sticker, 2 von 8'), findsOneWidget);
+    expect(find.bySemanticsLabel('hi.'), findsOneWidget);
+
+    await _pumpPanel(tester, locale: const Locale('ar'));
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-orbit_crew')));
+    await tester.pump();
+    expect(find.bySemanticsLabel('ملصق كوكب، 2 من 11'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('sticker-tab-big_mood')));
+    await tester.pump();
+    expect(find.bySemanticsLabel('ملصق الإنجليزية، 2 من 8'), findsOneWidget);
+    expect(find.bySemanticsLabel('Huh?'), findsOneWidget);
   });
 
   testWidgets('a round face picks the group', (tester) async {
@@ -160,7 +221,7 @@ void main() {
       find.byKey(const ValueKey('sticker-tab-orbit_crew')),
     );
     expect(recentTab.dx, greaterThan(firstPack.dx));
-    expect(find.bySemanticsLabel('ملصق كوكب'), findsWidgets);
+    expect(find.bySemanticsLabel('ملصق كوكب، 1 من 11'), findsOneWidget);
 
     await tester.fling(
       find.byKey(const ValueKey('sticker-grid')),
@@ -188,6 +249,9 @@ void main() {
       await tester.pump();
     }
 
+    await activate(find.bySemanticsLabel('Planet sticker, 2 of 11'));
+    expect(sent, ['orbit_crew.planet.crying']);
+
     await activate(find.bySemanticsLabel('Capybara'));
     expect(
       _visibleStickerIds(tester).first,
@@ -197,8 +261,8 @@ void main() {
     await activate(find.bySemanticsLabel('Big Mood'));
     expect(_visibleStickerIds(tester).first, startsWith('big_mood.en.'));
 
-    await activate(find.byKey(const ValueKey('sticker-cell-big_mood.en.hug')));
-    expect(sent, ['big_mood.en.hug']);
+    await activate(find.bySemanticsLabel('English sticker, 2 of 8'));
+    expect(sent, ['orbit_crew.planet.crying', 'big_mood.en.hug']);
 
     await activate(find.bySemanticsLabel('Recent'));
     expect(find.byKey(const ValueKey('sticker-group-de')), findsNothing);
