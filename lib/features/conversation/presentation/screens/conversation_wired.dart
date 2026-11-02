@@ -152,6 +152,7 @@ import 'package:flutter_app/shared/widgets/media/media_picture_in_picture_contro
 import 'package:flutter_app/shared/widgets/media/media_viewer_item.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'conversation_screen.dart';
@@ -646,7 +647,7 @@ class ConversationWired extends StatefulWidget {
     this.imageProcessor,
     this.mediaPicker,
     this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
-    this.stickerUsageRecorder = const NoopStickerUsageRecorder(),
+    this.stickerUsageRecorder = const AppDiagnosticStickerUsageRecorder(),
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,

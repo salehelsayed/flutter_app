@@ -103,15 +103,17 @@ const _controllerTestPaths = <String>[
 // `composerDraftStore`, defaulting to the shared app store, so an unsent text,
 // photo or video and the private setting come back after leaving the chat.
 // Stickers v1: one optional field, `stickerUsageRecorder`, defaulting to the
-// const no-op recorder. Without it the fingerprint is the previous 2cf4b34f.
-const _expectedDirectApiFingerprint = 'c2d1898f';
+// const diagnostics tally recorder. Without it the fingerprint is the
+// previous 2cf4b34f; with the earlier no-op default it was c2d1898f.
+const _expectedDirectApiFingerprint = '38b3be9b';
 // 414: GroupConversationWired gained the same `documentAttachmentsEnabled`
 // switch and public `attachSheetDocumentKey`.
 // Composer drafts (owner, 11-01): the same optional `composerDraftStore`
 // field on `GroupConversationWired`.
-// Stickers v1: the same optional `stickerUsageRecorder` field. Without it
-// the fingerprint is the previous cfec919a.
-const _expectedGroupApiFingerprint = '073281ee';
+// Stickers v1: the same optional `stickerUsageRecorder` field and default.
+// Without it the fingerprint is the previous cfec919a; with the earlier no-op
+// default it was 073281ee.
+const _expectedGroupApiFingerprint = '2b594730';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).

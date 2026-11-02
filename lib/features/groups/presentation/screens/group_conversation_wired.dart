@@ -112,6 +112,7 @@ import 'package:flutter_app/features/groups/presentation/group_security_status_v
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_screen.dart';
 import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_catalog.dart';
+import 'package:flutter_app/features/stickers/data/app_diagnostic_sticker_usage_recorder.dart';
 import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
@@ -466,7 +467,7 @@ class GroupConversationWired extends StatefulWidget {
     this.imageProcessor,
     this.mediaPicker,
     this.documentAttachmentsEnabled = kDocumentAttachmentsEnabled,
-    this.stickerUsageRecorder = const NoopStickerUsageRecorder(),
+    this.stickerUsageRecorder = const AppDiagnosticStickerUsageRecorder(),
     this.qualityPreference = ImageQualityPreference.compressed,
     this.videoQualityPreference = ImageQualityPreference.compressed,
     this.audioRecorderService,
