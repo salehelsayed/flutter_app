@@ -142,56 +142,203 @@ void main() {
   });
 
   group('registerPushToken', () {
-    for (final blockedProvider in ['APNs', 'FCM']) {
-      test('preference resend avoids a pending fresh iOS $blockedProvider read', () {
-        fakeAsync((async) {
-          final cache = PushRegistrationTokenCache();
-          final resume = Completer<String?>();
-          var apnsReads = 0;
-          var fcmReads = 0;
-          Future<RegisterPushTokenResult> register({bool preferences = false}) =>
-              registerPushToken(
-                p2pService: p2pService,
-                pushTokenStore: pushTokenStore,
-                registrationTokenCache: cache,
-                reuseRegisteredToken: preferences,
-                logicalAuthorityPeerId: 'account-peer',
-                isIOSFn: () => true,
-                getPlatformFn: () => 'ios',
-                getApnsTokenFn: () {
-                  apnsReads++;
-                  return apnsReads > 1 && blockedProvider == 'APNs'
-                      ? resume.future
-                      : Future.value('apns-token');
-                },
-                getTokenFn: () {
-                  fcmReads++;
-                  return fcmReads > 1 && blockedProvider == 'FCM'
-                      ? resume.future
-                      : Future.value('current-device-token');
-                },
-              );
-          RegisterPushTokenResult? startup;
-          register().then((value) => startup = value);
-          async.flushMicrotasks();
-          expect(startup, RegisterPushTokenResult.success);
-          expect(p2pService.registerCalls, 1);
-          RegisterPushTokenResult? preferenceResult;
-          register(preferences: true).then((value) => preferenceResult = value);
-          async.flushMicrotasks();
-          try {
-            expect(preferenceResult, RegisterPushTokenResult.success,
-                reason: 'OFF must reach the relay without lifecycle resume');
-            expect(p2pService.registerCalls, 2);
-            expect(apnsReads, 1);
-            expect(fcmReads, 1);
-            expect(pushTokenStore.writeCallCount, 1);
-          } finally {
-            resume.complete('current-device-token');
-            async.flushMicrotasks();
-          }
-        });
+    group('current registration token', () {
+      late PushRegistrationTokenCache cache;
+      var providerReads = 0;
+      var liveToken = 'current-token';
+      var account = 'account-peer';
+      Future<RegisterPushTokenResult> register({
+        bool preferences = false,
+        Future<bool> Function({String? peerId, required String operation})?
+        gate,
+      }) => registerPushToken(
+        p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
+        registrationTokenCache: cache,
+        reuseRegisteredToken: preferences,
+        logicalAuthorityPeerId: account,
+        isIOSFn: () => false,
+        getPlatformFn: () => 'ios',
+        getTokenFn: () async {
+          providerReads++;
+          return liveToken;
+        },
+        accountMigrationNetworkGate:
+            gate ?? ({peerId, required operation}) async => true,
+      );
+      setUp(() {
+        cache = PushRegistrationTokenCache();
+        providerReads = 0;
+        liveToken = 'current-token';
+        account = 'account-peer';
       });
+
+      test(
+        'ordinary registration still reads the live provider after success',
+        () async {
+          expect(await register(), RegisterPushTokenResult.success);
+          liveToken = 'refreshed-token';
+          expect(await register(), RegisterPushTokenResult.success);
+          expect(providerReads, 2);
+          expect(p2pService.lastToken, 'refreshed-token');
+        },
+      );
+      for (final mismatch in ['account', 'transport', 'empty cache']) {
+        test(
+          'cached resend rejects $mismatch without a provider fetch',
+          () async {
+            expect(await register(), RegisterPushTokenResult.success);
+            if (mismatch == 'account') {
+              account = 'other-account';
+            }
+            if (mismatch == 'transport') {
+              p2pService.state = const NodeState(
+                isStarted: true,
+                peerId: 'other-transport',
+              );
+            }
+            if (mismatch == 'empty cache') {
+              cache.clear();
+            }
+            expect(
+              await register(preferences: true),
+              RegisterPushTokenResult.failed,
+            );
+            expect(p2pService.registerCalls, 1);
+            expect(providerReads, 1);
+          },
+        );
+      }
+      for (final mutation in ['token refresh', 'transport change']) {
+        test(
+          'cached resend is fenced by $mutation during migration policy',
+          () async {
+            expect(await register(), RegisterPushTokenResult.success);
+            expect(
+              await register(
+                preferences: true,
+                gate: ({peerId, required operation}) async {
+                  if (mutation == 'token refresh') {
+                    cache.clear();
+                  } else {
+                    p2pService.state = const NodeState(
+                      isStarted: true,
+                      peerId: 'other-transport',
+                    );
+                  }
+                  return true;
+                },
+              ),
+              RegisterPushTokenResult.failed,
+            );
+            expect(p2pService.registerCalls, 1);
+            expect(providerReads, 1);
+          },
+        );
+      }
+      test(
+        'cached resend still honors migration network suppression',
+        () async {
+          expect(await register(), RegisterPushTokenResult.success);
+          expect(
+            await register(
+              preferences: true,
+              gate: ({peerId, required operation}) async => false,
+            ),
+            RegisterPushTokenResult.accountMigrationBlocked,
+          );
+          expect(p2pService.registerCalls, 1);
+        },
+      );
+      for (final failure in ['relay', 'persistence']) {
+        test(
+          '$failure failure cannot seed the successful token cache',
+          () async {
+            if (failure == 'relay') {
+              p2pService.registerResult = false;
+            } else {
+              pushTokenStore.throwOnWrite = true;
+            }
+            expect(await register(), RegisterPushTokenResult.failed);
+            expect(
+              cache.hasTokenFor(account: account, transport: 'local-peer'),
+              isFalse,
+            );
+          },
+        );
+      }
+      test(
+        'invalidation during relay ACK prevents late cache publication',
+        () async {
+          p2pService.onRegister = () async => cache.clear();
+          expect(await register(), RegisterPushTokenResult.success);
+          expect(
+            cache.hasTokenFor(account: account, transport: 'local-peer'),
+            isFalse,
+          );
+        },
+      );
+    });
+
+    for (final blockedProvider in ['APNs', 'FCM']) {
+      test(
+        'preference resend avoids a pending fresh iOS $blockedProvider read',
+        () {
+          fakeAsync((async) {
+            final cache = PushRegistrationTokenCache();
+            final resume = Completer<String?>();
+            var apnsReads = 0;
+            var fcmReads = 0;
+            Future<RegisterPushTokenResult> register({
+              bool preferences = false,
+            }) => registerPushToken(
+              p2pService: p2pService,
+              pushTokenStore: pushTokenStore,
+              registrationTokenCache: cache,
+              reuseRegisteredToken: preferences,
+              logicalAuthorityPeerId: 'account-peer',
+              isIOSFn: () => true,
+              getPlatformFn: () => 'ios',
+              getApnsTokenFn: () {
+                apnsReads++;
+                return apnsReads > 1 && blockedProvider == 'APNs'
+                    ? resume.future
+                    : Future.value('apns-token');
+              },
+              getTokenFn: () {
+                fcmReads++;
+                return fcmReads > 1 && blockedProvider == 'FCM'
+                    ? resume.future
+                    : Future.value('current-device-token');
+              },
+            );
+            RegisterPushTokenResult? startup;
+            register().then((value) => startup = value);
+            async.flushMicrotasks();
+            expect(startup, RegisterPushTokenResult.success);
+            expect(p2pService.registerCalls, 1);
+            RegisterPushTokenResult? preferenceResult;
+            register(
+              preferences: true,
+            ).then((value) => preferenceResult = value);
+            async.flushMicrotasks();
+            try {
+              expect(
+                preferenceResult,
+                RegisterPushTokenResult.success,
+                reason: 'OFF must reach the relay without lifecycle resume',
+              );
+              expect(p2pService.registerCalls, 2);
+              expect(apnsReads, 1);
+              expect(fcmReads, 1);
+              expect(pushTokenStore.writeCallCount, 1);
+            } finally {
+              resume.complete('current-device-token');
+              async.flushMicrotasks();
+            }
+          });
+        },
+      );
     }
 
     test(

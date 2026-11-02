@@ -2150,8 +2150,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
         thoughtNotificationsStore: widget.thoughtNotificationsStore,
-        onThoughtNotificationsChanged:
-            widget.pushRegistrationCoordinator?.retryNow,
+        onThoughtNotificationsChanged: widget
+            .pushRegistrationCoordinator
+            ?.refreshThoughtNotificationPreferences,
         retryThoughtPosting: widget.pendingPostDeliveryRetrier.retryNow,
         directRouteAuthority: _directRouteAuthority,
         callActivitySource: widget.orbitCallActivitySource,

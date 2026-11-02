@@ -6813,6 +6813,73 @@ final class ProductionApplicationBootstrap
             },
           )
         : null;
+    final registrationTokenCache =
+        push_registration.PushRegistrationTokenCache();
+    Future<push_registration.RegisterPushTokenResult> registerToken({
+      bool preferencesOnly = false,
+    }) async {
+      final tokenCacheGeneration = registrationTokenCache.generation;
+      // The headless Android FCM engine has no live P2P state. Persist the
+      // exact transport whose token is being registered so a later wake
+      // can prove this installation is both active in the local roster
+      // and present in the signed reaction-recipient nomination.
+      final identity = await repository.loadIdentity();
+      if (pushRelayRegistrationProof case final proof?) {
+        if (!proof.bindAccountIdentity(identity?.peerId)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_REGISTER_RELAY_PROOF_IDENTITY_UNAVAILABLE',
+            details: proof.safeDetails(platform: 'android'),
+          );
+          return push_registration.RegisterPushTokenResult.failed;
+        }
+      }
+      final transportPeerId = p2pService.currentState.peerId;
+      final reuseRegisteredToken =
+          preferencesOnly &&
+          pushRelayRegistrationProof == null &&
+          registrationTokenCache.hasTokenFor(
+            account: identity?.peerId,
+            transport: transportPeerId,
+          );
+      if (!reuseRegisteredToken) {
+        await groupReactionNotificationProjection?.replaceLocalIdentity(
+          accountPeerId: identity?.peerId,
+          deviceId: transportPeerId,
+          transportPeerId: transportPeerId,
+        );
+        await directReactionNotificationProjection?.replaceLocalIdentity(
+          accountPeerId: identity?.peerId,
+        );
+        await Future.wait([
+          contactRepository.mirrorAllDirectReactionContacts(),
+          messageRepository.mirrorAllDirectReactionAuthoredTargets(),
+        ]);
+        await persistBackgroundPushRegistrationTransportPeerId(
+          secureKeyStore: secureKeyStore,
+          transportPeerId: transportPeerId,
+        );
+      }
+      if (tokenCacheGeneration != registrationTokenCache.generation ||
+          transportPeerId != p2pService.currentState.peerId) {
+        return push_registration.RegisterPushTokenResult.failed;
+      }
+      return push_registration.registerPushToken(
+        p2pService: p2pService,
+        pushTokenStore: pushTokenStore,
+        registrationTokenCache: registrationTokenCache,
+        reuseRegisteredToken: reuseRegisteredToken,
+        getTokenFn: androidFcmTokenReader?.read,
+        // The DB identity row is the logical account peer for both
+        // roles; a linked physical transport peer is a relay route,
+        // never migration/account authority.
+        logicalAuthorityPeerId: identity?.peerId,
+        accountMigrationNetworkGate:
+            accountMigrationRuntimeNetworkGate.allowsAccountNetworkSideEffects,
+        relayRegistrationProof: pushRelayRegistrationProof,
+      );
+    }
+
     final PushRegistrationCoordinator? pushRegistrationCoordinator =
         pushRegistrationEnabled
         ? PushRegistrationCoordinator(
@@ -6822,52 +6889,10 @@ final class ProductionApplicationBootstrap
             },
             requestPermission: requestPushPermission,
             readPermission: readPushPermission,
-            registerPushToken: () async {
-              // The headless Android FCM engine has no live P2P state. Persist the
-              // exact transport whose token is being registered so a later wake
-              // can prove this installation is both active in the local roster
-              // and present in the signed reaction-recipient nomination.
-              final identity = await repository.loadIdentity();
-              if (pushRelayRegistrationProof case final proof?) {
-                if (!proof.bindAccountIdentity(identity?.peerId)) {
-                  emitFlowEvent(
-                    layer: 'FL',
-                    event: 'PUSH_REGISTER_RELAY_PROOF_IDENTITY_UNAVAILABLE',
-                    details: proof.safeDetails(platform: 'android'),
-                  );
-                  return push_registration.RegisterPushTokenResult.failed;
-                }
-              }
-              final transportPeerId = p2pService.currentState.peerId;
-              await groupReactionNotificationProjection?.replaceLocalIdentity(
-                accountPeerId: identity?.peerId,
-                deviceId: transportPeerId,
-                transportPeerId: transportPeerId,
-              );
-              await directReactionNotificationProjection?.replaceLocalIdentity(
-                accountPeerId: identity?.peerId,
-              );
-              await Future.wait([
-                contactRepository.mirrorAllDirectReactionContacts(),
-                messageRepository.mirrorAllDirectReactionAuthoredTargets(),
-              ]);
-              await persistBackgroundPushRegistrationTransportPeerId(
-                secureKeyStore: secureKeyStore,
-                transportPeerId: transportPeerId,
-              );
-              return push_registration.registerPushToken(
-                p2pService: p2pService,
-                pushTokenStore: pushTokenStore,
-                getTokenFn: androidFcmTokenReader?.read,
-                // The DB identity row is the logical account peer for both
-                // roles; a linked physical transport peer is a relay route,
-                // never migration/account authority.
-                logicalAuthorityPeerId: identity?.peerId,
-                accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
-                    .allowsAccountNetworkSideEffects,
-                relayRegistrationProof: pushRelayRegistrationProof,
-              );
-            },
+            registerPushToken: registerToken,
+            registerThoughtNotificationPreferences: () =>
+                registerToken(preferencesOnly: true),
+            onRegistrationInvalidated: registrationTokenCache.clear,
             // 164 (cold-start-1 regression #2): Firebase is now initialized lazily
             // inside the deferred startLiveServices, so Firebase.apps is empty here
             // on a normal launch — the old `Firebase.apps.isNotEmpty` gate would

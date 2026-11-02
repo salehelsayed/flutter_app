@@ -532,7 +532,7 @@ void main() {
   );
 
   testWidgets(
-    'Thought notifications change resends the same token through the registration owner',
+    'Thought notifications change resends the held iOS token without a fresh provider read',
     (tester) async {
       final store = FakeSecureKeyStore();
       final bridge = RecordingFakeBridge();
@@ -562,15 +562,32 @@ void main() {
       await tester.runAsync(
         () => node.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer'),
       );
+      final tokenCache = registration.PushRegistrationTokenCache();
+      var providerReads = 0;
+      Future<registration.RegisterPushTokenResult> register({
+        bool preferencesOnly = false,
+      }) => registration.registerPushToken(
+        p2pService: node,
+        registrationTokenCache: tokenCache,
+        reuseRegisteredToken: preferencesOnly,
+        logicalAuthorityPeerId: 'self-peer',
+        isIOSFn: () => true,
+        getApnsTokenFn: () async => 'current-apns-token',
+        getTokenFn: () {
+          providerReads++;
+          return providerReads == 1
+              ? Future.value('same-device-token')
+              : Completer<String?>().future;
+        },
+        getPlatformFn: () => 'ios',
+      );
       final coordinator = PushRegistrationCoordinator(
         requestPermission: () async => true,
         readPermission: () async => true,
-        registerPushToken: () => registration.registerPushToken(
-          p2pService: node,
-          isIOSFn: () => false,
-          getTokenFn: () async => 'same-device-token',
-          getPlatformFn: () => 'android',
-        ),
+        registerPushToken: register,
+        registerThoughtNotificationPreferences: () =>
+            register(preferencesOnly: true),
+        onRegistrationInvalidated: tokenCache.clear,
         tokenRefreshStream: const Stream<String>.empty(),
       );
       addTearDown(coordinator.dispose);
@@ -591,7 +608,7 @@ void main() {
           persistedAtResend = await store.read(
             _thoughtNotificationPreferenceKey,
           );
-          await coordinator.retryNow();
+          await coordinator.refreshThoughtNotificationPreferences();
         },
       );
       final toggle = find.byKey(
@@ -623,6 +640,7 @@ void main() {
         true,
         false,
       ]);
+      expect(providerReads, 1);
     },
   );
 

@@ -8099,6 +8099,20 @@ visible and cannot become an ordinary first-attempt PASS.
   rather than one pump or assertions inside a production-caught callback. An
   unlimited subtitle still truncates if it retains `TextOverflow.ellipsis`;
   EN/DE/AR cases assert `RenderParagraph.didExceedMaxLines == false` at 2x text.
+  Preference changes now have an explicit coordinator entry point: after a
+  successful registration in this runtime, it reuses the exact account/transport
+  token and skips repeated projection/backfill preparation, APNs/FCM lookup and
+  token persistence. Ordinary Retry/resume/token-refresh still use the live
+  provider and full preparation. Cache invalidation covers token refresh,
+  account/transport binding changes, cutover and disposal; migration policy and
+  current relay capability/preference reads remain in the existing send path.
+  Held-preparation/provider REDs and the corrected 118-test focused host pass
+  are in `.codex-test-logs/thought-switch-ios-stall-20261102/`; these tests do not
+  identify the particular await responsible for the captured seven-minute iOS
+  gap or certify a device fix. Preference attempts remain serialized behind any
+  already-running registration. Retry fixtures must verify the ten-second
+  retry deadline rather than counting all timers: the health notifier also owns
+  a 24-hour warning timer while a transient failure is active.
   Nearby settings fixtures must select the switch inside `settings-row-nearby`:
   the first switch now belongs to Thought notifications. The two original
   Nearby action assertions failed with the ordinal selector; all three cases in

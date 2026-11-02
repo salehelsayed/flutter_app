@@ -300,6 +300,235 @@ void main() {
       });
     });
 
+    for (final throwOnFirstAttempt in [false, true]) {
+      test('Thought preference retry keeps its intent after '
+          '${throwOnFirstAttempt ? 'an exception' : 'a relay failure'}', () {
+        fakeAsync((async) {
+          final notifier = PushRegistrationHealthNotifier();
+          var ordinaryCalls = 0;
+          var preferenceCalls = 0;
+          var permissionCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return true;
+            },
+            registerPushToken: () async {
+              ordinaryCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            registerThoughtNotificationPreferences: () async {
+              preferenceCalls++;
+              if (preferenceCalls == 1) {
+                if (throwOnFirstAttempt) throw StateError('relay unavailable');
+                return RegisterPushTokenResult.failed;
+              }
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream<String>.empty(),
+            retryDelay: const Duration(seconds: 10),
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(preferenceCalls, 1);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.retrying);
+          // Health also owns a 24-hour warning timer. Prove the registration
+          // retry's deadline and effect instead of counting unrelated timers.
+          async.elapse(const Duration(seconds: 9));
+          async.flushMicrotasks();
+          expect(preferenceCalls, 1);
+          async.elapse(const Duration(seconds: 1));
+          async.flushMicrotasks();
+          coordinator.dispose();
+          expect(preferenceCalls, 2);
+          expect(ordinaryCalls, 1);
+          expect(permissionCalls, 2);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(async.pendingTimers, isEmpty);
+          notifier.dispose();
+        });
+      });
+    }
+
+    test(
+      'Thought preference retry survives temporary binding unavailability',
+      () {
+        fakeAsync((async) {
+          final store = _ScopedMemoryHealthStore((
+            accountPeerId: 'account-a',
+            installationId: 'transport-a',
+          ));
+          var ordinaryCalls = 0;
+          var preferenceCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async => true,
+            registerPushToken: () async {
+              ordinaryCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            registerThoughtNotificationPreferences: () async {
+              preferenceCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream<String>.empty(),
+            retryDelay: const Duration(seconds: 10),
+            healthStore: store,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          store.throwOnResolve = true;
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(preferenceCalls, 0);
+          expect(async.pendingTimers, hasLength(1));
+          store.throwOnResolve = false;
+          async.elapse(const Duration(seconds: 10));
+          async.flushMicrotasks();
+          coordinator.dispose();
+          expect(preferenceCalls, 1);
+          expect(ordinaryCalls, 1);
+          expect(async.pendingTimers, isEmpty);
+        });
+      },
+    );
+
+    test(
+      'Thought preference resend respects disabled and denied permission',
+      () {
+        fakeAsync((async) {
+          final notifier = PushRegistrationHealthNotifier();
+          var enabled = true;
+          var granted = true;
+          var ordinaryCalls = 0;
+          var preferenceCalls = 0;
+          var permissionCalls = 0;
+          var permissionReads = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async {
+              permissionCalls++;
+              return granted;
+            },
+            readPermission: () async {
+              permissionReads++;
+              return granted;
+            },
+            registerPushToken: () async {
+              ordinaryCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            registerThoughtNotificationPreferences: () async {
+              preferenceCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            tokenRefreshStream: const Stream<String>.empty(),
+            isEnabled: () => enabled,
+            healthNotifier: notifier,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          enabled = false;
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(permissionCalls, 1);
+          expect(permissionReads, 0);
+          expect(preferenceCalls, 0);
+
+          enabled = true;
+          granted = false;
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(preferenceCalls, 0);
+          expect(
+            notifier.value.phase,
+            PushRegistrationHealthPhase.permissionDenied,
+          );
+          expect(async.pendingTimers, isEmpty);
+
+          granted = true;
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          coordinator.dispose();
+          expect(permissionCalls, 1);
+          expect(permissionReads, 2);
+          expect(preferenceCalls, 1);
+          expect(ordinaryCalls, 1);
+          expect(notifier.value.phase, PushRegistrationHealthPhase.healthy);
+          expect(async.pendingTimers, isEmpty);
+          notifier.dispose();
+        });
+      },
+    );
+
+    test(
+      'token, binding, cutover and disposal invalidate session registration',
+      () {
+        fakeAsync((async) {
+          final refresh = StreamController<String>.broadcast(sync: true);
+          final store = _ScopedMemoryHealthStore((
+            accountPeerId: 'account-a',
+            installationId: 'transport-a',
+          ));
+          final events = <String>[];
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async => true,
+            registerPushToken: () async {
+              events.add('ordinary');
+              return RegisterPushTokenResult.success;
+            },
+            registerThoughtNotificationPreferences: () async {
+              events.add('preference');
+              return RegisterPushTokenResult.success;
+            },
+            onRegistrationInvalidated: () => events.add('invalidate'),
+            tokenRefreshStream: refresh.stream,
+            healthStore: store,
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          expect(events, ['invalidate', 'ordinary']);
+          events.clear();
+
+          refresh.add('rotated-token');
+          expect(events, ['invalidate']);
+          async.flushMicrotasks();
+          expect(events, ['invalidate', 'ordinary']);
+          events.clear();
+
+          store.binding = (
+            accountPeerId: 'account-a',
+            installationId: 'transport-b',
+          );
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(events, ['invalidate', 'preference']);
+          events.clear();
+          store.binding = (
+            accountPeerId: 'account-b',
+            installationId: 'transport-b',
+          );
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          expect(events, ['invalidate', 'preference']);
+          events.clear();
+
+          coordinator.beginAccountBindingCutover();
+          expect(events, ['invalidate']);
+          events.clear();
+          coordinator.dispose();
+          coordinator.dispose();
+          coordinator.refreshThoughtNotificationPreferences();
+          refresh.add('after-disposal');
+          async.flushMicrotasks();
+          expect(events, ['invalidate']);
+          expect(async.pendingTimers, isEmpty);
+          refresh.close();
+        });
+      },
+    );
+
     test('queued Thought choices resend the newest choice without overlap', () {
       fakeAsync((async) {
         final firstPreferenceAck = Completer<RegisterPushTokenResult>();
@@ -359,44 +588,47 @@ void main() {
       });
     });
 
-    test('ordinary retry after a preference resend still runs the full path', () {
-      fakeAsync((async) {
-        final preferenceAck = Completer<RegisterPushTokenResult>();
-        var ordinaryCalls = 0;
-        var preferenceCalls = 0;
-        final coordinator = PushRegistrationCoordinator(
-          requestPermission: () async => true,
-          registerPushToken: () async {
-            ordinaryCalls++;
-            return RegisterPushTokenResult.success;
-          },
-          registerThoughtNotificationPreferences: () {
-            preferenceCalls++;
-            return preferenceAck.future;
-          },
-          tokenRefreshStream: const Stream<String>.empty(),
-        );
-        coordinator.ensureStarted();
-        async.flushMicrotasks();
-        coordinator.refreshThoughtNotificationPreferences();
-        async.flushMicrotasks();
-        var ordinaryCompleted = false;
-        coordinator.retryNow().then((_) => ordinaryCompleted = true);
-        async.flushMicrotasks();
-        final ordinaryCallsBeforeAck = ordinaryCalls;
-        final ordinaryCompletedBeforeAck = ordinaryCompleted;
-        preferenceAck.complete(RegisterPushTokenResult.success);
-        async.flushMicrotasks();
-        coordinator.dispose();
+    test(
+      'ordinary retry after a preference resend still runs the full path',
+      () {
+        fakeAsync((async) {
+          final preferenceAck = Completer<RegisterPushTokenResult>();
+          var ordinaryCalls = 0;
+          var preferenceCalls = 0;
+          final coordinator = PushRegistrationCoordinator(
+            requestPermission: () async => true,
+            registerPushToken: () async {
+              ordinaryCalls++;
+              return RegisterPushTokenResult.success;
+            },
+            registerThoughtNotificationPreferences: () {
+              preferenceCalls++;
+              return preferenceAck.future;
+            },
+            tokenRefreshStream: const Stream<String>.empty(),
+          );
+          coordinator.ensureStarted();
+          async.flushMicrotasks();
+          coordinator.refreshThoughtNotificationPreferences();
+          async.flushMicrotasks();
+          var ordinaryCompleted = false;
+          coordinator.retryNow().then((_) => ordinaryCompleted = true);
+          async.flushMicrotasks();
+          final ordinaryCallsBeforeAck = ordinaryCalls;
+          final ordinaryCompletedBeforeAck = ordinaryCompleted;
+          preferenceAck.complete(RegisterPushTokenResult.success);
+          async.flushMicrotasks();
+          coordinator.dispose();
 
-        expect(ordinaryCallsBeforeAck, 1);
-        expect(ordinaryCompletedBeforeAck, isFalse);
-        expect(preferenceCalls, 1);
-        expect(ordinaryCalls, 2);
-        expect(ordinaryCompleted, isTrue);
-        expect(async.pendingTimers, isEmpty);
-      });
-    });
+          expect(ordinaryCallsBeforeAck, 1);
+          expect(ordinaryCompletedBeforeAck, isFalse);
+          expect(preferenceCalls, 1);
+          expect(ordinaryCalls, 2);
+          expect(ordinaryCompleted, isTrue);
+          expect(async.pendingTimers, isEmpty);
+        });
+      },
+    );
 
     test(
       'explicit retry refreshes revoked permission and later restoration',

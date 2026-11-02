@@ -21,8 +21,13 @@ class PushRegistrationCoordinator {
   /// [requestPermission].
   final Future<bool> Function()? readPermission;
   final Future<RegisterPushTokenResult> Function() registerPushToken;
+
+  /// Republishes the durable Thought choice using an eligible successful
+  /// registration. The callback owns binding validation and full fallback.
   final Future<RegisterPushTokenResult> Function()?
   registerThoughtNotificationPreferences;
+
+  /// Invalidates the session registration when its token or authority changes.
   final void Function()? onRegistrationInvalidated;
   final Stream<String> tokenRefreshStream;
 
@@ -43,6 +48,9 @@ class PushRegistrationCoordinator {
   int? _inFlightTokenRefreshGeneration;
   int _permissionCheckGeneration = 0;
   int? _inFlightPermissionCheckGeneration;
+  int _preferenceGeneration = 0;
+  int? _inFlightPreferenceGeneration;
+  bool _inFlightPreferenceOnly = false;
   _PushRegistrationHealthAuthority? _inFlightAuthority;
   Future<void> _healthOperationTail = Future<void>.value();
   _PushPermissionState _permissionState = _PushPermissionState.unknown;
@@ -88,6 +96,7 @@ class PushRegistrationCoordinator {
     if (_tokenRefreshSubscription != null) return;
     _tokenRefreshSubscription = tokenRefreshStream.listen((_) {
       _tokenRefreshGeneration++;
+      onRegistrationInvalidated?.call();
       logPushDiagnostic('token_refresh_event');
       emitFlowEvent(
         layer: 'FL',
@@ -136,7 +145,23 @@ class PushRegistrationCoordinator {
     await _attemptRegistration(checkPermission: true, trigger: 'resume');
   }
 
-  Future<void> refreshThoughtNotificationPreferences() => retryNow();
+  /// Serializes a new durable Thought choice with all other registrations.
+  /// Ordinary retries retain their full preparation and live-token reads.
+  Future<void> refreshThoughtNotificationPreferences() async {
+    if (_disposed || !isEnabled()) return;
+    _preferenceGeneration++;
+    _permissionCheckGeneration++;
+    if (!_started) {
+      await ensureStarted();
+      return;
+    }
+    await _attemptRegistration(
+      checkPermission: true,
+      readOnly: true,
+      preferenceOnly: true,
+      trigger: 'thought_preferences',
+    );
+  }
 
   /// Synchronously fences all registration-health work owned by the account
   /// being replaced.
@@ -146,6 +171,7 @@ class PushRegistrationCoordinator {
   /// its captured authority can no longer publish or persist health state.
   void beginAccountBindingCutover() {
     if (_disposed) return;
+    onRegistrationInvalidated?.call();
     _healthAuthorityEpoch++;
     _healthBinding = null;
     _healthRecord = null;
@@ -162,7 +188,9 @@ class PushRegistrationCoordinator {
   Future<void> completeAccountBindingCutover() => retryNow();
 
   void dispose() {
+    if (_disposed) return;
     _disposed = true;
+    onRegistrationInvalidated?.call();
     _retryTimer?.cancel();
     _retryTimer = null;
     unawaited(_tokenRefreshSubscription?.cancel());
@@ -172,6 +200,7 @@ class PushRegistrationCoordinator {
   Future<void> _attemptRegistration({
     required bool checkPermission,
     bool readOnly = false,
+    bool preferenceOnly = false,
     required String trigger,
   }) async {
     _retryTimer?.cancel();
@@ -191,6 +220,7 @@ class PushRegistrationCoordinator {
         authority: resolutionAuthority,
         checkPermission: checkPermission,
         readOnly: readOnly,
+        preferenceOnly: preferenceOnly,
       );
       return;
     }
@@ -203,9 +233,13 @@ class PushRegistrationCoordinator {
       final inFlightAuthority = _inFlightAuthority;
       final inFlightTokenGeneration = _inFlightTokenRefreshGeneration;
       final inFlightPermissionGeneration = _inFlightPermissionCheckGeneration;
+      final inFlightPreferenceGeneration = _inFlightPreferenceGeneration;
+      final inFlightPreferenceOnly = _inFlightPreferenceOnly;
       await inFlightAttempt;
       if ((inFlightAuthority == authority &&
               inFlightTokenGeneration == _tokenRefreshGeneration &&
+              inFlightPreferenceGeneration == _preferenceGeneration &&
+              (preferenceOnly || !inFlightPreferenceOnly) &&
               (!checkPermission ||
                   inFlightPermissionGeneration ==
                       _permissionCheckGeneration)) ||
@@ -214,12 +248,14 @@ class PushRegistrationCoordinator {
           !isEnabled()) {
         return;
       }
-      // A changed token/account or requested permission observation cannot be
-      // covered by an older attempt. Retry after it settles; overlapping
-      // triggers join one follow-up without concurrent registration writes.
+      // A new preference, token, account or permission observation cannot be
+      // covered by an older attempt. A preference resend also cannot satisfy
+      // an ordinary retry's live-token requirement. Join one follow-up after
+      // the older attempt settles, without concurrent registration writes.
       await _attemptRegistration(
         checkPermission: checkPermission,
         readOnly: readOnly,
+        preferenceOnly: preferenceOnly,
         trigger: trigger,
       );
       return;
@@ -228,6 +264,7 @@ class PushRegistrationCoordinator {
     final attempt = _runAttempt(
       checkPermission: checkPermission,
       readOnly: readOnly,
+      preferenceOnly: preferenceOnly,
       trigger: trigger,
       authority: authority,
     );
@@ -236,6 +273,9 @@ class PushRegistrationCoordinator {
     _inFlightPermissionCheckGeneration = checkPermission
         ? _permissionCheckGeneration
         : null;
+    _inFlightPreferenceGeneration = _preferenceGeneration;
+    _inFlightPreferenceOnly =
+        preferenceOnly && registerThoughtNotificationPreferences != null;
     _inFlightAttempt = attempt;
     try {
       await attempt;
@@ -245,6 +285,8 @@ class PushRegistrationCoordinator {
         _inFlightAuthority = null;
         _inFlightTokenRefreshGeneration = null;
         _inFlightPermissionCheckGeneration = null;
+        _inFlightPreferenceGeneration = null;
+        _inFlightPreferenceOnly = false;
       }
     }
   }
@@ -252,6 +294,7 @@ class PushRegistrationCoordinator {
   Future<void> _runAttempt({
     required bool checkPermission,
     bool readOnly = false,
+    bool preferenceOnly = false,
     required String trigger,
     required _PushRegistrationHealthAuthority authority,
   }) async {
@@ -325,7 +368,10 @@ class PushRegistrationCoordinator {
         return;
       }
 
-      final result = await registerPushToken();
+      final register = preferenceOnly
+          ? registerThoughtNotificationPreferences ?? registerPushToken
+          : registerPushToken;
+      final result = await register();
       if (!_isCurrentHealthAuthority(authority)) return;
       switch (result) {
         case RegisterPushTokenResult.success:
@@ -365,6 +411,7 @@ class PushRegistrationCoordinator {
             result: result,
             trigger: trigger,
             authority: authority,
+            preferenceOnly: preferenceOnly,
           );
           return;
         case RegisterPushTokenResult.accountMigrationBlocked:
@@ -398,7 +445,12 @@ class PushRegistrationCoordinator {
         event: 'PUSH_REGISTER_COORDINATOR_EXCEPTION',
         details: {'trigger': trigger, 'error': e.toString()},
       );
-      _scheduleRetry(trigger: trigger, error: e, authority: authority);
+      _scheduleRetry(
+        trigger: trigger,
+        error: e,
+        authority: authority,
+        preferenceOnly: preferenceOnly,
+      );
     }
   }
 
@@ -419,6 +471,7 @@ class PushRegistrationCoordinator {
     return _serializeHealthOperation(() async {
       if (_disposed || resolutionEpoch != _healthAuthorityEpoch) return null;
       if (resolvedBinding != _healthBinding) {
+        onRegistrationInvalidated?.call();
         _healthAuthorityEpoch++;
         _healthBinding = resolvedBinding;
         _healthRecord = null;
@@ -591,6 +644,7 @@ class PushRegistrationCoordinator {
     required _PushRegistrationHealthAuthority authority,
     bool checkPermission = false,
     bool readOnly = false,
+    bool preferenceOnly = false,
   }) {
     if (!_isCurrentHealthAuthority(authority) || !isEnabled()) {
       return;
@@ -626,6 +680,7 @@ class PushRegistrationCoordinator {
         _attemptRegistration(
           checkPermission: checkPermission,
           readOnly: readOnly,
+          preferenceOnly: preferenceOnly,
           trigger: 'scheduled_retry',
         ),
       );

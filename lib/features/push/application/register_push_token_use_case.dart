@@ -24,6 +24,8 @@ class PushRegistrationTokenCache {
   int _generation = 0;
   ({String token, String platform, String account, String transport})? _entry;
 
+  int get generation => _generation;
+
   bool hasTokenFor({required String? account, required String? transport}) =>
       _entry != null &&
       account != null &&
@@ -44,9 +46,18 @@ class PushRegistrationTokenCache {
     required String? transport,
   }) {
     if (generation != _generation ||
-        account == null || account.isEmpty ||
-        transport == null || transport.isEmpty) return;
-    _entry = (token: token, platform: platform, account: account, transport: transport);
+        account == null ||
+        account.isEmpty ||
+        transport == null ||
+        transport.isEmpty) {
+      return;
+    }
+    _entry = (
+      token: token,
+      platform: platform,
+      account: account,
+      transport: transport,
+    );
   }
 }
 
@@ -70,6 +81,9 @@ Future<RegisterPushTokenResult> registerPushToken({
   required P2PService p2pService,
   PushTokenStore? pushTokenStore,
   PushRegistrationTokenCache? registrationTokenCache,
+
+  /// Preference-only resend of a successfully registered runtime token. A
+  /// missing/stale binding fails so the owner can rerun full preparation.
   bool reuseRegisteredToken = false,
 
   /// The LOGICAL account peer for migration/account authority. An
@@ -103,6 +117,9 @@ Future<RegisterPushTokenResult> registerPushToken({
 
   final localPeerId = p2pService.currentState.peerId;
   final tokenCacheGeneration = registrationTokenCache?._generation;
+  final cachedToken = reuseRegisteredToken
+      ? registrationTokenCache?._entry
+      : null;
   final authorityPeerId = logicalAuthorityPeerId?.trim().isNotEmpty == true
       ? logicalAuthorityPeerId!.trim()
       : localPeerId;
@@ -134,7 +151,22 @@ Future<RegisterPushTokenResult> registerPushToken({
   final effectiveGetTokenWithTimeout =
       getTokenWithTimeoutFn ?? _getTokenWithTimeout;
 
-  if (effectiveIsIOS()) {
+  if (reuseRegisteredToken &&
+      (cachedToken == null ||
+          relayRegistrationProof != null ||
+          tokenCacheGeneration != registrationTokenCache?._generation ||
+          !registrationTokenCache!.hasTokenFor(
+            account: logicalAuthorityPeerId,
+            transport: p2pService.currentState.peerId,
+          ) ||
+          cachedToken.platform != platform)) {
+    // The bootstrap selected an already-prepared binding. If it was replaced
+    // while policy was checked, retry through preparation rather than sending
+    // a token for the previous account/installation or fetching without it.
+    return RegisterPushTokenResult.failed;
+  }
+
+  if (!reuseRegisteredToken && effectiveIsIOS()) {
     final apnsToken = await _waitForApnsToken(
       getApnsToken: effectiveGetApnsToken,
       timeout: getApnsTokenTimeout,
@@ -174,16 +206,16 @@ Future<RegisterPushTokenResult> registerPushToken({
   // Apply a timeout so we don't hang forever — the coordinator will
   // retry, and the onTokenRefresh stream will trigger when the token
   // eventually becomes available.
-  String? token;
+  String? token = cachedToken?.token;
   try {
-    if (effectiveIsIOS()) {
+    if (!reuseRegisteredToken && effectiveIsIOS()) {
       // On iOS, getToken() can block waiting for the APNS device token.
       // Cap the wait so we don't hang forever.
       token = await effectiveGetTokenWithTimeout(
         effectiveGetToken,
         getTokenTimeout,
       );
-    } else {
+    } else if (!reuseRegisteredToken) {
       token = await effectiveGetToken();
     }
   } catch (_) {
@@ -302,7 +334,7 @@ Future<RegisterPushTokenResult> registerPushToken({
     );
   }
 
-  if (pushTokenStore != null) {
+  if (pushTokenStore != null && !reuseRegisteredToken) {
     try {
       await pushTokenStore.writeToken(token, registeredPlatform);
       logPushDiagnostic(
@@ -353,7 +385,8 @@ Future<RegisterPushTokenResult> registerPushToken({
     }
   }
 
-  if (tokenCacheGeneration != null) {
+  if (tokenCacheGeneration != null &&
+      p2pService.currentState.peerId == localPeerId) {
     registrationTokenCache!._remember(
       generation: tokenCacheGeneration,
       token: token,
