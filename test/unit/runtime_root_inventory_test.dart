@@ -1646,7 +1646,7 @@ flutter:
         'BB-010 native leave failure starts durable retry and pops from info',
         'GCA-010 native leave failure retains exact durable intent and local history for native-only retry',
         'writer Leave tears down local membership even when rotation is deferred',
-        'multi-admin leave broadcasts self-removal, rotates key, and pops to first route',
+        'multi-admin leave broadcasts self-removal, hands rotation to successor, and pops to first route',
         'writer leave broadcasts a durable left-the-group event before local cleanup',
       ];
       const retainedOrbitSelectors = <String>[
