@@ -113,7 +113,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
-import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import '../../../stickers/sticker_usage_tally_fixture.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import '../../../../core/bridge/fake_bridge.dart';
@@ -2127,8 +2127,6 @@ void main() {
     OutgoingCallCapability? outgoingCallCapability,
     ConversationCallTimelineSource? callTimelineSource,
     ComposerDraftStore? composerDraftStore,
-    StickerUsageRecorder stickerUsageRecorder =
-        const NoopStickerUsageRecorder(),
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -2199,7 +2197,6 @@ void main() {
           modalityGate: modalityGate ?? const DirectConversationModalityGate(),
           outgoingCallCapability: outgoingCallCapability,
           callTimelineSource: callTimelineSource,
-          stickerUsageRecorder: stickerUsageRecorder,
         ),
       ),
     );
@@ -3840,7 +3837,7 @@ void main() {
         await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
         final durableMediaFileManager =
             TrackingDurableConversationMediaFileManager(tempDir);
-        final recorder = _RecordingStickerUsageRecorder();
+        final diagnosticsDir = await installStickerDiagnostics(tester);
         final sentJson = <Map<String, dynamic>>[];
         final sentText = <String>[];
         final sentQuotes = <String?>[];
@@ -3891,7 +3888,6 @@ void main() {
           mediaFileManager: durableMediaFileManager,
           preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
           directMediaBlobCustodyClientEnabled: strict,
-          stickerUsageRecorder: recorder,
           uploadMediaFn:
               ({
                 required bridge,
@@ -4029,7 +4025,7 @@ void main() {
         );
         await pumpUntilAsyncIo(
           tester,
-          () => sentJson.isNotEmpty && recorder.ids.isNotEmpty,
+          () => sentJson.isNotEmpty,
           timeout: const Duration(seconds: 10),
         );
         await pumpUntilAsyncIo(
@@ -4061,7 +4057,12 @@ void main() {
         expect(sentText, ['']);
         expect(sentQuotes, [null]);
         expect(sentPolicies, const [PrivateMediaPolicy.ordinary()]);
-        expect(recorder.ids, ['orbit_crew.planet.angry']);
+        expect(await stickerUsageTally(tester, diagnosticsDir), [
+          {
+            'intervalEndMs': stickerTallyDayEndMs,
+            'counts': {'orbit_crew.planet.angry': 1},
+          },
+        ]);
         expect(
           find.byType(AttachmentPreviewStrip),
           findsOneWidget,
@@ -19952,10 +19953,4 @@ class _StickerTempPath extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => path;
   @override
   Future<String?> getApplicationDocumentsPath() async => path;
-}
-
-class _RecordingStickerUsageRecorder implements StickerUsageRecorder {
-  final ids = <String>[];
-  @override
-  Future<void> recordSent(String stickerId) async => ids.add(stickerId);
 }

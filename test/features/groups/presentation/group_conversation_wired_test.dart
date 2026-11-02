@@ -8,7 +8,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:flutter_app/features/stickers/domain/sticker_usage_recorder.dart';
+import '../../stickers/sticker_usage_tally_fixture.dart';
 import 'package:flutter_app/features/stickers/presentation/sticker_panel.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -2001,8 +2001,6 @@ void main() {
       AppVisibilityRouteObserver? visibilityRouteObserver,
       AppVisibilityRouteRegistry? visibilityRouteRegistry,
       ComposerDraftStore? composerDraftStore,
-      StickerUsageRecorder stickerUsageRecorder =
-          const NoopStickerUsageRecorder(),
       PreparedGroupMediaBlobCustodyCoordinator?
       preparedGroupMediaBlobCustodyCoordinator,
     }) {
@@ -2067,7 +2065,6 @@ void main() {
           forwardChatMessageListener: forwardChatMessageListener,
           openAnnouncementSenderConversation:
               openAnnouncementSenderConversation,
-          stickerUsageRecorder: stickerUsageRecorder,
           preparedGroupMediaBlobCustodyCoordinator:
               preparedGroupMediaBlobCustodyCoordinator,
         ),
@@ -2094,7 +2091,7 @@ void main() {
       await saveActiveGroupMembers(groupRepo, group);
       final staged = File('${tempDir.path}/staged.jpg')
         ..writeAsBytesSync(validJpegFixtureBytes);
-      final recorder = _RecordingStickerUsageRecorder();
+      final diagnosticsDir = await installStickerDiagnostics(tester);
       final uploadedBytes = <List<int>>[];
 
       await tester.pumpWidget(
@@ -2108,7 +2105,6 @@ void main() {
               budgetBytes: staged.lengthSync(),
             ),
           ],
-          stickerUsageRecorder: recorder,
           uploadMediaFn:
               ({
                 required bridge,
@@ -2190,7 +2186,12 @@ void main() {
         uploadedBytes.single,
         File('assets/stickers/big_mood/en/hug.webp').readAsBytesSync(),
       );
-      expect(recorder.ids, ['big_mood.en.hug']);
+      expect(await stickerUsageTally(tester, diagnosticsDir), [
+        {
+          'intervalEndMs': stickerTallyDayEndMs,
+          'counts': {'big_mood.en.hug': 1},
+        },
+      ]);
       final screen = tester.widget<GroupConversationScreen>(
         find.byType(GroupConversationScreen),
       );
@@ -2573,12 +2574,11 @@ void main() {
           createdAt: DateTime.now().toUtc(),
         ),
       );
-      final recorder = _RecordingStickerUsageRecorder();
+      final diagnosticsDir = await installStickerDiagnostics(tester);
       Widget screenFor(GroupModel group) => buildWidget(
         group: group,
         mediaRepo: mediaAttachmentRepo,
         mediaFileManager: _CopyingMediaFileManager(),
-        stickerUsageRecorder: recorder,
         uploadMediaFn:
             ({
               required bridge,
@@ -2641,7 +2641,7 @@ void main() {
       await pumpFrames(tester, count: 10);
 
       expect(groupPublishPayloads(bridge), isEmpty);
-      expect(recorder.ids, isEmpty);
+      expect(await stickerUsageTally(tester, diagnosticsDir), isEmpty);
       expect(
         tempDir
             .listSync()
@@ -24462,12 +24462,6 @@ class _GatedStickerTempPath extends _StickerTempPath {
     await gate;
     return path;
   }
-}
-
-class _RecordingStickerUsageRecorder implements StickerUsageRecorder {
-  final ids = <String>[];
-  @override
-  Future<void> recordSent(String stickerId) async => ids.add(stickerId);
 }
 
 class _CopyingMediaFileManager extends FakeMediaFileManager {
