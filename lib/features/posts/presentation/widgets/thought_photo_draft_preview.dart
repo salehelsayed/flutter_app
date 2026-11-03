@@ -335,9 +335,17 @@ class _FramedPhotoState extends State<_FramedPhoto>
               _EagerScaleGestureRecognizer.new,
               (recognizer) => recognizer
                 ..onStart = (details) {
-                  _move.stop();
-                  _movedFrom = null;
-                  _gestureStart = widget.framing;
+                  // A finger landing mid-glide holds the photo where it is
+                  // shown and frames on from there.
+                  if (_move.isAnimating) {
+                    final shown = PhotoFraming.ofCrop(_shownCrop(photo), photo);
+                    _move.stop();
+                    _movedFrom = null;
+                    widget.onFramed(shown);
+                    _gestureStart = shown;
+                  } else {
+                    _gestureStart = widget.framing;
+                  }
                   _gestureFrom = details.localFocalPoint;
                 }
                 ..onUpdate = (details) => widget.onFramed(

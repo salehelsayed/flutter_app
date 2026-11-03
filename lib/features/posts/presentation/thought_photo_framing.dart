@@ -35,6 +35,12 @@ class PhotoFraming {
 
   bool get isCover => scale == 1 && center == const Offset(.5, .5);
 
+  /// The framing that shows [crop] of [photo], as [cropRect] returns it.
+  static PhotoFraming ofCrop(Rect crop, Size photo) => PhotoFraming(
+    scale: photo.shortestSide / crop.width,
+    center: Offset(crop.center.dx / photo.width, crop.center.dy / photo.height),
+  );
+
   /// The framed square on a photo of [photo] pixels, as displayed (EXIF
   /// orientation already applied). Along a side longer than the square it
   /// never passes the photo's edges; along a shorter side the photo sits
