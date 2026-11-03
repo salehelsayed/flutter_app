@@ -260,6 +260,41 @@ void main() {
     );
   }
 
+  for (final count in const [2, 3, 4, 5]) {
+    testWidgets('$count photos of mixed shapes each show whole in their tile', (
+      tester,
+    ) async {
+      final file = File('${temp.path}/tile.png')
+        ..writeAsBytesSync(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          ),
+        );
+      final items = [
+        for (var i = 0; i < count; i++)
+          attachment('image', file.path).copyWith(
+            mediaId: 'media-image-$i',
+            width: i.isEven ? 1600 : 900,
+            height: i.isEven ? 900 : 1600,
+          ),
+      ];
+      await mount(tester, (_) async => items, (item) async => item);
+      final fits = [
+        for (final image in tester.widgetList<MediaThumbnailImage>(
+          find.byType(MediaThumbnailImage),
+        ))
+          image.fit,
+      ];
+      expect(fits, List.filled(count < 4 ? count : 4, BoxFit.contain));
+      expect(
+        tester.renderObject(
+          find.byKey(const ValueKey('orbit-depth-photo-frame')),
+        ),
+        isNot(paints..rect(color: Colors.black)),
+      );
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
   testWidgets('dispose fences pending load before any download is started', (
     tester,
   ) async {
