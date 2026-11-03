@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -8,8 +9,9 @@ import 'package:flutter_app/features/posts/application/post_media_draft.dart';
 import 'package:image/image.dart' as img;
 
 /// Where a Thought photo sits in the composer's square frame. [scale] 1 is
-/// the photo just covering the square; [center] is the square's centre on
-/// the photo, as fractions of the photo's width and height.
+/// the photo just covering the square, and it zooms out to the whole photo
+/// inside the square; [center] is the square's centre on the photo, as
+/// fractions of the photo's width and height.
 class PhotoFraming {
   const PhotoFraming({this.scale = 1, this.center = const Offset(.5, .5)});
 
@@ -19,15 +21,25 @@ class PhotoFraming {
   final double scale;
   final Offset center;
 
+  /// The scale at which the whole photo just fits in the square.
+  static double wholeScale(Size photo) =>
+      photo.shortestSide / photo.longestSide;
+
+  double _scaleOn(Size photo) => scale.clamp(wholeScale(photo), maxScale);
+
   /// The framed square on a photo of [photo] pixels, as displayed (EXIF
-  /// orientation already applied), never past the photo's edges.
+  /// orientation already applied). Along a side longer than the square it
+  /// never passes the photo's edges; along a shorter side the photo sits
+  /// centred in it.
   Rect cropRect(Size photo) {
-    final side = photo.shortestSide / scale.clamp(1.0, maxScale);
-    final half = side / 2;
+    final side = photo.shortestSide / _scaleOn(photo);
+    double place(double fraction, double extent) => side >= extent
+        ? extent / 2
+        : (fraction * extent).clamp(side / 2, extent - side / 2);
     return Rect.fromCenter(
       center: Offset(
-        (center.dx * photo.width).clamp(half, photo.width - half),
-        (center.dy * photo.height).clamp(half, photo.height - half),
+        place(center.dx, photo.width),
+        place(center.dy, photo.height),
       ),
       width: side,
       height: side,
@@ -45,7 +57,10 @@ class PhotoFraming {
   }) {
     final start = cropRect(photo);
     final anchor = start.topLeft + from * (start.width / frameSide);
-    final nextScale = (scale.clamp(1.0, maxScale) * zoom).clamp(1.0, maxScale);
+    final nextScale = (_scaleOn(photo) * zoom).clamp(
+      wholeScale(photo),
+      maxScale,
+    );
     final side = photo.shortestSide / nextScale;
     final centre =
         anchor - to * (side / frameSide) + Offset(side / 2, side / 2);
@@ -61,7 +76,8 @@ class PhotoFraming {
 }
 
 /// The framed square of [draft]'s photo as a new JPEG of at most [maxSide]
-/// pixels a side, and never larger than the framed area of the source. The
+/// pixels a side, and never larger than the framed area of the source. Any
+/// part of the square the photo leaves empty is [photoEdgeColor]. The
 /// engine decoder applies EXIF orientation, as the composer's preview does.
 Future<PostMediaDraft> bakeFramedPhoto(
   PostMediaDraft draft,
@@ -74,9 +90,9 @@ Future<PostMediaDraft> bakeFramedPhoto(
   final codec = await ui.instantiateImageCodecWithSize(
     buffer,
     getTargetSize: (width, height) {
-      final framed =
-          math.min(width, height) /
-          framing.scale.clamp(1.0, PhotoFraming.maxScale);
+      final framed = framing
+          .cropRect(Size(width.toDouble(), height.toDouble()))
+          .width;
       final shrink = math.min(1.0, maxSide / framed);
       return ui.TargetImageSize(
         width: (width * shrink).round(),
@@ -92,15 +108,28 @@ Future<PostMediaDraft> bakeFramedPhoto(
   }
   final ui.Image square;
   try {
-    final crop = framing.cropRect(
-      Size(photo.width.toDouble(), photo.height.toDouble()),
-    );
+    final size = Size(photo.width.toDouble(), photo.height.toDouble());
+    final crop = framing.cropRect(size);
     final side = math.min(maxSide, crop.width.round());
+    final zoom = side / crop.width;
     final recorder = ui.PictureRecorder();
-    ui.Canvas(recorder).drawImageRect(
+    final canvas = ui.Canvas(recorder);
+    if (!(Offset.zero & size).inflate(.5).contains(crop.topLeft) ||
+        !(Offset.zero & size).inflate(.5).contains(crop.bottomRight)) {
+      canvas.drawColor(
+        await photoEdgeColor(draft.localFilePath),
+        ui.BlendMode.src,
+      );
+    }
+    canvas.drawImageRect(
       photo,
-      crop,
-      Rect.fromLTWH(0, 0, side.toDouble(), side.toDouble()),
+      Offset.zero & size,
+      Rect.fromLTWH(
+        -crop.left * zoom,
+        -crop.top * zoom,
+        size.width * zoom,
+        size.height * zoom,
+      ),
       ui.Paint()..filterQuality = ui.FilterQuality.high,
     );
     final picture = recorder.endRecording();
@@ -137,6 +166,56 @@ Future<PostMediaDraft> bakeFramedPhoto(
   );
 }
 
-/// One colour for the empty part of the square when a photo is zoomed out.
-Future<ui.Color> photoEdgeColor(String path) =>
-    throw UnimplementedError('photoEdgeColor');
+/// One colour for the empty part of the square when a photo is zoomed out:
+/// the average of the outer pixels along the two long edges, the ones that
+/// face the empty part. The composer's preview and the bake both use it, so
+/// friends see the colour the author saw.
+Future<ui.Color> photoEdgeColor(String path) async {
+  final buffer = await ui.ImmutableBuffer.fromUint8List(
+    await File(path).readAsBytes(),
+  );
+  final codec = await ui.instantiateImageCodecWithSize(
+    buffer,
+    getTargetSize: (width, height) {
+      final shrink = math.min(1.0, _edgeSampleSide / math.max(width, height));
+      return ui.TargetImageSize(
+        width: math.max(1, (width * shrink).round()),
+        height: math.max(1, (height * shrink).round()),
+      );
+    },
+  );
+  final ui.Image image;
+  try {
+    image = (await codec.getNextFrame()).image;
+  } finally {
+    codec.dispose();
+  }
+  final width = image.width;
+  final height = image.height;
+  final ByteData? rgba;
+  try {
+    rgba = await image.toByteData();
+  } finally {
+    image.dispose();
+  }
+  if (rgba == null) throw StateError('Photo has no pixels');
+  final wide = width >= height;
+  final depth = math.min(_edgeDepth, wide ? height : width);
+  var r = 0, g = 0, b = 0, n = 0;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      final along = wide ? y : x;
+      final extent = wide ? height : width;
+      if (along >= depth && along < extent - depth) continue;
+      final i = (y * width + x) * 4;
+      r += rgba.getUint8(i);
+      g += rgba.getUint8(i + 1);
+      b += rgba.getUint8(i + 2);
+      n++;
+    }
+  }
+  return ui.Color.fromARGB(255, r ~/ n, g ~/ n, b ~/ n);
+}
+
+const _edgeSampleSide = 256;
+const _edgeDepth = 3;

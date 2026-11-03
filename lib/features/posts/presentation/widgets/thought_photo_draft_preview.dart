@@ -130,9 +130,18 @@ class _FramedPhotoState extends State<_FramedPhoto> {
   ImageStream? _stream;
   late final _listener = ImageStreamListener(_onImage, onError: _onError);
   Size? _photo;
+  Color? _fill;
   bool _failed = false;
   PhotoFraming _gestureStart = PhotoFraming.cover;
   Offset _gestureFrom = Offset.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    photoEdgeColor(widget.path).then((fill) {
+      if (mounted) setState(() => _fill = fill);
+    }, onError: (Object _) {});
+  }
 
   @override
   void didChangeDependencies() {
@@ -178,7 +187,13 @@ class _FramedPhotoState extends State<_FramedPhoto> {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  const ColoredBox(color: Colors.black),
+                  if (_fill case final fill?)
+                    ColoredBox(
+                      key: const ValueKey('thought-photo-frame-fill'),
+                      color: fill,
+                    )
+                  else
+                    const ColoredBox(color: Colors.black),
                   if (photo != null)
                     _placed(photo, widget.framing, side)
                   else if (_failed)
