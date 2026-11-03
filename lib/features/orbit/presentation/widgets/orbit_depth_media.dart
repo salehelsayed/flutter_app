@@ -152,7 +152,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
             attachment: item.toSharedMediaAttachment(),
             onRetryUnavailableMedia: () => unawaited(_load()),
           ),
-        // The whole photo, as large as the space allows, on black.
+        // The whole photo, as large as the space allows, on the scene.
         if (visual.isNotEmpty)
           Expanded(
             child: Semantics(
@@ -163,17 +163,15 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
                 excludeFromSemantics: true,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(22),
-                  child: ColoredBox(
-                    color: Colors.black,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) => Center(
-                        child: MediaGrid(
-                          media: visual
-                              .map((item) => item.toSharedMediaAttachment())
-                              .toList(),
-                          singleMaxHeight: constraints.maxHeight,
-                          onRetryUnavailableMedia: (_) => unawaited(_load()),
-                        ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Center(
+                      child: MediaGrid(
+                        media: visual
+                            .map((item) => item.toSharedMediaAttachment())
+                            .toList(),
+                        singleMaxHeight: constraints.maxHeight,
+                        borderRadius: 22,
+                        onRetryUnavailableMedia: (_) => unawaited(_load()),
                       ),
                     ),
                   ),

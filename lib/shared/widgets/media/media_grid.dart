@@ -32,6 +32,8 @@ class MediaGrid extends StatelessWidget {
   /// uses.
   final double? singleMaxHeight;
 
+  final double borderRadius;
+
   const MediaGrid({
     super.key,
     required this.media,
@@ -42,6 +44,7 @@ class MediaGrid extends StatelessWidget {
     this.ownedMediaPeerId,
     this.renderedSemanticsLabels = const <String, String>{},
     this.singleMaxHeight,
+    this.borderRadius = mediaGridContainerRadius,
   });
 
   @override
@@ -49,7 +52,7 @@ class MediaGrid extends StatelessWidget {
     if (media.isEmpty) return const SizedBox.shrink();
 
     final grid = ClipRRect(
-      borderRadius: BorderRadius.circular(mediaGridContainerRadius),
+      borderRadius: BorderRadius.circular(borderRadius),
       child: _buildLayout(),
     );
     return singleMaxHeight != null && media.length == 1
