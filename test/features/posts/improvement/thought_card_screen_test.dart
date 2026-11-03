@@ -23,6 +23,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_grid_cell.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
@@ -1031,6 +1032,45 @@ void main() {
       tester.getRect(find.byKey(const ValueKey('thought-card-screen'))),
     );
     expect(find.byType(ImageFiltered), findsNothing);
+    await finish(tester);
+  });
+
+  testWidgets('three square photos on the full card each show as a whole '
+      'square on an iPhone 13', (tester) async {
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    final file = _tempFile('square.png', pngBytes: true);
+    final thought = _thought(
+      initialNow,
+    ).copyWith(text: 'B212 multi', mediaKind: 'image_carousel');
+    await posts.savePost(thought);
+    for (var i = 0; i < 3; i++) {
+      await posts.savePostMediaAttachment(
+        _attachment('image').copyWith(
+          mediaId: 'media-image-$i',
+          blobId: 'blob-image-$i',
+          width: 1440,
+          height: 1440,
+          localPath: file.path,
+          downloadStatus: 'done',
+        ),
+      );
+    }
+    await openCard(tester, thought);
+    await pumpMediaFrames(tester);
+
+    final screen = Offset.zero & const Size(390, 844);
+    final tiles = [
+      for (final element in find.byType(MediaGridCell).evaluate())
+        tester.getRect(find.byWidget(element.widget)),
+    ];
+    expect(tiles, hasLength(3));
+    for (final tile in tiles) {
+      expect(tile.width, closeTo(tile.height, .5), reason: '$tile');
+      expect(screen.inflate(.5).contains(tile.topLeft), isTrue);
+      expect(screen.inflate(.5).contains(tile.bottomRight), isTrue);
+    }
     await finish(tester);
   });
 

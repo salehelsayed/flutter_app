@@ -53,6 +53,7 @@ void main() {
     Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)
     download, {
     VoidCallback? open,
+    double? height,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -61,6 +62,7 @@ void main() {
         home: Scaffold(
           body: SizedBox(
             width: 320,
+            height: height,
             child: OrbitDepthMedia(
               postId: 'post',
               load: load,
@@ -296,6 +298,51 @@ void main() {
         ),
         isNot(paints..rect(color: Colors.black)),
       );
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  // iPhone 13 in swipe-up: 362 pt wide, about 290 pt between the text and
+  // the reaction row.
+  for (final count in const [2, 3, 4, 5]) {
+    testWidgets('$count square photos all show whole squares in a short '
+        'swipe-up frame', (tester) async {
+      final file = File('${temp.path}/square.png')
+        ..writeAsBytesSync(
+          base64Decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+          ),
+        );
+      final items = [
+        for (var i = 0; i < count; i++)
+          attachment(
+            'image',
+            file.path,
+          ).copyWith(mediaId: 'media-image-$i', width: 1440, height: 1440),
+      ];
+      await tester.pumpWidget(const SizedBox());
+      await mount(
+        tester,
+        (_) async => items,
+        (item) async => item,
+        height: 290,
+      );
+      final frame = tester.getRect(
+        find.byKey(const ValueKey('orbit-depth-photo-frame')),
+      );
+      final tiles = [
+        for (final element in find.byType(MediaThumbnailImage).evaluate())
+          tester.getRect(find.byWidget(element.widget)),
+      ];
+      expect(tiles, hasLength(count < 4 ? count : 4));
+      for (final tile in tiles) {
+        expect(tile.width, closeTo(tile.height, .5), reason: '$tile');
+        expect(frame.inflate(.5).contains(tile.topLeft), isTrue);
+        expect(
+          frame.inflate(.5).contains(tile.bottomRight),
+          isTrue,
+          reason: '$tile in $frame',
+        );
+      }
       await tester.pumpWidget(const SizedBox());
     });
   }

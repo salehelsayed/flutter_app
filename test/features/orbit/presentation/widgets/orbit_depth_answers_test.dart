@@ -689,6 +689,8 @@ void main() {
 
     await tester.enterText(composerField, 'nice one');
     await rest(tester);
+    expect(sent, isEmpty, reason: 'typing after a disabled tap never sends');
+    expect(composer, findsOneWidget);
     expect(shownOpacity(tester, send), 1.0);
     expect(
       tester.getSemantics(send),
