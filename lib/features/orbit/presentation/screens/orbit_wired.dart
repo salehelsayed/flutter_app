@@ -141,6 +141,7 @@ import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
+import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
@@ -3549,7 +3550,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
-            load: (_) => _loadYouPage(identity),
+            load: (historyLimit) => _loadYouPage(identity, historyLimit),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
@@ -3568,22 +3569,43 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
-  Future<YouPageData> _loadYouPage(IdentityModel identity) async {
+  Future<YouPageData> _loadYouPage(
+    IdentityModel identity,
+    int historyLimit,
+  ) async {
     final friends = [
       for (final contact in await widget.contactRepo.getAllContacts())
         if (!contact.isBlocked && !contact.isArchived) contact,
     ];
     final repository = _thoughtPosts;
-    final own = repository == null
-        ? null
-        : await _thoughtQuery(
-            repository,
-          ).executeOwn(localPeerId: identity.peerId);
-    YouThought? thought;
-    if (repository != null && own != null) {
+    if (repository == null) {
+      return YouPageData(
+        username: identity.username,
+        avatarBytes: _avatarBytes,
+        friendCount: friends.length,
+        thought: null,
+        past: const [],
+      );
+    }
+    final own = await _thoughtQuery(
+      repository,
+    ).executeOwn(localPeerId: identity.peerId);
+    final past = await loadOwnThoughtHistory(
+      postRepo: repository,
+      historyLimit: historyLimit,
+      mediaFileManager: widget.mediaFileManager,
+      viewerPeerId: identity.peerId,
+      nowProvider: widget.thoughtNowProvider,
+    );
+    final messageRepo = widget.messageRepo;
+    final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
+        ? messageRepo as ThoughtReactionMessageRepository
+        : null;
+
+    Future<YouThought> responses(PostModel post) async {
       // Same recipients-only names as loadThoughtActivity.
       final recipients = {
-        for (final delivery in await repository.getRecipientDeliveries(own.id))
+        for (final delivery in await repository.getRecipientDeliveries(post.id))
           delivery.recipientPeerId,
       };
       final names = {
@@ -3591,21 +3613,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           if (recipients.contains(contact.peerId))
             contact.peerId: contact.username,
       };
-      final messageRepo = widget.messageRepo;
-      final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
-          ? messageRepo as ThoughtReactionMessageRepository
-          : null;
       final replies =
-          await thoughtReplies?.loadThoughtReactionMessages(own.id) ??
+          await thoughtReplies?.loadThoughtReactionMessages(post.id) ??
           const <ConversationMessage>[];
       final wroteBack =
-          await thoughtReplies?.loadThoughtWroteBack(own.id) ??
+          await thoughtReplies?.loadThoughtWroteBack(post.id) ??
           const <ThoughtWroteBack>[];
-      final media = await repository.loadPostMediaAttachmentsForPosts([own.id]);
-      thought = YouThought(
-        post: own.copyWith(media: media[own.id] ?? const []),
+      return YouThought(
+        post: post,
         reactions: groupThoughtReactions(
-          postId: own.id,
+          postId: post.id,
           replies: replies,
           participantNames: names,
         ),
@@ -3620,12 +3637,22 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         ],
       );
     }
+
+    final media = own == null
+        ? const <String, List<PostMediaAttachmentModel>>{}
+        : await repository.loadPostMediaAttachmentsForPosts([own.id]);
     return YouPageData(
       username: identity.username,
       avatarBytes: _avatarBytes,
       friendCount: friends.length,
-      thought: thought,
-      past: const [],
+      thought: own == null
+          ? null
+          : await responses(own.copyWith(media: media[own.id] ?? const [])),
+      // The live and expired reads take the clock separately.
+      past: await Future.wait([
+        for (final post in past)
+          if (post.id != own?.id) responses(post),
+      ]),
     );
   }
 

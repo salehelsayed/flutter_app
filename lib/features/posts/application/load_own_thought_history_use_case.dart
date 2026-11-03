@@ -16,7 +16,7 @@ Future<List<PostModel>> loadOwnThoughtHistory({
   final posts = await postRepo.loadExpiredOwnPosts(now.toIso8601String());
   return hydratePostSurfaceItems(
     postRepo: postRepo,
-    posts: posts,
+    posts: posts.take(historyLimit),
     mediaFileManager: mediaFileManager,
     viewerPeerId: viewerPeerId,
   );

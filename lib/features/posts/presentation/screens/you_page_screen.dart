@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/utils/format_day_separator_label.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -71,8 +72,8 @@ const _mono = TextStyle(
 );
 
 /// Your own page, opened from your photo in the middle of Orbit: your live
-/// Thought, who reacted, and who wrote back. A face that wrote opens your
-/// chat with them; nobody else sees what they wrote.
+/// Thought below your past ones, who reacted, and who wrote back. A face that
+/// wrote opens your chat with them; nobody else sees what they wrote.
 class YouPageScreen extends StatefulWidget {
   const YouPageScreen({
     super.key,
@@ -103,11 +104,14 @@ class YouPageScreen extends StatefulWidget {
 class _YouPageScreenState extends State<YouPageScreen>
     with WidgetsBindingObserver {
   YouPageData? _data;
+  int _historyLimit = _historyPage;
+  bool _loadingOlder = false;
   int _generation = 0;
   final _subscriptions = <StreamSubscription<Object?>>[];
   Timer? _expiryTimer;
   Timer? _ageTimer;
   Route<void>? _mediaRoute;
+  String? _mediaPostId;
 
   @override
   void initState() {
@@ -142,9 +146,13 @@ class _YouPageScreenState extends State<YouPageScreen>
   Future<void> _reload() async {
     final generation = ++_generation;
     try {
-      final data = await widget.load(_historyPage);
+      final data = await widget.load(_historyLimit);
       if (!mounted || generation != _generation) return;
-      if (data.thought?.post.id != _data?.thought?.post.id) _closeMediaViewer();
+      final shown = {
+        ?data.thought?.post.id,
+        for (final past in data.past) past.post.id,
+      };
+      if (!shown.contains(_mediaPostId)) _closeMediaViewer();
       setState(() => _data = data);
       _armExpiry(data.thought?.post);
     } catch (_) {
@@ -152,24 +160,24 @@ class _YouPageScreenState extends State<YouPageScreen>
     }
   }
 
-  /// The clock, not the reload, ends an expired Thought: it leaves the page
-  /// and its viewer at once, whether or not the reload answers.
+  /// The clock, not the reload, ends a live Thought: it moves into the past
+  /// and its viewer closes at once, whether or not the reload answers.
   void _expireThenReload() {
     final data = _data;
-    final expiry = DateTime.tryParse(
-      data?.thought?.post.expiresAt ?? '',
-    )?.toUtc();
+    final live = data?.thought;
+    final expiry = DateTime.tryParse(live?.post.expiresAt ?? '')?.toUtc();
     if (data != null &&
+        live != null &&
         expiry != null &&
         !expiry.isAfter(widget.now().toUtc())) {
-      _closeMediaViewer();
+      if (_mediaPostId == live.post.id) _closeMediaViewer();
       setState(
         () => _data = YouPageData(
           username: data.username,
           avatarBytes: data.avatarBytes,
           friendCount: data.friendCount,
           thought: null,
-          past: data.past,
+          past: [live, ...data.past],
         ),
       );
     }
@@ -192,12 +200,14 @@ class _YouPageScreenState extends State<YouPageScreen>
   void _closeMediaViewer() {
     final route = _mediaRoute;
     _mediaRoute = null;
+    _mediaPostId = null;
     if (route != null && route.isActive) {
       Navigator.of(context).removeRoute(route);
     }
   }
 
   Future<void> _openMedia(
+    String postId,
     List<PostMediaAttachmentModel> visual,
     int index,
   ) async {
@@ -210,8 +220,31 @@ class _YouPageScreenState extends State<YouPageScreen>
       ),
     );
     _mediaRoute = route;
+    _mediaPostId = postId;
     await Navigator.of(context).push(route);
-    if (identical(_mediaRoute, route)) _mediaRoute = null;
+    if (identical(_mediaRoute, route)) {
+      _mediaRoute = null;
+      _mediaPostId = null;
+    }
+  }
+
+  /// Near the oldest card, a full page asks for the next one.
+  bool _loadOlderAtTop(ScrollNotification notification) {
+    final data = _data;
+    if (!_loadingOlder &&
+        data != null &&
+        data.past.length >= _historyLimit &&
+        notification.metrics.extentAfter < 400) {
+      _loadingOlder = true;
+      _historyLimit += _historyPage;
+      // Scroll events before the next layout still carry the old extent.
+      _reload().whenComplete(
+        () => WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _loadingOlder = false,
+        ),
+      );
+    }
+    return false;
   }
 
   Future<void> _compose() async {
@@ -229,6 +262,7 @@ class _YouPageScreenState extends State<YouPageScreen>
     final l10n = AppLocalizations.of(context)!;
     final data = _data;
     final thought = data?.thought;
+    final empty = _mono.copyWith(color: _muted, fontSize: 12);
     return Scaffold(
       key: const ValueKey('you'),
       backgroundColor: _ground,
@@ -242,25 +276,36 @@ class _YouPageScreenState extends State<YouPageScreen>
             Expanded(
               child: data == null
                   ? const SizedBox.shrink()
-                  : thought == null
-                  ? Center(
-                      child: Text(
-                        l10n.you_page_empty,
-                        style: _mono.copyWith(color: _muted, fontSize: 12),
+                  : thought == null && data.past.isEmpty
+                  ? Center(child: Text(l10n.you_page_empty, style: empty))
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: _loadOlderAtTop,
+                      child: ListView(
+                        key: const ValueKey('you-feed'),
+                        reverse: true,
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        children: [
+                          if (thought == null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 16),
+                              child: Text(
+                                l10n.you_page_empty,
+                                textAlign: TextAlign.center,
+                                style: empty,
+                              ),
+                            ),
+                          for (final shown in [?thought, ...data.past])
+                            _ThoughtCard(
+                              key: ValueKey('you-thought-${shown.post.id}'),
+                              thought: shown,
+                              live: identical(shown, thought),
+                              now: widget.now,
+                              onOpenChat: _openChat,
+                              onOpenMedia: (visual, index) =>
+                                  _openMedia(shown.post.id, visual, index),
+                            ),
+                        ],
                       ),
-                    )
-                  : ListView(
-                      key: const ValueKey('you-feed'),
-                      reverse: true,
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                      children: [
-                        _ThoughtCard(
-                          thought: thought,
-                          now: widget.now,
-                          onOpenChat: _openChat,
-                          onOpenMedia: _openMedia,
-                        ),
-                      ],
                     ),
             ),
             _ComposerBar(onTap: _compose),
@@ -339,13 +384,18 @@ class _YouPageScreenState extends State<YouPageScreen>
 
 class _ThoughtCard extends StatelessWidget {
   const _ThoughtCard({
+    super.key,
     required this.thought,
+    required this.live,
     required this.now,
     required this.onOpenChat,
     required this.onOpenMedia,
   });
 
   final YouThought thought;
+
+  /// Only the live Thought says how long it stays up.
+  final bool live;
   final DateTime Function() now;
   final Future<void> Function(String peerId) onOpenChat;
   final Future<void> Function(List<PostMediaAttachmentModel> visual, int index)
@@ -377,11 +427,25 @@ class _ThoughtCard extends StatelessWidget {
     final wrote = thought.wroteBack;
     final fresh = wrote.where((w) => w.hasUnread).length;
     final label = _mono.copyWith(color: _muted, fontSize: 11.5);
+    final created = DateTime.tryParse(post.createdAt);
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (created != null) ...[
+            Text(
+              formatDaySeparatorLabel(
+                created,
+                now: now(),
+                todayLabel: l10n.date_today,
+                yesterdayLabel: l10n.date_yesterday,
+                locale: Localizations.localeOf(context).toLanguageTag(),
+              ),
+              style: label,
+            ),
+            const SizedBox(height: 6),
+          ],
           _AudienceChip(label: l10n.compose_audience_all),
           if (post.text.trim().isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -409,26 +473,28 @@ class _ThoughtCard extends StatelessWidget {
               attachment: attachment.toSharedMediaAttachment(),
             ),
           ],
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Container(
-                width: 7,
-                height: 7,
-                decoration: const BoxDecoration(
-                  color: _accent,
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(color: Color(0x2E1DB954), spreadRadius: 3),
-                  ],
+          if (live) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: const BoxDecoration(
+                    color: _accent,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(color: Color(0x2E1DB954), spreadRadius: 3),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Text(l10n.you_page_live(_hoursLeft()), style: label),
-              ),
-            ],
-          ),
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(l10n.you_page_live(_hoursLeft()), style: label),
+                ),
+              ],
+            ),
+          ],
           if (reacted > 0 || wrote.isNotEmpty) const SizedBox(height: 10),
           if (reacted > 0)
             _ResponseRow(
