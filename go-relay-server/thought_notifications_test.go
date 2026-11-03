@@ -20,6 +20,11 @@ type thoughtNotificationPushCase struct {
 func thoughtNotificationPushCases() []thoughtNotificationPushCase {
 	return []thoughtNotificationPushCase{
 		{name: "encrypted", envelope: postCreatePushFixtureWithPostID},
+		{
+			name: "oversized_photo_with_compact_ciphertext",
+			envelope: thoughtPhotoPushEnvelope(6000,
+				thoughtPhotoCompactEncryptedJSON(thoughtPhotoCompactCiphertext)),
+		},
 		{name: "fallback_without_post_id", envelope: postCreatePushFixture},
 		{
 			name:     "fallback_without_ciphertext",
@@ -236,7 +241,9 @@ func TestThoughtNotificationsOpaqueRoute_OnlyThoughtOriginIsSuppressed(t *testin
 			recorder := newRecordingPushSender()
 			push.sender = recorder.Send
 			t.Run("thought_origin", func(t *testing.T) {
-				assertThoughtNotificationProviderCalls(t, push, recorder, recipient, postCreatePushFixtureWithPostID, 0)
+				for _, fixture := range thoughtNotificationPushCases() {
+					assertThoughtNotificationProviderCalls(t, push, recorder, recipient, fixture.envelope, 0)
+				}
 			})
 			t.Run("chat_origin", func(t *testing.T) {
 				assertThoughtNotificationProviderCalls(t, push, recorder, recipient,
@@ -326,7 +333,9 @@ func TestThoughtNotificationsStaleRoute_RefreshCannotBypassOptOut(t *testing.T) 
 				push := NewPushServiceWithBackend(reopen())
 				recorder := newRecordingPushSender()
 				push.sender = recorder.Send
-				push.SendNotification(context.Background(), "recipient", "sender", postCreatePushFixtureWithPostID, selectedWhileOn)
+				for _, fixture := range thoughtNotificationPushCases() {
+					push.SendNotification(context.Background(), "recipient", "sender", fixture.envelope, selectedWhileOn)
+				}
 				if got := recorder.SendCallCount(); got != 0 {
 					t.Fatalf("stale ON route bypassed current opt-out: provider calls = %d", got)
 				}

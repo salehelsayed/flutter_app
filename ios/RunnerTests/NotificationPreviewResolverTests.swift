@@ -3528,6 +3528,60 @@ final class NotificationPreviewResolverTests: XCTestCase {
     }
   }
 
+  func testThoughtCompactPhotoSnapshotUsesTrustedContactAndExactParity() throws {
+    let cases: [(author: String, post: String, accepted: Bool)] = [
+      ("peer-alice", "post-compact-photo", true),
+      ("peer-mallory", "post-compact-photo", false),
+      ("peer-alice", "post-other", false),
+    ]
+    for item in cases {
+      // Exact compact producer schema: no outer post_id, username, MIME,
+      // media keys or inline preview are needed by the existing resolver.
+      let plaintext = try jsonString([
+        "snapshot": [
+          "post_id": item.post,
+          "author_peer_id": item.author,
+          "text": "",
+          "media": [["kind": "image"]],
+        ],
+      ])
+      let decryptor = MemoryPushDecryptor(chatPlaintext: plaintext)
+      let dedupe = MemoryPushDedupeStore()
+      let resolver = NotificationPreviewResolver(
+        keyReader: MemoryPushKeyReader([
+          PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+          PushSharedKeyNames.thoughtsEnabled: "1",
+          PushSharedKeyNames.directReactionContacts:
+            try ordinaryDirectContactsJSON(),
+        ]),
+        decryptor: decryptor,
+        dedupeStore: dedupe,
+        localeIdentifierProvider: { "en-US" }
+      )
+      let result = resolver.resolve(
+        userInfo: thoughtRoute(postId: "post-compact-photo"),
+        fallbackTitle: "New thought",
+        fallbackBody: "A friend shared a thought"
+      )
+
+      XCTAssertEqual(decryptor.chatCalls, 1)
+      XCTAssertEqual(result.didDecrypt, item.accepted)
+      if item.accepted {
+        XCTAssertEqual(result.reason, "thought")
+        XCTAssertEqual(result.title, "Trusted Alice shared a thought")
+        XCTAssertEqual(result.body, "Photo")
+        XCTAssertTrue(result.markAsShown)
+        XCTAssertFalse(result.suppress)
+        XCTAssertNil(result.recoveryIdentity)
+        XCTAssertEqual(dedupe.claims, ["post_create:post-compact-photo"])
+      } else {
+        XCTAssertEqual(result.reason, "thought_plaintext_parity_mismatch")
+        XCTAssertFalse(result.markAsShown)
+        XCTAssertTrue(dedupe.claims.isEmpty)
+      }
+    }
+  }
+
   /// A build with thoughts switched off never wrote "1": the card names the
   /// friend, says nothing of the thought, and is quiet.
   func testThoughtTextStaysHiddenWhenThoughtsAreSwitchedOff() throws {
