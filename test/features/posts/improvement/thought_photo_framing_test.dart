@@ -402,6 +402,22 @@ void main() {
       },
     );
 
+    test('the 4x framing of a one-pixel strip still bakes a square', () async {
+      for (final (width, height) in const [(80, 1), (1, 80)]) {
+        final image = img.Image(width: width, height: height);
+        img.fill(image, color: img.ColorRgb8(200, 80, 20));
+        final path = '${dir.path}/tiny_${width}x$height.png';
+        File(path).writeAsBytesSync(img.encodePng(image));
+        final out = await baked(
+          await bakeFramedPhoto(
+            PostMediaDraft(localFilePath: path, mime: 'image/png'),
+            const PhotoFraming(scale: 4),
+          ),
+        );
+        expect([out.width, out.height], [1, 1]);
+      }
+    });
+
     test('a 2x top-left framing keeps only the top-left quarter at its own '
         'resolution', () async {
       final source = quarters(2000, 1500);

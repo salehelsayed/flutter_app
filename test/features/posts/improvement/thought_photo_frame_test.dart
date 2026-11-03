@@ -349,6 +349,117 @@ void main() {
     expect([colour(tallOut, 8, 140), colour(tallOut, 8, 160)], ['red', 'blue']);
   });
 
+  testWidgets('a bake that cannot be written shares nothing, keeps the '
+      'draft and its framing, and a retry shares the framed square', (
+    tester,
+  ) async {
+    final path = quarters('private_crop', 400, 300);
+    final original = File(path);
+    final submitted = <ComposePostResult>[];
+    await openWith(tester, [path], submitted: submitted);
+    await drag(tester, const Offset(500, 0));
+    final framing = framings(tester)[path]!;
+
+    await IOOverrides.runZoned(() async {
+      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      for (var i = 0; i < 100; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+    }, createFile: (name) => name == path ? original : _NoSpaceFile(name));
+
+    expect(submitted, isEmpty, reason: 'never the uncropped original');
+    expect(
+      find.text('Not shared yet. Your thought is still here.'),
+      findsOneWidget,
+    );
+    expect(framedImage, findsOneWidget);
+    expect(framings(tester)[path]!.center, framing.center);
+
+    final [out] = await share(tester, submitted);
+    expect([out.width, out.height], [300, 300]);
+    expect([colour(out, 8, 8), colour(out, 291, 8)], ['red', 'red']);
+  });
+
+  testWidgets('closing and reopening a draft keeps each photo\'s framing', (
+    tester,
+  ) async {
+    final wide = quarters('restore_wide', 400, 300);
+    final tall = quarters('restore_tall', 300, 400);
+    ComposePostResult? saved;
+    Future<void> mount({ComposePostResult? initial}) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ComposePostSheet(
+              thoughtsOnly: true,
+              eligibleContacts: const [],
+              initialDraft: initial,
+              onPickMedia: () async => (
+                drafts: [
+                  for (final path in [wide, tall])
+                    PostMediaDraft(localFilePath: path, mime: 'image/jpeg'),
+                ],
+                leftOut: false,
+              ),
+              onSubmit: (_) async {},
+              onClosed: (value) => saved = value,
+            ),
+          ),
+        ),
+      );
+    }
+
+    tester.view.physicalSize = const Size(400, 900) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await mount();
+    await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+    await tester.pump();
+    await until(tester, () => framedImage.evaluate().isNotEmpty);
+    await drag(tester, const Offset(90, 0));
+    final before = framings(tester);
+    expect(before[wide]!.center, isNot(const Offset(.5, .5)));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(saved, isNotNull);
+    await mount(initial: saved);
+    await until(tester, () => framedImage.evaluate().isNotEmpty);
+
+    final after = framings(tester);
+    expect(after[wide]!.center, before[wide]!.center);
+    expect(after[wide]!.scale, before[wide]!.scale);
+    expect(after[tall]!.center, const Offset(.5, .5));
+    expect(after[tall]!.scale, 1);
+  });
+
+  for (final (width, height) in const [(5000, 1), (5000, 3), (1, 5000)]) {
+    testWidgets('a ${width}x$height strip opens in the frame and zooms out to '
+        'the whole strip', (tester) async {
+      final source = img.Image(width: width, height: height);
+      img.fill(source, color: img.ColorRgb8(200, 80, 20));
+      final path = '${dir.path}/strip_${width}x$height.png';
+      File(path).writeAsBytesSync(img.encodePng(source));
+      await openWith(tester, [path]);
+      final rect = tester.getRect(framedImage);
+      final fitted = PhotoFraming.cover.pinched(
+        Size(rect.width, rect.height),
+        360,
+        from: const Offset(100, 100),
+        to: const Offset(100, 100),
+        zoom: .000001,
+      );
+      expect(
+        fitted.cropRect(Size(width.toDouble(), height.toDouble())).width,
+        closeTo(5000, .01),
+      );
+    });
+  }
+
   testWidgets('a photo picked again while cached still shows its frame', (
     tester,
   ) async {
@@ -420,4 +531,22 @@ void main() {
       );
     });
   }
+}
+
+class _NoSpaceFile extends Fake implements File {
+  _NoSpaceFile(this.path);
+
+  @override
+  final String path;
+
+  @override
+  Future<File> writeAsBytes(
+    List<int> bytes, {
+    FileMode mode = FileMode.write,
+    bool flush = false,
+  }) async => throw FileSystemException(
+    'No space left on device',
+    path,
+    const OSError('No space left on device', 28),
+  );
 }
