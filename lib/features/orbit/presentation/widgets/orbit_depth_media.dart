@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -184,17 +185,16 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
     );
     if (visual.isEmpty || !voiced) return column;
     // A voice note above a photo needs a least height; while a reply leaves
-    // less, the pair keeps it and shows its top instead of overflowing.
+    // less, the pair keeps it and shows its top instead of overflowing. The
+    // clip stays mounted so a playing voice note is never rebuilt.
     return LayoutBuilder(
-      builder: (context, box) => box.maxHeight >= _voiceAndPhotoMinHeight
-          ? column
-          : ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.topCenter,
-                maxHeight: _voiceAndPhotoMinHeight,
-                child: column,
-              ),
-            ),
+      builder: (context, box) => ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.topCenter,
+          maxHeight: math.max(box.maxHeight, _voiceAndPhotoMinHeight),
+          child: column,
+        ),
+      ),
     );
   }
 }

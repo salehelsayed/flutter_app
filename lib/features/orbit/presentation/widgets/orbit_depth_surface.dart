@@ -1056,9 +1056,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                                 ? _card(
                                     shown,
                                     k,
-                                    composingRestHeight: composing
-                                        ? places.areaBottom - places.areaTop
-                                        : null,
+                                    restHeight:
+                                        places.areaBottom - places.areaTop,
                                   )
                                 : _layer == OrbitDepthLayer.flat ||
                                       _gesture == OrbitDepthGesture.vertical
@@ -1337,9 +1336,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     );
   }
 
-  /// [composingRestHeight] is the thought area's height at rest, given while
-  /// the reply composer takes part of it.
-  Widget _card(OrbitDepthSeat seat, double k, {double? composingRestHeight}) {
+  /// [restHeight] is the thought area's height when no reply is open.
+  Widget _card(OrbitDepthSeat seat, double k, {required double restHeight}) {
     final post = seat.thought;
     final l10n = AppLocalizations.of(context)!;
     final created = DateTime.tryParse(post.createdAt)?.toUtc();
@@ -1521,21 +1519,20 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       container: true,
       label: '${seat.friend.username} · $ageText',
       onTap: _bySemantics(open),
-      // While replying, a text or voice thought keeps its resting layout and
-      // shows only its top: the composer and keyboard leave too little height
-      // for its fixed parts. A photo shrinks into the space as before.
-      child: photo || composingRestHeight == null
+      // While replying, a text or voice thought keeps at least its resting
+      // height and shows only its top: the composer and keyboard leave too
+      // little for its fixed parts. A photo shrinks into the space as before.
+      // The clip stays mounted so a playing voice note is never rebuilt.
+      child: photo
           ? content
           : LayoutBuilder(
-              builder: (context, box) => box.maxHeight >= composingRestHeight
-                  ? content
-                  : ClipRect(
-                      child: OverflowBox(
-                        alignment: Alignment.topCenter,
-                        maxHeight: composingRestHeight,
-                        child: content,
-                      ),
-                    ),
+              builder: (context, box) => ClipRect(
+                child: OverflowBox(
+                  alignment: Alignment.topCenter,
+                  maxHeight: math.max(box.maxHeight, restHeight),
+                  child: content,
+                ),
+              ),
             ),
     );
   }
