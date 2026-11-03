@@ -827,9 +827,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                     ),
                     if (depth && _active)
                       Positioned.fill(
-                        top: widget.topClearance,
-                        bottom: widget.bottomClearance,
-                        child: RepaintBoundary(child: _dial(stage)),
+                        child: RepaintBoundary(
+                          child: _dial(constraints.biggest),
+                        ),
                       ),
                   ],
                 );
@@ -845,32 +845,23 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final k = _scale;
     final tiltProgress = (_vertical.value / 320).clamp(0.0, 1.0);
     final e = _smooth(tiltProgress);
-    final top = _anchor == OrbitDepthAnchor.top;
-    // The shipped 3D Orbit's placement: at the top, the ring sits as low as
-    // its old waiting outer ring needed to stay clear of the header.
-    final (outerFarEdge, _) = projectOrbitCenter(
-      -math.pi / 2,
-      orbitCenterRadius * k * 1.12 * 1.45,
-      orbitCenterTilt,
+    final places = orbitDepthPlaces(
+      anchor: _anchor,
+      height: size.height,
+      topClearance: widget.topClearance,
+      bottomClearance: widget.bottomClearance,
+      scale: k,
     );
-    final cy = top
-        ? math.max(size.height * .084, 35 * k - outerFarEdge.dy)
-        : size.height * .8;
-    final ringDepth = orbitCenterRadius * k * math.cos(orbitCenterTilt);
+    final cy = places.ringY;
     final center = Offset(size.width / 2, cy);
     final colors = Theme.of(context).colorScheme;
     final queue = _queue;
     // Faces fly from where the flat orbit showed them to their seats, as the
     // finger drags; a face the flat orbit did not show fades in at its seat.
-    final lift = Offset(0, -widget.topClearance);
     final flat = _flat;
     final origin =
-        flat?.self?.center.translate(0, lift.dy) ??
-        Offset(size.width / 2, size.height * .5);
-    final from = {
-      for (final MapEntry(:key, :value) in (flat?.faces ?? const {}).entries)
-        key: value.shift(lift),
-    };
+        flat?.self?.center ?? Offset(size.width / 2, size.height * .5);
+    final from = flat?.faces ?? const <String, Rect>{};
     final flatRadius = from.isEmpty
         ? orbitCenterRadius * k
         : from.values
@@ -911,18 +902,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     final presence = _reduceMotion
         ? 1.0
         : math.pow(lifted?.lift ?? 0, 2).toDouble();
-    final slotTop = top
-        ? math.max(cy + ringDepth * 1.45 + 38 * k, 140 * k)
-        : 60 * k;
-    final slotBottom = top
-        ? 20 * k
-        : math.max(0.0, size.height - cy + ringDepth + 30 * k);
     // The bar's row and its status line below it; never under 44 pt.
     final answers = widget.onReply != null;
-    final target = math.max(44.0, 52 * k);
-    final statusRow = math.max(44.0, 36 * k);
-    final answersHeight = answers ? target + statusRow : 0.0;
-    final answersGap = answers ? 12 * k : 0.0;
+    final target = places.barHeight;
+    final statusRow = places.statusHeight;
     final composing = _composing;
     if (composing && shown?.thought.id != _visit.composingPostId) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -930,8 +913,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       });
     }
     final keyboard = math.max(
-      0.0,
-      MediaQuery.viewInsetsOf(context).bottom - widget.bottomClearance,
+      widget.bottomClearance,
+      MediaQuery.viewInsetsOf(context).bottom,
     );
     // The bar trails the card by about 80 ms as it lands: it is placed where
     // the card was that long ago.
@@ -1052,10 +1035,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
               key: const ValueKey('orbit-depth-card-slot'),
               left: 14 * k,
               right: 14 * k,
-              top: slotTop,
-              bottom: composing
-                  ? keyboard
-                  : slotBottom + answersHeight + answersGap,
+              top: places.areaTop,
+              bottom: composing ? keyboard : size.height - places.areaBottom,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -1124,8 +1105,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 key: const ValueKey('orbit-depth-answers-slot'),
                 left: 14 * k,
                 right: 14 * k,
-                bottom: slotBottom,
-                height: answersHeight,
+                top: places.barTop,
+                height: target + statusRow,
                 child: Transform.translate(
                   offset: Offset(0, (1 - barReveal) * 40 * k),
                   child: Opacity(
@@ -1382,106 +1363,170 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
             lastLoaded: _lastLoadedMedia,
           )
         : null;
-    // A photo fills the slot below the text, shown whole. Voice and text
-    // thoughts keep their own height.
-    final photo = media != null && post.mediaKind != 'voice';
-    final words = Semantics(
-      onTap: _bySemantics(open),
-      child: GestureDetector(
-        onTap: open,
-        behavior: HitTestBehavior.opaque,
-        excludeFromSemantics: true,
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 8 * k),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                ageText,
-                style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
-              ),
-              if (post.text.isNotEmpty)
-                Padding(
-                  padding: EdgeInsets.only(top: 12 * k),
-                  // Full width, so the text sits on its own side: an Arabic
-                  // thought on the right even in an English app.
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: Text(
-                      post.text,
-                      key: ValueKey('orbit-depth-text-${post.id}'),
-                      textDirection: detectTextDirection(post.text),
-                      maxLines: photo ? 3 : null,
-                      overflow: photo ? TextOverflow.ellipsis : null,
-                      style: TextStyle(fontSize: 22 * k, height: 1.3),
-                    ),
-                  ),
-                ),
-            ],
-          ),
+    final voice = media != null && post.mediaKind == 'voice';
+    final photo = media != null && !voice;
+    final length = orbitThoughtLength(post.text);
+    final centred = voice || (!photo && length != OrbitThoughtLength.long);
+    final type = voice
+        ? _voiceType
+        : _thoughtType[photo ? OrbitThoughtLength.long : length]!;
+    final colors = Theme.of(context).colorScheme;
+    Widget tappable(Widget child) => GestureDetector(
+      onTap: open,
+      behavior: HitTestBehavior.opaque,
+      excludeFromSemantics: true,
+      child: child,
+    );
+    final ageLine = Text(
+      ageText,
+      style: TextStyle(fontSize: 13 * k, fontWeight: FontWeight.w600),
+    );
+    Text words({int? maxLines}) => Text(
+      post.text,
+      key: ValueKey('orbit-depth-text-${post.id}'),
+      textDirection: detectTextDirection(post.text),
+      textAlign: centred ? TextAlign.center : null,
+      maxLines: maxLines,
+      overflow: maxLines == null ? null : TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: type.size * k,
+        fontWeight: type.weight,
+        height: _thoughtLineHeight,
+        color: colors.onSurface,
+      ),
+    );
+    // As many whole lines as the space holds; the rest is cut with an
+    // ellipsis.
+    Widget fitted() => LayoutBuilder(
+      builder: (context, box) => words(
+        maxLines: math.max(
+          1,
+          (box.maxHeight / (type.size * k * _thoughtLineHeight)).floor(),
         ),
       ),
     );
     // The caption of a photo thought is offered for translation like any
     // text thought. The link sits outside the tap that opens the thought.
-    final caption = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        words,
-        if (translatePreviewEnabled && post.text.isNotEmpty)
-          TranslatePreview(
+    final preview = translatePreviewEnabled && post.text.isNotEmpty
+        ? TranslatePreview(
             text: post.text,
             owner: PreviewOwner.thought(post.id),
             ai: translatePreviewAi,
             delivery: translatePreviewDelivery,
             onFreeUpSpace: translatePreviewOpenStorage,
-            color: Theme.of(context).colorScheme.onSurface,
+            color: colors.onSurface,
+          )
+        : null;
+    // A drag on the thought tilts or turns the orbit, so it cannot scroll.
+    // It clips to its area; the tap opens the whole thought.
+    final Widget content;
+    if (photo) {
+      // Full width, so the text sits on its own side: an Arabic caption on
+      // the right even in an English app.
+      final caption = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          tappable(
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: 8 * k),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ageLine,
+                  if (post.text.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(top: 12 * k),
+                      child: words(maxLines: 3),
+                    ),
+                ],
+              ),
+            ),
           ),
-      ],
-    );
+          ?preview,
+        ],
+      );
+      // The caption and its translation take at most half of the area,
+      // clipped at its end, so the photo always keeps the rest down to the
+      // bar.
+      content = LayoutBuilder(
+        builder: (context, box) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ConstrainedBox(
+              key: ValueKey('orbit-depth-caption-${post.id}'),
+              constraints: BoxConstraints(maxHeight: box.maxHeight / 2),
+              child: UnconstrainedBox(
+                constrainedAxis: Axis.horizontal,
+                alignment: Alignment.topCenter,
+                clipBehavior: Clip.hardEdge,
+                child: caption,
+              ),
+            ),
+            Expanded(child: media),
+          ],
+        ),
+      );
+    } else if (centred) {
+      content = Center(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (post.text.isNotEmpty) Flexible(child: tappable(fitted())),
+            ?preview,
+            if (voice) ...[SizedBox(height: 16 * k), media],
+            SizedBox(height: 16 * k),
+            tappable(Center(child: ageLine)),
+          ],
+        ),
+      );
+    } else {
+      // A long thought reads from the top and is cut at the area's end.
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: tappable(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ageLine,
+                  SizedBox(height: 12 * k),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: fitted(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          ?preview,
+        ],
+      );
+    }
     // Screen readers hear whose thought it is; the name is under the face.
     return Semantics(
       key: ValueKey('orbit-depth-card-${post.id}'),
       container: true,
       label: '${seat.friend.username} · $ageText',
-      child: photo
-          // The caption and its translation take at most half of the slot,
-          // clipped at its end, so the photo always keeps the rest; the tap
-          // opens the whole thought.
-          ? LayoutBuilder(
-              builder: (context, box) => Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ConstrainedBox(
-                    key: ValueKey('orbit-depth-caption-${post.id}'),
-                    constraints: BoxConstraints(maxHeight: box.maxHeight / 2),
-                    child: UnconstrainedBox(
-                      constrainedAxis: Axis.horizontal,
-                      alignment: Alignment.topCenter,
-                      clipBehavior: Clip.hardEdge,
-                      child: caption,
-                    ),
-                  ),
-                  Expanded(child: media),
-                ],
-              ),
-            )
-          // A drag on the card tilts or turns the orbit, so the card cannot
-          // scroll. It clips to its slot; the tap opens the whole thought.
-          : UnconstrainedBox(
-              constrainedAxis: Axis.horizontal,
-              alignment: Alignment.topCenter,
-              clipBehavior: Clip.hardEdge,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [caption, ?media],
-              ),
-            ),
+      onTap: _bySemantics(open),
+      child: content,
     );
   }
 }
+
+const _thoughtLineHeight = 1.3;
+
+/// Text sizes of a thought on the background, by its length, at k = 1.
+const _thoughtType = {
+  OrbitThoughtLength.short: (size: 34.0, weight: FontWeight.w600),
+  OrbitThoughtLength.medium: (size: 26.0, weight: FontWeight.w500),
+  OrbitThoughtLength.long: (size: 22.0, weight: FontWeight.w500),
+};
+const _voiceType = (size: 30.0, weight: FontWeight.w600);
 
 const _answerGreen = Color(0xFF1DB954);
 const _onAnswerGreen = Color(0xFF04130A);

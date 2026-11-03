@@ -630,9 +630,8 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('on a 375x667 phone every target stays at least 44 pt', (
-    tester,
-  ) async {
+  testWidgets('on a 375x667 phone every target stays at least 44 pt and '
+      'the bar keeps its place above the bottom', (tester) async {
     await mount(
       tester,
       size: const Size(375, 667),
@@ -645,7 +644,9 @@ void main() {
     }
     expect(tester.getSize(replyButton).height, 44);
     expect(tester.getSize(replyButton).width, greaterThanOrEqualTo(44));
-    expect(tester.getBottomLeft(bar(0)).dy, lessThanOrEqualTo(667 - 80));
+    // In 3D the host's nav band leaves, so the bar rests 44 pt (the status
+    // line under it) above the bottom instead of above the band.
+    expect(tester.getBottomLeft(replyButton).dy, closeTo(667 - 44, .01));
     await finish(tester);
   });
 

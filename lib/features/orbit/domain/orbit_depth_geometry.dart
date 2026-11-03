@@ -141,3 +141,84 @@ List<OrbitCenterFace> orbitCenterFaces({
   faces.sort((a, b) => a.$1.compareTo(b.$1));
   return [for (final (_, face) in faces) face];
 }
+
+/// How long a text thought reads; it sets the thought's size in 3D.
+enum OrbitThoughtLength { short, medium, long }
+
+const orbitThoughtShortMax = 30;
+const orbitThoughtMediumMax = 120;
+
+OrbitThoughtLength orbitThoughtLength(String text) {
+  final length = text.runes.length;
+  return length <= orbitThoughtShortMax
+      ? OrbitThoughtLength.short
+      : length <= orbitThoughtMediumMax
+      ? OrbitThoughtLength.medium
+      : OrbitThoughtLength.long;
+}
+
+/// Where the 3D view seats its parts, in the depth surface's points: the
+/// ring's center, the thought area, and the bar with its status line below.
+typedef OrbitDepthPlaces = ({
+  double ringY,
+  double areaTop,
+  double areaBottom,
+  double barTop,
+  double barHeight,
+  double statusHeight,
+});
+
+/// The owner's "3d" layout on a 390 x 844 phone, scaled by [scale]. Swiped
+/// down, the ring rests at the bottom and the bar 50 pt above its center
+/// face; swiped up, the ring keeps the shipped top place and the bar rests
+/// 50 pt above the bottom. Either way the bar has one place for every
+/// thought, and the thought fills the area 16 pt above it. [topClearance]
+/// and [bottomClearance] are the host chrome the flat orbit keeps clear.
+OrbitDepthPlaces orbitDepthPlaces({
+  required OrbitDepthAnchor anchor,
+  required double height,
+  required double topClearance,
+  required double bottomClearance,
+  required double scale,
+}) {
+  final k = scale;
+  final barHeight = math.max(44.0, 52 * k);
+  final statusHeight = math.max(44.0, 36 * k);
+  final barGap = math.max(50 * k, statusHeight);
+  final double ringY, areaTop, barBottom;
+  switch (anchor) {
+    case OrbitDepthAnchor.bottom:
+      ringY = height - 85 * k;
+      areaTop = 17 * k;
+      barBottom = ringY - orbitCenterDiameter / 2 * k - barGap;
+    case OrbitDepthAnchor.top:
+      // The shipped place: as low as its old waiting outer ring needed to
+      // stay clear of the header.
+      final (outerFarEdge, _) = projectOrbitCenter(
+        -math.pi / 2,
+        orbitCenterRadius * k * 1.12 * 1.45,
+        orbitCenterTilt,
+      );
+      final stage = height - topClearance - bottomClearance;
+      final center = math.max(stage * .084, 35 * k - outerFarEdge.dy);
+      ringY = topClearance + center;
+      areaTop =
+          topClearance +
+          math.max(
+            center +
+                orbitCenterRadius * k * math.cos(orbitCenterTilt) * 1.45 +
+                38 * k,
+            140 * k,
+          );
+      barBottom = height - barGap;
+  }
+  final barTop = barBottom - barHeight;
+  return (
+    ringY: ringY,
+    areaTop: areaTop,
+    areaBottom: barTop - 16 * k,
+    barTop: barTop,
+    barHeight: barHeight,
+    statusHeight: statusHeight,
+  );
+}

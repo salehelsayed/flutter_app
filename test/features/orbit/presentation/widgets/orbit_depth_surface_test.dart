@@ -764,6 +764,8 @@ void main() {
     },
   );
 
+  // A short thought is centred (owner's "3d" layout), so only its order is
+  // checked here; the side a line starts on is checked on long thoughts.
   for (final c in bidiCases) {
     testWidgets('the 3D card lays out mixed text: ${c.label}', (tester) async {
       thoughts['peer-0'] = depthThought(0, text: c.text);
@@ -776,43 +778,68 @@ void main() {
         c,
         direction: paragraph.textDirection,
         boxes: paragraph.getBoxesForSelection,
-        area: tester.getRect(card(0)),
-        toGlobal: paragraph.localToGlobal,
       );
       await finish(tester);
     });
   }
   for (final appRtl in [false, true]) {
-    for (final (text, direction) in [
-      ('مرحبا 🙂', TextDirection.rtl),
-      ('Hi 🙂', TextDirection.ltr),
+    for (final (word, direction) in [
+      ('مرحبا', TextDirection.rtl),
+      ('Hi', TextDirection.ltr),
     ]) {
       testWidgets(
-        'the 3D card puts a short ${direction.name} thought on its own side '
-        'in a ${appRtl ? 'right-to-left' : 'left-to-right'} app',
+        'the 3D card centres a short ${direction.name} thought and starts a '
+        'long one on its own side in a '
+        '${appRtl ? 'right-to-left' : 'left-to-right'} app',
         (tester) async {
           rtl = appRtl;
-          thoughts['peer-0'] = depthThought(0, text: text);
-          await mount(tester);
-          await enter(tester);
-          final paragraph = tester.renderObject<RenderParagraph>(
-            find.byKey(const ValueKey('orbit-depth-text-post-0')),
-          );
-          expect(paragraph.textDirection, direction);
-          final start = paragraph
-              .localToGlobal(
-                paragraph.getOffsetForCaret(
-                  const TextPosition(offset: 0),
-                  Rect.zero,
+          for (final long in [false, true]) {
+            final text = long ? List.filled(60, word).join(' ') : '$word 🙂';
+            thoughts['peer-0'] = depthThought(0, text: text);
+            await mount(tester);
+            await enter(tester);
+            final paragraph = tester.renderObject<RenderParagraph>(
+              find.byKey(const ValueKey('orbit-depth-text-post-0')),
+            );
+            expect(paragraph.textDirection, direction);
+            final line = paragraph
+                .getBoxesForSelection(
+                  const TextSelection(baseOffset: 0, extentOffset: 1),
+                )
+                .first;
+            final start = paragraph
+                .localToGlobal(
+                  Offset(
+                    direction == TextDirection.rtl ? line.right : line.left,
+                    line.top,
+                  ),
+                )
+                .dx;
+            final area = tester.getRect(card(0));
+            if (long) {
+              expect(
+                start,
+                closeTo(
+                  direction == TextDirection.rtl ? area.right : area.left,
+                  2,
                 ),
-              )
-              .dx;
-          final area = tester.getRect(card(0));
-          expect(
-            start,
-            closeTo(direction == TextDirection.rtl ? area.right : area.left, 2),
-          );
-          await finish(tester);
+              );
+            } else {
+              final width = paragraph
+                  .getBoxesForSelection(
+                    TextSelection(baseOffset: 0, extentOffset: text.length),
+                  )
+                  .last
+                  .toRect()
+                  .shift(paragraph.localToGlobal(Offset.zero));
+              expect(
+                width.left - area.left,
+                closeTo(area.right - width.right, 2),
+              );
+            }
+            await finish(tester);
+            reset = ValueNotifier(0);
+          }
         },
       );
     }

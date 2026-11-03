@@ -353,17 +353,14 @@ void main() {
           closeTo(place.areaBottom - when.bottom, 1),
         );
         final paragraph = tester.renderObject<RenderParagraph>(text);
-        final first = paragraph
+        final last = paragraph
             .getBoxesForSelection(
               TextSelection(baseOffset: 0, extentOffset: sample.length),
             )
-            .first
+            .last
             .toRect()
             .shift(paragraph.localToGlobal(Offset.zero));
-        expect(
-          first.left - 14,
-          closeTo(phone.size.width - 14 - first.right, 1),
-        );
+        expect(last.left - 14, closeTo(phone.size.width - 14 - last.right, 1));
         await finish(tester);
       });
     }
