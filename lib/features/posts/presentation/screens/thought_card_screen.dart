@@ -861,33 +861,46 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           _postingStatus(l10n),
           if (widget.loadActivity != null) _ownActivity(l10n),
         ],
-        if (widget.onDelete != null)
-          OutlinedButton.icon(
+      ],
+    );
+    final delete = widget.onDelete == null
+        ? null
+        : OutlinedButton.icon(
             key: const ValueKey('thought-delete'),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.white,
               side: BorderSide(color: Colors.white.withValues(alpha: 0.6)),
-              minimumSize: const Size.fromHeight(48),
+              minimumSize: const Size.fromHeight(_deleteHeight),
             ),
             onPressed: _deleting ? null : () => unawaited(_confirmDelete()),
             icon: const Icon(Icons.delete_outline),
             label: Text(l10n.thought_delete),
-          ),
-      ],
-    );
+          );
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      child: _post.isIncoming
-          ? content
-          : ConstrainedBox(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_post.isIncoming)
+            content
+          else
+            ConstrainedBox(
               // Keep activity within the inset reserved by the thought's text.
+              // Delete stays outside the scroll, always whole on screen.
               constraints: BoxConstraints(
-                maxHeight: (188 - MediaQuery.paddingOf(context).bottom)
-                    .clamp(0.0, 188.0)
-                    .toDouble(),
+                maxHeight:
+                    (188 -
+                            MediaQuery.paddingOf(context).bottom -
+                            (delete == null ? 0 : _deleteHeight))
+                        .clamp(0.0, 188.0)
+                        .toDouble(),
               ),
               child: SingleChildScrollView(primary: false, child: content),
             ),
+          ?delete,
+        ],
+      ),
     );
   }
 
@@ -1113,3 +1126,5 @@ class _MediaPlaceholder extends StatelessWidget {
     ),
   );
 }
+
+const double _deleteHeight = 48;
