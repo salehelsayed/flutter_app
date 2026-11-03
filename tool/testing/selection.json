@@ -5908,6 +5908,8 @@
     {
       "id": "notification-lock-observation",
       "patterns": [
+        "ios/NotificationService/IosNotificationRecovery.swift",
+        "ios/RunnerTests/IosNotificationRecoveryTests.swift",
         "lib/core/notifications/bounded_posix_flock.dart",
         "lib/core/diagnostics/app_diagnostic_events.dart",
         "lib/core/diagnostics/app_diagnostics.dart",

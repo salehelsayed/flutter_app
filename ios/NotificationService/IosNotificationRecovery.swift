@@ -1238,7 +1238,14 @@ final class IosNotificationRecoveryStore {
   /// Runner can rebuild from its canonical database. An unknown future schema
   /// is never renamed or overwritten: an older binary must fail closed.
   func beginReconciliation(accountPeerId: String) -> IosNotificationRecoveryBegin? {
-    withLock(defaultValue: nil) {
+    // Security IPC can block; do not retain the shared file lock while reading
+    // Keychain, especially when Runner is approaching suspension.
+    let currentBindingHash = currentOpaqueBinding().flatMap { binding in
+      Self.isCanonicalOpaqueBinding(binding)
+        ? Self.hash(domain: "binding", value: binding)
+        : nil
+    }
+    return withLock(defaultValue: nil) {
       let loaded = loadState()
       if case .unsupported = loaded { return nil }
       if case .unavailable = loaded { return nil }
@@ -1271,11 +1278,6 @@ final class IosNotificationRecoveryStore {
         state.canonicalOrdinaryEventHashes.removeAll()
         state.mailboxAlertLease = nil
         state.activeAccountHash = accountHash
-      }
-      let currentBindingHash = currentOpaqueBinding().flatMap { binding in
-        Self.isCanonicalOpaqueBinding(binding)
-          ? Self.hash(domain: "binding", value: binding)
-          : nil
       }
       if let lease = state.mailboxAlertLease,
          lease.accountHash != accountHash ||

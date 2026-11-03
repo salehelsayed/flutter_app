@@ -7452,6 +7452,25 @@ visible and cannot become an ordinary first-attempt PASS.
   `run_ios_nse_native_373.sh` selection. This does not prove that synchronous
   badge/state I/O cannot outlive background execution. Private causal evidence:
   crash investigation `remaining-20260911/native-badge-writer/`.
+- **Recovery binding read outside the file lock:** the TestFlight 129 Runner
+  report is a `0xdead10cc` suspension termination with its main thread in
+  `SecItemCopyMatching`, reached from `beginReconciliation` while the shared
+  recovery state flock is held. The archived Runner dSYM matches the crash
+  image, and `atos` resolves the recorded addresses to this path. The store
+  source is unchanged between 129 (`bac98f244`) and 130 (`8182dbc5c`). Read and
+  hash the opaque binding before acquiring the flock; keep state loading,
+  account fencing, lease invalidation and writes inside the locked transaction.
+  The causal XCTest uses a separate open file description to probe the real
+  flock nonblockingly during the injected binding read. It fails on the old
+  ordering and passes after the move. Six exact store tests compiled against
+  the production Swift file on macOS pass, including valid-lease preservation,
+  missing/invalid/changed-binding rejection, account fencing, claim suspension,
+  capacity and delivery pruning. The two new tests remain selected by
+  `run_ios_nse_native_373.sh`. Host evidence is retained in the crash worktree's
+  `.codex-test-logs/crash-129-20261103/` (`red-004`, `green-001`); earlier compiler
+  setup failures are separate from the causal RED. This verifies lock ordering,
+  not an iOS suspension reproduction or signed-candidate proof. Already-entered
+  synchronous filesystem I/O may still outlive background execution.
 - **Debug crash provenance:** supplemental 107/110 reports match the Flutter
   3.41.4 debug engine, including distinct debug dylibs sharing build 110.
   Matched binary instructions establish allocation-failure aborts in two
