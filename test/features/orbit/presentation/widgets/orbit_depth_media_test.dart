@@ -203,7 +203,11 @@ void main() {
     );
   }
 
-  for (final (width, height) in const [(1600, 900), (900, 1600)]) {
+  for (final (width, height) in const [
+    (1600, 900),
+    (900, 1600),
+    (1440, 1440),
+  ]) {
     testWidgets(
       'a single ${width}x$height photo shows whole at its own shape, rounded '
       '22, as large as the frame allows, with nothing black behind it',
