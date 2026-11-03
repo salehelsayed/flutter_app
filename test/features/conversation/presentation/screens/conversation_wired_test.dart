@@ -2114,6 +2114,7 @@ void main() {
     int maxAttachmentBudgetBytes = kGeneralMediaAttachmentBudgetBytes,
     DateTime? notificationTappedAt,
     ThemeData? themeOverride,
+    Locale locale = const Locale('en'),
     MediaAutoDownloadDecider? autoDownloadDecider,
     ReceivedMediaActionController? receivedMediaActionController,
     PreparedDirectMediaBlobCustodyCoordinator?
@@ -2130,7 +2131,7 @@ void main() {
   }) async {
     await tester.pumpWidget(
       MaterialApp(
-        locale: const Locale('en'),
+        locale: locale,
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: themeOverride,
@@ -3809,6 +3810,124 @@ void main() {
   }
 
   group('stickers v1', () {
+    Future<void> pumpStickerComposer(
+      WidgetTester tester, {
+      Locale locale = const Locale('en'),
+    }) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
+      FlutterSecureStorage.setMockInitialValues(<String, String>{});
+      tester.view.physicalSize = const Size(1170, 2532);
+      tester.view.devicePixelRatio = 3;
+      addTearDown(tester.view.reset);
+      final tempDir = Directory.systemTemp.createTempSync('sticker_field_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _StickerTempPath(tempDir.path);
+      addTearDown(() => PathProviderPlatform.instance = previousPathProvider);
+      final messageRepo = FakeMessageRepository();
+      await pumpScreen(
+        tester,
+        locale: locale,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+      );
+    }
+
+    Finder fieldStickerToggle(WidgetTester tester) {
+      final field = find.byType(TextField);
+      final title = AppLocalizations.of(tester.element(field))!.stickers_title;
+      return find.descendant(of: field, matching: find.byTooltip(title));
+    }
+
+    for (final locale in const [Locale('en'), Locale('ar')]) {
+      testWidgets(
+        '131 sticker field: the toggle is inside the directional suffix '
+        '(${locale.languageCode})',
+        (tester) async {
+          await pumpStickerComposer(tester, locale: locale);
+          final field = find.byType(TextField);
+          final toggle = fieldStickerToggle(tester);
+          expect(toggle, findsOneWidget);
+
+          final fieldRect = tester.getRect(field);
+          final toggleCenter = tester.getCenter(toggle);
+          expect(fieldRect.contains(toggleCenter), isTrue);
+          expect(
+            toggleCenter.dx,
+            locale.languageCode == 'ar'
+                ? lessThan(fieldRect.center.dx)
+                : greaterThan(fieldRect.center.dx),
+          );
+        },
+      );
+    }
+
+    for (final returnViaField in [false, true]) {
+      testWidgets('131 sticker field: hides the keyboard and restores it from '
+          '${returnViaField ? 'the text field' : 'the keyboard toggle'}', (
+        tester,
+      ) async {
+        await pumpStickerComposer(tester);
+        final field = find.byType(TextField);
+        final toggle = fieldStickerToggle(tester);
+        expect(toggle, findsOneWidget);
+        await tester.enterText(field, 'draft stays here');
+        expect(tester.testTextInput.isVisible, isTrue);
+
+        await tester.tap(toggle);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(BundledStickerPanel), findsOneWidget);
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(
+          find.descendant(
+            of: field,
+            matching: find.byIcon(Icons.keyboard_rounded),
+          ),
+          findsOneWidget,
+        );
+
+        await tester.tap(returnViaField ? field : toggle);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(BundledStickerPanel), findsNothing);
+        expect(tester.testTextInput.isVisible, isTrue);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+        expect(
+          tester.widget<TextField>(field).controller!.text,
+          'draft stays here',
+        );
+      });
+    }
+
+    testWidgets('131 sticker field: the plus menu keeps its other actions '
+        'without Stickers', (tester) async {
+      await pumpStickerComposer(tester);
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Media Library'), findsOneWidget);
+      expect(find.text('Take Photo'), findsOneWidget);
+      expect(find.text('Record Video'), findsOneWidget);
+      expect(
+        find.byKey(ConversationWired.attachSheetCancelKey),
+        findsOneWidget,
+      );
+      expect(find.text('Stickers'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('conversation-attach-stickers-action')),
+        findsNothing,
+      );
+    });
+
     for (final strict in [true, false]) {
       testWidgets('the Stickers tile opens the panel and a tapped sticker goes '
           'out as one ordinary ${strict ? 'strict' : 'legacy'} image with the '
