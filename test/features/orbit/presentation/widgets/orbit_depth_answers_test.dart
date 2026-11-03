@@ -676,7 +676,7 @@ void main() {
     expect(shownOpacity(tester, send), 1.0);
     expect(
       tester.getSemantics(send),
-      containsSemantics(
+      isSemantics(
         label: 'Send message',
         isButton: true,
         hasEnabledState: true,
@@ -692,7 +692,7 @@ void main() {
     expect(shownOpacity(tester, send), 1.0);
     expect(
       tester.getSemantics(send),
-      containsSemantics(
+      isSemantics(
         label: 'Send message',
         hasEnabledState: true,
         isEnabled: true,

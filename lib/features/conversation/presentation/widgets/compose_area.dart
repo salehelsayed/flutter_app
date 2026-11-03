@@ -85,6 +85,10 @@ class ComposeArea extends StatefulWidget {
   /// The Thought card replies with text only, so it has no "+".
   final bool showAttachButton;
 
+  /// Keeps Send in its slot while the field is empty, disabled, for a
+  /// composer with no mic to show there instead.
+  final bool alwaysShowSend;
+
   const ComposeArea({
     super.key,
     required this.onSend,
@@ -125,6 +129,7 @@ class ComposeArea extends StatefulWidget {
     this.onTextFieldTap,
     this.hintText,
     this.showAttachButton = true,
+    this.alwaysShowSend = false,
   });
 
   @override
@@ -175,7 +180,9 @@ class _ComposeAreaState extends State<ComposeArea>
     _hasText = _controller.text.trim().isNotEmpty;
     _hasFocus = _focusNode.hasFocus;
 
-    if (widget.hasAttachments || _controller.text.trim().isNotEmpty) {
+    if (widget.alwaysShowSend ||
+        widget.hasAttachments ||
+        _controller.text.trim().isNotEmpty) {
       _sendButtonController.value = 1.0;
     }
   }
@@ -195,7 +202,8 @@ class _ComposeAreaState extends State<ComposeArea>
   }
 
   void _updateSendButton() {
-    final shouldShow = _hasText || widget.hasAttachments;
+    final shouldShow =
+        widget.alwaysShowSend || _hasText || widget.hasAttachments;
     if (shouldShow) {
       _sendButtonController.forward();
     } else {
@@ -415,6 +423,16 @@ class _ComposeAreaState extends State<ComposeArea>
 
   bool get _shouldShowSendButton =>
       (_hasText || widget.hasAttachments) && !_isRecording;
+
+  bool get _canSend =>
+      !widget.isProcessing &&
+      !widget.isSending &&
+      !widget.hasInvalidAttachment &&
+      (_hasText || widget.hasAttachments);
+
+  Color _sendColor(Color color) => widget.alwaysShowSend && !_canSend
+      ? color.withValues(alpha: color.a * .4)
+      : color;
 
   bool get _canRecordVoice =>
       widget.onRecordStart != null && widget.onRecordStop != null;
@@ -825,19 +843,9 @@ class _ComposeAreaState extends State<ComposeArea>
                                 label: AppLocalizations.of(
                                   context,
                                 )!.action_send_message,
-                                enabled:
-                                    !widget.isProcessing &&
-                                    !widget.isSending &&
-                                    !widget.hasInvalidAttachment &&
-                                    (_hasText || widget.hasAttachments),
+                                enabled: _canSend,
                                 child: GestureDetector(
-                                  onTap:
-                                      !widget.isProcessing &&
-                                          !widget.isSending &&
-                                          !widget.hasInvalidAttachment &&
-                                          (_hasText || widget.hasAttachments)
-                                      ? _onSendPressed
-                                      : null,
+                                  onTap: _canSend ? _onSendPressed : null,
                                   child: Container(
                                     // Match the VoiceRecordButton (48x48) so the
                                     // send affordance is the same size as the mic
@@ -845,7 +853,7 @@ class _ComposeAreaState extends State<ComposeArea>
                                     width: 48,
                                     height: 48,
                                     decoration: BoxDecoration(
-                                      color: readableColors.sendBg,
+                                      color: _sendColor(readableColors.sendBg),
                                       borderRadius: BorderRadius.circular(100),
                                       border: Border.all(
                                         color: readableColors.micBorder,
@@ -855,7 +863,9 @@ class _ComposeAreaState extends State<ComposeArea>
                                       child: Icon(
                                         Icons.arrow_upward_rounded,
                                         size: 20,
-                                        color: readableColors.sendIcon,
+                                        color: _sendColor(
+                                          readableColors.sendIcon,
+                                        ),
                                       ),
                                     ),
                                   ),

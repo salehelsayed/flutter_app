@@ -1098,6 +1098,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                           context,
                         )!.thought_reply_hint(shown.friend.username),
                         showAttachButton: false,
+                        alwaysShowSend: true,
                         clearOnSend: false,
                         onSend: (text) => _sendTyped(shown.thought.id, text),
                       ),
