@@ -1710,7 +1710,8 @@ void main() {
     );
 
     testWidgets(
-      'the open You page follows a late reply, a late photo and the expiry',
+      'the open You page follows a late reply, a late photo and the expiry '
+      'into history',
       (tester) async {
         debugYouPageEnabledOverride = true;
         addTearDown(() => debugYouPageEnabledOverride = null);
@@ -1811,8 +1812,27 @@ void main() {
         now = deadline.add(const Duration(seconds: 1));
         await tester.pump(const Duration(minutes: 30));
         await pumpOrbitFrames(tester, count: 4);
-        expect(find.text('Morning walk'), findsNothing);
         expect(find.text('Nothing shared right now'), findsOneWidget);
+        expect(find.textContaining('still up for'), findsNothing);
+        final pastCard = find.byKey(const ValueKey('you-thought-you-live'));
+        expect(
+          find.descendant(of: pastCard, matching: find.text('Morning walk')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: pastCard,
+            matching: find.byKey(ValueKey('you-wrote-${testContact.peerId}')),
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(
+            of: pastCard,
+            matching: find.byKey(const ValueKey('you-media-you-photo')),
+          ),
+          findsOneWidget,
+        );
 
         await finishThoughtCase(tester);
       },

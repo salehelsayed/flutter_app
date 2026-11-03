@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
@@ -14,20 +15,46 @@ import '../../../../shared/fakes/fake_just_audio.dart';
 
 final _now = DateTime.utc(2026, 11, 1, 12);
 
-PostModel _post({Duration left = const Duration(hours: 18, minutes: 10)}) =>
-    PostModel(
-      id: 'post-1',
-      eventId: 'event-1',
-      senderPeerId: 'me',
-      authorPeerId: 'me',
-      authorUsername: 'Saleh',
-      text: 'first coffee on the balcony',
-      audience: PostAudience.allFriends(),
-      createdAt: _now.subtract(const Duration(hours: 5)).toIso8601String(),
-      visibleAt: _now.subtract(const Duration(hours: 5)).toIso8601String(),
-      expiresAt: _now.add(left).toIso8601String(),
-      isIncoming: false,
-    );
+PostModel _post({
+  String id = 'post-1',
+  String text = 'first coffee on the balcony',
+  Duration age = const Duration(hours: 5),
+  Duration left = const Duration(hours: 18, minutes: 10),
+}) => PostModel(
+  id: id,
+  eventId: 'event-$id',
+  senderPeerId: 'me',
+  authorPeerId: 'me',
+  authorUsername: 'Saleh',
+  text: text,
+  audience: PostAudience.allFriends(),
+  createdAt: _now.subtract(age).toIso8601String(),
+  visibleAt: _now.subtract(age).toIso8601String(),
+  expiresAt: _now.add(left).toIso8601String(),
+  isIncoming: false,
+);
+
+YouThought _past(
+  String id,
+  String text,
+  Duration age, {
+  List<ThoughtReactionGroup> reactions = const [],
+  List<YouWroteBack> wroteBack = const [],
+}) => YouThought(
+  post: _post(
+    id: id,
+    text: text,
+    age: age,
+    left: const Duration(hours: 24) - age,
+  ),
+  reactions: reactions,
+  wroteBack: wroteBack,
+);
+
+Finder _inCard(String postId, Finder finder) => find.descendant(
+  of: find.byKey(ValueKey('you-thought-$postId')),
+  matching: finder,
+);
 
 YouThought _thought({
   bool reactions = true,
@@ -56,12 +83,14 @@ YouThought _thought({
       : const [],
 );
 
-YouPageData _data({YouThought? thought}) => YouPageData(
-  username: 'Saleh',
-  avatarBytes: null,
-  friendCount: 41,
-  thought: thought,
-);
+YouPageData _data({YouThought? thought, List<YouThought> past = const []}) =>
+    YouPageData(
+      username: 'Saleh',
+      avatarBytes: null,
+      friendCount: 41,
+      thought: thought,
+      past: past,
+    );
 
 Finder _keysStartingWith(String prefix) => find.byWidgetPredicate(
   (widget) =>
@@ -97,7 +126,8 @@ void main() {
 
   Future<void> pumpPage(
     WidgetTester tester,
-    Future<YouPageData> Function() load, {
+    Future<YouPageData> Function()? load, {
+    Future<YouPageData> Function(int historyLimit)? paged,
     DateTime Function()? now,
   }) async {
     await tester.pumpWidget(
@@ -106,7 +136,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
-          load: load,
+          load: paged ?? (_) => load!(),
           now: now ?? () => _now,
           onBack: () => backCalls++,
           onOpenChat: (peerId) async => openedChats.add(peerId),
@@ -324,7 +354,118 @@ void main() {
 
     expect(loads, greaterThan(1));
     expect(find.byKey(const ValueKey('you-media-viewer')), findsNothing);
-    expect(find.text('first coffee on the balcony'), findsNothing);
+    expect(find.text('first coffee on the balcony'), findsOneWidget);
+    expect(find.textContaining('still up for'), findsNothing);
     expect(find.text('Nothing shared right now'), findsOneWidget);
+  });
+
+  testWidgets(
+    'past thoughts sit above the live one, oldest at the top, each with its '
+    'own reacted and wrote-back rows',
+    (tester) async {
+      final older = _past(
+        'past-old',
+        'rain on the tram',
+        const Duration(days: 3),
+        reactions: [
+          (
+            reaction: ThoughtReaction.love,
+            participants: [(peerId: 'omar', name: 'Omar')],
+          ),
+        ],
+      );
+      final newer = _past(
+        'past-new',
+        'new shoes',
+        const Duration(hours: 30),
+        wroteBack: const [
+          YouWroteBack(peerId: 'sara', name: 'Sara', hasUnread: false),
+        ],
+      );
+      await pumpPage(
+        tester,
+        () async => _data(
+          thought: _thought(reactions: false, wroteBack: false),
+          past: [newer, older],
+        ),
+      );
+
+      double top(String text) => tester.getTopLeft(find.text(text)).dy;
+      expect(top('rain on the tram'), lessThan(top('new shoes')));
+      expect(top('new shoes'), lessThan(top('first coffee on the balcony')));
+
+      expect(_inCard('past-old', find.text('1 reacted')), findsOneWidget);
+      expect(
+        _inCard(
+          'past-old',
+          find.byKey(const ValueKey('you-reaction-omar-love')),
+        ),
+        findsOneWidget,
+      );
+      expect(_inCard('past-new', find.text('1 wrote back')), findsOneWidget);
+      expect(_inCard('post-1', find.textContaining('reacted')), findsNothing);
+      expect(
+        _inCard('post-1', find.textContaining('wrote back')),
+        findsNothing,
+      );
+      expect(
+        _inCard('post-1', find.text('still up for friends · gone in 19 h')),
+        findsOneWidget,
+      );
+      expect(_inCard('post-1', find.text('Today')), findsOneWidget);
+      expect(_inCard('past-new', find.text('Yesterday')), findsOneWidget);
+
+      await tester.tap(
+        _inCard('past-new', find.byKey(const ValueKey('you-wrote-sara'))),
+      );
+      await tester.pumpAndSettle();
+      expect(openedChats, ['sara']);
+    },
+  );
+
+  testWidgets('an expired thought shows its day but no live line', (
+    tester,
+  ) async {
+    await pumpPage(
+      tester,
+      () async => _data(
+        past: [_past('past-new', 'new shoes', const Duration(hours: 30))],
+      ),
+    );
+
+    expect(find.text('new shoes'), findsOneWidget);
+    expect(_inCard('past-new', find.text('Yesterday')), findsOneWidget);
+    expect(find.textContaining('still up for'), findsNothing);
+    expect(find.text('Nothing shared right now'), findsOneWidget);
+  });
+
+  testWidgets('scrolling to the oldest past thought loads the next page', (
+    tester,
+  ) async {
+    final limits = <int>[];
+    await pumpPage(
+      tester,
+      null,
+      paged: (limit) async {
+        limits.add(limit);
+        return _data(
+          past: [
+            for (var i = 0; i < limit; i++)
+              _past('past-$i', 'past $i', Duration(days: i + 2)),
+          ],
+        );
+      },
+    );
+    expect(limits, [20]);
+
+    for (var i = 0; i < 20 && limits.length == 1; i++) {
+      await tester.drag(
+        find.byKey(const ValueKey('you-feed')),
+        const Offset(0, 600),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    expect(limits, [20, 40]);
   });
 }

@@ -3549,7 +3549,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
-            load: () => _loadYouPage(identity),
+            load: (_) => _loadYouPage(identity),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
@@ -3625,6 +3625,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       avatarBytes: _avatarBytes,
       friendCount: friends.length,
       thought: thought,
+      past: const [],
     );
   }
 

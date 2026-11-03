@@ -20,6 +20,7 @@ class YouPageData {
     required this.avatarBytes,
     required this.friendCount,
     required this.thought,
+    required this.past,
   });
 
   final String username;
@@ -28,6 +29,9 @@ class YouPageData {
 
   /// The one live own Thought, or null when nothing is up.
   final YouThought? thought;
+
+  /// Expired own Thoughts, newest first.
+  final List<YouThought> past;
 }
 
 class YouThought {
@@ -60,6 +64,7 @@ const _muted = Color(0xFF9AA59F);
 const _accent = Color(0xFF1DB954);
 const _friendsBlue = Color(0xFF5FB3C9);
 const _hairline = Color(0x14E8ECE9);
+const _historyPage = 20;
 const _mono = TextStyle(
   fontFamily: 'Menlo',
   fontFamilyFallback: ['Courier', 'monospace'],
@@ -79,7 +84,8 @@ class YouPageScreen extends StatefulWidget {
     this.changes = const [],
   });
 
-  final Future<YouPageData> Function() load;
+  /// Loads the page with at most [historyLimit] past Thoughts.
+  final Future<YouPageData> Function(int historyLimit) load;
 
   /// Any event reloads the page: a stored post or a reply changed.
   final List<Stream<Object?>> changes;
@@ -136,7 +142,7 @@ class _YouPageScreenState extends State<YouPageScreen>
   Future<void> _reload() async {
     final generation = ++_generation;
     try {
-      final data = await widget.load();
+      final data = await widget.load(_historyPage);
       if (!mounted || generation != _generation) return;
       if (data.thought?.post.id != _data?.thought?.post.id) _closeMediaViewer();
       setState(() => _data = data);
@@ -163,6 +169,7 @@ class _YouPageScreenState extends State<YouPageScreen>
           avatarBytes: data.avatarBytes,
           friendCount: data.friendCount,
           thought: null,
+          past: data.past,
         ),
       );
     }

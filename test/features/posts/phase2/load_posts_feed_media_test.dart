@@ -64,12 +64,19 @@ void main() {
 
       final history = await loadOwnThoughtHistory(
         postRepo: posts,
+        historyLimit: 20,
         mediaFileManager: mediaFileManager,
         viewerPeerId: 'author',
         nowProvider: () => now,
       );
+      final newestOnly = await loadOwnThoughtHistory(
+        postRepo: posts,
+        historyLimit: 1,
+        nowProvider: () => now,
+      );
 
       expect(history.map((post) => post.id), ['own-newer', 'own-older']);
+      expect(newestOnly.map((post) => post.id), ['own-newer']);
       expect(history.first.media, hasLength(1));
       expect(history.first.mediaKind, 'image');
       expect(
