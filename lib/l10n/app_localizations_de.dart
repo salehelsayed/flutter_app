@@ -258,6 +258,17 @@ class AppLocalizationsDe extends AppLocalizations {
       'Zoomen und verschieben: Wähle, was Freunde sehen';
 
   @override
+  String get thought_photo_fit => 'Ganz';
+
+  @override
+  String get thought_photo_fill => 'Füllen';
+
+  @override
+  String thought_photo_position(int index, int count) {
+    return 'Foto $index von $count';
+  }
+
+  @override
   String get thought_compose_open => 'Gedanken teilen';
 
   @override

@@ -12,8 +12,9 @@ import '../thought_photo_framing.dart';
 
 /// The picked photos inside the Thought composer. One shows at a time in a
 /// square frame, framed the way friends will see it: a pinch zooms and a
-/// drag places it. With several, a tap on a thumbnail below shows that
-/// one; each keeps its own framing. The X takes the shown photo out.
+/// drag places it, and Fit and Fill under it show the whole photo or cover
+/// the square. With several, a tap on a thumbnail below shows that one;
+/// each keeps its own framing. The X takes the shown photo out.
 class ThoughtPhotoDraftPreview extends StatefulWidget {
   const ThoughtPhotoDraftPreview({
     super.key,
@@ -43,6 +44,7 @@ class _ThoughtPhotoDraftPreviewState extends State<ThoughtPhotoDraftPreview> {
     final shown = math.min(_shown, widget.paths.length - 1);
     final path = widget.paths[shown];
     final rc = context.backgroundReadableColors;
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -51,7 +53,9 @@ class _ThoughtPhotoDraftPreviewState extends State<ThoughtPhotoDraftPreview> {
           path: path,
           framing: widget.framings[path] ?? PhotoFraming.cover,
           onFramed: (framing) => widget.onFramed?.call(path, framing),
-          hint: AppLocalizations.of(context)!.thought_photo_frame_hint,
+          hint: l10n.thought_photo_frame_hint,
+          fitLabel: l10n.thought_photo_fit,
+          fillLabel: l10n.thought_photo_fill,
           removeLabel: MaterialLocalizations.of(context).deleteButtonTooltip,
           onRemove: () => widget.onRemove(shown),
         ),
@@ -63,29 +67,39 @@ class _ThoughtPhotoDraftPreviewState extends State<ThoughtPhotoDraftPreview> {
               scrollDirection: Axis.horizontal,
               itemCount: widget.paths.length,
               separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) => GestureDetector(
+              itemBuilder: (context, index) => Semantics(
                 key: ValueKey('thought-photo-thumb-$index'),
+                button: true,
+                selected: index == shown,
+                label: l10n.thought_photo_position(
+                  index + 1,
+                  widget.paths.length,
+                ),
                 onTap: () => setState(() => _shown = index),
-                child: Container(
-                  width: _thumbSide,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                      color: index == shown ? rc.accent : Colors.transparent,
-                      width: 2,
-                    ),
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image(
-                      image: ResizeImage.resizeIfNeeded(
-                        168,
-                        null,
-                        FileImage(File(widget.paths[index])),
+                excludeSemantics: true,
+                child: GestureDetector(
+                  onTap: () => setState(() => _shown = index),
+                  child: Container(
+                    width: _thumbSide,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: index == shown ? rc.accent : Colors.transparent,
+                        width: 2,
                       ),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) =>
-                          const ColoredBox(color: Colors.black),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image(
+                        image: ResizeImage.resizeIfNeeded(
+                          168,
+                          null,
+                          FileImage(File(widget.paths[index])),
+                        ),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, _, _) =>
+                            const ColoredBox(color: Colors.black),
+                      ),
                     ),
                   ),
                 ),
@@ -108,6 +122,8 @@ class _FramedPhoto extends StatefulWidget {
     required this.framing,
     required this.onFramed,
     required this.hint,
+    required this.fitLabel,
+    required this.fillLabel,
     required this.removeLabel,
     required this.onRemove,
   });
@@ -116,6 +132,8 @@ class _FramedPhoto extends StatefulWidget {
   final PhotoFraming framing;
   final ValueChanged<PhotoFraming> onFramed;
   final String hint;
+  final String fitLabel;
+  final String fillLabel;
   final String removeLabel;
   final VoidCallback onRemove;
 
@@ -123,7 +141,16 @@ class _FramedPhoto extends StatefulWidget {
   State<_FramedPhoto> createState() => _FramedPhotoState();
 }
 
-class _FramedPhotoState extends State<_FramedPhoto> {
+class _FramedPhotoState extends State<_FramedPhoto>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _move = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+
+  /// Where the photo was when Fit or Fill was tapped; it glides from there.
+  Rect? _movedFrom;
+
   late final ImageProvider _image = _FramePhotoImage(widget.path);
   ImageStream? _stream;
   late final _listener = ImageStreamListener(_onImage, onError: _onError);
@@ -153,7 +180,27 @@ class _FramedPhotoState extends State<_FramedPhoto> {
   @override
   void dispose() {
     _stream?.removeListener(_listener);
+    _move.dispose();
     super.dispose();
+  }
+
+  Rect _shownCrop(Size photo) {
+    final target = widget.framing.cropRect(photo);
+    final from = _movedFrom;
+    if (from == null || !_move.isAnimating) return target;
+    return Rect.lerp(from, target, Curves.easeOutCubic.transform(_move.value))!;
+  }
+
+  void _choose(Size photo, PhotoFraming target) {
+    final from = _shownCrop(photo);
+    widget.onFramed(target);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _move.stop();
+      _movedFrom = null;
+      return;
+    }
+    _movedFrom = from;
+    _move.forward(from: 0);
   }
 
   void _onImage(ImageInfo info, bool _) {
@@ -176,7 +223,7 @@ class _FramedPhotoState extends State<_FramedPhoto> {
       builder: (context, constraints) {
         final side = math.min(constraints.maxWidth, _maxFrameSide);
         final photo = _photo;
-        return Center(
+        final frame = Center(
           child: SizedBox.square(
             key: const ValueKey('thought-photo-frame-box'),
             dimension: side,
@@ -193,7 +240,11 @@ class _FramedPhotoState extends State<_FramedPhoto> {
                   else
                     const ColoredBox(color: Colors.black),
                   if (photo != null)
-                    _placed(photo, widget.framing, side)
+                    AnimatedBuilder(
+                      animation: _move,
+                      builder: (context, _) =>
+                          _placed(photo, _shownCrop(photo), side),
+                    )
                   else if (_failed)
                     const Icon(
                       Icons.broken_image_outlined,
@@ -249,14 +300,31 @@ class _FramedPhotoState extends State<_FramedPhoto> {
             ),
           ),
         );
+        if (photo == null || PhotoFraming.wholeScale(photo) > 1 - 1e-6) {
+          return frame;
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            frame,
+            const SizedBox(height: 10),
+            _FitFill(
+              fitLabel: widget.fitLabel,
+              fillLabel: widget.fillLabel,
+              isFit: widget.framing.isWhole(photo),
+              isFill: widget.framing.isCover,
+              onFit: () => _choose(photo, PhotoFraming.whole(photo)),
+              onFill: () => _choose(photo, PhotoFraming.cover),
+            ),
+          ],
+        );
       },
     );
   }
 
-  /// The photo at its framing, under a gesture layer that owns every
-  /// pointer landing on it, so the sheet neither scrolls nor closes.
-  Widget _placed(Size photo, PhotoFraming framing, double side) {
-    final crop = framing.cropRect(photo);
+  /// The photo at [crop], under a gesture layer that owns every pointer
+  /// landing on it, so the sheet neither scrolls nor closes.
+  Widget _placed(Size photo, Rect crop, double side) {
     final zoom = side / crop.width;
     return RawGestureDetector(
       key: const ValueKey('thought-photo-frame'),
@@ -267,6 +335,8 @@ class _FramedPhotoState extends State<_FramedPhoto> {
               _EagerScaleGestureRecognizer.new,
               (recognizer) => recognizer
                 ..onStart = (details) {
+                  _move.stop();
+                  _movedFrom = null;
                   _gestureStart = widget.framing;
                   _gestureFrom = details.localFocalPoint;
                 }
@@ -292,9 +362,90 @@ class _FramedPhotoState extends State<_FramedPhoto> {
               key: const ValueKey('thought-photo-framed-image'),
               image: _image,
               fit: BoxFit.fill,
+              excludeFromSemantics: true,
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Two quiet choices in one pill under the frame: the whole photo, or the
+/// photo covering the square. Neither is selected once the user has
+/// pinched or dragged the photo elsewhere.
+class _FitFill extends StatelessWidget {
+  const _FitFill({
+    required this.fitLabel,
+    required this.fillLabel,
+    required this.isFit,
+    required this.isFill,
+    required this.onFit,
+    required this.onFill,
+  });
+
+  final String fitLabel;
+  final String fillLabel;
+  final bool isFit;
+  final bool isFill;
+  final VoidCallback onFit;
+  final VoidCallback onFill;
+
+  @override
+  Widget build(BuildContext context) {
+    final rc = context.backgroundReadableColors;
+    final still = MediaQuery.disableAnimationsOf(context);
+    Widget choice(String key, String label, bool selected, VoidCallback tap) =>
+        Semantics(
+          key: ValueKey(key),
+          button: true,
+          selected: selected,
+          inMutuallyExclusiveGroup: true,
+          label: label,
+          onTap: tap,
+          excludeSemantics: true,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: tap,
+            child: AnimatedContainer(
+              duration: still
+                  ? Duration.zero
+                  : const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              constraints: const BoxConstraints(minWidth: 84, minHeight: 44),
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              alignment: Alignment.center,
+              decoration: ShapeDecoration(
+                shape: const StadiumBorder(),
+                color: selected
+                    ? rc.textPrimary
+                    : rc.textPrimary.withValues(alpha: 0),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: selected ? rc.surfaceBase : rc.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        );
+    return DecoratedBox(
+      decoration: ShapeDecoration(
+        shape: StadiumBorder(side: BorderSide(color: rc.glassBorder)),
+        color: rc.surfaceSubtle,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            choice('thought-photo-fit', fitLabel, isFit, onFit),
+            choice('thought-photo-fill', fillLabel, isFill, onFill),
+          ],
+        ),
       ),
     );
   }

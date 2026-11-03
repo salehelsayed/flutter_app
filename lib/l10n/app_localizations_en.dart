@@ -248,6 +248,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'Pinch and drag to choose what friends see';
 
   @override
+  String get thought_photo_fit => 'Fit';
+
+  @override
+  String get thought_photo_fill => 'Fill';
+
+  @override
+  String thought_photo_position(int index, int count) {
+    return 'Photo $index of $count';
+  }
+
+  @override
   String get thought_compose_open => 'Share a thought';
 
   @override

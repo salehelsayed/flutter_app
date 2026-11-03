@@ -27,6 +27,14 @@ class PhotoFraming {
 
   double _scaleOn(Size photo) => scale.clamp(wholeScale(photo), maxScale);
 
+  /// The whole photo inside the square, centred.
+  static PhotoFraming whole(Size photo) =>
+      PhotoFraming(scale: wholeScale(photo));
+
+  bool isWhole(Size photo) => _scaleOn(photo) <= wholeScale(photo) + 1e-9;
+
+  bool get isCover => scale == 1 && center == const Offset(.5, .5);
+
   /// The framed square on a photo of [photo] pixels, as displayed (EXIF
   /// orientation already applied). Along a side longer than the square it
   /// never passes the photo's edges; along a shorter side the photo sits

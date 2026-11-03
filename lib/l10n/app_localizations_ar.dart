@@ -240,6 +240,17 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_photo_frame_hint => 'قرّب واسحب لتختار ما يراه أصدقاؤك';
 
   @override
+  String get thought_photo_fit => 'كاملة';
+
+  @override
+  String get thought_photo_fill => 'ملء';
+
+  @override
+  String thought_photo_position(int index, int count) {
+    return 'الصورة $index من $count';
+  }
+
+  @override
   String get thought_compose_open => 'شارك خاطرة';
 
   @override

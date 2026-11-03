@@ -532,6 +532,24 @@ abstract class AppLocalizations {
   /// **'Pinch and drag to choose what friends see'**
   String get thought_photo_frame_hint;
 
+  /// Thought composer: button under the photo frame that shows the whole photo in the square
+  ///
+  /// In en, this message translates to:
+  /// **'Fit'**
+  String get thought_photo_fit;
+
+  /// Thought composer: button under the photo frame that makes the photo cover the square, centred
+  ///
+  /// In en, this message translates to:
+  /// **'Fill'**
+  String get thought_photo_fill;
+
+  /// Thought composer: screen reader label of a picked photo thumbnail
+  ///
+  /// In en, this message translates to:
+  /// **'Photo {index} of {count}'**
+  String thought_photo_position(int index, int count);
+
   /// No description provided for @thought_compose_open.
   ///
   /// In en, this message translates to:
