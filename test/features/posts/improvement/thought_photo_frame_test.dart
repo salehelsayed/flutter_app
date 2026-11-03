@@ -550,6 +550,32 @@ void main() {
     );
   });
 
+  testWidgets('a drag during the Fit glide carries on from where the photo '
+      'is shown', (tester) async {
+    final photo = quarters('glide', 400, 300);
+    await openWith(tester, [photo]);
+    await tester.tap(fit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+    final mid = tester.getRect(framedImage);
+    expect(mid.width, inExclusiveRange(361, 479), reason: 'mid-glide');
+
+    final finger = await tester.startGesture(tester.getRect(frame).center);
+    await tester.pump();
+    await finger.moveBy(const Offset(2, 0));
+    await tester.pump();
+    final moved = tester.getRect(framedImage);
+    expect(moved.width, moreOrLessEquals(mid.width, epsilon: .5));
+    expect(moved.left, moreOrLessEquals(mid.left + 2, epsilon: 1));
+    await finger.up();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(
+      tester.getRect(framedImage).width,
+      moreOrLessEquals(mid.width, epsilon: .5),
+      reason: 'the glide does not resume',
+    );
+  });
+
   testWidgets('with reduce motion Fit jumps to the whole photo at once', (
     tester,
   ) async {
