@@ -130,8 +130,17 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
 
-  /// A Thought photo's framing by path, once its frame has shown it.
+  /// A Thought photo's framing by path, once the user has framed it.
   Map<String, PhotoFraming> _framings = const {};
+
+  /// Every Thought photo's framing by path, centred cover until framed.
+  Map<String, PhotoFraming> get _photoFramings => {
+    if (widget.thoughtsOnly)
+      for (final draft in _mediaDrafts)
+        if (draft.kind == 'image')
+          draft.localFilePath:
+              _framings[draft.localFilePath] ?? PhotoFraming.cover,
+  };
   _ComposeNotice? _notice;
   final AmplitudeBuffer _amplitudeBuffer = AmplitudeBuffer(size: 24);
   StreamSubscription<Duration>? _durationSubscription;
@@ -204,13 +213,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               ),
               _ => PostAudience.allFriends(),
             };
+      final framings = _photoFramings;
       final outcome = await _submitPost(
         ComposePostResult(
           text: _textController.text.trim(),
           audience: audience,
           mediaDrafts: [
             for (final draft in _mediaDrafts)
-              if (_framings[draft.localFilePath] case final framing?)
+              if (framings[draft.localFilePath] case final framing?)
                 await _framed(draft, framing)
               else
                 draft,
@@ -878,7 +888,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           const SizedBox(height: 12),
           ThoughtPhotoDraftPreview(
             paths: [for (final draft in _mediaDrafts) draft.localFilePath],
-            framings: _framings,
+            framings: _photoFramings,
             onFramed: (path, framing) =>
                 setState(() => _framings = {..._framings, path: framing}),
             onRemove: (index) => setState(() {

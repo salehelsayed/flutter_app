@@ -57,6 +57,17 @@ void main() {
     await tester.tap(finder);
   }
 
+  /// A shared photo is baked first; a missing file fails it fast.
+  Future<void> until(WidgetTester tester, bool Function() done) async {
+    for (var i = 0; i < 300 && !done(); i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(done(), isTrue);
+  }
+
   /// Photos show inside the sheet; nothing opens over it.
   Future<void> finishPick(WidgetTester tester) async {
     await tester.pumpAndSettle();
@@ -175,7 +186,7 @@ void main() {
           tester,
           find.byKey(const ValueKey('thought-composer-share')),
         );
-        await tester.pump();
+        await until(tester, () => submitted != null);
         expect(submitted!.text, isEmpty);
         expect(submitted!.audience.kind, PostAudienceKind.allFriends);
         expect(submitted!.mediaDrafts.single, same(draft));
@@ -408,8 +419,7 @@ void main() {
     );
 
     await tester.tap(shareButton);
-    await tester.pump();
-    expect(shared, 1);
+    await until(tester, () => shared == 1);
   });
 
   testWidgets('a mixed photo and video pick keeps photos and says so', (

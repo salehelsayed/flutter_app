@@ -24,7 +24,7 @@ class ThoughtPhotoDraftPreview extends StatefulWidget {
   final List<String> paths;
   final ValueChanged<int> onRemove;
 
-  /// Each photo's framing by path, once its frame has shown it.
+  /// Each photo's framing by path; centred cover when absent.
   final Map<String, PhotoFraming> framings;
   final void Function(String path, PhotoFraming framing)? onFramed;
 
@@ -47,7 +47,7 @@ class _ThoughtPhotoDraftPreviewState extends State<ThoughtPhotoDraftPreview> {
         _FramedPhoto(
           key: ValueKey('thought-photo-draft-$path'),
           path: path,
-          framing: widget.framings[path],
+          framing: widget.framings[path] ?? PhotoFraming.cover,
           onFramed: (framing) => widget.onFramed?.call(path, framing),
           hint: AppLocalizations.of(context)!.thought_photo_frame_hint,
           removeLabel: MaterialLocalizations.of(context).deleteButtonTooltip,
@@ -111,7 +111,7 @@ class _FramedPhoto extends StatefulWidget {
   });
 
   final String path;
-  final PhotoFraming? framing;
+  final PhotoFraming framing;
   final ValueChanged<PhotoFraming> onFramed;
   final String hint;
   final String removeLabel;
@@ -157,7 +157,6 @@ class _FramedPhotoState extends State<_FramedPhoto> {
     info.dispose();
     if (!mounted) return;
     setState(() => _photo = size);
-    if (widget.framing == null) widget.onFramed(PhotoFraming.cover);
   }
 
   void _onError(Object _, StackTrace? _) {
@@ -170,7 +169,6 @@ class _FramedPhotoState extends State<_FramedPhoto> {
       builder: (context, constraints) {
         final side = math.min(constraints.maxWidth, _maxFrameSide);
         final photo = _photo;
-        final framing = widget.framing;
         return Center(
           child: SizedBox.square(
             key: const ValueKey('thought-photo-frame-box'),
@@ -181,8 +179,8 @@ class _FramedPhotoState extends State<_FramedPhoto> {
                 fit: StackFit.expand,
                 children: [
                   const ColoredBox(color: Colors.black),
-                  if (photo != null && framing != null)
-                    _placed(photo, framing, side)
+                  if (photo != null)
+                    _placed(photo, widget.framing, side)
                   else if (_failed)
                     const Icon(
                       Icons.broken_image_outlined,
@@ -256,7 +254,7 @@ class _FramedPhotoState extends State<_FramedPhoto> {
               _EagerScaleGestureRecognizer.new,
               (recognizer) => recognizer
                 ..onStart = (details) {
-                  _gestureStart = widget.framing ?? PhotoFraming.cover;
+                  _gestureStart = widget.framing;
                   _gestureFrom = details.localFocalPoint;
                 }
                 ..onUpdate = (details) => widget.onFramed(
