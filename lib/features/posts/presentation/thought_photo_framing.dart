@@ -76,8 +76,8 @@ class PhotoFraming {
 }
 
 /// The framed square of [draft]'s photo as a new JPEG of at most [maxSide]
-/// pixels a side, and never larger than the framed area of the source. Any
-/// part of the square the photo leaves empty is [photoEdgeColor]. The
+/// pixels a side, and never larger than the framed area of the source. The
+/// photo is drawn on [photoEdgeColor], as the composer's preview is. The
 /// engine decoder applies EXIF orientation, as the composer's preview does.
 Future<PostMediaDraft> bakeFramedPhoto(
   PostMediaDraft draft,
@@ -95,11 +95,12 @@ Future<PostMediaDraft> bakeFramedPhoto(
           .width;
       final shrink = math.min(1.0, maxSide / framed);
       return ui.TargetImageSize(
-        width: (width * shrink).round(),
-        height: (height * shrink).round(),
+        width: math.max(1, (width * shrink).round()),
+        height: math.max(1, (height * shrink).round()),
       );
     },
   );
+  final matte = await photoEdgeColor(draft.localFilePath);
   final ui.Image photo;
   try {
     photo = (await codec.getNextFrame()).image;
@@ -113,14 +114,7 @@ Future<PostMediaDraft> bakeFramedPhoto(
     final side = math.min(maxSide, crop.width.round());
     final zoom = side / crop.width;
     final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder);
-    if (!(Offset.zero & size).inflate(.5).contains(crop.topLeft) ||
-        !(Offset.zero & size).inflate(.5).contains(crop.bottomRight)) {
-      canvas.drawColor(
-        await photoEdgeColor(draft.localFilePath),
-        ui.BlendMode.src,
-      );
-    }
+    final canvas = ui.Canvas(recorder)..drawColor(matte, ui.BlendMode.src);
     canvas.drawImageRect(
       photo,
       Offset.zero & size,
