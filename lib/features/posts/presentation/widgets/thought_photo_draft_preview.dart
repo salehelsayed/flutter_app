@@ -354,18 +354,25 @@ class _FramePhotoImage extends ImageProvider<_FramePhotoImage> {
     _FramePhotoImage key,
     ImageDecoderCallback decode,
   ) => OneFrameImageStreamCompleter(() async {
-    final buffer = await ui.ImmutableBuffer.fromUint8List(
-      await File(path).readAsBytes(),
-    );
-    final codec = await decode(
-      buffer,
-      getTargetSize: (width, height) =>
-          thoughtDecodeSize(width, height, 1440 / math.max(width, height)),
-    );
     try {
-      return ImageInfo(image: (await codec.getNextFrame()).image);
-    } finally {
-      codec.dispose();
+      final buffer = await ui.ImmutableBuffer.fromUint8List(
+        await File(path).readAsBytes(),
+      );
+      final codec = await decode(
+        buffer,
+        getTargetSize: (width, height) =>
+            thoughtDecodeSize(width, height, 1440 / math.max(width, height)),
+      );
+      try {
+        return ImageInfo(image: (await codec.getNextFrame()).image);
+      } finally {
+        codec.dispose();
+      }
+    } catch (_) {
+      // A failed load stays cached under this path otherwise, so the same
+      // file could never open again once it is readable.
+      PaintingBinding.instance.imageCache.evict(key);
+      rethrow;
     }
   }());
 
