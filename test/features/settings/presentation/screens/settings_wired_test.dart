@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart'
     as identity_db;
@@ -443,6 +444,23 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  testWidgets('Settings exposes app updates with installed version and build', (
+    tester,
+  ) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Mknoon',
+      packageName: 'com.mknoon.app',
+      version: '1.0.1',
+      buildNumber: '130',
+      buildSignature: '',
+    );
+    await pumpScreen(tester, identityRepo: FakeIdentityRepository(makeIdentity()));
+    await tester.pump();
+    expect(find.text('App updates'), findsOneWidget);
+    expect(find.text('Your version: 1.0.1 (130)'), findsOneWidget);
+    expect(find.text('Status unavailable'), findsOneWidget);
+  });
 
   Future<void> pumpUntilObserved(
     WidgetTester tester,
