@@ -1519,21 +1519,18 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       container: true,
       label: '${seat.friend.username} · $ageText',
       onTap: _bySemantics(open),
-      // While replying, a text or voice thought keeps at least its resting
-      // height and shows only its top: the composer and keyboard leave too
-      // little for its fixed parts. A photo shrinks into the space as before.
+      // While replying, the thought keeps at least its resting height and
+      // shows only its top, so a photo and its caption are never squeezed.
       // The clip stays mounted so a playing voice note is never rebuilt.
-      child: photo
-          ? content
-          : LayoutBuilder(
-              builder: (context, box) => ClipRect(
-                child: OverflowBox(
-                  alignment: Alignment.topCenter,
-                  maxHeight: math.max(box.maxHeight, restHeight),
-                  child: content,
-                ),
-              ),
-            ),
+      child: LayoutBuilder(
+        builder: (context, box) => ClipRect(
+          child: OverflowBox(
+            alignment: Alignment.topCenter,
+            maxHeight: math.max(box.maxHeight, restHeight),
+            child: content,
+          ),
+        ),
+      ),
     );
   }
 }
