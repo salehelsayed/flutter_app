@@ -207,8 +207,9 @@ void main() {
       ).readAsBytesSync();
       expect(restoredBytes, orderedEquals(plaintextBytes()));
 
-      // Command-log counts: one keygen+encrypt+upload per attachment, one
-      // message.encrypt per recipient.
+      // Command-log counts: one keygen+encrypt+upload per attachment, and
+      // two message.encrypt per recipient for an image-only Thought (the
+      // canonical envelope plus the compact iOS push preview).
       expect(
         author.bridge.commandLog.where((command) => command == 'blob:encrypt'),
         hasLength(1),
@@ -221,7 +222,7 @@ void main() {
         author.bridge.commandLog.where(
           (command) => command == 'message.encrypt',
         ),
-        hasLength(1),
+        hasLength(2),
       );
     },
   );
@@ -333,7 +334,7 @@ void main() {
         author.bridge.commandLog.where(
           (command) => command == 'message.encrypt',
         ),
-        hasLength(3),
+        hasLength(6),
       );
     },
   );
