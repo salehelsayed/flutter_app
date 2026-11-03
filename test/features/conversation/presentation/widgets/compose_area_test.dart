@@ -4,6 +4,7 @@ import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import '../../../translate_preview/fake_model_delivery_controller.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/l10n/app_localizations_en.dart';
@@ -671,6 +672,31 @@ void main() {
       final opacityWidgets = tester.widgetList<Opacity>(find.byType(Opacity));
       final zeroOpacity = opacityWidgets.where((o) => o.opacity == 0.0);
       expect(zeroOpacity, isNotEmpty);
+    });
+
+    testWidgets('by default an empty chat composer hides Send until there is '
+        'text', (tester) async {
+      double shown() {
+        var opacity = 1.0;
+        for (
+          RenderObject? box = tester.renderObject(
+            find.byIcon(Icons.arrow_upward_rounded),
+          );
+          box != null;
+          box = box.parent
+        ) {
+          if (box is RenderOpacity) opacity *= box.opacity;
+        }
+        return opacity;
+      }
+
+      await tester.pumpWidget(buildTestWidget());
+      await tester.pumpAndSettle();
+      expect(shown(), 0.0);
+
+      await tester.enterText(find.byType(TextField), 'hi');
+      await tester.pumpAndSettle();
+      expect(shown(), 1.0);
     });
 
     testWidgets('send button reacts to hasAttachments changing to true', (

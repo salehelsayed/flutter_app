@@ -662,6 +662,49 @@ void main() {
     return opacity;
   }
 
+  testWidgets('an empty Reply shows Send in its slot, disabled until there '
+      'is text, then Send sends', (tester) async {
+    final handle = tester.ensureSemantics();
+    await mount(tester);
+    await enter(tester);
+    await tap(tester, replyButton);
+    final send = find.descendant(
+      of: composer,
+      matching: find.byIcon(Icons.arrow_upward_rounded),
+    );
+    expect(send, findsOneWidget);
+    expect(shownOpacity(tester, send), 1.0);
+    expect(
+      tester.getSemantics(send),
+      containsSemantics(
+        label: 'Send message',
+        isButton: true,
+        hasEnabledState: true,
+        isEnabled: false,
+      ),
+    );
+    await tap(tester, send);
+    expect(sent, isEmpty);
+    expect(composer, findsOneWidget);
+
+    await tester.enterText(composerField, 'nice one');
+    await rest(tester);
+    expect(shownOpacity(tester, send), 1.0);
+    expect(
+      tester.getSemantics(send),
+      containsSemantics(
+        label: 'Send message',
+        hasEnabledState: true,
+        isEnabled: true,
+      ),
+    );
+    await tap(tester, send);
+    expect(sent.map((s) => (s.text, s.postId)), [('nice one', 'post-0')]);
+    expect(composer, findsNothing);
+    await finish(tester);
+    handle.dispose();
+  });
+
   for (final size in const [Size(360, 640), Size(390, 844), Size(412, 915)]) {
     testWidgets('on a ${size.width.toInt()}x${size.height.toInt()} phone the '
         'bar sits in the bottom fifth after a swipe up, and between the '
