@@ -416,16 +416,28 @@ void main() {
       kinds[kind]!();
       await mount(tester, _phones[0]);
       await enter(tester, up: true);
+      final player = kind.contains('voice') ? tester.state(voice) : null;
+      void expectSamePlayer(String when) {
+        if (player == null) return;
+        expect(player.mounted, isTrue, reason: when);
+        expect(identical(tester.state(voice), player), isTrue, reason: when);
+      }
+
       await tester.tap(reply);
       await tester.pump();
       final composer = find.byKey(const ValueKey('orbit-depth-composer'));
       expect(composer, findsOneWidget);
+      expectSamePlayer('opening Reply keeps the playing voice note');
       tester.view.viewInsets = const FakeViewPadding(bottom: 280);
       await tester.pump();
       expect(tester.takeException(), isNull);
       expect(tester.getRect(composer).bottom, lessThanOrEqualTo(360));
+      expectSamePlayer('the keyboard keeps the playing voice note');
       tester.view.viewInsets = const FakeViewPadding();
       await tester.pump();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expectSamePlayer('closing Reply keeps the playing voice note');
       await finish(tester);
     });
   }
