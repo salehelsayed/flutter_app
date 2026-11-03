@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"slices"
 	"strings"
 	"time"
@@ -517,10 +518,10 @@ func (n *Node) exchangeCallControl(request callControlWireRequest, diagnostics .
 	for _, relay := range relays {
 		for _, candidate := range relayInfoAttemptCandidates(relay) {
 			diagnostic := n.diagnosticForRelay(candidate.ID, diagnostics)
-			raw, err := exchangeCallControlRelay(ctx, h, candidate, request, diagnostic)
+			raw, err := n.exchangeCallControlRelay(ctx, h, candidate, request, diagnostic)
 			if err == nil && diagnostic != nil && diagnosticUnsupported(raw) {
 				n.setDiagnosticRelay(candidate.ID, false)
-				raw, err = exchangeCallControlRelay(ctx, h, candidate, request)
+				raw, err = n.exchangeCallControlRelay(ctx, h, candidate, request)
 			}
 			if err != nil {
 				lastErr = err
@@ -547,7 +548,7 @@ func (n *Node) exchangeCallControl(request callControlWireRequest, diagnostics .
 	return callControlWireResponse{}, lastErr
 }
 
-func exchangeCallControlRelay(
+func (n *Node) exchangeCallControlRelay(
 	parent context.Context,
 	h host.Host,
 	relay RelayInfo,
@@ -556,26 +557,64 @@ func exchangeCallControlRelay(
 ) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, InboxTimeout)
 	defer cancel()
+	diagnostic := diagnosticContext(diagnostics)
+	started := time.Now()
+	phase := "connect"
+	connectCompleteMs, openCompleteMs, writeCompleteMs := int64(-1), int64(-1), int64(-1)
+	defer func() {
+		if diagnostic != nil {
+			log.Printf("[CALL_CONTROL_NATIVE] phase=%s elapsed_ms=%d native_connect_complete_ms=%d native_stream_open_complete_ms=%d native_write_complete_ms=%d write_complete=%t", phase, time.Since(started).Milliseconds(), connectCompleteMs, openCompleteMs, writeCompleteMs, writeCompleteMs >= 0)
+		}
+	}()
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 		return nil, ErrCallControlUnavailable
 	}
+	connectCompleteMs = time.Since(started).Milliseconds()
+	phase = "connection_check"
+	if err := n.checkSendConnections(ctx, h, relay.ID); err != nil {
+		return nil, ErrCallControlUnavailable
+	}
+	connections := h.Network().ConnsToPeer(relay.ID)
+	phase = "stream_open"
 	stream, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	if err != nil {
+		n.noteSendOpenTimeout(ctx, h, relay.ID, connections, stream, err)
 		return nil, ErrCallControlUnavailable
 	}
+	openCompleteMs = time.Since(started).Milliseconds()
 	streamOK := false
 	defer finishStream(stream, &streamOK)
-	setStreamDeadline(stream, InboxTimeout)
-	raw, err := json.Marshal(request)
-	raw = diagnosticWrapRequest(raw, diagnosticContext(diagnostics))
-	if err != nil || writeFrame(stream, raw) != nil {
+	phase = "stream_deadline"
+	deadline, _ := ctx.Deadline()
+	if err := stream.SetDeadline(deadline); err != nil {
 		return nil, ErrCallControlUnavailable
 	}
+	stopReset := context.AfterFunc(ctx, func() { _ = stream.Reset() })
+	defer stopReset()
+	phase = "marshal"
+	raw, err := json.Marshal(request)
+	raw = diagnosticWrapRequest(raw, diagnostic)
+	if err != nil || ctx.Err() != nil {
+		return nil, ErrCallControlUnavailable
+	}
+	phase = "write"
+	if err := writeFrame(stream, raw); err != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), err)
+		return nil, ErrCallControlUnavailable
+	}
+	writeCompleteMs = time.Since(started).Milliseconds()
+	phase = "read"
 	response, err := readFrame(stream)
+	if ctx.Err() != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), ctx.Err())
+		return nil, ErrCallControlUnavailable
+	}
 	if err != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), err)
 		return nil, ErrCallControlUnavailable
 	}
 	streamOK = true
+	phase = "read_complete"
 	return response, nil
 }
 

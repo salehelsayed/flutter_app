@@ -1,12 +1,57 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"testing"
 	"time"
 )
+
+func TestCallControlRelay_CanceledRequestPreservesSharedConnection(t *testing.T) {
+	relay, requests, closed := startStalledTurnCredentialsRelayFixture(t)
+	n := turnCredentialsNode(t, relay)
+	if err := n.DialPeerWithTimeout(relay.ID().String(), []string{relay.Addrs()[0].String()}, 3000); err != nil {
+		t.Fatal("could not establish the call control relay connection")
+	}
+	sibling, remote := sharedTraffic(t, n.Host(), relay)
+	original := sibling.Conn()
+	sharedProgress(t, sibling, remote, "before-canceled-call-control")
+	ctx, cancel := context.WithCancel(n.ctx)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		_, err := n.exchangeCallControlRelay(ctx, n.Host(), RelayInfo{
+			ID: relay.ID(), Addrs: relay.Addrs(),
+		}, callControlWireRequest{
+			Action: callStoreAction, To: relay.ID().String(), CallHandle: nodeCallHandle,
+			MessageID: nodeCallMessage, Envelope: "encrypted-node-envelope",
+			ExpiresAtMs: time.Now().Add(30 * time.Second).UnixMilli(),
+			WakeHandle:  nodeCallWake, WakeReceipt: true,
+		})
+		result <- err
+	}()
+	awaitShared(t, requests)
+	sharedProgress(t, sibling, remote, "during-canceled-call-control")
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrCallControlUnavailable) {
+			t.Fatal("canceled call control request returned an unexpected result")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("cancellation did not interrupt the call control response read")
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("canceled call control stream was not released")
+	}
+	assertOriginalSharedConnection(t, n.Host(), relay.ID(), original)
+	sharedProgress(t, sibling, remote, "after-canceled-call-control")
+	assertNoSendChecks(t, n)
+}
 
 const (
 	nodeCallHandle  = "00112233445566778899aabbccddeeff"

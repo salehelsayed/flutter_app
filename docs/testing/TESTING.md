@@ -7152,6 +7152,18 @@ visible and cannot become an ordinary first-attempt PASS.
   and focused GREEN evidence are retained in
   `.codex-test-logs/call-cellular-signalling-20261103/` under
   `red-turn-single-relay` and `green-turn-focused`.
+  Call-control stores now use the same Node-owned checks and timeout notes,
+  sharing one absolute fifteen-second connect/check/stream deadline.
+  `TestCallStoreV1_EstablishedRelayBlackholeRecoversWithoutRestart` proves the
+  next ordinary store recovers through a preknown healthy address after an
+  initial timeout; its server checkpoints remain test-only. Cancellation
+  interrupts only the operation stream and preserves shared sibling traffic.
+  Diagnostic-context-gated native logs expose numeric connect/open/write
+  completion offsets without payloads or identities. This local recovery
+  evidence does not explain a successful but slow store or prove an accepted
+  cellular call. Original RED and focused GREEN artifacts are retained beside
+  the TURN evidence as `red-call-store-single-relay` and
+  `green-call-control-focused`.
   A coalesced waiter also observes its own half-budget check deadline, leaving
   its I/O reserve even when another operation owns a longer check; the owner
   retains the single probe. A gated real-connection regression fails when that
