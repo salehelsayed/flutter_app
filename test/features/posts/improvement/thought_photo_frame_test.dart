@@ -576,6 +576,41 @@ void main() {
     );
   });
 
+  testWidgets('a drag during Fit from a 4x top-left framing does not jump', (
+    tester,
+  ) async {
+    final photo = quarters('glide_corner', 400, 300);
+    await openWith(tester, [photo]);
+    final centre = tester.getRect(frame).center;
+    final a = await tester.startGesture(centre - const Offset(10, 0));
+    final b = await tester.startGesture(centre + const Offset(10, 0));
+    for (var step = 1; step <= 10; step++) {
+      await a.moveTo(centre - Offset(10.0 + step * 20, 0));
+      await b.moveTo(centre + Offset(10.0 + step * 20, 0));
+      await tester.pump();
+    }
+    await a.up();
+    await b.up();
+    await tester.pump();
+    await drag(tester, const Offset(2000, 2000));
+    expect(framings(tester)[photo]!.scale, 4);
+
+    await tester.tap(fit);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 70));
+    final mid = tester.getRect(framedImage);
+
+    final finger = await tester.startGesture(tester.getRect(frame).center);
+    await tester.pump();
+    await finger.moveBy(const Offset(1, 0));
+    await tester.pump();
+    final moved = tester.getRect(framedImage);
+    expect(moved.top, moreOrLessEquals(mid.top, epsilon: 1));
+    expect(moved.left, moreOrLessEquals(mid.left + 1, epsilon: 1));
+    expect(moved.width, moreOrLessEquals(mid.width, epsilon: .5));
+    await finger.up();
+  });
+
   testWidgets('with reduce motion Fit jumps to the whole photo at once', (
     tester,
   ) async {
