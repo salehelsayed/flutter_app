@@ -1474,7 +1474,10 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
         ),
       );
     } else if (centred) {
-      content = Center(
+      // While replying, the thought shows from its top, so the words sit in
+      // the space above the composer instead of the middle of its rest area.
+      content = Align(
+        alignment: _composing ? Alignment.topCenter : Alignment.center,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
