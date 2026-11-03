@@ -1526,12 +1526,16 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       // for its fixed parts. A photo shrinks into the space as before.
       child: photo || composingRestHeight == null
           ? content
-          : ClipRect(
-              child: OverflowBox(
-                alignment: Alignment.topCenter,
-                maxHeight: composingRestHeight,
-                child: content,
-              ),
+          : LayoutBuilder(
+              builder: (context, box) => box.maxHeight >= composingRestHeight
+                  ? content
+                  : ClipRect(
+                      child: OverflowBox(
+                        alignment: Alignment.topCenter,
+                        maxHeight: composingRestHeight,
+                        child: content,
+                      ),
+                    ),
             ),
     );
   }
