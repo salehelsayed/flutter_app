@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_thought_activity_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
@@ -1225,6 +1226,84 @@ void main() {
       );
       await finish(tester);
     });
+
+    for (final (size, top, bottom) in const [
+      (Size(390, 844), 47.0, 34.0),
+      (Size(412, 915), 24.0, 24.0),
+    ]) {
+      testWidgets('on a ${size.width.toInt()}x${size.height.toInt()} phone '
+          'Delete stays whole above the home indicator under a captioned '
+          'photo, See translation, sent and Seen by', (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = FakeViewPadding(top: top, bottom: bottom);
+        addTearDown(tester.view.reset);
+        tester.platformDispatcher.localeTestValue = const Locale('de');
+        addTearDown(tester.platformDispatcher.clearLocaleTestValue);
+        debugTranslatePreviewEnabledOverride = true;
+        debugOnDeviceAiOverride = _FakeTranslator();
+        final photo = _tempFile('own.png', pngBytes: true);
+        final mine = _thought(initialNow).copyWith(
+          senderPeerId: 'local-peer',
+          authorPeerId: 'local-peer',
+          authorUsername: 'Me',
+          isIncoming: false,
+          deliveryStatus: 'sent',
+          mediaKind: 'image',
+          text:
+              'Golden hour from the roof. We stayed up there until the '
+              'street lights came on.',
+        );
+        await posts.savePost(mine);
+        await posts.savePostMediaAttachment(
+          _attachment(
+            'image',
+          ).copyWith(localPath: photo.path, downloadStatus: 'done'),
+        );
+        final query = LoadOrbitThoughtsUseCase(
+          postRepo: posts,
+          contactRepo: contacts,
+          nowProvider: () => now,
+        );
+
+        await openCard(
+          tester,
+          mine,
+          authorName: 'You',
+          locale: const Locale('de'),
+          loadCurrent: () => query.executeOwn(localPeerId: 'local-peer'),
+          loadActivity: (_) async => (
+            viewers: [
+              (peerId: 'sam', name: 'Sam'),
+              (peerId: 'ria', name: 'Ria'),
+            ],
+            reactions: const <ThoughtReactionGroup>[],
+          ),
+          onDelete: (_) async {},
+        );
+        await pumpMediaFrames(tester);
+
+        expect(find.text('Übersetzung anzeigen'), findsOneWidget);
+        expect(find.byKey(const ValueKey('thought-activity-open')), findsOne);
+        final delete = tester.getRect(
+          find.byKey(const ValueKey('thought-delete')),
+        );
+        expect(delete.top, greaterThanOrEqualTo(0));
+        expect(delete.bottom, lessThanOrEqualTo(size.height - bottom));
+        final button = tester.renderObject(
+          find.byKey(const ValueKey('thought-delete')),
+        );
+        expect(
+          tester
+              .hitTestOnBinding(delete.center)
+              .path
+              .any((entry) => entry.target == button),
+          isTrue,
+          reason: 'Delete is clipped or covered',
+        );
+        await finish(tester);
+      });
+    }
   });
 }
 
