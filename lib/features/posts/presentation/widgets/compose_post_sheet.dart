@@ -15,6 +15,7 @@ import 'package:flutter_app/features/posts/application/attach_post_media_use_cas
 import 'package:flutter_app/features/posts/application/nearby_location_service.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
+import 'package:flutter_app/features/posts/presentation/thought_photo_framing.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
@@ -128,6 +129,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
   List<PostMediaDraft> _mediaDrafts = const <PostMediaDraft>[];
+
+  /// A Thought photo's framing by path, once its frame has shown it.
+  Map<String, PhotoFraming> _framings = const {};
   _ComposeNotice? _notice;
   final AmplitudeBuffer _amplitudeBuffer = AmplitudeBuffer(size: 24);
   StreamSubscription<Duration>? _durationSubscription;
@@ -204,7 +208,13 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         ComposePostResult(
           text: _textController.text.trim(),
           audience: audience,
-          mediaDrafts: _mediaDrafts,
+          mediaDrafts: [
+            for (final draft in _mediaDrafts)
+              if (_framings[draft.localFilePath] case final framing?)
+                await _framed(draft, framing)
+              else
+                draft,
+          ],
         ),
       );
       if (!mounted) return;
@@ -223,6 +233,23 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       if (mounted) {
         setState(() => _isSubmitting = false);
       }
+    }
+  }
+
+  /// A photo that cannot be baked is shared as picked, whole.
+  Future<PostMediaDraft> _framed(
+    PostMediaDraft draft,
+    PhotoFraming framing,
+  ) async {
+    try {
+      return await bakeFramedPhoto(draft, framing);
+    } on Object catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'POST_COMPOSE_FL_PHOTO_FRAME_FAILED',
+        details: {'error': error.runtimeType.toString()},
+      );
+      return draft;
     }
   }
 
@@ -851,9 +878,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           const SizedBox(height: 12),
           ThoughtPhotoDraftPreview(
             paths: [for (final draft in _mediaDrafts) draft.localFilePath],
-            onRemove: (index) => setState(
-              () => _mediaDrafts = [..._mediaDrafts]..removeAt(index),
-            ),
+            framings: _framings,
+            onFramed: (path, framing) =>
+                setState(() => _framings = {..._framings, path: framing}),
+            onRemove: (index) => setState(() {
+              final removed = _mediaDrafts[index].localFilePath;
+              _mediaDrafts = [..._mediaDrafts]..removeAt(index);
+              _framings = {..._framings}..remove(removed);
+            }),
           ),
         ] else if (_mediaDrafts.isNotEmpty &&
             _mediaDrafts.first.kind != 'voice') ...[
