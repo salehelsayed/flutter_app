@@ -171,6 +171,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
                             .toList(),
                         singleMaxHeight: constraints.maxHeight,
                         borderRadius: 22,
+                        tileFit: BoxFit.contain,
                         onRetryUnavailableMedia: (_) => unawaited(_load()),
                       ),
                     ),

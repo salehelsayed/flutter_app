@@ -34,6 +34,10 @@ class MediaGrid extends StatelessWidget {
 
   final double borderRadius;
 
+  /// How each tile of a two-or-more grid draws its photo. Thoughts in 3D pass
+  /// contain so no photo is cropped; chat keeps cover.
+  final BoxFit tileFit;
+
   const MediaGrid({
     super.key,
     required this.media,
@@ -45,6 +49,7 @@ class MediaGrid extends StatelessWidget {
     this.renderedSemanticsLabels = const <String, String>{},
     this.singleMaxHeight,
     this.borderRadius = mediaGridContainerRadius,
+    this.tileFit = BoxFit.cover,
   });
 
   @override
@@ -131,6 +136,7 @@ class MediaGrid extends StatelessWidget {
               child: AspectRatio(
                 aspectRatio: 1,
                 child: MediaGridCell(
+                  fit: tileFit,
                   attachment: media[3],
                   showOverlayCount: overflow > 0,
                   overlayCount: overflow,
@@ -157,9 +163,9 @@ class MediaGrid extends StatelessWidget {
   /// phones without decoding a camera original at full size.
   static const _fullScreenWidth = 1440;
 
-  Widget _cell(int index, {BoxFit fit = BoxFit.cover, int cacheWidth = 400}) {
+  Widget _cell(int index, {BoxFit? fit, int cacheWidth = 400}) {
     return MediaGridCell(
-      fit: fit,
+      fit: fit ?? tileFit,
       cacheWidth: cacheWidth,
       attachment: media[index],
       onTap: onTap != null ? () => onTap!(index) : null,
