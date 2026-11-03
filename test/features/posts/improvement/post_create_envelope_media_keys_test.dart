@@ -148,45 +148,65 @@ void main() {
     },
   );
 
-  test('compact photo push metadata leaves canonical photo decryption unchanged', () async {
-    final inner = envelope(mediaKeys: {
-      'media-1': PostMediaCryptoEntry(
-        keyBase64: 'key-b64', nonce: 'nonce-b64', blobId: 'blob-1',
-        scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        contentHash: 'f' * 64, preview: 'UFJFVklFVw==',
-      ),
-    }).toInnerJson();
-    final wire = jsonDecode(PostCreateEnvelope.buildEncryptedEnvelope(
-      eventId: 'evt-1', createdAt: createdAt,
-      senderPeerId: 'peer-alice', postId: 'post-1',
-      kem: 'canonical-kem', ciphertext: inner, nonce: 'canonical-nonce',
-    )) as Map<String, dynamic>;
-    wire['push_encrypted'] = {
-      'kem': 'compact-kem',
-      'ciphertext': jsonEncode({
-        'snapshot': {
-          'post_id': 'post-1', 'author_peer_id': 'peer-alice',
-          'text': '', 'media': [{'kind': 'image'}],
+  test(
+    'compact photo push metadata leaves canonical photo decryption unchanged',
+    () async {
+      final inner = envelope(
+        mediaKeys: {
+          'media-1': PostMediaCryptoEntry(
+            keyBase64: 'key-b64',
+            nonce: 'nonce-b64',
+            blobId: 'blob-1',
+            scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            contentHash: 'f' * 64,
+            preview: 'UFJFVklFVw==',
+          ),
         },
-      }),
-      'nonce': 'compact-nonce',
-    };
+      ).toInnerJson();
+      final wire =
+          jsonDecode(
+                PostCreateEnvelope.buildEncryptedEnvelope(
+                  eventId: 'evt-1',
+                  createdAt: createdAt,
+                  senderPeerId: 'peer-alice',
+                  postId: 'post-1',
+                  kem: 'canonical-kem',
+                  ciphertext: inner,
+                  nonce: 'canonical-nonce',
+                ),
+              )
+              as Map<String, dynamic>;
+      wire['push_encrypted'] = {
+        'kem': 'compact-kem',
+        'ciphertext': jsonEncode({
+          'snapshot': {
+            'post_id': 'post-1',
+            'author_peer_id': 'peer-alice',
+            'text': '',
+            'media': [
+              {'kind': 'image'},
+            ],
+          },
+        }),
+        'nonce': 'compact-nonce',
+      };
 
-    final parsed = await PostCreateEnvelope.fromEncryptedJson(
-      jsonString: jsonEncode(wire),
-      bridge: PassthroughCryptoBridge(),
-      ownMlKemSecretKey: 'own-sk',
-    );
+      final parsed = await PostCreateEnvelope.fromEncryptedJson(
+        jsonString: jsonEncode(wire),
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'own-sk',
+      );
 
-    expect(parsed, isNotNull);
-    expect(parsed!.postId, 'post-1');
-    expect(parsed.authorPeerId, 'peer-alice');
-    expect(parsed.text, 'hello');
-    expect(parsed.media.single.blobId, 'blob-1');
-    expect(parsed.mediaKeys!['media-1']!.keyBase64, 'key-b64');
-    expect(parsed.mediaKeys!['media-1']!.nonce, 'nonce-b64');
-    expect(parsed.mediaKeys!['media-1']!.preview, 'UFJFVklFVw==');
-  });
+      expect(parsed, isNotNull);
+      expect(parsed!.postId, 'post-1');
+      expect(parsed.authorPeerId, 'peer-alice');
+      expect(parsed.text, 'hello');
+      expect(parsed.media.single.blobId, 'blob-1');
+      expect(parsed.mediaKeys!['media-1']!.keyBase64, 'key-b64');
+      expect(parsed.mediaKeys!['media-1']!.nonce, 'nonce-b64');
+      expect(parsed.mediaKeys!['media-1']!.preview, 'UFJFVklFVw==');
+    },
+  );
 
   test('a preview that is not a short string is dropped on receipt', () {
     Map<String, dynamic> entry(Object? preview) => {

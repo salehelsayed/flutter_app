@@ -8118,6 +8118,26 @@ visible and cannot become an ordinary first-attempt PASS.
   Nearby action assertions failed with the ordinal selector; all three cases in
   `settings_wired_posts_nearby_test.dart` pass with the row-scoped selector.
 
+- **Photo Thought push size fallback:** photo-only Thoughts may carry optional
+  `push_encrypted` metadata encrypted separately for the same recipient through
+  the existing message-encryption API. Its plaintext contains only the snapshot
+  post/author IDs, empty text and one image kind. Canonical Thought ciphertext,
+  media keys and inline previews remain authoritative for inbox delivery. Only
+  the iOS provider projection may select this compact block, after a valid full
+  block exceeds the existing 3800-byte budgets. Missing, malformed or oversized
+  compact blocks retain the generic fallback; a fitting full block wins.
+  Runner/envelope tests cover recipient binding, optional-encryption failures,
+  canonical preservation and old receiver parsing. Relay gateway tests cover
+  both data and complete-payload limits, Android/unknown projection parity,
+  Thought OFF/stale-route refusal and stored retry collapse/ACK. The three
+  focused Thought resolver XCTests exercise trusted-name/Photo presentation,
+  policy and post/author parity; the minimal schema needs no NSE production
+  change. Host fixtures and simulator XCTest remain separate from signed-device
+  APNs delivery. Generic alerts have no mutable-content flag, so absent NSE
+  activity alone cannot establish a missing or delayed visible alert. Preserve
+  causal REDs, source identities, byte counts and focused results under
+  `.codex-test-logs/photo-thought-compact-push-20261103/`.
+
 - **Linked-group terminal verdict capture:** Flutter may uninstall a completed
   endpoint before the host retains its app-private verdict. Both B1b roles now
   opt into the existing group multi-party capture handshake. Publish the linked

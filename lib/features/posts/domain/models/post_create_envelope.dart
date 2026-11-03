@@ -418,6 +418,7 @@ class PostCreateEnvelope {
     required String kem,
     required String ciphertext,
     required String nonce,
+    Map<String, String>? pushEncrypted,
     bool metricsOptOut = false,
   }) {
     return jsonEncode({
@@ -428,6 +429,7 @@ class PostCreateEnvelope {
       'sender_peer_id': senderPeerId,
       'post_id': postId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
+      'push_encrypted': ?pushEncrypted,
       // Outer and plaintext on purpose: the relay's weekly Thoughts count
       // skips this envelope. Absent when the switch was on, so that envelope
       // stays byte-identical to builds before 129.

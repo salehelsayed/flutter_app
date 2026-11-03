@@ -49,88 +49,172 @@ void main() {
   });
 
   group('compact photo push', () {
-    test('encrypts a minimal snapshot for each relay recipient without changing the canonical photo', () async {
-      final recipients = [_contact('peer-bob', 'Bob'), _contact('peer-cara', 'Cara')];
-      final created = await _createdForCompactPhotoPush(
-        posts: posts,
-        recipients: recipients,
-        mediaKinds: const ['image', 'image'],
-        metricsOptOut: true,
-      );
-      final bridge = FakeBridge();
-      final service = FakeP2PService(peerId: 'peer-alice', network: network);
-      final canonicalInner = PostCreateEnvelope.fromPost(created.post).toInnerJson();
-      final canonical = jsonDecode(canonicalInner) as Map<String, dynamic>;
-      expect((canonical['snapshot'] as Map)['text'], created.post.text);
-      expect((canonical['snapshot'] as Map)['media'], hasLength(2));
-      expect(canonical['media_keys'], {
-        for (var i = 0; i < 2; i++) 'photo-media-$i': {
-          'key_base64': 'fixture-key-$i',
-          'nonce': 'fixture-media-nonce-$i',
-          'blob_id': 'photo-blob-$i',
-          'scheme': 'blob_aes_256_gcm_v1',
-          'content_hash': 'f' * 64,
-          'preview': 'A' * 4096,
-        },
-      });
-
-      final (result, delivered) = await PostDeliveryRunner(
-        p2pService: service,
-        postRepo: posts,
-        bridge: bridge,
-        nowProvider: () => _compactPhotoPushNow,
-      ).execute(created);
-
-      expect(result, SendPostResult.success);
-      expect(delivered.deliveryStatus, 'sent');
-      expect(network.deliverCallCount, 0);
-      expect(network.storeInInboxCallCount, 2);
-      final minimal = <String, Object?>{
-        'snapshot': {
-          'post_id': created.post.id,
-          'author_peer_id': created.post.authorPeerId,
-          'text': '',
-          'media': [{'kind': 'image'}],
-        },
-      };
-      for (final recipient in recipients) {
-        final wireString = network.retrieveInbox(recipient.peerId).single['message'] as String;
-        final wire = jsonDecode(wireString) as Map<String, dynamic>;
-        expect(wire['encrypted'], {
-          'kem': 'fake-kem', 'ciphertext': canonicalInner, 'nonce': 'fake-nonce',
+    test(
+      'encrypts a minimal snapshot for each relay recipient without changing the canonical photo',
+      () async {
+        final recipients = [
+          _contact('peer-bob', 'Bob'),
+          _contact('peer-cara', 'Cara'),
+        ];
+        final created = await _createdForCompactPhotoPush(
+          posts: posts,
+          recipients: recipients,
+          mediaKinds: const ['image', 'image'],
+          metricsOptOut: true,
+        );
+        final bridge = FakeBridge();
+        final service = FakeP2PService(peerId: 'peer-alice', network: network);
+        final canonicalInner = PostCreateEnvelope.fromPost(
+          created.post,
+        ).toInnerJson();
+        final canonical = jsonDecode(canonicalInner) as Map<String, dynamic>;
+        expect((canonical['snapshot'] as Map)['text'], created.post.text);
+        expect((canonical['snapshot'] as Map)['media'], hasLength(2));
+        expect(canonical['media_keys'], {
+          for (var i = 0; i < 2; i++)
+            'photo-media-$i': {
+              'key_base64': 'fixture-key-$i',
+              'nonce': 'fixture-media-nonce-$i',
+              'blob_id': 'photo-blob-$i',
+              'scheme': 'blob_aes_256_gcm_v1',
+              'content_hash': 'f' * 64,
+              'preview': 'A' * 4096,
+            },
         });
-        expect(wire['thoughts_metrics_opt_out'], isTrue);
-        final withoutPush = Map<String, dynamic>.from(wire)..remove('push_encrypted');
-        expect(jsonEncode(withoutPush), _canonicalPhotoWire(created.post, canonicalInner));
-        expect(wire['push_encrypted'], {
-          'kem': 'fake-kem', 'ciphertext': jsonEncode(minimal), 'nonce': 'fake-nonce',
-        });
-        final requests = _photoEncryptRequests(bridge).where(
-          (payload) => payload['recipientPublicKey'] == recipient.mlKemPublicKey,
-        ).toList();
-        expect(requests, hasLength(2));
-        expect(requests.first['plaintext'], canonicalInner);
-        expect(jsonDecode(requests.last['plaintext'] as String), minimal);
-      }
-      expect((await posts.getRecipientDeliveries(created.post.id)).map(
-        (delivery) => delivery.deliveryPath,
-      ), everyElement('inbox'));
-    });
+
+        final (result, delivered) = await PostDeliveryRunner(
+          p2pService: service,
+          postRepo: posts,
+          bridge: bridge,
+          nowProvider: () => _compactPhotoPushNow,
+        ).execute(created);
+
+        expect(result, SendPostResult.success);
+        expect(delivered.deliveryStatus, 'sent');
+        expect(network.deliverCallCount, 0);
+        expect(network.storeInInboxCallCount, 2);
+        final minimal = <String, Object?>{
+          'snapshot': {
+            'post_id': created.post.id,
+            'author_peer_id': created.post.authorPeerId,
+            'text': '',
+            'media': [
+              {'kind': 'image'},
+            ],
+          },
+        };
+        for (final recipient in recipients) {
+          final wireString =
+              network.retrieveInbox(recipient.peerId).single['message']
+                  as String;
+          final wire = jsonDecode(wireString) as Map<String, dynamic>;
+          expect(wire['encrypted'], {
+            'kem': 'fake-kem',
+            'ciphertext': canonicalInner,
+            'nonce': 'fake-nonce',
+          });
+          expect(wire['thoughts_metrics_opt_out'], isTrue);
+          final withoutPush = Map<String, dynamic>.from(wire)
+            ..remove('push_encrypted');
+          expect(
+            jsonEncode(withoutPush),
+            _canonicalPhotoWire(created.post, canonicalInner),
+          );
+          expect(wire['push_encrypted'], {
+            'kem': 'fake-kem',
+            'ciphertext': jsonEncode(minimal),
+            'nonce': 'fake-nonce',
+          });
+          final requests = _photoEncryptRequests(bridge)
+              .where(
+                (payload) =>
+                    payload['recipientPublicKey'] == recipient.mlKemPublicKey,
+              )
+              .toList();
+          expect(requests, hasLength(2));
+          expect(requests.first['plaintext'], canonicalInner);
+          expect(jsonDecode(requests.last['plaintext'] as String), minimal);
+        }
+        expect(
+          (await posts.getRecipientDeliveries(
+            created.post.id,
+          )).map((delivery) => delivery.deliveryPath),
+          everyElement('inbox'),
+        );
+      },
+    );
 
     for (final failure in <String, Map<String, dynamic>>{
       'error response': {'ok': false, 'errorCode': 'COMPACT_FAILED'},
-      'missing kem': {'ok': true, 'ciphertext': 'push-cipher', 'nonce': 'push-nonce'},
-      'empty ciphertext': {'ok': true, 'kem': 'push-kem', 'ciphertext': '', 'nonce': 'push-nonce'},
-      'non-string nonce': {'ok': true, 'kem': 'push-kem', 'ciphertext': 'push-cipher', 'nonce': 7},
+      'missing kem': {
+        'ok': true,
+        'ciphertext': 'push-cipher',
+        'nonce': 'push-nonce',
+      },
+      'empty ciphertext': {
+        'ok': true,
+        'kem': 'push-kem',
+        'ciphertext': '',
+        'nonce': 'push-nonce',
+      },
+      'non-string nonce': {
+        'ok': true,
+        'kem': 'push-kem',
+        'ciphertext': 'push-cipher',
+        'nonce': 7,
+      },
     }.entries) {
-      test('keeps canonical inbox delivery after optional ${failure.key}', () async {
+      test(
+        'keeps canonical inbox delivery after optional ${failure.key}',
+        () async {
+          final created = await _createdForCompactPhotoPush(posts: posts);
+          final bridge = FakeBridge(
+            initialResponses: {'message.encrypt': _canonicalPhotoEncryptResult},
+          );
+          bridge.responseSequences['message.encrypt'] = [
+            _canonicalPhotoEncryptResult,
+            failure.value,
+          ];
+          final (result, delivered) = await PostDeliveryRunner(
+            p2pService: FakeP2PService(peerId: 'peer-alice', network: network),
+            postRepo: posts,
+            bridge: bridge,
+            nowProvider: () => _compactPhotoPushNow,
+          ).execute(created);
+
+          expect(result, SendPostResult.success);
+          expect(delivered.deliveryStatus, 'sent');
+          final wire =
+              network.retrieveInbox('peer-bob').single['message'] as String;
+          expect(
+            wire,
+            _canonicalPhotoWire(
+              created.post,
+              'canonical-ciphertext',
+              kem: 'canonical-kem',
+              nonce: 'canonical-nonce',
+            ),
+          );
+          expect(
+            (jsonDecode(wire) as Map).containsKey('push_encrypted'),
+            isFalse,
+          );
+          expect(
+            (await posts.getRecipientDeliveries(
+              created.post.id,
+            )).single.deliveryPath,
+            'inbox',
+          );
+          expect(_photoEncryptRequests(bridge), hasLength(2));
+        },
+      );
+    }
+
+    test(
+      'keeps canonical inbox delivery when optional encryption throws',
+      () async {
         final created = await _createdForCompactPhotoPush(posts: posts);
-        final bridge = FakeBridge(initialResponses: {
-          'message.encrypt': _canonicalPhotoEncryptResult,
-        });
-        bridge.responseSequences['message.encrypt'] = [
-          _canonicalPhotoEncryptResult, failure.value,
-        ];
+        final bridge = _ThrowOnSecondPhotoEncryptionBridge();
         final (result, delivered) = await PostDeliveryRunner(
           p2pService: FakeP2PService(peerId: 'peer-alice', network: network),
           postRepo: posts,
@@ -140,42 +224,41 @@ void main() {
 
         expect(result, SendPostResult.success);
         expect(delivered.deliveryStatus, 'sent');
-        final wire = network.retrieveInbox('peer-bob').single['message'] as String;
-        expect(wire, _canonicalPhotoWire(created.post, 'canonical-ciphertext',
-          kem: 'canonical-kem', nonce: 'canonical-nonce'));
-        expect((jsonDecode(wire) as Map).containsKey('push_encrypted'), isFalse);
-        expect((await posts.getRecipientDeliveries(created.post.id)).single.deliveryPath, 'inbox');
-        expect(_photoEncryptRequests(bridge), hasLength(2));
-      });
-    }
-
-    test('keeps canonical inbox delivery when optional encryption throws', () async {
-      final created = await _createdForCompactPhotoPush(posts: posts);
-      final bridge = _ThrowOnSecondPhotoEncryptionBridge();
-      final (result, delivered) = await PostDeliveryRunner(
-        p2pService: FakeP2PService(peerId: 'peer-alice', network: network),
-        postRepo: posts,
-        bridge: bridge,
-        nowProvider: () => _compactPhotoPushNow,
-      ).execute(created);
-
-      expect(result, SendPostResult.success);
-      expect(delivered.deliveryStatus, 'sent');
-      expect(network.retrieveInbox('peer-bob').single['message'],
-        _canonicalPhotoWire(created.post, 'canonical-ciphertext',
-          kem: 'canonical-kem', nonce: 'canonical-nonce'));
-      expect((await posts.getRecipientDeliveries(created.post.id)).single.deliveryPath, 'inbox');
-      expect(bridge.encryptionAttempts, 2);
-    });
+        expect(
+          network.retrieveInbox('peer-bob').single['message'],
+          _canonicalPhotoWire(
+            created.post,
+            'canonical-ciphertext',
+            kem: 'canonical-kem',
+            nonce: 'canonical-nonce',
+          ),
+        );
+        expect(
+          (await posts.getRecipientDeliveries(
+            created.post.id,
+          )).single.deliveryPath,
+          'inbox',
+        );
+        expect(bridge.encryptionAttempts, 2);
+      },
+    );
 
     for (final kind in ['text', 'empty-image', 'video', 'voice', 'mixed']) {
       test('leaves $kind canonical-only with one encryption', () async {
         final kinds = kind == 'text' || kind == 'empty-image'
-            ? <String>[] : kind == 'mixed' ? <String>['image', 'video'] : <String>[kind];
-        final declaredKind = kind == 'text' ? 'none'
-            : kind == 'empty-image' || kind == 'mixed' ? 'image' : kind;
+            ? <String>[]
+            : kind == 'mixed'
+            ? <String>['image', 'video']
+            : <String>[kind];
+        final declaredKind = kind == 'text'
+            ? 'none'
+            : kind == 'empty-image' || kind == 'mixed'
+            ? 'image'
+            : kind;
         final created = await _createdForCompactPhotoPush(
-          posts: posts, mediaKinds: kinds, mediaKind: declaredKind,
+          posts: posts,
+          mediaKinds: kinds,
+          mediaKind: declaredKind,
         );
         final bridge = FakeBridge();
         final inner = PostCreateEnvelope.fromPost(created.post).toInnerJson();
@@ -187,8 +270,10 @@ void main() {
         ).execute(created);
 
         expect(result, SendPostResult.success);
-        expect(network.retrieveInbox('peer-bob').single['message'],
-          _canonicalPhotoWire(created.post, inner));
+        expect(
+          network.retrieveInbox('peer-bob').single['message'],
+          _canonicalPhotoWire(created.post, inner),
+        );
         expect(_photoEncryptRequests(bridge), hasLength(1));
       });
     }
@@ -285,9 +370,10 @@ void main() {
       // the inbox or the friend never gets the thought.
       contacts.addTestContact(_contact('peer-bob', 'Bob'));
       FakeP2PService(peerId: 'peer-bob', network: network);
-      final aliceService = FakeP2PService(peerId: 'peer-alice', network: network)
-        ..directReplyBuilder = (_, _, _) =>
-            const SendMessageResult(sent: true, acked: false);
+      final aliceService =
+          FakeP2PService(peerId: 'peer-alice', network: network)
+            ..directReplyBuilder = (_, _, _) =>
+                const SendMessageResult(sent: true, acked: false);
       aliceService.connectedPeers.add('peer-bob');
       final created = await _createLocalPost(
         posts: posts,
@@ -766,8 +852,10 @@ Future<CreatedLocalPost> _createLocalPost({
 
 final _compactPhotoPushNow = DateTime.utc(2026, 11, 3, 12);
 const _canonicalPhotoEncryptResult = <String, dynamic>{
-  'ok': true, 'kem': 'canonical-kem',
-  'ciphertext': 'canonical-ciphertext', 'nonce': 'canonical-nonce',
+  'ok': true,
+  'kem': 'canonical-kem',
+  'ciphertext': 'canonical-ciphertext',
+  'nonce': 'canonical-nonce',
 };
 
 Future<CreatedLocalPost> _createdForCompactPhotoPush({
@@ -781,28 +869,43 @@ Future<CreatedLocalPost> _createdForCompactPhotoPush({
   final post = _post(id: 'compact-photo', deliveryStatus: 'sending').copyWith(
     createdAt: createdAt,
     visibleAt: createdAt,
-    expiresAt: _compactPhotoPushNow.add(const Duration(hours: 24)).toIso8601String(),
+    expiresAt: _compactPhotoPushNow
+        .add(const Duration(hours: 24))
+        .toIso8601String(),
     text: 'Caption stays in the full photo Thought',
     mediaKind: mediaKind,
     metricsOptOut: metricsOptOut,
     media: [
-      for (var i = 0; i < mediaKinds.length; i++) PostMediaAttachmentModel(
-        mediaId: 'photo-media-$i', postId: 'compact-photo', blobId: 'photo-blob-$i',
-        kind: mediaKinds[i],
-        mime: mediaKinds[i] == 'image' ? 'image/jpeg' : mediaKinds[i] == 'video' ? 'video/mp4' : 'audio/mp4',
-        sizeBytes: 1024, position: i, createdAt: createdAt,
-        encryptionKeyBase64: 'fixture-key-$i',
-        encryptionNonce: 'fixture-media-nonce-$i',
-        encryptionScheme: 'blob_aes_256_gcm_v1', contentHash: 'f' * 64,
-        previewBase64: mediaKinds[i] == 'image' ? 'A' * 4096 : null,
-      ),
+      for (var i = 0; i < mediaKinds.length; i++)
+        PostMediaAttachmentModel(
+          mediaId: 'photo-media-$i',
+          postId: 'compact-photo',
+          blobId: 'photo-blob-$i',
+          kind: mediaKinds[i],
+          mime: mediaKinds[i] == 'image'
+              ? 'image/jpeg'
+              : mediaKinds[i] == 'video'
+              ? 'video/mp4'
+              : 'audio/mp4',
+          sizeBytes: 1024,
+          position: i,
+          createdAt: createdAt,
+          encryptionKeyBase64: 'fixture-key-$i',
+          encryptionNonce: 'fixture-media-nonce-$i',
+          encryptionScheme: 'blob_aes_256_gcm_v1',
+          contentHash: 'f' * 64,
+          previewBase64: mediaKinds[i] == 'image' ? 'A' * 4096 : null,
+        ),
     ],
   );
   await posts.savePost(post);
-  return CreatedLocalPost(post: post, resolvedRecipients: [
-    for (final contact in recipients ?? [_contact('peer-bob', 'Bob')])
-      CreatedLocalPostRecipient(contact: contact),
-  ]);
+  return CreatedLocalPost(
+    post: post,
+    resolvedRecipients: [
+      for (final contact in recipients ?? [_contact('peer-bob', 'Bob')])
+        CreatedLocalPostRecipient(contact: contact),
+    ],
+  );
 }
 
 List<Map<String, dynamic>> _photoEncryptRequests(FakeBridge bridge) => bridge
@@ -812,19 +915,27 @@ List<Map<String, dynamic>> _photoEncryptRequests(FakeBridge bridge) => bridge
     .map((request) => request['payload'] as Map<String, dynamic>)
     .toList(growable: false);
 
-String _canonicalPhotoWire(PostModel post, String ciphertext, {
-  String kem = 'fake-kem', String nonce = 'fake-nonce',
+String _canonicalPhotoWire(
+  PostModel post,
+  String ciphertext, {
+  String kem = 'fake-kem',
+  String nonce = 'fake-nonce',
 }) => PostCreateEnvelope.buildEncryptedEnvelope(
-  eventId: post.eventId, createdAt: post.createdAt,
-  senderPeerId: post.senderPeerId, postId: post.id,
-  kem: kem, ciphertext: ciphertext, nonce: nonce,
+  eventId: post.eventId,
+  createdAt: post.createdAt,
+  senderPeerId: post.senderPeerId,
+  postId: post.id,
+  kem: kem,
+  ciphertext: ciphertext,
+  nonce: nonce,
   metricsOptOut: post.metricsOptOut,
 );
 
 class _ThrowOnSecondPhotoEncryptionBridge extends FakeBridge {
-  _ThrowOnSecondPhotoEncryptionBridge() : super(initialResponses: {
-    'message.encrypt': _canonicalPhotoEncryptResult,
-  });
+  _ThrowOnSecondPhotoEncryptionBridge()
+    : super(
+        initialResponses: {'message.encrypt': _canonicalPhotoEncryptResult},
+      );
   int encryptionAttempts = 0;
 
   @override

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -600,6 +601,45 @@ Future<String> _buildWireEnvelope({
     );
   }
 
+  Map<String, String>? pushEncrypted;
+  if (post.media.isNotEmpty &&
+      post.media.every((attachment) => attachment.kind == 'image')) {
+    try {
+      final pushResult = await callEncryptMessage(
+        bridge: bridge,
+        recipientMlKemPublicKey: recipientKey,
+        plaintext: jsonEncode({
+          'snapshot': {
+            'post_id': post.id,
+            'author_peer_id': post.authorPeerId,
+            'text': '',
+            'media': [
+              {'kind': 'image'},
+            ],
+          },
+        }),
+      );
+      final pushKem = pushResult['kem'];
+      final pushCiphertext = pushResult['ciphertext'];
+      final pushNonce = pushResult['nonce'];
+      if (pushResult['ok'] == true &&
+          pushKem is String &&
+          pushKem.isNotEmpty &&
+          pushCiphertext is String &&
+          pushCiphertext.isNotEmpty &&
+          pushNonce is String &&
+          pushNonce.isNotEmpty) {
+        pushEncrypted = {
+          'kem': pushKem,
+          'ciphertext': pushCiphertext,
+          'nonce': pushNonce,
+        };
+      }
+    } catch (_) {
+      // A missing optional push preview must not block canonical delivery.
+    }
+  }
+
   return PostCreateEnvelope.buildEncryptedEnvelope(
     eventId: post.eventId,
     createdAt: post.createdAt,
@@ -608,6 +648,7 @@ Future<String> _buildWireEnvelope({
     kem: kem,
     ciphertext: ciphertext,
     nonce: nonce,
+    pushEncrypted: pushEncrypted,
     metricsOptOut: metricsOptOut,
   );
 }

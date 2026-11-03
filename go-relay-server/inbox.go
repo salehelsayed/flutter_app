@@ -1052,13 +1052,10 @@ func (ps *PushService) sendRichNotification(
 		}
 	}
 
-	var projectMessage []pushMessageProjector
-	if custodyID != "" {
-		projectMessage = []pushMessageProjector{
-			func(message *messaging.Message, platform string) *messaging.Message {
-				return projectStoredDirectPushMessageForPlatform(message, platform, custodyID)
-			},
-		}
+	projectMessage := []pushMessageProjector{
+		func(draft *messaging.Message, platform string) *messaging.Message {
+			return projectRichDirectPushMessageForPlatform(draft, platform, fromPeerID, message, custodyID)
+		},
 	}
 	var admissionIdentity *messageDispatchAdmissionIdentity
 	if identity, valid := newDirectMessageDispatchAdmissionIdentity(toPeerID, fromPeerID, message); valid {
@@ -1564,6 +1561,43 @@ func buildEncryptedPostCreatePushMessage(
 		return nil
 	}
 	return pushMessage
+}
+
+// projectRichDirectPushMessageForPlatform may replace an oversized Thought's
+// generic alert with its optional compact ciphertext only at the iOS boundary.
+// A fitting full block remains authoritative; malformed full blocks cannot be
+// rescued by the optional block. Custody and platform projection stay shared.
+func projectRichDirectPushMessageForPlatform(
+	message *messaging.Message,
+	platform,
+	fromPeerID,
+	envelope,
+	custodyID string,
+) *messaging.Message {
+	if message != nil && strings.ToLower(strings.TrimSpace(platform)) == "ios" &&
+		message.Data["type"] == "post_create" && message.Data["post_id"] != "" &&
+		message.Data["ciphertext"] == "" {
+		// buildPushMessage already selected the full ciphertext whenever it fit.
+		// Its generic fallback means oversize only if the full block is valid.
+		if addChatEncryptedPushData(map[string]string{}, envelope) {
+			var outer map[string]interface{}
+			if json.Unmarshal([]byte(envelope), &outer) == nil {
+				compactEnvelope, err := json.Marshal(map[string]interface{}{
+					"version":   outer["version"],
+					"encrypted": outer["push_encrypted"],
+				})
+				if err == nil {
+					metadata := chatPushMetadata{
+						PostID: message.Data["post_id"], MessageID: message.Data["message_id"],
+					}
+					if compact := buildEncryptedPostCreatePushMessage(message.Token, fromPeerID, metadata, string(compactEnvelope)); compact != nil {
+						message = compact
+					}
+				}
+			}
+		}
+	}
+	return projectStoredDirectPushMessageForPlatform(message, platform, custodyID)
 }
 
 func buildGroupPushMessage(

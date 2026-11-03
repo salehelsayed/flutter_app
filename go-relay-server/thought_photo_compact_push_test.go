@@ -100,6 +100,26 @@ func TestThoughtPhotoCompactPush_IOSSelectsCompactOnlyAfterFullBudgetFailure(t *
 			if got := recorder.SendCallCount(); got != 1 {
 				t.Fatalf("provider calls = %d, want 1", got)
 			}
+			fullJSON, _ := json.Marshal(full)
+			fullSizes, err := providerEquivalentPayloadSize(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sent := recorder.LastMessage()
+			sentJSON, _ := json.Marshal(sent)
+			sentSizes, err := providerEquivalentPayloadSize(sent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generic := projectPushMessageForPlatform(buildPushMessage("recipient-token", "peer-sender", thoughtPhotoPushEnvelope(tc.ciphertextBytes, "")), "ios")
+			genericJSON, _ := json.Marshal(generic)
+			genericSizes, err := providerEquivalentPayloadSize(generic)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("envelope_bytes=%d full_message_bytes=%d full_data_bytes=%d full_fcm_bytes=%d full_apns_bytes=%d generic_message_bytes=%d generic_apns_bytes=%d projected_message_bytes=%d compact_data_bytes=%d projected_apns_bytes=%d",
+				len(envelope), len(fullJSON), pushDataSize(full.Data), fullSizes.FCM, fullSizes.APNS,
+				len(genericJSON), genericSizes.APNS, len(sentJSON), pushDataSize(apnsCustomDataAsStringMap(sent)), sentSizes.APNS)
 			assertThoughtPhotoCompactIOSPush(t, recorder.LastMessage())
 		})
 	}

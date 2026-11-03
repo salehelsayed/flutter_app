@@ -53,6 +53,39 @@ void main() {
     });
   });
 
+  test('buildEncryptedEnvelope adds optional compact photo push metadata', () {
+    const compact = <String, String>{
+      'kem': 'push-kem',
+      'ciphertext': 'push-ciphertext',
+      'nonce': 'push-nonce',
+    };
+    final wire = PostCreateEnvelope.buildEncryptedEnvelope(
+      eventId: 'evt-1',
+      createdAt: createdAt,
+      senderPeerId: 'peer-alice',
+      postId: 'post-1',
+      kem: 'canonical-kem',
+      ciphertext: 'canonical-ciphertext',
+      nonce: 'canonical-nonce',
+      pushEncrypted: compact,
+    );
+
+    expect(jsonDecode(wire), <String, Object>{
+      'type': 'post_create',
+      'version': '2',
+      'event_id': 'evt-1',
+      'created_at': createdAt,
+      'sender_peer_id': 'peer-alice',
+      'post_id': 'post-1',
+      'encrypted': <String, String>{
+        'kem': 'canonical-kem',
+        'ciphertext': 'canonical-ciphertext',
+        'nonce': 'canonical-nonce',
+      },
+      'push_encrypted': compact,
+    });
+  });
+
   test('an envelope with post_id still decrypts to the same post', () async {
     final wire = PostCreateEnvelope.buildEncryptedEnvelope(
       eventId: 'evt-1',
