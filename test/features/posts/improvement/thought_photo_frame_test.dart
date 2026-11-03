@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/thought_photo_framing.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_photo_draft_preview.dart';
@@ -60,7 +61,12 @@ void main() {
     List<String> paths, {
     Locale locale = const Locale('en'),
     List<ComposePostResult>? submitted,
+    bool restored = false,
   }) async {
+    final drafts = [
+      for (final path in paths)
+        PostMediaDraft(localFilePath: path, mime: 'image/jpeg'),
+    ];
     tester.view.physicalSize = const Size(400, 900) * 3;
     tester.view.devicePixelRatio = 3;
     addTearDown(tester.view.reset);
@@ -73,13 +79,14 @@ void main() {
           body: ComposePostSheet(
             thoughtsOnly: true,
             eligibleContacts: const [],
-            onPickMedia: () async => (
-              drafts: [
-                for (final path in paths)
-                  PostMediaDraft(localFilePath: path, mime: 'image/jpeg'),
-              ],
-              leftOut: false,
-            ),
+            initialDraft: restored
+                ? ComposePostResult(
+                    text: '',
+                    audience: PostAudience.allFriends(),
+                    mediaDrafts: drafts,
+                  )
+                : null,
+            onPickMedia: () async => (drafts: drafts, leftOut: false),
             onSubmitWithOutcome: (result) async {
               submitted?.add(result);
               return ComposePostSubmitOutcome.keepSheetOpen;
@@ -88,8 +95,10 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
-    await tester.pump();
+    if (!restored) {
+      await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+      await tester.pump();
+    }
     await until(tester, () => framedImage.evaluate().isNotEmpty);
   }
 
@@ -242,6 +251,52 @@ void main() {
       ['red', 'green'],
     );
     expect([colour(tallOut, 8, 190), colour(tallOut, 8, 210)], ['red', 'blue']);
+  });
+
+  testWidgets('a photo never shown in the frame is shared as a square too', (
+    tester,
+  ) async {
+    final wide = quarters('shown', 400, 300);
+    final tall = quarters('never_shown', 300, 400);
+    final submitted = <ComposePostResult>[];
+    await openWith(tester, [wide, tall], submitted: submitted);
+
+    final [wideOut, tallOut] = await share(tester, submitted);
+    expect(
+      [
+        [wideOut.width, wideOut.height],
+        [tallOut.width, tallOut.height],
+      ],
+      [
+        [300, 300],
+        [300, 300],
+      ],
+    );
+    expect([colour(tallOut, 8, 140), colour(tallOut, 8, 160)], ['red', 'blue']);
+  });
+
+  testWidgets('a photo picked again while cached still shows its frame', (
+    tester,
+  ) async {
+    final photo = quarters('cached', 400, 300);
+    await openWith(tester, [photo]);
+    await tester.pumpWidget(const SizedBox());
+
+    await openWith(tester, [photo]);
+    expect(tester.takeException(), isNull);
+    expect(framedImage, findsOneWidget);
+  });
+
+  testWidgets('a restored draft of a cached photo shows its frame', (
+    tester,
+  ) async {
+    final photo = quarters('restored', 400, 300);
+    await openWith(tester, [photo]);
+    await tester.pumpWidget(const SizedBox());
+
+    await openWith(tester, [photo], restored: true);
+    expect(tester.takeException(), isNull);
+    expect(framedImage, findsOneWidget);
   });
 
   testWidgets('removing one photo keeps the other photo and its framing', (
