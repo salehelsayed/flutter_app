@@ -136,3 +136,7 @@ Future<PostMediaDraft> bakeFramedPhoto(
     height: side,
   );
 }
+
+/// One colour for the empty part of the square when a photo is zoomed out.
+Future<ui.Color> photoEdgeColor(String path) =>
+    throw UnimplementedError('photoEdgeColor');

@@ -31,6 +31,27 @@ void main() {
     return path;
   }
 
+  /// [quarters] inside a 24-pixel frame of rgb(40, 120, 200).
+  String bordered(String name, int width, int height) {
+    final image = img.Image(width: width, height: height);
+    for (final pixel in image) {
+      final edge =
+          pixel.x < 24 ||
+          pixel.y < 24 ||
+          pixel.x >= width - 24 ||
+          pixel.y >= height - 24;
+      final right = pixel.x >= width / 2;
+      final bottom = pixel.y >= height / 2;
+      pixel
+        ..r = edge ? 40 : (right == bottom ? 255 : 0)
+        ..g = edge ? 120 : (right ? 255 : 0)
+        ..b = edge ? 200 : (!right && bottom ? 255 : 0);
+    }
+    final path = '${dir.path}/$name.jpg';
+    File(path).writeAsBytesSync(img.encodeJpg(image, quality: 95));
+    return path;
+  }
+
   String colour(img.Image image, int x, int y) {
     final p = image.getPixel(x, y);
     final on = [p.r, p.g, p.b].map((c) => c > 160).toList();
@@ -157,6 +178,59 @@ void main() {
       framings(tester)[photo]!.cropRect(const Size(400, 300)),
       const Rect.fromLTWH(50, 0, 300, 300),
     );
+    expect(framings(tester)[photo]!.scale, 1, reason: 'cover by default');
+  });
+
+  testWidgets('a pinch out shows the whole wide photo on its edge colour, '
+      'and Share bakes the same picture', (tester) async {
+    final photo = bordered('wide_out', 400, 300);
+    final submitted = <ComposePostResult>[];
+    await openWith(tester, [photo], submitted: submitted);
+    final box = tester.getRect(frame);
+    final fill = find.byKey(const ValueKey('thought-photo-frame-fill'));
+    await until(tester, () => fill.evaluate().isNotEmpty);
+
+    final centre = box.center;
+    final a = await tester.startGesture(centre - const Offset(120, 0));
+    final b = await tester.startGesture(centre + const Offset(120, 0));
+    for (var step = 1; step <= 10; step++) {
+      await a.moveTo(centre - Offset(120.0 - step * 10, 0));
+      await b.moveTo(centre + Offset(120.0 - step * 10, 0));
+      await tester.pump();
+    }
+    await a.up();
+    await b.up();
+    await tester.pump();
+
+    expect(framings(tester)[photo]!.scale, .75);
+    final shown = tester.getRect(framedImage);
+    expect(shown.left, moreOrLessEquals(box.left, epsilon: .01));
+    expect(shown.right, moreOrLessEquals(box.right, epsilon: .01));
+    expect(shown.top, moreOrLessEquals(box.top + 45, epsilon: .01));
+    expect(shown.bottom, moreOrLessEquals(box.bottom - 45, epsilon: .01));
+    await drag(tester, const Offset(0, 300));
+    expect(
+      tester.getRect(framedImage).top,
+      moreOrLessEquals(box.top + 45, epsilon: .01),
+      reason: 'the whole photo stays centred',
+    );
+
+    final preview = tester.widget<ColoredBox>(fill).color;
+    final [out] = await share(tester, submitted);
+    expect([out.width, out.height], [400, 400]);
+    for (final (x, y) in const [(8, 8), (200, 30), (391, 391), (200, 370)]) {
+      final p = out.getPixel(x, y);
+      expect(
+        [p.r, p.g, p.b],
+        [
+          closeTo((preview.r * 255).round(), 10),
+          closeTo((preview.g * 255).round(), 10),
+          closeTo((preview.b * 255).round(), 10),
+        ],
+        reason: 'band pixel $x,$y matches the preview fill',
+      );
+    }
+    expect([colour(out, 40, 90), colour(out, 359, 309)], ['red', 'yellow']);
   });
 
   testWidgets('a drag and a pinch change the framing, never leaving an '

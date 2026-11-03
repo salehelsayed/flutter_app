@@ -34,16 +34,77 @@ void main() {
       );
     });
 
-    test('scale and placement clamp so the square never leaves the photo', () {
+    test('scale clamps between the whole photo and 4x, and placement keeps '
+        'the photo in the square', () {
       const photo = Size(4000, 3000);
       expect(
         const PhotoFraming(scale: .5, center: Offset(2, -1)).cropRect(photo),
-        const Rect.fromLTWH(1000, 0, 3000, 3000),
+        const Rect.fromLTWH(0, -500, 4000, 4000),
+      );
+      expect(
+        const PhotoFraming(scale: 2, center: Offset(2, -1)).cropRect(photo),
+        const Rect.fromLTWH(2500, 0, 1500, 1500),
       );
       expect(
         const PhotoFraming(scale: 9, center: Offset(.5, .5)).cropRect(photo),
         const Rect.fromLTWH(1625, 1125, 750, 750),
       );
+    });
+  });
+
+  group('zoomed out', () {
+    test('a wide photo at its smallest shows whole with room above and '
+        'below', () {
+      expect(
+        const PhotoFraming(scale: .75).cropRect(const Size(4000, 3000)),
+        const Rect.fromLTWH(0, -500, 4000, 4000),
+      );
+    });
+
+    test('a tall photo at its smallest shows whole with room at the sides', () {
+      expect(
+        const PhotoFraming(scale: .75).cropRect(const Size(3000, 4000)),
+        const Rect.fromLTWH(-500, 0, 4000, 4000),
+      );
+    });
+
+    test('between cover and whole, the photo stays centred across its short '
+        'side and still moves along its long side', () {
+      const photo = Size(4000, 3000);
+      final out = PhotoFraming.cover.pinched(
+        photo,
+        300,
+        from: const Offset(150, 150),
+        to: const Offset(150, 150),
+        zoom: .9,
+      );
+      expect(out.scale, closeTo(.9, 1e-9));
+      final crop = out.cropRect(photo);
+      expect(crop.width, closeTo(3000 / .9, 1e-6));
+      expect(crop.center.dy, closeTo(1500, 1e-6));
+      final moved = out.pinched(
+        photo,
+        300,
+        from: Offset.zero,
+        to: const Offset(-40, 40),
+      );
+      final shifted = moved.cropRect(photo);
+      expect(shifted.center.dy, closeTo(1500, 1e-6));
+      expect(shifted.center.dx, greaterThan(crop.center.dx));
+      expect(shifted.right, lessThanOrEqualTo(4000 + 1e-6));
+    });
+
+    test('a pinch out stops at the whole photo', () {
+      const photo = Size(4000, 3000);
+      final out = PhotoFraming.cover.pinched(
+        photo,
+        300,
+        from: const Offset(150, 150),
+        to: const Offset(150, 150),
+        zoom: .2,
+      );
+      expect(out.scale, .75);
+      expect(out.cropRect(photo), const Rect.fromLTWH(0, -500, 4000, 4000));
     });
   });
 
@@ -106,6 +167,40 @@ void main() {
       final path = '${dir.path}/source_${width}x$height.jpg';
       File(path).writeAsBytesSync(img.encodeJpg(image, quality: 95));
       return path;
+    }
+
+    /// [quarters] inside a [border]-pixel frame of rgb(40, 120, 200).
+    String framed(int width, int height, {int border = 24}) {
+      final image = img.Image(width: width, height: height);
+      for (final pixel in image) {
+        final edge =
+            pixel.x < border ||
+            pixel.y < border ||
+            pixel.x >= width - border ||
+            pixel.y >= height - border;
+        final right = pixel.x >= width / 2;
+        final bottom = pixel.y >= height / 2;
+        pixel
+          ..r = edge ? 40 : (right == bottom ? 255 : 0)
+          ..g = edge ? 120 : (right ? 255 : 0)
+          ..b = edge ? 200 : (!right && bottom ? 255 : 0);
+      }
+      final path = '${dir.path}/framed_${width}x$height.jpg';
+      File(path).writeAsBytesSync(img.encodeJpg(image, quality: 95));
+      return path;
+    }
+
+    void edgeColoured(img.Image image, int x, int y) {
+      final p = image.getPixel(x, y);
+      expect(
+        [p.r, p.g, p.b],
+        [
+          inInclusiveRange(30, 50),
+          inInclusiveRange(110, 130),
+          inInclusiveRange(190, 210),
+        ],
+        reason: 'pixel $x,$y',
+      );
     }
 
     String colour(img.Image image, int x, int y) {
@@ -174,6 +269,71 @@ void main() {
         );
       },
     );
+
+    test(
+      'the edge colour is the average of the edges that face the bands',
+      () async {
+        final colour = await photoEdgeColor(framed(400, 300));
+        expect(
+          [
+            (colour.r * 255).round(),
+            (colour.g * 255).round(),
+            (colour.b * 255).round(),
+          ],
+          [
+            inInclusiveRange(30, 50),
+            inInclusiveRange(110, 130),
+            inInclusiveRange(190, 210),
+          ],
+        );
+      },
+    );
+
+    test('a wide photo zoomed all the way out bakes whole, with bands of its '
+        'edge colour above and below', () async {
+      final out = await baked(
+        await bakeFramedPhoto(
+          PostMediaDraft(localFilePath: framed(400, 300), mime: 'image/jpeg'),
+          const PhotoFraming(scale: .75),
+        ),
+      );
+      expect([out.width, out.height], [400, 400]);
+      for (final (x, y) in const [(8, 8), (200, 30), (391, 391), (200, 370)]) {
+        edgeColoured(out, x, y);
+      }
+      expect(
+        [
+          colour(out, 40, 90),
+          colour(out, 359, 90),
+          colour(out, 40, 309),
+          colour(out, 359, 309),
+        ],
+        ['red', 'green', 'blue', 'yellow'],
+      );
+    });
+
+    test('a tall photo zoomed all the way out bakes whole, with bands at the '
+        'sides', () async {
+      final out = await baked(
+        await bakeFramedPhoto(
+          PostMediaDraft(localFilePath: framed(300, 400), mime: 'image/jpeg'),
+          const PhotoFraming(scale: .75),
+        ),
+      );
+      expect([out.width, out.height], [400, 400]);
+      for (final (x, y) in const [(8, 200), (30, 8), (391, 200), (370, 391)]) {
+        edgeColoured(out, x, y);
+      }
+      expect(
+        [
+          colour(out, 90, 40),
+          colour(out, 309, 40),
+          colour(out, 90, 359),
+          colour(out, 309, 359),
+        ],
+        ['red', 'green', 'blue', 'yellow'],
+      );
+    });
 
     test('a 2x top-left framing keeps only the top-left quarter at its own '
         'resolution', () async {
