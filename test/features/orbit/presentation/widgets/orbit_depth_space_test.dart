@@ -475,4 +475,69 @@ void main() {
       });
     }
   }
+
+  double shownOpacity(WidgetTester tester, Finder target) {
+    var opacity = 1.0;
+    for (
+      RenderObject? box = tester.renderObject(target);
+      box != null;
+      box = box.parent
+    ) {
+      if (box is RenderOpacity) opacity *= box.opacity;
+      if (box is RenderAnimatedOpacity) opacity *= box.opacity.value;
+    }
+    return opacity;
+  }
+
+  Rect visible(WidgetTester tester, Finder target) {
+    var rect = tester.getRect(target);
+    for (
+      RenderObject? box = tester.renderObject(target).parent;
+      box != null;
+      box = box.parent
+    ) {
+      if (box is RenderClipRect) {
+        final clip = box.localToGlobal(Offset.zero) & (box as RenderBox).size;
+        rect = rect.intersect(clip);
+      }
+    }
+    return rect;
+  }
+
+  for (final (label, phone, keyboard) in [
+    ('iPhone 13', _phones[1], 336.0),
+    ('Pixel', _phones[2], 320.0),
+  ]) {
+    for (final kind in ['short', 'medium', 'voice', 'photo']) {
+      testWidgets('$label swiped up, Reply with the keyboard up still paints '
+          'the top of a $kind thought above the composer', (tester) async {
+        kinds[kind]!();
+        await mount(tester, phone);
+        await enter(tester, up: true);
+        final restPhoto = kind == 'photo' ? tester.getRect(photo) : null;
+        await tester.tap(reply);
+        await tester.pump();
+        tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(tester.takeException(), isNull);
+        final composer = tester.getRect(
+          find.byKey(const ValueKey('orbit-depth-composer')),
+        );
+        expect(shownOpacity(tester, text), greaterThan(.9));
+        if (restPhoto != null) {
+          expect(tester.getRect(photo).size, restPhoto.size);
+          expect(tester.getRect(text).top, lessThan(composer.top));
+        } else {
+          final words = visible(tester, text);
+          expect(words.height, greaterThan(20), reason: 'the text is shown');
+          expect(words.bottom, lessThanOrEqualTo(composer.top + .01));
+        }
+        tester.view.viewInsets = const FakeViewPadding();
+        await tester.pump();
+        await tester.pump();
+        await finish(tester);
+      });
+    }
+  }
 }
