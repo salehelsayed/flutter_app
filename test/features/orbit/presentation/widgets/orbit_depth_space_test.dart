@@ -410,9 +410,7 @@ void main() {
     });
   });
 
-  // Photo + voice overflows with the keyboard up on base 3126d485d too; it
-  // belongs to the photo-while-replying layout the owner has not decided.
-  for (final kind in kinds.keys.where((kind) => kind != 'photo+voice')) {
+  for (final kind in kinds.keys) {
     testWidgets('on a 360x640 phone swiped up, a $kind thought keeps a valid '
         'layout while Reply opens the keyboard', (tester) async {
       kinds[kind]!();
