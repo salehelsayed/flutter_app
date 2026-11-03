@@ -1,8 +1,10 @@
 import 'dart:math' as math;
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image/image.dart' as img;
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -66,6 +68,17 @@ void main() {
       await tester.pump();
     }
     expect(done(), isTrue);
+  }
+
+  /// A real 40x30 JPEG, for a share that bakes the photo's square.
+  String realPhoto() {
+    final dir = Directory.systemTemp.createTempSync('thought_compose_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final path = '${dir.path}/photo.jpg';
+    File(
+      path,
+    ).writeAsBytesSync(img.encodeJpg(img.Image(width: 40, height: 30)));
+    return path;
   }
 
   /// Photos show inside the sheet; nothing opens over it.
@@ -162,39 +175,50 @@ void main() {
     },
   );
 
-  for (final draft in const [
-    PostMediaDraft(localFilePath: '/tmp/thought.jpg', mime: 'image/jpeg'),
-    PostMediaDraft(localFilePath: '/tmp/thought.mp4', mime: 'video/mp4'),
-  ]) {
-    testWidgets(
-      '${draft.kind} can share without text through existing media drafts',
-      (tester) async {
-        ComposePostResult? submitted;
-        await tester.pumpWidget(
-          scene(
-            media: () async => [draft],
-            submit: (value) async {
-              submitted = value;
-              return ComposePostSubmitOutcome.keepSheetOpen;
-            },
-          ),
+  for (final kind in const ['image', 'video']) {
+    testWidgets('$kind can share without text through existing media drafts', (
+      tester,
+    ) async {
+      final draft = kind == 'image'
+          ? PostMediaDraft(localFilePath: realPhoto(), mime: 'image/jpeg')
+          : const PostMediaDraft(
+              localFilePath: '/tmp/thought.mp4',
+              mime: 'video/mp4',
+            );
+      ComposePostResult? submitted;
+      await tester.pumpWidget(
+        scene(
+          media: () async => [draft],
+          submit: (value) async {
+            submitted = value;
+            return ComposePostSubmitOutcome.keepSheetOpen;
+          },
+        ),
+      );
+      await tester.tap(find.byTooltip('Media'));
+      await finishPick(tester);
+      expect(share(tester).onPressed, isNotNull);
+      await tapVisible(
+        tester,
+        find.byKey(const ValueKey('thought-composer-share')),
+      );
+      await until(tester, () => submitted != null);
+      expect(submitted!.text, isEmpty);
+      expect(submitted!.audience.kind, PostAudienceKind.allFriends);
+      if (kind == 'image') {
+        final shared = submitted!.mediaDrafts.single;
+        expect(shared.localFilePath, isNot(draft.localFilePath));
+        expect(
+          [shared.mime, shared.width, shared.height],
+          ['image/jpeg', 30, 30],
         );
-        await tester.tap(find.byTooltip('Media'));
-        await finishPick(tester);
-        expect(share(tester).onPressed, isNotNull);
-        await tapVisible(
-          tester,
-          find.byKey(const ValueKey('thought-composer-share')),
-        );
-        await until(tester, () => submitted != null);
-        expect(submitted!.text, isEmpty);
-        expect(submitted!.audience.kind, PostAudienceKind.allFriends);
+      } else {
         expect(submitted!.mediaDrafts.single, same(draft));
-        await tapVisible(tester, find.byIcon(Icons.close));
-        await tester.pump();
-        expect(share(tester).onPressed, isNull);
-      },
-    );
+      }
+      await tapVisible(tester, find.byIcon(Icons.close));
+      await tester.pump();
+      expect(share(tester).onPressed, isNull);
+    });
   }
 
   testWidgets('picked photos show as thumbnails that remove one by one', (
@@ -375,6 +399,10 @@ void main() {
     tester.view.viewInsets = const FakeViewPadding(bottom: 260 * 3);
     addTearDown(tester.view.reset);
     const keyboardTop = 568.0 - 260;
+    final photo = PostMediaDraft(
+      localFilePath: realPhoto(),
+      mime: 'image/jpeg',
+    );
     var shared = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -391,8 +419,7 @@ void main() {
                 shared++;
                 return ComposePostSubmitOutcome.keepSheetOpen;
               },
-              onPickMedia: () async =>
-                  (drafts: const [photoOne], leftOut: false),
+              onPickMedia: () async => (drafts: [photo], leftOut: false),
             ),
           ),
         ),
@@ -401,7 +428,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Lake at dusk');
     await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
-    expect(shownPaths(tester), ['/tmp/one.jpg']);
+    expect(shownPaths(tester), [photo.localFilePath]);
 
     final shareButton = find.byKey(const ValueKey('thought-composer-share'));
     final shareRect = tester.getRect(shareButton);

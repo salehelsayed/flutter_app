@@ -380,7 +380,7 @@ void main() {
 
     final [out] = await share(tester, submitted);
     expect([out.width, out.height], [300, 300]);
-    expect([colour(out, 8, 8), colour(out, 291, 8)], ['red', 'red']);
+    expect([colour(out, 190, 8), colour(out, 210, 8)], ['red', 'green']);
   });
 
   testWidgets('closing and reopening a draft keeps each photo\'s framing', (

@@ -27,10 +27,15 @@ class ComposePostResult {
   final PostAudience audience;
   final List<PostMediaDraft> mediaDrafts;
 
+  /// An unsent Thought's photo framings by path, so a reopened draft shows
+  /// each photo as it was framed.
+  final Map<String, PhotoFraming> photoFramings;
+
   const ComposePostResult({
     required this.text,
     required this.audience,
     this.mediaDrafts = const <PostMediaDraft>[],
+    this.photoFramings = const {},
   });
 }
 
@@ -156,6 +161,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _textController.text = draft.text;
       _inputDirection = detectTextDirection(draft.text);
       _mediaDrafts = draft.mediaDrafts;
+      _framings = draft.photoFramings;
     }
     _textController.addListener(_updateInputDirection);
     _nearbyAvailability = widget.nearbyAvailability;
@@ -214,17 +220,31 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               _ => PostAudience.allFriends(),
             };
       final framings = _photoFramings;
+      final List<PostMediaDraft> media;
+      try {
+        media = [
+          for (final draft in _mediaDrafts)
+            if (framings[draft.localFilePath] case final framing?)
+              await bakeFramedPhoto(draft, framing)
+            else
+              draft,
+        ];
+      } on Object catch (error) {
+        // Friends never get more than the author framed: nothing is shared
+        // and the draft stays for another try.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'POST_COMPOSE_FL_PHOTO_FRAME_FAILED',
+          details: {'error': error.runtimeType.toString()},
+        );
+        if (mounted) setState(() => _notice = _ComposeNotice.shareFailed);
+        return;
+      }
       final outcome = await _submitPost(
         ComposePostResult(
           text: _textController.text.trim(),
           audience: audience,
-          mediaDrafts: [
-            for (final draft in _mediaDrafts)
-              if (framings[draft.localFilePath] case final framing?)
-                await _framed(draft, framing)
-              else
-                draft,
-          ],
+          mediaDrafts: media,
         ),
       );
       if (!mounted) return;
@@ -243,23 +263,6 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       if (mounted) {
         setState(() => _isSubmitting = false);
       }
-    }
-  }
-
-  /// A photo that cannot be baked is shared as picked, whole.
-  Future<PostMediaDraft> _framed(
-    PostMediaDraft draft,
-    PhotoFraming framing,
-  ) async {
-    try {
-      return await bakeFramedPhoto(draft, framing);
-    } on Object catch (error) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'POST_COMPOSE_FL_PHOTO_FRAME_FAILED',
-        details: {'error': error.runtimeType.toString()},
-      );
-      return draft;
     }
   }
 
@@ -284,6 +287,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               text: text,
               audience: PostAudience.allFriends(),
               mediaDrafts: _mediaDrafts,
+              photoFramings: _framings,
             )
           : null,
     );

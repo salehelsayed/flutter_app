@@ -93,11 +93,7 @@ Future<PostMediaDraft> bakeFramedPhoto(
       final framed = framing
           .cropRect(Size(width.toDouble(), height.toDouble()))
           .width;
-      final shrink = math.min(1.0, maxSide / framed);
-      return ui.TargetImageSize(
-        width: math.max(1, (width * shrink).round()),
-        height: math.max(1, (height * shrink).round()),
-      );
+      return thoughtDecodeSize(width, height, maxSide / framed);
     },
   );
   final matte = await photoEdgeColor(draft.localFilePath);
@@ -111,7 +107,7 @@ Future<PostMediaDraft> bakeFramedPhoto(
   try {
     final size = Size(photo.width.toDouble(), photo.height.toDouble());
     final crop = framing.cropRect(size);
-    final side = math.min(maxSide, crop.width.round());
+    final side = math.max(1, math.min(maxSide, crop.width.round()));
     final zoom = side / crop.width;
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(recorder)..drawColor(matte, ui.BlendMode.src);
@@ -170,13 +166,11 @@ Future<ui.Color> photoEdgeColor(String path) async {
   );
   final codec = await ui.instantiateImageCodecWithSize(
     buffer,
-    getTargetSize: (width, height) {
-      final shrink = math.min(1.0, _edgeSampleSide / math.max(width, height));
-      return ui.TargetImageSize(
-        width: math.max(1, (width * shrink).round()),
-        height: math.max(1, (height * shrink).round()),
-      );
-    },
+    getTargetSize: (width, height) => thoughtDecodeSize(
+      width,
+      height,
+      _edgeSampleSide / math.max(width, height),
+    ),
   );
   final ui.Image image;
   try {
@@ -211,5 +205,19 @@ Future<ui.Color> photoEdgeColor(String path) async {
   return ui.Color.fromARGB(255, r ~/ n, g ~/ n, b ~/ n);
 }
 
+/// The size to decode a [width] x [height] photo at when it is shrunk by
+/// [shrink]: never upscaled, at least one pixel a side, and never thinner
+/// than [_thinnestDecode] pixels where the photo is thicker, so a long thin
+/// strip keeps its exact shape for framing.
+ui.TargetImageSize thoughtDecodeSize(int width, int height, double shrink) {
+  final floor = _thinnestDecode / math.max(1, math.min(width, height));
+  final scale = math.min(1.0, math.max(shrink, floor));
+  return ui.TargetImageSize(
+    width: math.max(1, (width * scale).round()),
+    height: math.max(1, (height * scale).round()),
+  );
+}
+
+const _thinnestDecode = 64;
 const _edgeSampleSide = 256;
 const _edgeDepth = 3;

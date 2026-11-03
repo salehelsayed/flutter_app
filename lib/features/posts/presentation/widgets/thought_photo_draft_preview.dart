@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -122,11 +124,7 @@ class _FramedPhoto extends StatefulWidget {
 }
 
 class _FramedPhotoState extends State<_FramedPhoto> {
-  late final ImageProvider _image = ResizeImage.resizeIfNeeded(
-    1440,
-    null,
-    FileImage(File(widget.path)),
-  );
+  late final ImageProvider _image = _FramePhotoImage(widget.path);
   ImageStream? _stream;
   late final _listener = ImageStreamListener(_onImage, onError: _onError);
   Size? _photo;
@@ -337,4 +335,44 @@ class _ThirdsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ThirdsPainter oldDelegate) => false;
+}
+
+/// The photo in the frame, decoded at most 1440 pixels long with
+/// [thoughtDecodeSize], the sizing the bake uses, so a long thin strip
+/// keeps its shape instead of decoding to an empty size.
+class _FramePhotoImage extends ImageProvider<_FramePhotoImage> {
+  const _FramePhotoImage(this.path);
+
+  final String path;
+
+  @override
+  Future<_FramePhotoImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(
+    _FramePhotoImage key,
+    ImageDecoderCallback decode,
+  ) => OneFrameImageStreamCompleter(() async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(
+      await File(path).readAsBytes(),
+    );
+    final codec = await decode(
+      buffer,
+      getTargetSize: (width, height) =>
+          thoughtDecodeSize(width, height, 1440 / math.max(width, height)),
+    );
+    try {
+      return ImageInfo(image: (await codec.getNextFrame()).image);
+    } finally {
+      codec.dispose();
+    }
+  }());
+
+  @override
+  bool operator ==(Object other) =>
+      other is _FramePhotoImage && other.path == path;
+
+  @override
+  int get hashCode => path.hashCode;
 }
