@@ -1053,7 +1053,13 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                           child: fade(
                             'orbit-depth-content',
                             shown != null
-                                ? _card(shown, k)
+                                ? _card(
+                                    shown,
+                                    k,
+                                    composingRestHeight: composing
+                                        ? places.areaBottom - places.areaTop
+                                        : null,
+                                  )
                                 : _layer == OrbitDepthLayer.flat ||
                                       _gesture == OrbitDepthGesture.vertical
                                 ? null
@@ -1331,7 +1337,9 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     );
   }
 
-  Widget _card(OrbitDepthSeat seat, double k) {
+  /// [composingRestHeight] is the thought area's height at rest, given while
+  /// the reply composer takes part of it.
+  Widget _card(OrbitDepthSeat seat, double k, {double? composingRestHeight}) {
     final post = seat.thought;
     final l10n = AppLocalizations.of(context)!;
     final created = DateTime.tryParse(post.createdAt)?.toUtc();
@@ -1513,7 +1521,18 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
       container: true,
       label: '${seat.friend.username} · $ageText',
       onTap: _bySemantics(open),
-      child: content,
+      // While replying, a text or voice thought keeps its resting layout and
+      // shows only its top: the composer and keyboard leave too little height
+      // for its fixed parts. A photo shrinks into the space as before.
+      child: photo || composingRestHeight == null
+          ? content
+          : ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topCenter,
+                maxHeight: composingRestHeight,
+                child: content,
+              ),
+            ),
     );
   }
 }
