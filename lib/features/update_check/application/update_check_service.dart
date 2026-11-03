@@ -59,6 +59,9 @@ class UpdateCheckService {
 
   bool _checkedThisLaunch = false;
   Future<UpdateDecision>? _inFlight;
+  UpdateAvailability _availability = UpdateAvailability.unknown;
+
+  UpdateAvailability get availability => _availability;
 
   bool get isEnabled => _switch.enabled && _platform != null;
 
@@ -112,12 +115,14 @@ class UpdateCheckService {
   }
 
   Future<UpdateDecision> _check() async {
+    _availability = UpdateAvailability.unknown;
     final platform = _platform;
     if (!isEnabled || platform == null) return const UpdateDecisionNone();
     try {
       final loaded = await _loadVerified(platform);
       var state = loaded.state;
       var current = loaded.file;
+      var verifiedDownload = false;
 
       final downloaded = await _fetcher.fetch(_url);
       if (downloaded != null) {
@@ -128,23 +133,25 @@ class UpdateCheckService {
               requiredPlatforms: {platform},
             )
             .file;
-        if (candidate != null &&
-            decideVersionFileRatchet(
-                  candidate: candidate,
-                  highestAcceptedRank: state.highestAcceptedRank,
-                  storedSequence: state.sequence,
-                  storedPayloadBytes: current?.payloadBytes,
-                ) ==
-                VersionFileRatchet.accept) {
-          // A rank rise replaces all lower-rank state.
-          state = UpdateCheckState(
-            lastEnvelope: candidate.envelopeBytes,
-            highestAcceptedRank: candidate.rank,
-            sequence: candidate.payload.sequence,
-            lastCheckAt: state.lastCheckAt,
-            dismissedLatestBuild: state.dismissedLatestBuild,
+        if (candidate != null) {
+          final ratchet = decideVersionFileRatchet(
+            candidate: candidate,
+            highestAcceptedRank: state.highestAcceptedRank,
+            storedSequence: state.sequence,
+            storedPayloadBytes: current?.payloadBytes,
           );
-          current = candidate;
+          verifiedDownload = ratchet != VersionFileRatchet.ignore;
+          if (ratchet == VersionFileRatchet.accept) {
+            // A rank rise replaces all lower-rank state.
+            state = UpdateCheckState(
+              lastEnvelope: candidate.envelopeBytes,
+              highestAcceptedRank: candidate.rank,
+              sequence: candidate.payload.sequence,
+              lastCheckAt: state.lastCheckAt,
+              dismissedLatestBuild: state.dismissedLatestBuild,
+            );
+            current = candidate;
+          }
         }
       }
       // Every attempt counts for the schedule, failed downloads included.
@@ -155,14 +162,23 @@ class UpdateCheckService {
         if (saved.highestAcceptedRank != state.highestAcceptedRank ||
             saved.sequence != state.sequence) {
           current = _verifyStored(saved, platform);
+          verifiedDownload = false;
         }
         state = saved;
       }
       _checkedThisLaunch = true;
 
+      final build = await _installedBuildNumber();
+      final installed = int.tryParse(build.trim());
+      final policy = current?.payload.platforms[platform];
+      if (verifiedDownload && installed != null && policy != null) {
+        _availability = installed < policy.latestBuild
+            ? UpdateAvailability.available
+            : UpdateAvailability.current;
+      }
       return decideUpdate(
-        installedBuildNumber: await _installedBuildNumber(),
-        policy: current?.payload.platforms[platform],
+        installedBuildNumber: build,
+        policy: policy,
         dismissedLatestBuild: state.dismissedLatestBuild,
       );
     } catch (_) {

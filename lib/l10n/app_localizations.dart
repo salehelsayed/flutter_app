@@ -8197,6 +8197,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Nujoom'**
   String get sticker_pack_nujoom;
+
+  /// No description provided for @settings_app_updates.
+  ///
+  /// In en, this message translates to:
+  /// **'App updates'**
+  String get settings_app_updates;
+
+  /// No description provided for @settings_updates_current.
+  ///
+  /// In en, this message translates to:
+  /// **'Up to date'**
+  String get settings_updates_current;
+
+  /// No description provided for @settings_updates_unknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Status unavailable'**
+  String get settings_updates_unknown;
+
+  /// No description provided for @settings_updates_checking.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates'**
+  String get settings_updates_checking;
 }
 
 class _AppLocalizationsDelegate

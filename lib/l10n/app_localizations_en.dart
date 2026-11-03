@@ -4918,4 +4918,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get sticker_pack_nujoom => 'Nujoom';
+
+  @override
+  String get settings_app_updates => 'App updates';
+
+  @override
+  String get settings_updates_current => 'Up to date';
+
+  @override
+  String get settings_updates_unknown => 'Status unavailable';
+
+  @override
+  String get settings_updates_checking => 'Checking for updates';
 }

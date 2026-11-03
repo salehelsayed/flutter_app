@@ -62,6 +62,120 @@ void main() {
     keyId: 'k2',
   );
 
+  group('Settings availability from a fresh verified policy', () {
+    test(
+      'current, newer and hard policies remain distinct from prompt dismissal',
+      () async {
+        for (final installed in ['120', '130', '110', '99']) {
+          fetcher.responses.add(k1(1));
+          final svc = service(installed: installed);
+          await svc.check();
+          expect(
+            svc.availability,
+            int.parse(installed) >= 120
+                ? UpdateAvailability.current
+                : UpdateAvailability.available,
+          );
+        }
+      },
+    );
+
+    test(
+      'a repeated byte-identical verified download is still fresh',
+      () async {
+        final svc = service(installed: '120');
+        fetcher.responses.addAll([k1(1), k1(1)]);
+        await svc.check();
+        expect(svc.availability, UpdateAvailability.current);
+        await svc.check();
+        expect(svc.availability, UpdateAvailability.current);
+      },
+    );
+
+    test(
+      'dismissing a soft banner does not dismiss Settings availability',
+      () async {
+        final svc = service();
+        fetcher.responses.addAll([k1(1), k1(1)]);
+        await svc.check();
+        await svc.dismissSoft(120);
+        expect(await svc.check(), const UpdateDecisionNone());
+        expect(svc.availability, UpdateAvailability.available);
+      },
+    );
+
+    test(
+      'offline with a cached current policy is neutral, not freshly current',
+      () async {
+        final svc = service(installed: '120');
+        fetcher.responses.addAll([k1(1), null]);
+        await svc.check();
+        expect(svc.availability, UpdateAvailability.current);
+        expect(await svc.check(), const UpdateDecisionNone());
+        expect(svc.availability, UpdateAvailability.unknown);
+        expect((await temp.load()).lastEnvelope, isNotNull);
+      },
+    );
+
+    test('bad signature with a cached current policy is neutral', () async {
+      final svc = service(installed: '120');
+      fetcher.responses.addAll([
+        k1(1),
+        signedEnvelope(payloadBytes(sequence: 2), signer: testOnlyRogue),
+      ]);
+      await svc.check();
+      expect(svc.availability, UpdateAvailability.current);
+      expect(await svc.check(), const UpdateDecisionNone());
+      expect(svc.availability, UpdateAvailability.unknown);
+      expect((await temp.load()).sequence, 1);
+    });
+
+    test(
+      'offline cache still supplies the unchanged soft and hard prompts',
+      () async {
+        for (final installed in ['110', '99']) {
+          final svc = service(installed: installed);
+          fetcher.responses.addAll([k1(1), null]);
+          final before = await svc.check();
+          expect(svc.availability, UpdateAvailability.available);
+          expect(await svc.check(), before);
+          expect(svc.availability, UpdateAvailability.unknown);
+        }
+      },
+    );
+
+    test(
+      'replayed download is neutral even when cached policy is current',
+      () async {
+        final svc = service(installed: '120');
+        fetcher.responses.addAll([k1(2), k1(1)]);
+        await svc.check();
+        expect(svc.availability, UpdateAvailability.current);
+        await svc.check();
+        expect(svc.availability, UpdateAvailability.unknown);
+        expect((await temp.load()).sequence, 2);
+      },
+    );
+
+    test(
+      'unparseable installed build, missing policy and offline never claim current',
+      () async {
+        fetcher.responses.add(k1(1));
+        final invalidBuild = service(installed: 'version 120');
+        await invalidBuild.check();
+        expect(invalidBuild.availability, UpdateAvailability.unknown);
+        await temp.file.writeAsString('{}');
+        fetcher.responses.add(signedEnvelope(payloadBytes(ios: null)));
+        final missingPlatform = service(installed: '120');
+        await missingPlatform.check();
+        expect(missingPlatform.availability, UpdateAvailability.unknown);
+        fetcher.responses.add(null);
+        await missingPlatform.check();
+        expect(missingPlatform.availability, UpdateAvailability.unknown);
+      },
+    );
+  });
+
   group('decision through the service (AC1)', () {
     test('none, soft and hard', () async {
       fetcher.responses.addAll([k1(1), k1(1), k1(1)]);
@@ -261,27 +375,33 @@ void main() {
       expect(state.highestAcceptedRank, 2);
     });
 
-    test('(f2) corrupt or tampered stored state is discarded -> none', () async {
-      // Corrupt: not JSON at all.
-      await temp.file.writeAsString('{{{ not json');
-      fetcher.responses.add(null);
-      expect(await service().check(), const UpdateDecisionNone());
+    test(
+      '(f2) corrupt or tampered stored state is discarded -> none',
+      () async {
+        // Corrupt: not JSON at all.
+        await temp.file.writeAsString('{{{ not json');
+        fetcher.responses.add(null);
+        expect(await service().check(), const UpdateDecisionNone());
 
-      // Tamper: flip a byte in the stored envelope.
-      fetcher.responses.add(k1(2, min: 200));
-      await service().check();
-      final stored =
-          jsonDecode(await temp.file.readAsString()) as Map<String, Object?>;
-      final envelope = base64.decode(stored['lastEnvelope']! as String);
-      final payload = jsonDecode(utf8.decode(envelope)) as Map<String, Object?>;
-      final payloadBytes = base64.decode(payload['payload']! as String)
-        ..[5] ^= 1;
-      payload['payload'] = base64.encode(payloadBytes);
-      stored['lastEnvelope'] = base64.encode(utf8.encode(jsonEncode(payload)));
-      await temp.file.writeAsString(jsonEncode(stored));
-      fetcher.responses.add(null);
-      expect(await service().check(), const UpdateDecisionNone());
-    });
+        // Tamper: flip a byte in the stored envelope.
+        fetcher.responses.add(k1(2, min: 200));
+        await service().check();
+        final stored =
+            jsonDecode(await temp.file.readAsString()) as Map<String, Object?>;
+        final envelope = base64.decode(stored['lastEnvelope']! as String);
+        final payload =
+            jsonDecode(utf8.decode(envelope)) as Map<String, Object?>;
+        final payloadBytes = base64.decode(payload['payload']! as String)
+          ..[5] ^= 1;
+        payload['payload'] = base64.encode(payloadBytes);
+        stored['lastEnvelope'] = base64.encode(
+          utf8.encode(jsonEncode(payload)),
+        );
+        await temp.file.writeAsString(jsonEncode(stored));
+        fetcher.responses.add(null);
+        expect(await service().check(), const UpdateDecisionNone());
+      },
+    );
   });
 
   group('kill switch (AC6)', () {

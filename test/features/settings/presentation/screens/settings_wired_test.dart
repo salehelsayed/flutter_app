@@ -455,7 +455,10 @@ void main() {
       buildNumber: '130',
       buildSignature: '',
     );
-    await pumpScreen(tester, identityRepo: FakeIdentityRepository(makeIdentity()));
+    await pumpScreen(
+      tester,
+      identityRepo: FakeIdentityRepository(makeIdentity()),
+    );
     await tester.pump();
     expect(find.text('App updates'), findsOneWidget);
     expect(find.text('Your version: 1.0.1 (130)'), findsOneWidget);

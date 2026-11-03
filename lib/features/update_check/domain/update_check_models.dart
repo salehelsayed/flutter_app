@@ -63,6 +63,10 @@ class VersionPayload {
   final Map<UpdatePlatform, UpdatePlatformPolicy> platforms;
 }
 
+/// Availability established by a fresh, verified foreground check. Prompt
+/// dismissal does not change this status; an unsuccessful check is unknown.
+enum UpdateAvailability { unknown, current, available }
+
 /// What the caller (T2a/T2b) should show.
 sealed class UpdateDecision {
   const UpdateDecision();

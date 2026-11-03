@@ -4980,4 +4980,16 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get sticker_pack_nujoom => 'نجوم';
+
+  @override
+  String get settings_app_updates => 'تحديث التطبيق';
+
+  @override
+  String get settings_updates_current => 'التطبيق محدّث';
+
+  @override
+  String get settings_updates_unknown => 'الحالة غير متاحة';
+
+  @override
+  String get settings_updates_checking => 'جارٍ التحقق من التحديثات';
 }

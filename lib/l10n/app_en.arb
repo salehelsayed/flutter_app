@@ -2492,5 +2492,9 @@
   "sticker_group_german": "German celebrities",
   "sticker_pack_orbit_crew": "Orbit Crew",
   "sticker_pack_big_mood": "Big Mood",
-  "sticker_pack_nujoom": "Nujoom"
+  "sticker_pack_nujoom": "Nujoom",
+  "settings_app_updates": "App updates",
+  "settings_updates_current": "Up to date",
+  "settings_updates_unknown": "Status unavailable",
+  "settings_updates_checking": "Checking for updates"
 }

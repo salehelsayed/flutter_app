@@ -9,12 +9,15 @@ class FakeUpdateCheckService implements UpdateCheckService {
     List<UpdateDecision>? decisions,
     this.due = false,
     this.installed = '118',
+    this.availability = UpdateAvailability.unknown,
     UpdatePlatform? platform = UpdatePlatform.ios,
   }) : _decisions = decisions ?? <UpdateDecision>[],
        _platform = platform;
 
   final List<UpdateDecision> _decisions;
   final UpdatePlatform? _platform;
+  @override
+  UpdateAvailability availability;
   bool due;
   String installed;
   int checks = 0;
@@ -23,6 +26,7 @@ class FakeUpdateCheckService implements UpdateCheckService {
 
   /// When set, [check] waits for it, so a test can interleave a dismissal.
   Completer<void>? gate;
+  Completer<bool>? dueGate;
 
   UpdateDecision _last = const UpdateDecisionNone();
 
@@ -51,7 +55,8 @@ class FakeUpdateCheckService implements UpdateCheckService {
   @override
   Future<bool> isCheckDue(DateTime now) async {
     dueQueries += 1;
-    return due;
+    final wait = dueGate;
+    return wait == null ? due : await wait.future;
   }
 
   @override

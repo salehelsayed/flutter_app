@@ -5030,4 +5030,16 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String get sticker_pack_nujoom => 'Nujoom';
+
+  @override
+  String get settings_app_updates => 'App-Updates';
+
+  @override
+  String get settings_updates_current => 'Auf dem neuesten Stand';
+
+  @override
+  String get settings_updates_unknown => 'Status nicht verfügbar';
+
+  @override
+  String get settings_updates_checking => 'Updates werden geprüft';
 }

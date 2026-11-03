@@ -53,6 +53,7 @@ class SettingsScreen extends StatelessWidget {
   final bool isNearbySharingEnabled;
   final ValueChanged<bool>? onNearbySharingChanged;
   final Widget? thoughtNotificationsRow;
+  final Widget? appUpdatesRow;
   final VoidCallback? onMoveAccountToNewPhone;
   final Widget? groupExitDiagnosticsSection;
   final Widget? callDiagnosticsSection;
@@ -90,6 +91,7 @@ class SettingsScreen extends StatelessWidget {
     this.isNearbySharingEnabled = false,
     this.onNearbySharingChanged,
     this.thoughtNotificationsRow,
+    this.appUpdatesRow,
     this.onMoveAccountToNewPhone,
     this.groupExitDiagnosticsSection,
     this.callDiagnosticsSection,
@@ -215,6 +217,7 @@ class SettingsScreen extends StatelessWidget {
           label: l10n.settings_move_account_title,
           onTap: onMoveAccountToNewPhone,
         ),
+      ?appUpdatesRow,
     ];
 
     return AmbientBackground(

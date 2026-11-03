@@ -27,6 +27,13 @@ class UpdateCheckController extends ValueNotifier<UpdateDecision> {
   bool _disposed = false;
   int? _dismissedLatestBuild;
   String? _installedBuildNumber;
+  UpdateAvailability _availability = UpdateAvailability.unknown;
+  bool _isChecking = false;
+  Future<void>? _inFlight;
+  bool _forceRequested = false;
+
+  UpdateAvailability get availability => _availability;
+  bool get isChecking => _isChecking;
 
   /// The installed build number, once a check has read it.
   String? get installedBuildNumber => _installedBuildNumber;
@@ -37,21 +44,36 @@ class UpdateCheckController extends ValueNotifier<UpdateDecision> {
 
   /// Runs the launch check once. Later calls do nothing.
   void start() {
-    if (_started) return;
-    _started = true;
-    unawaited(_run());
+    if (_started || _disposed) return;
+    unawaited(refresh(force: true));
   }
 
   Future<void> onResumed() async {
     if (!_started || _disposed) return;
-    if (value is UpdateDecisionHard) return _run();
-    bool due;
-    try {
-      due = await _service.isCheckDue(_clock());
-    } catch (_) {
-      due = false;
+    await refresh(force: value is UpdateDecisionHard);
+  }
+
+  /// Settings reuses the current result until due; its refresh action forces
+  /// the same shared check used by launch and resume.
+  Future<void> refresh({bool force = false}) {
+    if (_disposed) return Future<void>.value();
+    final running = _inFlight;
+    if (running != null) {
+      _forceRequested |= force;
+      return running;
     }
-    if (due) await _run();
+    final first = !_started;
+    _started = true;
+    final completion = Completer<void>();
+    _inFlight = completion.future;
+    unawaited(
+      _run(force: force || first).whenComplete(() {
+        _inFlight = null;
+        _forceRequested = false;
+        completion.complete();
+      }),
+    );
+    return completion.future;
   }
 
   /// Hides the banner for the current latestBuild. A higher latestBuild
@@ -69,23 +91,55 @@ class UpdateCheckController extends ValueNotifier<UpdateDecision> {
     }
   }
 
-  Future<void> _run() async {
-    final decision = await _service.check();
-    if (decision is UpdateDecisionHard && _installedBuildNumber == null) {
+  Future<void> _run({required bool force}) async {
+    if (!force) {
+      bool due;
       try {
-        _installedBuildNumber = await _service.installedBuildNumber();
+        due = await _service.isCheckDue(_clock());
       } catch (_) {
-        _installedBuildNumber = null;
+        if (!_forceRequested) {
+          if (!_disposed) {
+            _availability = UpdateAvailability.unknown;
+            notifyListeners();
+          }
+          return;
+        }
+        due = false;
       }
+      if ((!due && !_forceRequested) || _disposed) return;
     }
-    if (_disposed) return;
-    // A check that started before a dismissal can still return that build.
-    if (decision is UpdateDecisionSoft &&
-        decision.latestBuild == _dismissedLatestBuild) {
-      value = const UpdateDecisionNone();
+    _isChecking = true;
+    notifyListeners();
+    UpdateDecision decision;
+    try {
+      decision = await _service.check();
+      if (decision is UpdateDecisionHard && _installedBuildNumber == null) {
+        try {
+          _installedBuildNumber = await _service.installedBuildNumber();
+        } catch (_) {
+          _installedBuildNumber = null;
+        }
+      }
+    } catch (_) {
+      if (!_disposed) {
+        _isChecking = false;
+        _availability = UpdateAvailability.unknown;
+        notifyListeners();
+      }
       return;
     }
-    value = decision;
+    if (_disposed) return;
+    _availability = _service.availability;
+    _isChecking = false;
+    // A check that started before a dismissal can still return that build.
+    final next =
+        decision is UpdateDecisionSoft &&
+            decision.latestBuild == _dismissedLatestBuild
+        ? const UpdateDecisionNone()
+        : decision;
+    final previous = value;
+    value = next;
+    if (previous == next) notifyListeners();
   }
 
   @override

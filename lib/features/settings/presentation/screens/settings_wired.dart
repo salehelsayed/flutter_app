@@ -62,6 +62,7 @@ import 'package:flutter_app/features/settings/presentation/widgets/group_exit_di
 import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'package:flutter_app/features/translate_preview/on_device_ai.dart';
 import 'package:flutter_app/features/translate_preview/private_translator_settings_section.dart';
+import 'package:flutter_app/features/settings/presentation/widgets/settings_app_updates_row.dart';
 import 'settings_screen.dart';
 
 /// Wired widget connecting SettingsScreen to business logic.
@@ -1221,6 +1222,7 @@ class _SettingsWiredState extends State<SettingsWired>
 
     final screen = SettingsScreen(
       username: identity?.username ?? 'Username',
+      appUpdatesRow: const SettingsAppUpdatesRow(),
       peerId: identity?.peerId,
       avatarBytes: _pickedAvatarBytes ?? identity?.avatarBlob,
       mnemonic: identity?.mnemonic12,

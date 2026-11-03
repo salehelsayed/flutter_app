@@ -1596,6 +1596,23 @@ and `010-analyze.log`; earlier interrupted/held attempts remain preserved. This
 is injected host evidence, not an actual external-store, install, signed-candidate
 or native-notification result.
 
+Settings update availability is separate from the banner/gate decision:
+`UpdateDecisionNone` also covers unknown policy and dismissed soft updates, so it
+must never establish "Up to date". Only a fresh verified download accepted or
+refreshed by the existing ratchet, plus a numeric installed build, establishes
+Settings availability. Offline, invalid signatures and rejected replays leave
+Settings neutral while the existing prompts retain their verified-cache fallback.
+An explicit refresh arriving during the asynchronous six-hour due lookup must
+still run if that lookup returns false or throws; overlapping requests share the
+actual check. The Settings row uses the shared controller and store resolver,
+loads PackageInfo without blocking the page, and keeps failed store handoffs
+retryable. The missing-row and pending-due-refresh causal failures, corrected
+metadata-pump probe, and 108 passing service/controller/Settings cases are retained
+in `.audit/wt/settings-update-row-20261103/.codex-test-logs/settings-update-row-20261103/`.
+Those host cases cover approved EN/DE/AR copy, narrow large-text layouts, platform
+links and late completions; they do not prove a signed candidate, native screen
+reader or actual TestFlight/Play handoff.
+
 The SE-41 production notification parser recognizes package-grouped Android
 PendingIntent headers (`#N: PendingIntentRecord{...}`) as well as legacy
 bare/asterisk headers. It still requires exactly one record for the active
