@@ -136,10 +136,10 @@ func (n *Node) turnCredentialsV1At(now func() time.Time, diagnostics ...*CallDia
 		}
 		attemptCtx, attemptCancel := context.WithTimeout(ctx, attemptTimeout)
 		diagnostic := n.diagnosticForRelay(relay.ID, diagnostics)
-		bundle, err := requestTurnCredentialsV1(attemptCtx, h, relay, now(), diagnostic)
+		bundle, err := n.requestTurnCredentialsV1(attemptCtx, h, relay, now(), diagnostic)
 		if diagnostic != nil && errors.Is(err, errTurnDiagnosticUnsupported) {
 			n.setDiagnosticRelay(relay.ID, false)
-			bundle, err = requestTurnCredentialsV1(attemptCtx, h, relay, now())
+			bundle, err = n.requestTurnCredentialsV1(attemptCtx, h, relay, now())
 		}
 		attemptCancel()
 		if err == nil {
@@ -153,7 +153,7 @@ func (n *Node) turnCredentialsV1At(now func() time.Time, diagnostics ...*CallDia
 	return TurnCredentialBundle{}, lastErr
 }
 
-func requestTurnCredentialsV1(
+func (n *Node) requestTurnCredentialsV1(
 	parent context.Context,
 	h host.Host,
 	relay RelayInfo,
@@ -165,9 +165,14 @@ func requestTurnCredentialsV1(
 	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
 		return TurnCredentialBundle{}, annotateTurnCredentialFailure(turnCredentialConnectError(err), "connect", err)
 	}
+	if err := n.checkSendConnections(ctx, h, relay.ID); err != nil {
+		return TurnCredentialBundle{}, annotateTurnCredentialFailure(turnCredentialConnectError(err), "new_stream", err)
+	}
 
+	connections := h.Network().ConnsToPeer(relay.ID)
 	stream, err := h.NewStream(ctx, relay.ID, InboxProtocol)
 	if err != nil {
+		n.noteSendOpenTimeout(ctx, h, relay.ID, connections, stream, err)
 		return TurnCredentialBundle{}, annotateTurnCredentialFailure(turnCredentialConnectError(err), "new_stream", err)
 	}
 	streamOK := false
@@ -187,13 +192,16 @@ func requestTurnCredentialsV1(
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	if err := writeFrame(stream, requestBytes); err != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), err)
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	responseBytes, err := readFrame(stream)
 	if ctx.Err() != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), ctx.Err())
 		return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable
 	}
 	if err != nil {
+		n.noteSendTimeout(ctx, h, stream.Conn(), err)
 		var timeout net.Error
 		if errors.As(err, &timeout) && timeout.Timeout() {
 			return TurnCredentialBundle{}, ErrTurnCredentialsUnavailable

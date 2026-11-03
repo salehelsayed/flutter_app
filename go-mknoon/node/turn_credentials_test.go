@@ -209,7 +209,7 @@ func TestTurnCredentialsV1_CanceledRequestInterruptsBlockedResponse(t *testing.T
 	defer cancel()
 	result := make(chan turnCredentialFetchResult, 1)
 	go func() {
-		bundle, err := requestTurnCredentialsV1(ctx, n.host, RelayInfo{
+		bundle, err := n.requestTurnCredentialsV1(ctx, n.host, RelayInfo{
 			ID: relay.ID(), Addrs: relay.Addrs(),
 		}, time.Now())
 		result <- turnCredentialFetchResult{bundle: bundle, err: err}

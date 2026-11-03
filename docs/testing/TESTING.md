@@ -7139,6 +7139,19 @@ visible and cannot become an ordinary first-attempt PASS.
   connection ownership fence shutdown and successors. Message command and
   committed-ACK deadlines remain unchanged; inbox connect/check/I/O share the
   existing attempt deadline instead of renewing I/O time after a check.
+  TURN credential requests use these same exact-connection checks and timeout
+  notes. `TestTurnCredentialsV1_EstablishedRelayBlackholeRecoversWithoutRestart`
+  warms one relay connection, drops its bytes without FIN/RST, and proves a
+  subsequent ordinary request reaches a preknown healthy address of that same
+  relay within the unchanged four-second budget, without restarting the node.
+  The first timeout alone preserves the connection; retirement requires the
+  independent response check. A replaced host remains a typed rejection before
+  stream admission, rather than permission for transient TURN fallback. The
+  local socket fixture proves credential-request recovery, not full cellular
+  call connectivity, live TURN allocation or signed-device media. Original RED
+  and focused GREEN evidence are retained in
+  `.codex-test-logs/call-cellular-signalling-20261103/` under
+  `red-turn-single-relay` and `green-turn-focused`.
   A coalesced waiter also observes its own half-budget check deadline, leaving
   its I/O reserve even when another operation owns a longer check; the owner
   retains the single probe. A gated real-connection regression fails when that

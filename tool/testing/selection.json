@@ -1586,13 +1586,13 @@
         "-race",
         "./node",
         "-run",
-        "^Test(SendConnectionRecovery_|SendMessage_(SlowCommit|EstablishedIPv6)|InboxStore_(SlowReceipt|EstablishedIPv6)|R3Deadline|QuietRecovery|DualStackUDPBlackhole|SendMessageRecovery_)",
+        "^Test(SendConnectionRecovery_|SendMessage_(SlowCommit|EstablishedIPv6)|InboxStore_(SlowReceipt|EstablishedIPv6)|TurnCredentialsV1_|R3Deadline|QuietRecovery|DualStackUDPBlackhole|SendMessageRecovery_)",
         "-count=1",
         "-v"
       ],
       "cwd": "go-mknoon",
       "success_marker": "--- PASS: TestSendMessage_SlowCommitPreservesSharedConnection",
-      "boundary": "Real shared TCP/yamux and QUIC streams preserve bidirectional progress across delayed committed ACKs and inbox receipts; established IPv6 socket blackholes recover on the existing retry, including registered streams and a healthy same-peer connection. Connection-bound checks coalesce within caller budgets and retain cancellation, resource, quiet and successor ownership boundaries.",
+      "boundary": "Real shared TCP/yamux and QUIC streams preserve bidirectional progress across delayed committed ACKs and inbox receipts; established IPv6 socket blackholes and TURN credential requests recover on the existing retry, including registered streams and a healthy same-peer connection. Connection-bound checks coalesce within caller budgets and retain cancellation, resource, quiet and successor ownership boundaries.",
       "limitations": "Local synthetic socket/commit fixtures and focused Go race detection; not public IPv6 reachability, signed-device execution or separate WebRTC audio.",
       "requirements": [
         "go"
@@ -1601,6 +1601,7 @@
       "references": [
         "go-mknoon/node/shared_connection_timeout_test.go",
         "go-mknoon/node/send_connection_recovery_test.go",
+        "go-mknoon/node/turn_credentials_connection_recovery_test.go",
         "go-mknoon/node/ipv6_happy_eyeballs_test.go",
         "go-mknoon/node/deadline_contract_test.go"
       ]
@@ -6232,6 +6233,7 @@
         "go-mknoon/node/node.go",
         "go-mknoon/node/inbox.go",
         "go-mknoon/node/send_connection_recovery*",
+        "go-mknoon/node/turn_credentials*.go",
         "go-mknoon/node/shared_connection_timeout_test.go",
         "go-mknoon/node/ipv6_happy_eyeballs_test.go"
       ],

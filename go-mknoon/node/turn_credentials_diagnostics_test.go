@@ -30,6 +30,7 @@ func (h turnDiagnosticFailureHost) NewStream(context.Context, peer.ID, ...protoc
 }
 
 func TestTurnCredentialsV1_FixedDiagnosticPreservesActualPreStreamStageAndPolicy(t *testing.T) {
+	backingHost := startLocalNodeForMultiRelayTest(t).Host()
 	route := &net.OpError{Op: "private-operation", Net: "private-network", Err: &os.SyscallError{Syscall: "private-syscall", Err: syscall.ENETUNREACH}}
 	aggregate := &swarm.DialError{Cause: swarm.ErrAllDialsFailed, DialErrors: []swarm.TransportError{{Cause: route}, {Cause: swarm.ErrDialBackoff}}}
 	cases := []struct {
@@ -44,13 +45,14 @@ func TestTurnCredentialsV1_FixedDiagnosticPreservesActualPreStreamStageAndPolicy
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := turnDiagnosticFailureHost{}
+			h := &turnDiagnosticFailureHost{Host: backingHost}
 			if tc.stage == "connect" {
 				h.connectErr = tc.raw
 			} else {
 				h.streamErr = tc.raw
 			}
-			_, err := requestTurnCredentialsV1(context.Background(), h, RelayInfo{}, time.Now())
+			n := &Node{host: h, ctx: context.Background()}
+			_, err := n.requestTurnCredentialsV1(context.Background(), h, RelayInfo{}, time.Now())
 			if !errors.Is(err, tc.classified) {
 				t.Fatal("diagnostic changed failure classification")
 			}
@@ -73,6 +75,28 @@ func TestTurnCredentialsV1_FixedDiagnosticPreservesActualPreStreamStageAndPolicy
 			}
 		})
 	}
+}
+
+func TestTurnCredentialsV1_ReplacedHostRefusesInsteadOfTransientFallback(t *testing.T) {
+	currentHost := startLocalNodeForMultiRelayTest(t).Host()
+	previousHost := &turnDiagnosticFailureHost{
+		Host:      currentHost,
+		streamErr: errors.New("private-stream-must-not-open"),
+	}
+	n := &Node{host: currentHost, ctx: context.Background()}
+	parent := context.Background()
+	bundle, err := n.requestTurnCredentialsV1(parent, previousHost, RelayInfo{}, time.Now())
+	if !errors.Is(err, ErrTurnCredentialsRejected) || errors.Is(err, ErrTurnCredentialsUnavailable) {
+		t.Fatal("revoked host authority became transient TURN fallback permission")
+	}
+	if parent.Err() != nil || bundle.Username != "" || bundle.Password != "" || len(bundle.URLs) != 0 {
+		t.Fatal("revoked host request canceled the caller or returned credential material")
+	}
+	detail := TurnCredentialFailureDiagnostics(err)
+	if detail["stage"] != "new_stream" || detail["kind"] != "canceled" {
+		t.Fatal("revoked host was not refused before opening a TURN stream")
+	}
+	assertNoSendChecks(t, n)
 }
 
 func TestTurnCredentialsV1_FixedDiagnosticBoundsAndOwnsItsValues(t *testing.T) {
