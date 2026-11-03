@@ -184,6 +184,7 @@ void main() {
           child: child!,
         ),
         home: Scaffold(
+          resizeToAvoidBottomInset: false,
           body: SafeArea(
             child: OrbitDepthSurface(
               items: [
@@ -408,4 +409,26 @@ void main() {
       await finish(tester);
     });
   });
+
+  // Photo + voice overflows with the keyboard up on base 3126d485d too; it
+  // belongs to the photo-while-replying layout the owner has not decided.
+  for (final kind in kinds.keys.where((kind) => kind != 'photo+voice')) {
+    testWidgets('on a 360x640 phone swiped up, a $kind thought keeps a valid '
+        'layout while Reply opens the keyboard', (tester) async {
+      kinds[kind]!();
+      await mount(tester, _phones[0]);
+      await enter(tester, up: true);
+      await tester.tap(reply);
+      await tester.pump();
+      final composer = find.byKey(const ValueKey('orbit-depth-composer'));
+      expect(composer, findsOneWidget);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(tester.getRect(composer).bottom, lessThanOrEqualTo(360));
+      tester.view.viewInsets = const FakeViewPadding();
+      await tester.pump();
+      await finish(tester);
+    });
+  }
 }
