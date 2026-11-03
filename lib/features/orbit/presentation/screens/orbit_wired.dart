@@ -144,6 +144,7 @@ import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_c
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
+import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
@@ -1160,6 +1161,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     PostRepository repository,
     CreatedLocalPost created,
   ) async {
+    // Friends a narrower thought leaves out were queued a retraction of the
+    // one it replaced; send it now instead of at the next retrier pass.
+    unawaited(
+      retryPendingPostFollowOns(
+        postRepo: repository,
+        p2pService: widget.p2pService,
+      ).catchError((Object error) {
+        _reportThoughtFailure(error);
+        return 0;
+      }),
+    );
     try {
       final (result, prepared) = await prepareCreatedLocalPostMedia(
         created: created,

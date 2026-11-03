@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 import 'package:flutter_app/features/posts/application/attach_post_media_use_case.dart';
 import 'package:flutter_app/features/posts/application/nearby_eligibility_service.dart';
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart';
+import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
@@ -335,6 +336,21 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     return (SendPostResult.sendFailed, null);
   }
   if (otherOwnThoughts.isNotEmpty) {
+    // Friends the new thought reaches drop the old one when it arrives; the
+    // rest are asked to now, before the old thought's recipient rows go.
+    final reached = {
+      for (final recipient in resolvedRecipients) recipient.contact.peerId,
+    };
+    for (final old in otherOwnThoughts) {
+      if (!isNewerThought(post, old)) continue;
+      await queueThoughtRetraction(
+        postRepo: postRepo,
+        post: old,
+        senderPeerId: senderPeerId,
+        recipientPeerIds: (await sentTo(postRepo, old.id)).difference(reached),
+        now: now,
+      );
+    }
     // The orbit's composer passes no media manager; the default one reaches
     // the same post_media folders.
     await deleteReplacedThoughts(

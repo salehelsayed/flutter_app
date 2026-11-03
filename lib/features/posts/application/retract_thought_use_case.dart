@@ -5,6 +5,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/posts/application/post_follow_on_delivery.dart';
 import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_follow_on_outbox_recipient_delivery.dart';
+import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_retract_envelope.dart';
 import 'package:flutter_app/features/posts/domain/repositories/post_repository.dart';
 
@@ -54,29 +55,13 @@ Future<ThoughtRetraction> retractThought({
     return const ThoughtRetraction(RetractThoughtResult.notAuthor);
   }
 
-  final recipients = <String>{
-    for (final delivery in await postRepo.getRecipientDeliveries(postId))
-      if (delivery.recipientPeerId.isNotEmpty) delivery.recipientPeerId,
-  }.toList(growable: false);
-  final envelope = PostRetractEnvelope(
-    eventId: 'evt_${_uuid.v4()}',
-    createdAt: now,
-    postId: postId,
-    postCreatedAt: DateTime.tryParse(post.createdAt)?.toUtc() ?? now,
+  final (envelope, queued) = await queueThoughtRetraction(
+    postRepo: postRepo,
+    post: post,
+    senderPeerId: senderPeerId,
+    recipientPeerIds: await sentTo(postRepo, postId),
+    now: now,
   );
-  var queued = const <PostFollowOnOutboxRecipientDelivery>[];
-  if (recipients.isNotEmpty) {
-    queued = await queuePostFollowOn(
-      postRepo: postRepo,
-      eventId: envelope.eventId,
-      eventType: PostRetractEnvelope.type,
-      postId: postId,
-      senderPeerId: senderPeerId,
-      envelope: envelope.toJson(),
-      createdAt: now.toIso8601String(),
-      recipientPeerIds: recipients,
-    );
-  }
 
   await deleteStoredThought(
     postRepo: postRepo,
@@ -97,4 +82,41 @@ Future<ThoughtRetraction> retractThought({
       deliveries: queued,
     ),
   );
+}
+
+/// Everyone the user's thought [postId] was sent to.
+Future<Set<String>> sentTo(PostRepository postRepo, String postId) async => {
+  for (final delivery in await postRepo.getRecipientDeliveries(postId))
+    if (delivery.recipientPeerId.isNotEmpty) delivery.recipientPeerId,
+};
+
+/// Queues a `post_retract` of [post] for [recipientPeerIds], ahead of any
+/// local delete so the follow-on retrier still sends it after a crash.
+Future<(PostRetractEnvelope, List<PostFollowOnOutboxRecipientDelivery>)>
+queueThoughtRetraction({
+  required PostRepository postRepo,
+  required PostModel post,
+  required String senderPeerId,
+  required Set<String> recipientPeerIds,
+  required DateTime now,
+}) async {
+  final envelope = PostRetractEnvelope(
+    eventId: 'evt_${_uuid.v4()}',
+    createdAt: now,
+    postId: post.id,
+    postCreatedAt: DateTime.tryParse(post.createdAt)?.toUtc() ?? now,
+  );
+  if (recipientPeerIds.isEmpty)
+    return (envelope, const <PostFollowOnOutboxRecipientDelivery>[]);
+  final queued = await queuePostFollowOn(
+    postRepo: postRepo,
+    eventId: envelope.eventId,
+    eventType: PostRetractEnvelope.type,
+    postId: post.id,
+    senderPeerId: senderPeerId,
+    envelope: envelope.toJson(),
+    createdAt: now.toIso8601String(),
+    recipientPeerIds: recipientPeerIds.toList(growable: false),
+  );
+  return (envelope, queued);
 }
