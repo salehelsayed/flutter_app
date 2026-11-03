@@ -441,4 +441,38 @@ void main() {
       await finish(tester);
     });
   }
+
+  for (final kind in ['photo', 'photo+voice']) {
+    for (final (phone, up) in [(_phones[0], true), (_phones[1], false)]) {
+      testWidgets('on a ${phone.size.width.toInt()}x'
+          '${phone.size.height.toInt()} phone swiped ${up ? 'up' : 'down'}, '
+          'a $kind thought keeps its resting photo and caption while you '
+          'reply', (tester) async {
+        kinds[kind]!();
+        await mount(tester, phone);
+        await enter(tester, up: up);
+        final restPhoto = tester.getRect(photo);
+        final restText = tester.getRect(text);
+        await tester.tap(reply);
+        await tester.pump();
+        tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(tester.getRect(photo), restPhoto);
+        expect(tester.getRect(text), restText);
+        if (!up) {
+          final composer = find.byKey(const ValueKey('orbit-depth-composer'));
+          expect(
+            restText.bottom,
+            lessThanOrEqualTo(tester.getRect(composer).top),
+            reason: 'the whole caption shows above the composer',
+          );
+        }
+        tester.view.viewInsets = const FakeViewPadding();
+        await tester.pump();
+        await tester.pump();
+        await finish(tester);
+      });
+    }
+  }
 }
