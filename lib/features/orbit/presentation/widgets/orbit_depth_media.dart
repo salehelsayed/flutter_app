@@ -130,7 +130,8 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
   @override
   Widget build(BuildContext context) {
     final visual = _media.where((item) => item.kind != 'voice').toList();
-    return Column(
+    final voiced = _media.any((item) => item.kind == 'voice');
+    final column = Column(
       mainAxisSize: visual.isEmpty ? MainAxisSize.min : MainAxisSize.max,
       children: [
         if (_loading && _media.isEmpty)
@@ -181,5 +182,21 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
           ),
       ],
     );
+    if (visual.isEmpty || !voiced) return column;
+    // A voice note above a photo needs a least height; while a reply leaves
+    // less, the pair keeps it and shows its top instead of overflowing.
+    return LayoutBuilder(
+      builder: (context, box) => box.maxHeight >= _voiceAndPhotoMinHeight
+          ? column
+          : ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topCenter,
+                maxHeight: _voiceAndPhotoMinHeight,
+                child: column,
+              ),
+            ),
+    );
   }
 }
+
+const _voiceAndPhotoMinHeight = 120.0;
