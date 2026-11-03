@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -168,10 +169,9 @@ func TestRelaySelector_FanOut_AttemptsAllRelaysAndSucceedsIfAnyRelaySucceeds(t *
 	addr3 := generateFakeRelayAddr(t, 19003)
 
 	rs := NewRelaySelector([]string{addr1, addr2, addr3})
-	calls := 0
+	var calls atomic.Int32
 	err := rs.FanOut(func(relay RelayInfo) error {
-		calls++
-		if calls == 2 {
+		if calls.Add(1) == 2 {
 			return nil
 		}
 		return fmt.Errorf("relay down")
@@ -179,8 +179,8 @@ func TestRelaySelector_FanOut_AttemptsAllRelaysAndSucceedsIfAnyRelaySucceeds(t *
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if calls != 3 {
-		t.Errorf("expected 3 calls (fan out across all relays), got %d", calls)
+	if got := calls.Load(); got != 3 {
+		t.Errorf("expected 3 calls (fan out across all relays), got %d", got)
 	}
 }
 
