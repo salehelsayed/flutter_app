@@ -244,6 +244,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The microphone is busy right now. Try again in a moment.';
 
   @override
+  String get thought_photo_frame_hint =>
+      'Pinch and drag to choose what friends see';
+
+  @override
   String get thought_compose_open => 'Share a thought';
 
   @override

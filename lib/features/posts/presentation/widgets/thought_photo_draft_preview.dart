@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import '../thought_photo_framing.dart';
+
 /// The picked photos inside the Thought composer, drawn the way friends will
 /// see them on the card: the whole photo on black. Each has an X to take it
 /// out. There is no separate framing step.
@@ -10,10 +12,14 @@ class ThoughtPhotoDraftPreview extends StatelessWidget {
     super.key,
     required this.paths,
     required this.onRemove,
+    this.framings = const {},
+    this.onFramed,
   });
 
   final List<String> paths;
   final ValueChanged<int> onRemove;
+  final Map<String, PhotoFraming> framings;
+  final void Function(String path, PhotoFraming framing)? onFramed;
 
   static const _height = 240.0;
 

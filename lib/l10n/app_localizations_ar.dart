@@ -237,6 +237,9 @@ class AppLocalizationsAr extends AppLocalizations {
       'الميكروفون مشغول الآن. حاول بعد قليل.';
 
   @override
+  String get thought_photo_frame_hint => 'قرّب واسحب لتختار ما يراه أصدقاؤك';
+
+  @override
   String get thought_compose_open => 'شارك خاطرة';
 
   @override

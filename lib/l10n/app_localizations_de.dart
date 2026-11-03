@@ -254,6 +254,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Das Mikrofon wird gerade verwendet. Versuche es gleich erneut.';
 
   @override
+  String get thought_photo_frame_hint =>
+      'Zoomen und verschieben: Wähle, was Freunde sehen';
+
+  @override
   String get thought_compose_open => 'Gedanken teilen';
 
   @override

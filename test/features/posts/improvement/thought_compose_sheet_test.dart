@@ -323,7 +323,7 @@ void main() {
   );
 
   testWidgets(
-    'a picked photo shows whole inside the composer and the X takes it out',
+    'a picked photo shows in the square frame and the X takes it out',
     (tester) async {
       await tester.pumpWidget(
         scene(
@@ -336,14 +336,14 @@ void main() {
       await finishPick(tester);
 
       expect(shownPaths(tester), ['/tmp/one.jpg']);
-      expect(find.text('Fit'), findsNothing);
-      final photo = find.descendant(
-        of: find.byKey(const ValueKey('thought-photo-draft-0')),
-        matching: find.byType(Image),
+      final frame = tester.getSize(
+        find.byKey(const ValueKey('thought-photo-frame-box')),
       );
-      expect(tester.widgetList<Image>(photo).map((image) => image.fit), [
-        BoxFit.contain,
-      ]);
+      expect(frame.width, frame.height);
+      expect(
+        find.text('Pinch and drag to choose what friends see'),
+        findsOneWidget,
+      );
       expect(find.byType(ImageFiltered), findsNothing);
 
       await tapVisible(

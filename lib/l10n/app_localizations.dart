@@ -526,6 +526,12 @@ abstract class AppLocalizations {
   /// **'The microphone is busy right now. Try again in a moment.'**
   String get thought_compose_mic_busy;
 
+  /// No description provided for @thought_photo_frame_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinch and drag to choose what friends see'**
+  String get thought_photo_frame_hint;
+
   /// No description provided for @thought_compose_open.
   ///
   /// In en, this message translates to:
