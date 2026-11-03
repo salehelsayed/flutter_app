@@ -335,6 +335,73 @@ void main() {
       );
     });
 
+    test(
+      'a 5000x1 strip and a 1x5000 strip bake whole as a 1440 square',
+      () async {
+        for (final (width, height) in const [(5000, 1), (1, 5000)]) {
+          final image = img.Image(width: width, height: height);
+          for (final pixel in image) {
+            pixel
+              ..r = 40
+              ..g = 120
+              ..b = 200;
+          }
+          final path = '${dir.path}/strip_${width}x$height.png';
+          File(path).writeAsBytesSync(img.encodePng(image));
+          final out = await baked(
+            await bakeFramedPhoto(
+              PostMediaDraft(localFilePath: path, mime: 'image/png'),
+              const PhotoFraming(scale: 0),
+            ),
+          );
+          expect([out.width, out.height], [1440, 1440]);
+          edgeColoured(out, 8, 8);
+        }
+      },
+    );
+
+    test('a photo with a see-through middle bakes on its edge colour, as the '
+        'preview shows it', () async {
+      final image = img.Image(width: 400, height: 300, numChannels: 4);
+      for (final pixel in image) {
+        final edge =
+            pixel.x < 24 || pixel.y < 24 || pixel.x >= 376 || pixel.y >= 276;
+        pixel
+          ..r = 40
+          ..g = 120
+          ..b = 200
+          ..a = edge ? 255 : 0;
+      }
+      final path = '${dir.path}/hole.png';
+      File(path).writeAsBytesSync(img.encodePng(image));
+      final out = await baked(
+        await bakeFramedPhoto(
+          PostMediaDraft(localFilePath: path, mime: 'image/png'),
+          PhotoFraming.cover,
+        ),
+      );
+      edgeColoured(out, 150, 150);
+    });
+
+    test(
+      'a hair under cover still fills the thin band with the edge colour',
+      () async {
+        final image = img.Image(width: 400, height: 300);
+        final path = '${dir.path}/black.png';
+        File(path).writeAsBytesSync(img.encodePng(image));
+        final out = await baked(
+          await bakeFramedPhoto(
+            PostMediaDraft(localFilePath: path, mime: 'image/png'),
+            const PhotoFraming(scale: .998),
+          ),
+        );
+        for (final x in const [0, 100, 200, 299]) {
+          final p = out.getPixel(x, 0);
+          expect([p.r, p.g, p.b], everyElement(lessThan(12)), reason: 'x $x');
+        }
+      },
+    );
+
     test('a 2x top-left framing keeps only the top-left quarter at its own '
         'resolution', () async {
       final source = quarters(2000, 1500);
