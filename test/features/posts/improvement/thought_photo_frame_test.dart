@@ -460,6 +460,43 @@ void main() {
     });
   }
 
+  testWidgets('a photo that failed to open opens once the same file is '
+      'readable again', (tester) async {
+    final path = '${dir.path}/recovering.jpg';
+    File(path).writeAsBytesSync([1, 2, 3, 4]);
+    final drafts = [PostMediaDraft(localFilePath: path, mime: 'image/jpeg')];
+    tester.view.physicalSize = const Size(400, 900) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: ComposePostSheet(
+            thoughtsOnly: true,
+            eligibleContacts: const [],
+            onPickMedia: () async => (drafts: drafts, leftOut: false),
+            onSubmit: (_) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+    await tester.pump();
+    await until(
+      tester,
+      () => find.byIcon(Icons.broken_image_outlined).evaluate().isNotEmpty,
+    );
+    await tester.pumpWidget(const SizedBox());
+
+    File(
+      path,
+    ).writeAsBytesSync(File(quarters('valid', 400, 300)).readAsBytesSync());
+    await openWith(tester, [path]);
+    expect(framedImage, findsOneWidget);
+  });
+
   testWidgets('a photo picked again while cached still shows its frame', (
     tester,
   ) async {
