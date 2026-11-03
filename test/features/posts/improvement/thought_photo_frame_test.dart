@@ -497,6 +497,170 @@ void main() {
     expect(framedImage, findsOneWidget);
   });
 
+  final fit = find.byKey(const ValueKey('thought-photo-fit'));
+  final fill = find.byKey(const ValueKey('thought-photo-fill'));
+
+  Future<void> settle(WidgetTester tester) async {
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+  }
+
+  testWidgets('Fit shows the whole photo on its edge colour and Share bakes '
+      'it whole', (tester) async {
+    final photo = bordered('fit_wide', 400, 300);
+    final submitted = <ComposePostResult>[];
+    await openWith(tester, [photo], submitted: submitted);
+    final box = tester.getRect(frame);
+    expect(find.text('Fit'), findsOneWidget);
+    expect(find.text('Fill'), findsOneWidget);
+
+    await tester.tap(fit);
+    await settle(tester);
+    expect(framings(tester)[photo]!.scale, .75);
+    final shown = tester.getRect(framedImage);
+    expect(shown.left, moreOrLessEquals(box.left, epsilon: .01));
+    expect(shown.right, moreOrLessEquals(box.right, epsilon: .01));
+    expect(shown.top, moreOrLessEquals(box.top + 45, epsilon: .01));
+
+    final [out] = await share(tester, submitted);
+    expect([out.width, out.height], [400, 400]);
+    expect([colour(out, 40, 90), colour(out, 359, 309)], ['red', 'yellow']);
+  });
+
+  testWidgets('Fill brings back the centred cover after Fit or a drag', (
+    tester,
+  ) async {
+    final photo = quarters('fill_wide', 400, 300);
+    await openWith(tester, [photo]);
+    final box = tester.getRect(frame);
+    await tester.tap(fit);
+    await settle(tester);
+    await tester.tap(fill);
+    await settle(tester);
+    expect(framings(tester)[photo]!.scale, 1);
+    expect(framings(tester)[photo]!.center, const Offset(.5, .5));
+    await drag(tester, const Offset(500, 0));
+    await tester.tap(fill);
+    await settle(tester);
+    expect(framings(tester)[photo]!.center, const Offset(.5, .5));
+    expect(
+      tester.getRect(framedImage),
+      Rect.fromLTWH(box.left - 60, box.top, 480, 360),
+    );
+  });
+
+  testWidgets('with reduce motion Fit jumps to the whole photo at once', (
+    tester,
+  ) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue =
+        const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    final photo = quarters('fit_still', 400, 300);
+    await openWith(tester, [photo]);
+    final box = tester.getRect(frame);
+    await tester.tap(fit);
+    await tester.pump();
+    expect(
+      tester.getRect(framedImage).top,
+      moreOrLessEquals(box.top + 45, epsilon: .01),
+    );
+  });
+
+  testWidgets('Fit and Fill say which is chosen, and neither once the photo '
+      'is pinched', (tester) async {
+    final handle = tester.ensureSemantics();
+    final photo = quarters('chosen', 400, 300);
+    await openWith(tester, [photo]);
+    Matcher chosen(String label, bool selected) => isSemantics(
+      label: label,
+      isButton: true,
+      hasSelectedState: true,
+      isSelected: selected,
+      hasTapAction: true,
+    );
+    expect(tester.getSemantics(fit), chosen('Fit', false));
+    expect(tester.getSemantics(fill), chosen('Fill', true));
+    await tester.tap(fit);
+    await settle(tester);
+    expect(tester.getSemantics(fit), chosen('Fit', true));
+    expect(tester.getSemantics(fill), chosen('Fill', false));
+
+    final centre = tester.getRect(frame).center;
+    final a = await tester.startGesture(centre - const Offset(20, 0));
+    final b = await tester.startGesture(centre + const Offset(20, 0));
+    for (var step = 1; step <= 10; step++) {
+      await a.moveTo(centre - Offset(20.0 + step * 6, 0));
+      await b.moveTo(centre + Offset(20.0 + step * 6, 0));
+      await tester.pump();
+    }
+    await a.up();
+    await b.up();
+    await tester.pump();
+    expect(tester.getSemantics(fit), chosen('Fit', false));
+    expect(tester.getSemantics(fill), chosen('Fill', false));
+    handle.dispose();
+  });
+
+  testWidgets('Fit and Fill are at least 44 pt tall, sit under the frame, and '
+      'swap sides right to left', (tester) async {
+    await openWith(tester, [quarters('ltr', 400, 300)]);
+    final box = tester.getRect(frame);
+    for (final control in [fit, fill]) {
+      final rect = tester.getRect(control);
+      expect(rect.height, greaterThanOrEqualTo(44));
+      expect(rect.top, greaterThanOrEqualTo(box.bottom));
+    }
+    expect(tester.getCenter(fit).dx, lessThan(tester.getCenter(fill).dx));
+
+    await tester.pumpWidget(const SizedBox());
+    await openWith(tester, [
+      quarters('rtl', 400, 300),
+    ], locale: const Locale('ar'));
+    expect(tester.getCenter(fit).dx, greaterThan(tester.getCenter(fill).dx));
+  });
+
+  testWidgets('a square photo has no Fit or Fill, there is nothing to choose', (
+    tester,
+  ) async {
+    await openWith(tester, [quarters('square_photo', 300, 300)]);
+    expect(fit, findsNothing);
+    expect(fill, findsNothing);
+  });
+
+  testWidgets('each thumbnail reads as Photo n of count, the shown one '
+      'selected', (tester) async {
+    final handle = tester.ensureSemantics();
+    await openWith(tester, [
+      quarters('thumb_a', 400, 300),
+      quarters('thumb_b', 300, 400),
+    ]);
+    Matcher thumb(String label, bool selected) => isSemantics(
+      label: label,
+      isButton: true,
+      hasSelectedState: true,
+      isSelected: selected,
+      hasTapAction: true,
+    );
+    final first = find.byKey(const ValueKey('thought-photo-thumb-0'));
+    final second = find.byKey(const ValueKey('thought-photo-thumb-1'));
+    expect(tester.getSemantics(first), thumb('Photo 1 of 2', true));
+    expect(tester.getSemantics(second), thumb('Photo 2 of 2', false));
+    await showPhoto(tester, 1);
+    expect(tester.getSemantics(first), thumb('Photo 1 of 2', false));
+    expect(tester.getSemantics(second), thumb('Photo 2 of 2', true));
+    expect(
+      find.descendant(
+        of: find.byType(ThoughtPhotoDraftPreview),
+        matching: find.bySemanticsLabel(
+          RegExp(r'\.jpg|image', caseSensitive: false),
+        ),
+      ),
+      findsNothing,
+    );
+    handle.dispose();
+  });
+
   testWidgets('a photo picked again while cached still shows its frame', (
     tester,
   ) async {
