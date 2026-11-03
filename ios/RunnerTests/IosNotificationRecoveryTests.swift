@@ -1213,6 +1213,79 @@ final class IosNotificationRecoveryTests: XCTestCase {
     XCTAssertEqual(store.desiredBadgeSnapshot()?.count, 1)
   }
 
+  func testReconciliationReadsBindingBeforeStateLockAndPreservesCurrentLease() throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let binding = "v1:" + String(repeating: "a", count: 64)
+    let lockURL = directory.appendingPathComponent(".ios_notification_recovery.lock")
+    let probeFd = open(lockURL.path, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR)
+    XCTAssertGreaterThanOrEqual(probeFd, 0)
+    guard probeFd >= 0 else { return }
+    defer { close(probeFd) }
+    var bindingReads = 0
+    var lockWasAvailable = false
+    let store = IosNotificationRecoveryStore(
+      directory: directory,
+      currentOpaqueBinding: {
+        bindingReads += 1
+        // The production reader may block in Security IPC. A separate open
+        // file description must be able to acquire the shared lock then.
+        let result = flock(probeFd, LOCK_EX | LOCK_NB)
+        lockWasAvailable = result == 0
+        if result == 0 { _ = flock(probeFd, LOCK_UN) }
+        return binding
+      }
+    )
+    let lease = try XCTUnwrap(store.prepareMailboxAlertLease(
+      requestIdentifier: "pending-wake",
+      accountPeerId: "account-self",
+      opaqueBinding: binding
+    ))
+
+    let begin = try XCTUnwrap(store.beginReconciliation(accountPeerId: "account-self"))
+
+    XCTAssertEqual(bindingReads, 1)
+    XCTAssertTrue(lockWasAvailable, "Keychain lookup must not retain the shared state flock")
+    XCTAssertEqual(begin.mailboxAlertLease, lease)
+    XCTAssertGreaterThan(begin.generation, lease.generation)
+    XCTAssertTrue(store.mailboxAlertLeaseMatches(
+      lease,
+      accountPeerId: "account-self",
+      opaqueBinding: binding
+    ))
+  }
+
+  func testReconciliationDiscardsLeaseWhenBindingMissingInvalidOrChanged() throws {
+    let previousBinding = "v1:" + String(repeating: "a", count: 64)
+    let currentBindings: [String?] = [
+      nil,
+      "invalid-binding",
+      "v1:" + String(repeating: "b", count: 64),
+    ]
+    for binding in currentBindings {
+      let directory = try temporaryDirectory()
+      defer { try? FileManager.default.removeItem(at: directory) }
+      let store = IosNotificationRecoveryStore(
+        directory: directory,
+        currentOpaqueBinding: { binding }
+      )
+      let lease = try XCTUnwrap(store.prepareMailboxAlertLease(
+        requestIdentifier: "pending-wake",
+        accountPeerId: "account-self",
+        opaqueBinding: previousBinding
+      ))
+
+      let begin = try XCTUnwrap(store.beginReconciliation(accountPeerId: "account-self"))
+
+      XCTAssertNil(begin.mailboxAlertLease)
+      XCTAssertFalse(store.mailboxAlertLeaseMatches(
+        lease,
+        accountPeerId: "account-self",
+        opaqueBinding: previousBinding
+      ))
+    }
+  }
+
   func testAccountFenceRejectsLateOldAccountCommitAndNseClaim() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
