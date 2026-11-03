@@ -188,7 +188,12 @@ class _FramedPhotoState extends State<_FramedPhoto>
     final target = widget.framing.cropRect(photo);
     final from = _movedFrom;
     if (from == null || !_move.isAnimating) return target;
-    return Rect.lerp(from, target, Curves.easeOutCubic.transform(_move.value))!;
+    // Each step of the glide is a framing the photo could hold, so a finger
+    // landing on it carries on from exactly what is shown.
+    return PhotoFraming.ofCrop(
+      Rect.lerp(from, target, Curves.easeOutCubic.transform(_move.value))!,
+      photo,
+    ).cropRect(photo);
   }
 
   void _choose(Size photo, PhotoFraming target) {
