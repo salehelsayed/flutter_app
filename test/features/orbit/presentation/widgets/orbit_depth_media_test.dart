@@ -3,12 +3,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_media.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
+import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import '../../../../shared/fakes/fake_just_audio.dart';
@@ -197,6 +199,63 @@ void main() {
         await tester.pump(const Duration(seconds: 1));
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(seconds: 1));
+      },
+    );
+  }
+
+  for (final (width, height) in const [(1600, 900), (900, 1600)]) {
+    testWidgets(
+      'a single ${width}x$height photo shows whole at its own shape, rounded '
+      '22, as large as the frame allows, with nothing black behind it',
+      (tester) async {
+        final file = File('${temp.path}/shape.png')
+          ..writeAsBytesSync(
+            base64Decode(
+              'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+            ),
+          );
+        final item = attachment(
+          'image',
+          file.path,
+        ).copyWith(width: width, height: height);
+        await mount(tester, (_) async => [item], (item) async => item);
+        final image = find.byType(MediaThumbnailImage);
+        final rect = tester.getRect(image);
+        final frame = tester.getRect(
+          find.byKey(const ValueKey('orbit-depth-photo-frame')),
+        );
+        expect(
+          (rect.width / rect.height) / (width / height),
+          closeTo(1, .01),
+          reason: '$rect',
+        );
+        expect(frame.inflate(.5).contains(rect.topLeft), isTrue);
+        expect(frame.inflate(.5).contains(rect.bottomRight), isTrue);
+        expect(
+          (rect.width - frame.width).abs() < .5 ||
+              (rect.height - frame.height).abs() < .5,
+          isTrue,
+          reason: '$rect in $frame',
+        );
+        var corner = 0.0;
+        for (
+          RenderObject? box = tester.renderObject(image);
+          box != null;
+          box = box.parent
+        ) {
+          if (box is RenderClipRRect && box.size == rect.size) {
+            final radius = (box.borderRadius as BorderRadius).topLeft.x;
+            if (radius > corner) corner = radius;
+          }
+        }
+        expect(corner, 22);
+        expect(
+          tester.renderObject(
+            find.byKey(const ValueKey('orbit-depth-photo-frame')),
+          ),
+          isNot(paints..rect(color: Colors.black)),
+        );
+        await tester.pumpWidget(const SizedBox());
       },
     );
   }
