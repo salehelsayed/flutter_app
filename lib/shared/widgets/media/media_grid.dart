@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'media_display_helpers.dart';
@@ -11,6 +13,8 @@ import 'media_grid_cell.dart';
 /// - 3 items: 1 top full (2:1) + 2 bottom (1:1 each)
 /// - 4 items: 2x2 grid, 1:1 each
 /// - 5+ items: 2x2 grid, "+N" overlay on 4th cell
+///
+/// [squareTiles] replaces the 2+ layouts for thoughts.
 class MediaGrid extends StatelessWidget {
   final List<MediaAttachment> media;
   final void Function(int index)? onTap;
@@ -38,6 +42,10 @@ class MediaGrid extends StatelessWidget {
   /// contain so no photo is cropped; chat keeps cover.
   final BoxFit tileFit;
 
+  /// Thoughts: in a two-or-more grid every tile is a whole square, three sit
+  /// in one row, and the grid shrinks to the height it is given.
+  final bool squareTiles;
+
   const MediaGrid({
     super.key,
     required this.media,
@@ -50,6 +58,7 @@ class MediaGrid extends StatelessWidget {
     this.singleMaxHeight,
     this.borderRadius = mediaGridContainerRadius,
     this.tileFit = BoxFit.cover,
+    this.squareTiles = false,
   });
 
   @override
@@ -68,6 +77,7 @@ class MediaGrid extends StatelessWidget {
   Widget _buildLayout() {
     final count = media.length;
     if (count == 1) return _buildSingle();
+    if (squareTiles) return _buildSquares();
     if (count == 2) return _buildTwo();
     if (count == 3) return _buildThree();
     return _buildFourPlus();
@@ -116,8 +126,49 @@ class MediaGrid extends StatelessWidget {
     );
   }
 
+  Widget _buildSquares() {
+    final count = math.min(media.length, 4);
+    final columns = count == 3 ? 3 : 2;
+    final rows = (count / columns).ceil();
+    return LayoutBuilder(
+      builder: (context, box) {
+        var side = (box.maxWidth - (columns - 1) * mediaGridGap) / columns;
+        if (box.maxHeight.isFinite) {
+          side = math.min(
+            side,
+            (box.maxHeight - (rows - 1) * mediaGridGap) / rows,
+          );
+        }
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          spacing: mediaGridGap,
+          children: [
+            for (var row = 0; row < rows; row++)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: mediaGridGap,
+                children: [
+                  for (
+                    var index = row * columns;
+                    index < math.min(count, (row + 1) * columns);
+                    index++
+                  )
+                    SizedBox.square(
+                      dimension: side,
+                      child: _cell(
+                        index,
+                        overlayCount: index == 3 ? media.length - 4 : 0,
+                      ),
+                    ),
+                ],
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildFourPlus() {
-    final overflow = media.length - 4;
     return Column(
       children: [
         Row(
@@ -135,22 +186,7 @@ class MediaGrid extends StatelessWidget {
             Expanded(
               child: AspectRatio(
                 aspectRatio: 1,
-                child: MediaGridCell(
-                  fit: tileFit,
-                  attachment: media[3],
-                  showOverlayCount: overflow > 0,
-                  overlayCount: overflow,
-                  onTap: onTap != null ? () => onTap!(3) : null,
-                  onLongPress: onLongPressItem != null
-                      ? () => onLongPressItem!(3)
-                      : null,
-                  onRetryUnavailableMedia: onRetryUnavailableMedia != null
-                      ? () => onRetryUnavailableMedia!(media[3])
-                      : null,
-                  requireVerifiedContentHash: requireVerifiedContentHash,
-                  ownedMediaPeerId: ownedMediaPeerId,
-                  renderedSemanticsLabel: renderedSemanticsLabels[media[3].id],
-                ),
+                child: _cell(3, overlayCount: media.length - 4),
               ),
             ),
           ],
@@ -163,11 +199,18 @@ class MediaGrid extends StatelessWidget {
   /// phones without decoding a camera original at full size.
   static const _fullScreenWidth = 1440;
 
-  Widget _cell(int index, {BoxFit? fit, int cacheWidth = 400}) {
+  Widget _cell(
+    int index, {
+    BoxFit? fit,
+    int cacheWidth = 400,
+    int overlayCount = 0,
+  }) {
     return MediaGridCell(
       fit: fit ?? tileFit,
       cacheWidth: cacheWidth,
       attachment: media[index],
+      showOverlayCount: overlayCount > 0,
+      overlayCount: overlayCount,
       onTap: onTap != null ? () => onTap!(index) : null,
       onLongPress: onLongPressItem != null
           ? () => onLongPressItem!(index)

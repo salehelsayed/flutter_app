@@ -725,6 +725,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
           .map((attachment) => attachment.toSharedMediaAttachment())
           .toList(growable: false),
       singleMaxHeight: height,
+      tileFit: BoxFit.contain,
+      squareTiles: true,
       onTap: (index) => unawaited(_openMedia(index)),
       onRetryUnavailableMedia: (attachment) {
         final original = visual

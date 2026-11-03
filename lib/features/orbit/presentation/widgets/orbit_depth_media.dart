@@ -172,6 +172,7 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
                         singleMaxHeight: constraints.maxHeight,
                         borderRadius: 22,
                         tileFit: BoxFit.contain,
+                        squareTiles: true,
                         onRetryUnavailableMedia: (_) => unawaited(_load()),
                       ),
                     ),
