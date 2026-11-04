@@ -233,18 +233,18 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         if (_selectedPeerIds.contains(contact.peerId)) contact,
   ];
 
-  PostAudience get _thoughtAudience => switch (_picked) {
-    [] => PostAudience.allFriends(),
-    final picked => PostAudience.pickPeople([
-      for (final contact in picked) contact.peerId,
-    ]),
-  };
+  /// A pick stays a pick even when everyone in it has left the orbit: it
+  /// never widens to all friends on its own.
+  PostAudience get _thoughtAudience =>
+      _audienceKind == PostAudienceKind.pickPeople
+      ? PostAudience.pickPeople([for (final contact in _picked) contact.peerId])
+      : PostAudience.allFriends();
 
   Future<void> _chooseAudience(BuildContext chipContext) async {
     final choice = await showThoughtAudienceMenu(
       chipContext,
       friendCount: _eligible.length,
-      picking: _picked.isNotEmpty,
+      picking: _audienceKind == PostAudienceKind.pickPeople,
     );
     if (!mounted || choice == null) return;
     if (choice == ThoughtAudienceChoice.friends) {
@@ -284,6 +284,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     }
     if (widget.thoughtsOnly &&
         _textController.text.characters.length > _thoughtMaxLength) {
+      return false;
+    }
+    if (widget.thoughtsOnly &&
+        _audienceKind == PostAudienceKind.pickPeople &&
+        _picked.isEmpty) {
       return false;
     }
     if (!widget.thoughtsOnly &&
@@ -831,11 +836,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           Builder(
             builder: (chipContext) => ThoughtAudienceChip(
               friendCount: contacts.length,
+              picking: _audienceKind == PostAudienceKind.pickPeople,
               picked: _picked,
               onTap: () => unawaited(_chooseAudience(chipContext)),
             ),
           ),
-        if (thought)
+        if (thought &&
+            (_audienceKind != PostAudienceKind.pickPeople ||
+                _picked.isNotEmpty))
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Row(

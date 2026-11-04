@@ -50,11 +50,15 @@ class ThoughtAudienceChip extends StatelessWidget {
   const ThoughtAudienceChip({
     super.key,
     required this.friendCount,
+    required this.picking,
     required this.picked,
     required this.onTap,
   });
 
   final int friendCount;
+
+  /// "select people…" is chosen, even if nobody in the pick is left.
+  final bool picking;
   final List<ContactModel> picked;
   final VoidCallback? onTap;
 
@@ -62,9 +66,9 @@ class ThoughtAudienceChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final rc = context.backgroundReadableColors;
-    final label = picked.isEmpty
-        ? l10n.thought_audience_to_friends(friendCount)
-        : l10n.thought_audience_to_people(picked.length);
+    final label = picking
+        ? l10n.thought_audience_to_people(picked.length)
+        : l10n.thought_audience_to_friends(friendCount);
     return Semantics(
       button: true,
       label: label,

@@ -221,7 +221,7 @@ void main() {
     final remove = find.byKey(const ValueKey('thought-pick-remove-peer-layla'));
     expect(
       tester.getSemantics(remove),
-      containsSemantics(
+      isSemantics(
         label: 'Remove layla',
         isButton: true,
         hasTapAction: true,
