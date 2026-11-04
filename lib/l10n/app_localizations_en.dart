@@ -222,9 +222,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get thought_voice_remove => 'Remove voice note';
 
   @override
-  String thought_audience_to_friends(int count) {
-    return 'to friends · $count';
-  }
+  String get thought_audience_all_friends => 'all friends';
+
+  @override
+  String get thought_compose_lifetime_short => '· 24 h';
 
   @override
   String thought_audience_to_people(int count) {
@@ -236,9 +237,6 @@ class AppLocalizationsEn extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get thought_audience_friends => 'friends';
 
   @override
   String get thought_audience_friends_desc => 'everyone in your orbit';

@@ -44,18 +44,15 @@ class ThoughtRecentPicks {
   }
 }
 
-/// "to friends · 41" or the picked faces with "to 3 people". Tapping it
-/// opens the two-row audience menu.
+/// "all friends" or the picked faces with "to 3 people". Tapping it opens
+/// the two-row audience menu.
 class ThoughtAudienceChip extends StatelessWidget {
   const ThoughtAudienceChip({
     super.key,
-    required this.friendCount,
     required this.picking,
     required this.picked,
     required this.onTap,
   });
-
-  final int friendCount;
 
   /// "select people…" is chosen, even if nobody in the pick is left.
   final bool picking;
@@ -68,7 +65,7 @@ class ThoughtAudienceChip extends StatelessWidget {
     final rc = context.backgroundReadableColors;
     final label = picking
         ? l10n.thought_audience_to_people(picked.length)
-        : l10n.thought_audience_to_friends(friendCount);
+        : l10n.thought_audience_all_friends;
     return Semantics(
       button: true,
       label: label,
@@ -190,7 +187,7 @@ Future<ThoughtAudienceChoice?> showThoughtAudienceMenu(
           child: row(
             key: const ValueKey('thought-audience-friends'),
             lead: _Dot(color: rc.ring2, size: 8),
-            title: l10n.thought_audience_friends,
+            title: l10n.thought_audience_all_friends,
             subtitle: l10n.thought_audience_friends_desc,
             trailing: '$friendCount',
             selected: !picking,

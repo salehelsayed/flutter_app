@@ -343,16 +343,19 @@ void main() {
   testWidgets(
     'Arabic composer explains its lifetime without audience choices',
     (tester) async {
+      final semantics = tester.ensureSemantics();
       await tester.pumpWidget(
         scene(
           locale: const Locale('ar'),
           submit: (_) async => ComposePostSubmitOutcome.keepSheetOpen,
         ),
       );
+      expect(find.text('· 24 س'), findsOneWidget);
       expect(
-        find.text('يرى جميع أصدقائك هذه الخاطرة لمدة 24 ساعة'),
+        find.bySemanticsLabel('يرى جميع أصدقائك هذه الخاطرة لمدة 24 ساعة'),
         findsOneWidget,
       );
+      semantics.dispose();
       expect(find.text('مشاركة'), findsOneWidget);
       expect(find.byType(ChoiceChip), findsNothing);
     },

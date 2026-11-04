@@ -499,20 +499,20 @@ abstract class AppLocalizations {
   /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
-  /// **'to friends · {count}'**
-  String thought_audience_to_friends(int count);
+  /// **'all friends'**
+  String get thought_audience_all_friends;
+
+  /// Thoughts 131 copy, owner-approved 2026-11-04. Next to the audience chip; screen readers hear the full lifetime sentence.
+  ///
+  /// In en, this message translates to:
+  /// **'· 24 h'**
+  String get thought_compose_lifetime_short;
 
   /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{count, plural, =1{to 1 person} other{to {count} people}}'**
   String thought_audience_to_people(int count);
-
-  /// Thoughts 131 copy, owner-approved 2026-11-04
-  ///
-  /// In en, this message translates to:
-  /// **'friends'**
-  String get thought_audience_friends;
 
   /// Thoughts 131 copy, owner-approved 2026-11-04
   ///

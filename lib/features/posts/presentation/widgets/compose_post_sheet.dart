@@ -833,34 +833,29 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         ],
         if (thought)
-          Builder(
-            builder: (chipContext) => ThoughtAudienceChip(
-              friendCount: contacts.length,
-              picking: _audienceKind == PostAudienceKind.pickPeople,
-              picked: _picked,
-              onTap: () => unawaited(_chooseAudience(chipContext)),
-            ),
-          ),
-        if (thought &&
-            (_audienceKind != PostAudienceKind.pickPeople ||
-                _picked.isNotEmpty))
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Row(
-              children: [
-                Icon(Icons.schedule_rounded, size: 16, color: rc.textSecondary),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    thoughtPickedLifetime(AppLocalizations.of(context)!, [
-                      for (final contact in _picked) contact.username,
-                    ]),
-                    key: const ValueKey('thought-composer-lifetime'),
-                    style: TextStyle(color: rc.textSecondary, fontSize: 13),
+          Row(
+            children: [
+              Builder(
+                builder: (chipContext) => ThoughtAudienceChip(
+                  picking: _audienceKind == PostAudienceKind.pickPeople,
+                  picked: _picked,
+                  onTap: () => unawaited(_chooseAudience(chipContext)),
+                ),
+              ),
+              if (_audienceKind != PostAudienceKind.pickPeople ||
+                  _picked.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  AppLocalizations.of(context)!.thought_compose_lifetime_short,
+                  key: const ValueKey('thought-composer-lifetime'),
+                  semanticsLabel: thoughtPickedLifetime(
+                    AppLocalizations.of(context)!,
+                    [for (final contact in _picked) contact.username],
                   ),
+                  style: TextStyle(color: rc.textSecondary, fontSize: 13),
                 ),
               ],
-            ),
+            ],
           ),
         SizedBox(height: thought ? 6 : 16),
         TextField(

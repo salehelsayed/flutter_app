@@ -217,9 +217,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_voice_remove => 'إزالة الرسالة الصوتية';
 
   @override
-  String thought_audience_to_friends(int count) {
-    return 'إلى الأصدقاء · $count';
-  }
+  String get thought_audience_all_friends => 'كل الأصدقاء';
+
+  @override
+  String get thought_compose_lifetime_short => '· 24 س';
 
   @override
   String thought_audience_to_people(int count) {
@@ -233,9 +234,6 @@ class AppLocalizationsAr extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get thought_audience_friends => 'الأصدقاء';
 
   @override
   String get thought_audience_friends_desc => 'كل من في مدارك';

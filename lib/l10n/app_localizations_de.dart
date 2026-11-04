@@ -229,9 +229,10 @@ class AppLocalizationsDe extends AppLocalizations {
   String get thought_voice_remove => 'Sprachnachricht entfernen';
 
   @override
-  String thought_audience_to_friends(int count) {
-    return 'an Freunde · $count';
-  }
+  String get thought_audience_all_friends => 'alle Freunde';
+
+  @override
+  String get thought_compose_lifetime_short => '· 24 Std.';
 
   @override
   String thought_audience_to_people(int count) {
@@ -243,9 +244,6 @@ class AppLocalizationsDe extends AppLocalizations {
     );
     return '$_temp0';
   }
-
-  @override
-  String get thought_audience_friends => 'Freunde';
 
   @override
   String get thought_audience_friends_desc => 'alle in deinem Orbit';

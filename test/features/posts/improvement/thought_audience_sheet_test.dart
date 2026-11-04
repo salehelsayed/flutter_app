@@ -100,7 +100,10 @@ void main() {
     );
     final chipRect = tester.getRect(chip());
     final ruleRect = tester.getRect(rule());
-    expect(ruleRect.center.dy, moreOrLessEquals(chipRect.center.dy, epsilon: 1));
+    expect(
+      ruleRect.center.dy,
+      moreOrLessEquals(chipRect.center.dy, epsilon: 1),
+    );
     expect(ruleRect.left, greaterThanOrEqualTo(chipRect.right));
     semantics.dispose();
 
@@ -244,11 +247,7 @@ void main() {
     final remove = find.byKey(const ValueKey('thought-pick-remove-peer-layla'));
     expect(
       tester.getSemantics(remove),
-      isSemantics(
-        label: 'Remove layla',
-        isButton: true,
-        hasTapAction: true,
-      ),
+      isSemantics(label: 'Remove layla', isButton: true, hasTapAction: true),
     );
     await tester.tap(remove);
     await tester.pump();
@@ -309,7 +308,10 @@ void main() {
     expect(find.text('· 24 س'), findsOneWidget);
     final chipRect = tester.getRect(chip());
     final ruleRect = tester.getRect(rule());
-    expect(ruleRect.center.dy, moreOrLessEquals(chipRect.center.dy, epsilon: 1));
+    expect(
+      ruleRect.center.dy,
+      moreOrLessEquals(chipRect.center.dy, epsilon: 1),
+    );
     expect(ruleRect.right, lessThanOrEqualTo(chipRect.left));
     expect(ruleRect.left, greaterThanOrEqualTo(0));
     expect(tester.takeException(), isNull);
@@ -366,6 +368,7 @@ void main() {
   testWidgets('a picked friend who is gone by reopening is left out', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(
       scene(
         contacts: [_friends[1]],
@@ -377,7 +380,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('omar sees this for 24 hours'), findsOneWidget);
+    expect(find.bySemanticsLabel('omar sees this for 24 hours'), findsOne);
+    semantics.dispose();
     await tapShare(tester);
     expect(shared.single.audience.selectedPeerIds, ['peer-omar']);
   });
