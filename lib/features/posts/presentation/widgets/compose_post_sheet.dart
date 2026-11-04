@@ -21,6 +21,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
 import 'thought_audience.dart';
+import 'thought_voice.dart';
 import 'thought_photo_draft_preview.dart';
 
 class ComposePostResult {
@@ -50,6 +51,9 @@ enum ComposePostSubmitOutcome {
 /// Thoughts are short by design; chat allows 10,000.
 const int _thoughtMaxLength = 500;
 const int _thoughtCounterFrom = 450;
+
+/// A Thought's voice note stops itself here; chat keeps the recorder's 5 min.
+const Duration _thoughtVoiceLimit = Duration(minutes: 3);
 
 enum _ComposeNotice {
   nobodyToShareWith,
@@ -135,6 +139,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   VoiceRecordingState _recordingState = VoiceRecordingState.idle;
   bool _pendingRecordingAbort = false;
   bool _recorderStartInFlight = false;
+  bool _recordingPaused = false;
   MicrophoneCaptureLease? _microphoneCaptureLease;
   Duration _recordingDuration = Duration.zero;
   List<double> _recordingAmplitudes = const <double>[];
@@ -519,6 +524,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         return;
       }
       setState(() => _recordingDuration = duration);
+      if (widget.thoughtsOnly &&
+          duration >= _thoughtVoiceLimit &&
+          _recordingState == VoiceRecordingState.recording) {
+        unawaited(_stopVoiceRecording());
+      }
     });
     _amplitudeSubscription = recorder.amplitudeStream.listen((value) {
       if (!mounted) {
@@ -582,6 +592,22 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     });
   }
 
+  Future<void> _togglePause() async {
+    final recorder = widget.audioRecorderService;
+    if (recorder is! PausableAudioRecorder ||
+        _recordingState != VoiceRecordingState.recording) {
+      return;
+    }
+    final pausable = recorder as PausableAudioRecorder;
+    final pause = !_recordingPaused;
+    try {
+      pause ? await pausable.pause() : await pausable.resume();
+    } on Object {
+      return;
+    }
+    if (mounted) setState(() => _recordingPaused = pause);
+  }
+
   Future<void> _cancelVoiceRecording() async {
     final recorder = widget.audioRecorderService;
     if (recorder == null || !_recordingState.isActive) {
@@ -623,6 +649,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   void _resetRecordingState([_ComposeNotice? notice]) {
     if (notice != null) _notice = notice;
     _pendingRecordingAbort = false;
+    _recordingPaused = false;
     _recordingState = VoiceRecordingState.idle;
     _recordingDuration = Duration.zero;
     _recordingAmplitudes = const <double>[];
@@ -804,7 +831,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           buildCounter: widget.thoughtsOnly ? _noCounter : null,
           onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
-            hintText: AppLocalizations.of(context)!.compose_hint,
+            hintText: thought
+                ? AppLocalizations.of(context)!.thought_compose_hint
+                : AppLocalizations.of(context)!.compose_hint,
             hintStyle: TextStyle(
               color: thought
                   ? rc.placeholderText
@@ -992,7 +1021,26 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             ),
           ),
         ],
-        if (_mediaDrafts.isNotEmpty && _mediaDrafts.first.kind == 'voice') ...[
+        if (thought && _isRecording) ...[
+          const SizedBox(height: 12),
+          ThoughtRecordingCard(
+            elapsed: _recordingDuration,
+            amplitudes: _recordingAmplitudes,
+            paused: _recordingPaused,
+            onPauseToggle: widget.audioRecorderService is PausableAudioRecorder
+                ? () => unawaited(_togglePause())
+                : null,
+            onCancel: () => unawaited(_cancelVoiceRecording()),
+            onStop: () => unawaited(_stopVoiceRecording()),
+          ),
+        ],
+        if (thought &&
+            _mediaDrafts.isNotEmpty &&
+            _mediaDrafts.first.kind == 'voice') ...[
+          const SizedBox(height: 12),
+          ThoughtVoiceCard(draft: _mediaDrafts.first, onRemove: _clearDrafts),
+        ] else if (_mediaDrafts.isNotEmpty &&
+            _mediaDrafts.first.kind == 'voice') ...[
           const SizedBox(height: 12),
           Container(
             width: double.infinity,
@@ -1263,92 +1311,54 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                             : _attachMedia,
                       ),
                       const SizedBox(width: 12),
-                      // The mic sits at the end; recording grows out of it.
+                      // The mic sits at the end; a recording shows in the
+                      // sheet above.
                       Expanded(
-                        child: AnimatedSwitcher(
-                          duration: const Duration(milliseconds: 220),
-                          transitionBuilder: (child, animation) => Align(
-                            alignment: AlignmentDirectional.centerEnd,
-                            child: SizeTransition(
-                              sizeFactor: animation,
-                              axis: Axis.horizontal,
-                              alignment: AlignmentDirectional.centerEnd,
-                              child: child,
-                            ),
-                          ),
-                          child: _isRecording
-                              ? Row(
-                                  key: const ValueKey(
-                                    'thought-composer-recording',
-                                  ),
-                                  children: [
-                                    Expanded(
-                                      child: RecordingOverlay(
-                                        elapsed: _recordingDuration,
-                                        amplitudeValues: _recordingAmplitudes,
-                                        onCancel: () {
-                                          unawaited(_cancelVoiceRecording());
-                                        },
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _ToolButton(
-                                      key: const ValueKey(
-                                        'thought-composer-voice-stop',
-                                      ),
-                                      icon: Icons.stop_rounded,
-                                      label: l10n.compose_voice_stop,
-                                      filled: true,
-                                      onPressed: _stopVoiceRecording,
-                                    ),
-                                  ],
-                                )
-                              : Row(
-                                  key: const ValueKey('thought-composer-idle'),
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    if (length >= _thoughtCounterFrom) ...[
-                                      Text(
-                                        '$length/$_thoughtMaxLength',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          color: over ? error : rc.textMuted,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                    ],
-                                    if (length > 0) ...[
-                                      SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                          key: const ValueKey(
-                                            'thought-composer-count-ring',
-                                          ),
-                                          value: (length / _thoughtMaxLength)
-                                              .clamp(0.0, 1.0),
-                                          strokeWidth: 2.5,
-                                          backgroundColor: rc.divider,
-                                          color: over ? error : rc.accent,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 12),
-                                    ],
-                                    _ToolButton(
-                                      key: const ValueKey(
-                                        'thought-composer-voice',
-                                      ),
-                                      icon: Icons.mic_none_rounded,
-                                      label: l10n.compose_voice,
-                                      onPressed:
-                                          widget.onAttachVoice == null &&
-                                              widget.audioRecorderService ==
-                                                  null
-                                          ? null
-                                          : _attachVoice,
-                                    ),
-                                  ],
+                        child: Row(
+                          key: const ValueKey('thought-composer-idle'),
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (length >= _thoughtCounterFrom) ...[
+                              Text(
+                                '$length/$_thoughtMaxLength',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: over ? error : rc.textMuted,
                                 ),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            if (length > 0) ...[
+                              SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                  key: const ValueKey(
+                                    'thought-composer-count-ring',
+                                  ),
+                                  value: (length / _thoughtMaxLength).clamp(
+                                    0.0,
+                                    1.0,
+                                  ),
+                                  strokeWidth: 2.5,
+                                  backgroundColor: rc.divider,
+                                  color: over ? error : rc.accent,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                            ],
+                            _ToolButton(
+                              key: const ValueKey('thought-composer-voice'),
+                              icon: Icons.mic_none_rounded,
+                              label: l10n.compose_voice,
+                              onPressed:
+                                  _isRecording ||
+                                      (widget.onAttachVoice == null &&
+                                          widget.audioRecorderService == null)
+                                  ? null
+                                  : _attachVoice,
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -1371,13 +1381,11 @@ class _ToolButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
-    this.filled = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback? onPressed;
-  final bool filled;
 
   @override
   Widget build(BuildContext context) {
@@ -1387,11 +1395,11 @@ class _ToolButton extends StatelessWidget {
       onPressed: onPressed,
       constraints: const BoxConstraints.tightFor(width: 44, height: 44),
       style: IconButton.styleFrom(
-        backgroundColor: filled ? rc.accent : rc.composerInputFill,
-        foregroundColor: filled ? _onAccent(rc.accent) : rc.accent,
+        backgroundColor: rc.composerInputFill,
+        foregroundColor: rc.accent,
         disabledBackgroundColor: rc.composerInputFill,
         disabledForegroundColor: rc.disabledForeground,
-        side: filled ? null : BorderSide(color: rc.divider),
+        side: BorderSide(color: rc.divider),
       ),
       icon: Icon(icon, size: 22),
     );

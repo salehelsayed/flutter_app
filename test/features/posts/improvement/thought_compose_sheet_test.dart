@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
@@ -17,9 +18,16 @@ import 'package:flutter_app/features/posts/presentation/widgets/thought_photo_dr
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_just_audio.dart';
 import '../../../shared/bidi_layout_checks.dart';
 
 void main() {
+  setUp(() {
+    final original = JustAudioPlatform.instance;
+    JustAudioPlatform.instance = FakeJustAudioPlatform();
+    addTearDown(() => JustAudioPlatform.instance = original);
+  });
+
   Widget scene({
     required Future<ComposePostSubmitOutcome> Function(ComposePostResult)
     submit,
@@ -99,6 +107,13 @@ void main() {
         .attachments
         .map((file) => file.path)
         .toList();
+  }
+
+  /// The voice card's player finishes loading (or failing to) and lets go of
+  /// its timers once the sheet is gone.
+  Future<void> settlePlayer(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
   }
 
   ElevatedButton share(WidgetTester tester) =>
@@ -296,6 +311,7 @@ void main() {
       expect(submitted!.mediaDrafts.single.durationMs, 6400);
       expect(submitted!.mediaDrafts.single.waveform, hasLength(50));
       expect(recorder.isRecording, isFalse);
+      await settlePlayer(tester);
     },
   );
 
@@ -569,7 +585,7 @@ void main() {
     recorder.emitAmplitude(0.4);
     await recorder.triggerAutoStop();
     await tester.pump();
-    expect(find.text('Voice attached'), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
     await tapVisible(
       tester,
       find.byKey(const ValueKey('thought-composer-share')),
@@ -579,6 +595,7 @@ void main() {
     expect(submitted!.mediaDrafts.single.durationMs, 300000);
     expect(submitted!.mediaDrafts.single.waveform, hasLength(50));
     expect(recorder.onAutoStopped, isNull);
+    await settlePlayer(tester);
   });
 
   testWidgets('a denied microphone says how to turn it on', (tester) async {
@@ -680,9 +697,10 @@ void main() {
         onClosed: closed.add,
       ),
     );
-    expect(find.text('Voice attached'), findsOneWidget);
+    expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     expect(closed.single!.mediaDrafts.single, same(voice));
+    await settlePlayer(tester);
   });
 
   testWidgets('an emptied draft is not kept', (tester) async {
@@ -783,8 +801,8 @@ void main() {
       }
 
       final stop = tester.widget<IconButton>(
-        find.descendant(
-          of: find.byKey(const ValueKey('thought-composer-voice-stop')),
+        find.ancestor(
+          of: find.byIcon(Icons.stop_rounded),
           matching: find.byType(IconButton),
         ),
       );
@@ -809,7 +827,7 @@ void main() {
   }
 
   for (final rtl in [false, true]) {
-    testWidgets('the mic sits at the end and recording grows out of it '
+    testWidgets('the mic sits at the end and records in the sheet '
         '(${rtl ? 'Arabic' : 'English'})', (tester) async {
       final recorder = FakeAudioRecorderService();
       addTearDown(recorder.dispose);
@@ -837,24 +855,21 @@ void main() {
 
       await tester.tap(voice);
       await tester.pumpAndSettle();
-      final stop = find.byKey(const ValueKey('thought-composer-voice-stop'));
-      expect(stop, findsOneWidget);
       expect(
-        tester.getCenter(stop).dx,
-        moreOrLessEquals(micCentre, epsilon: 1),
+        find.byKey(const ValueKey('thought-voice-recording')),
+        findsOneWidget,
       );
-      expect(find.byType(RecordingOverlay), findsOneWidget);
-      final overlay = tester.getRect(find.byType(RecordingOverlay));
-      final mediaRect = tester.getRect(media);
-      final stopRect = tester.getRect(stop);
-      // The bar fills the space between the photo button and the stop.
-      if (rtl) {
-        expect(stopRect.right, lessThanOrEqualTo(overlay.left));
-        expect(overlay.right, lessThanOrEqualTo(mediaRect.left));
-      } else {
-        expect(mediaRect.right, lessThanOrEqualTo(overlay.left));
-        expect(overlay.right, lessThanOrEqualTo(stopRect.left));
-      }
+      expect(find.byType(RecordingOverlay), findsNothing);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.descendant(of: voice, matching: find.byType(IconButton)),
+            )
+            .onPressed,
+        isNull,
+        reason: 'the mic waits while recording',
+      );
+      final stop = find.byTooltip(rtl ? 'إيقاف' : 'Stop');
       await tester.tap(stop);
       await tester.pumpAndSettle();
       expect(

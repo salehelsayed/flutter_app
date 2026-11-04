@@ -13,14 +13,13 @@ void main() {
   late FakeAudioRecorderService recorder;
   late List<ComposePostResult> shared;
 
-  setUp(() {
+  /// The recorder is made inside the test so its streams deliver in the
+  /// test's fake time.
+  Future<void> open(WidgetTester tester) async {
     recorder = FakeAudioRecorderService()
       ..fakeOutputPath = '/tmp/thought.m4a'
       ..fakeDurationMs = 18000;
     shared = [];
-  });
-
-  Future<void> open(WidgetTester tester) async {
     final original = JustAudioPlatform.instance;
     JustAudioPlatform.instance = FakeJustAudioPlatform();
     addTearDown(() => JustAudioPlatform.instance = original);
@@ -73,6 +72,8 @@ void main() {
     );
     expect(find.text('up to 3 min · you can write after'), findsOneWidget);
     recorder.emitDuration(const Duration(seconds: 14));
+    // The tick lands after this frame; the next frame shows it.
+    await tester.pump();
     await tester.pump();
     expect(find.descendant(of: card(), matching: find.text('0:14')), findsOne);
     expect(share(tester).onPressed, isNull);
