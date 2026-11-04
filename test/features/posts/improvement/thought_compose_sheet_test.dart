@@ -425,9 +425,11 @@ void main() {
         ),
       ),
     );
-    await tester.enterText(find.byType(TextField), 'Lake at dusk');
+    // Photo first: a caret handle can sit over the toolbar on this screen.
     await tester.tap(find.byTooltip('Media'));
     await finishPick(tester);
+    await tester.enterText(find.byType(TextField), 'Lake at dusk');
+    await tester.pump();
     expect(shownPaths(tester), [photo.localFilePath]);
 
     final shareButton = find.byKey(const ValueKey('thought-composer-share'));

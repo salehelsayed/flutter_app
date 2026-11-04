@@ -68,6 +68,7 @@ class ThoughtAudienceChip extends StatelessWidget {
     return Semantics(
       button: true,
       label: label,
+      onTap: onTap,
       excludeSemantics: true,
       child: InkWell(
         key: const ValueKey('thought-audience-chip'),
@@ -152,10 +153,7 @@ Future<ThoughtAudienceChoice?> showThoughtAudienceMenu(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(title, style: TextStyle(color: rc.textPrimary, fontSize: 15)),
-            Text(
-              subtitle,
-              style: TextStyle(color: rc.textMuted, fontSize: 12),
-            ),
+            Text(subtitle, style: TextStyle(color: rc.textMuted, fontSize: 12)),
           ],
         ),
       ),
@@ -202,7 +200,11 @@ Future<ThoughtAudienceChoice?> showThoughtAudienceMenu(
           selected: picking,
           child: row(
             key: const ValueKey('thought-audience-select'),
-            lead: Icon(Icons.person_add_alt_rounded, size: 18, color: rc.accent),
+            lead: Icon(
+              Icons.person_add_alt_rounded,
+              size: 18,
+              color: rc.accent,
+            ),
             title: l10n.thought_audience_select,
             subtitle: l10n.thought_audience_select_desc,
             selected: picking,
@@ -247,7 +249,8 @@ class _ThoughtPeoplePickerSheetState extends State<ThoughtPeoplePickerSheet> {
   }
 
   void _toggle(String peerId) => setState(
-    () => _chosen.contains(peerId) ? _chosen.remove(peerId) : _chosen.add(peerId),
+    () =>
+        _chosen.contains(peerId) ? _chosen.remove(peerId) : _chosen.add(peerId),
   );
 
   @override
@@ -262,10 +265,7 @@ class _ThoughtPeoplePickerSheetState extends State<ThoughtPeoplePickerSheet> {
     ];
     final picks = [
       for (final pick in widget.recentPicks)
-        [
-          for (final id in pick)
-            if (_byId[id] case final contact?) contact,
-        ],
+        [for (final id in pick) ?_byId[id]],
     ].where((pick) => pick.isNotEmpty).toList();
     final chosen = [
       for (final contact in widget.contacts)
@@ -478,12 +478,15 @@ class _ChosenFace extends StatelessWidget {
                 end: -10,
                 top: -10,
                 child: Semantics(
+                  container: true,
                   button: true,
                   label: AppLocalizations.of(
                     context,
                   )!.thought_pick_remove(contact.username),
+                  onTap: onRemove,
                   excludeSemantics: true,
                   child: InkResponse(
+                    key: ValueKey('thought-pick-remove-${contact.peerId}'),
                     onTap: onRemove,
                     radius: 22,
                     child: SizedBox(
@@ -539,6 +542,7 @@ class _RecentPickRow extends StatelessWidget {
       child: Semantics(
         button: true,
         label: names,
+        onTap: onTap,
         excludeSemantics: true,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 52),
@@ -582,6 +586,7 @@ class _PersonRow extends StatelessWidget {
     return Semantics(
       checked: checked,
       label: contact.username,
+      onTap: onTap,
       excludeSemantics: true,
       child: InkWell(
         key: ValueKey('thought-pick-${contact.peerId}'),

@@ -1066,6 +1066,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
+      // The audience chip counts these and "select people…" lists them.
+      final friends = [
+        for (final contact in await widget.contactRepo.getActiveContacts())
+          if (!contact.isBlocked) contact,
+      ];
+      if (!mounted) return;
       await showModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
@@ -1077,7 +1083,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           replacesCurrentThought: _thoughtsByPeerId.containsKey(
             identity.peerId,
           ),
-          eligibleContacts: const [],
+          eligibleContacts: friends,
+          recentPicks: ThoughtRecentPicks(widget.secureKeyStore),
           initialDraft: start,
           onClosed: (draft) {
             // A tag the sheet only started with is no draft to keep.
@@ -1111,7 +1118,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 senderPeerId: identity.peerId,
                 senderUsername: identity.username,
                 text: draft.text,
-                audience: PostAudience.allFriends(),
+                audience: draft.audience,
                 mediaDrafts: draft.mediaDrafts,
                 secureKeyStore: widget.secureKeyStore,
               );

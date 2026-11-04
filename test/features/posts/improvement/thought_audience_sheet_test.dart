@@ -201,6 +201,7 @@ void main() {
   testWidgets('search narrows the list and X takes a person back out', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(scene());
     await tester.tap(chip());
     await tester.pumpAndSettle();
@@ -217,7 +218,16 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('thought-pick-peer-layla')));
     await tester.pump();
-    await tester.tap(find.bySemanticsLabel('Remove layla'));
+    final remove = find.byKey(const ValueKey('thought-pick-remove-peer-layla'));
+    expect(
+      tester.getSemantics(remove),
+      containsSemantics(
+        label: 'Remove layla',
+        isButton: true,
+        hasTapAction: true,
+      ),
+    );
+    await tester.tap(remove);
     await tester.pump();
     expect(find.text('Done · 0'), findsOneWidget);
 
@@ -227,6 +237,7 @@ void main() {
     );
     await tester.pump();
     expect(find.text('no one by that name'), findsOneWidget);
+    semantics.dispose();
   });
 
   testWidgets('a swiped-away draft keeps its picked people', (tester) async {

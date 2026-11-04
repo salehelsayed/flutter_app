@@ -167,6 +167,10 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _inputDirection = detectTextDirection(draft.text);
       _mediaDrafts = draft.mediaDrafts;
       _framings = draft.photoFramings;
+      if (draft.audience.kind == PostAudienceKind.pickPeople) {
+        _audienceKind = PostAudienceKind.pickPeople;
+        _selectedPeerIds.addAll(draft.audience.selectedPeerIds);
+      }
     }
     _textController.addListener(_updateInputDirection);
     _nearbyAvailability = widget.nearbyAvailability;
@@ -178,6 +182,60 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (oldWidget.nearbyAvailability != widget.nearbyAvailability) {
       _nearbyAvailability = widget.nearbyAvailability;
     }
+  }
+
+  List<ContactModel> get _eligible => widget.eligibleContacts
+      .where((contact) => !contact.isArchived && !contact.isBlocked)
+      .toList(growable: false);
+
+  /// A Thought's picked people still in the user's orbit; empty means
+  /// friends.
+  List<ContactModel> get _picked => [
+    if (_audienceKind == PostAudienceKind.pickPeople)
+      for (final contact in _eligible)
+        if (_selectedPeerIds.contains(contact.peerId)) contact,
+  ];
+
+  PostAudience get _thoughtAudience => switch (_picked) {
+    [] => PostAudience.allFriends(),
+    final picked => PostAudience.pickPeople([
+      for (final contact in picked) contact.peerId,
+    ]),
+  };
+
+  Future<void> _chooseAudience(BuildContext chipContext) async {
+    final choice = await showThoughtAudienceMenu(
+      chipContext,
+      friendCount: _eligible.length,
+      picking: _picked.isNotEmpty,
+    );
+    if (!mounted || choice == null) return;
+    if (choice == ThoughtAudienceChoice.friends) {
+      setState(() {
+        _audienceKind = PostAudienceKind.allFriends;
+        _selectedPeerIds.clear();
+      });
+      return;
+    }
+    final recentPicks = await widget.recentPicks?.load() ?? const [];
+    if (!mounted) return;
+    final chosen = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => ThoughtPeoplePickerSheet(
+        contacts: _eligible,
+        initial: {for (final contact in _picked) contact.peerId},
+        recentPicks: recentPicks,
+      ),
+    );
+    if (!mounted || chosen == null || chosen.isEmpty) return;
+    setState(() {
+      _audienceKind = PostAudienceKind.pickPeople;
+      _selectedPeerIds
+        ..clear()
+        ..addAll(chosen);
+    });
   }
 
   bool get _canSubmit {
@@ -214,7 +272,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     });
     try {
       final audience = widget.thoughtsOnly
-          ? PostAudience.allFriends()
+          ? _thoughtAudience
           : switch (_audienceKind) {
               PostAudienceKind.peopleNearby => PostAudience.peopleNearby(
                 radiusM: _nearbyRadiusM,
@@ -253,6 +311,12 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
         ),
       );
       if (!mounted) return;
+      if (widget.thoughtsOnly &&
+          audience.kind == PostAudienceKind.pickPeople &&
+          (outcome == ComposePostSubmitOutcome.closeSheet ||
+              outcome == ComposePostSubmitOutcome.keepSheetOpen)) {
+        unawaited(widget.recentPicks?.remember(audience.selectedPeerIds));
+      }
       switch (outcome) {
         case ComposePostSubmitOutcome.closeSheet:
           _shared = true;
@@ -290,7 +354,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       keep
           ? ComposePostResult(
               text: text,
-              audience: PostAudience.allFriends(),
+              audience: widget.thoughtsOnly
+                  ? _thoughtAudience
+                  : PostAudience.allFriends(),
               mediaDrafts: _mediaDrafts,
               photoFramings: _framings,
             )
@@ -640,9 +706,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final contacts = widget.eligibleContacts
-        .where((contact) => !contact.isArchived && !contact.isBlocked)
-        .toList(growable: false);
+    final contacts = _eligible;
 
     final rc = context.backgroundReadableColors;
     final thought = widget.thoughtsOnly;
@@ -703,6 +767,14 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         ],
         if (thought)
+          Builder(
+            builder: (chipContext) => ThoughtAudienceChip(
+              friendCount: contacts.length,
+              picked: _picked,
+              onTap: () => unawaited(_chooseAudience(chipContext)),
+            ),
+          ),
+        if (thought)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Row(
@@ -711,7 +783,9 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    AppLocalizations.of(context)!.thought_compose_lifetime,
+                    thoughtPickedLifetime(AppLocalizations.of(context)!, [
+                      for (final contact in _picked) contact.username,
+                    ]),
                     key: const ValueKey('thought-composer-lifetime'),
                     style: TextStyle(color: rc.textSecondary, fontSize: 13),
                   ),
