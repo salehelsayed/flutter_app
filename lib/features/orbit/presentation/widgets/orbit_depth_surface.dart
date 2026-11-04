@@ -174,7 +174,12 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
   DateTime get _now => (widget.nowProvider ?? DateTime.now)().toUtc();
 
   List<OrbitDepthSeat> get _queue {
-    final live = orbitDepthQueue(widget.items, widget.thoughts, _now);
+    final own = widget.ownSeat;
+    final live = [
+      // Your own live thought comes first, the way friends see theirs.
+      if (own != null && liveOrbitDepthThought(own.thought, _now) != null) own,
+      ...orbitDepthQueue(widget.items, widget.thoughts, _now),
+    ];
     final order = _order;
     if (order == null) return live;
     final byPeer = {for (final seat in live) seat.friend.peerId: seat};
@@ -519,7 +524,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
     _landedPostId = next;
     if (landing.markDeparture &&
         landing.departedPostId != null &&
-        landing.departedPostId != next) {
+        landing.departedPostId != next &&
+        landing.departedPostId != widget.ownSeat?.thought.id) {
       widget.onThoughtDeparted?.call(landing.departedPostId!);
     }
     if (_layer == OrbitDepthLayer.flat) {
@@ -1118,7 +1124,7 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 ],
               ),
             ),
-            if (answers && !composing)
+            if ((answers || _isOwn(shown)) && !composing)
               Positioned(
                 key: const ValueKey('orbit-depth-answers-slot'),
                 left: 14 * k,
@@ -1135,6 +1141,8 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                         'orbit-depth-answers',
                         shown == null
                             ? null
+                            : _isOwn(shown)
+                            ? _ownActivity(shown, k, target + statusRow)
                             : _answers(shown, k, target, statusRow),
                       ),
                     ),
@@ -1142,6 +1150,52 @@ class _OrbitDepthSurfaceState extends State<OrbitDepthSurface>
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  bool _isOwn(OrbitDepthSeat? seat) =>
+      seat != null && seat.thought.id == widget.ownSeat?.thought.id;
+
+  /// On your own card: what friends did with it, as on the You page. A tap
+  /// opens your thought.
+  Widget _ownActivity(OrbitDepthSeat seat, double k, double height) {
+    final l10n = AppLocalizations.of(context)!;
+    final colors = Theme.of(context).colorScheme;
+    final activity = widget.ownActivity;
+    final postId = seat.thought.id;
+    final style = TextStyle(
+      fontSize: 14 * k,
+      color: colors.onSurface.withValues(alpha: .8),
+    );
+    final parts = <Widget>[
+      if (activity != null && activity.reacted > 0)
+        Text(l10n.you_page_reacted(activity.reacted), style: style),
+      if (activity != null && activity.wroteBack > 0)
+        Text(l10n.you_page_wrote_back(activity.wroteBack), style: style),
+      if (activity != null && activity.wroteBack > 0 && activity.fresh > 0)
+        Text(
+          l10n.you_page_new_replies(activity.fresh),
+          style: style.copyWith(color: colors.primary),
+        ),
+    ];
+    return Semantics(
+      button: true,
+      onTap: _bySemantics(() => widget.onThoughtTap?.call(postId)),
+      child: GestureDetector(
+        key: ValueKey('orbit-depth-own-activity-$postId'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => widget.onThoughtTap?.call(postId),
+        child: SizedBox(
+          height: height,
+          child: Center(
+            child: Wrap(
+              spacing: 14 * k,
+              alignment: WrapAlignment.center,
+              children: parts,
+            ),
+          ),
         ),
       ),
     );

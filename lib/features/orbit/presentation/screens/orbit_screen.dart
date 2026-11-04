@@ -325,6 +325,11 @@ class OrbitScreen extends StatefulWidget {
   final VoidCallback? onThoughtsSpread;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final Map<String, PostModel> depthThoughtsByPeerId;
+
+  /// The user's own live thought, first on the 3D ring, and what friends
+  /// did with it.
+  final OrbitDepthSeat? ownDepthSeat;
+  final OrbitDepthOwnActivity? ownDepthActivity;
   final bool depthActive;
   final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
   final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
@@ -423,6 +428,8 @@ class OrbitScreen extends StatefulWidget {
     this.onThoughtsSpread,
     this.thoughtsByPeerId = const {},
     this.depthThoughtsByPeerId = const {},
+    this.ownDepthSeat,
+    this.ownDepthActivity,
     this.depthActive = true,
     this.onDepthOwnsHostGestureChanged,
     this.onDepthBackActionChanged,
@@ -550,6 +557,8 @@ class _OrbitScreenState extends State<OrbitScreen> {
     onThoughtsSpread: widget.onThoughtsSpread,
     thoughtsByPeerId: widget.thoughtsByPeerId,
     depthThoughtsByPeerId: widget.depthThoughtsByPeerId,
+    ownDepthSeat: widget.ownDepthSeat,
+    ownDepthActivity: widget.ownDepthActivity,
     depthActive: widget.depthActive,
     onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
     onDepthBackActionChanged: widget.onDepthBackActionChanged,
@@ -637,6 +646,11 @@ class _OrbitScreenView extends StatelessWidget {
   final VoidCallback? onThoughtsSpread;
   final Map<String, OrbitThoughtNote> thoughtsByPeerId;
   final Map<String, PostModel> depthThoughtsByPeerId;
+
+  /// The user's own live thought, first on the 3D ring, and what friends
+  /// did with it.
+  final OrbitDepthSeat? ownDepthSeat;
+  final OrbitDepthOwnActivity? ownDepthActivity;
   final bool depthActive;
   final ValueChanged<bool>? onDepthOwnsHostGestureChanged;
   final ValueChanged<VoidCallback?>? onDepthBackActionChanged;
@@ -745,6 +759,8 @@ class _OrbitScreenView extends StatelessWidget {
     this.onThoughtsSpread,
     this.thoughtsByPeerId = const {},
     this.depthThoughtsByPeerId = const {},
+    this.ownDepthSeat,
+    this.ownDepthActivity,
     this.depthActive = true,
     this.onDepthOwnsHostGestureChanged,
     this.onDepthBackActionChanged,
@@ -1294,6 +1310,8 @@ class _OrbitScreenView extends StatelessWidget {
           builder: (context, findOpen, child) => OrbitDepthSurface(
             items: projection.innerItems,
             thoughts: depthThoughtsByPeerId,
+            ownSeat: ownDepthSeat,
+            ownActivity: ownDepthActivity,
             active: depthActive,
             gesturesEnabled: !innerEditing && !findOpen,
             topClearance: _kHeaderRowClearance,

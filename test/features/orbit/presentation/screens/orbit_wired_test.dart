@@ -962,6 +962,64 @@ void main() {
       },
     );
 
+    testWidgets(
+      'your own live Thought is the first 3D seat, without a reply bar, and '
+      'it stays unread when you move on',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        await posts.savePost(thought('friend-post'));
+        await posts.savePost(
+          thought('mine', text: 'My own thought').copyWith(
+            authorPeerId: testIdentity.peerId,
+            senderPeerId: testIdentity.peerId,
+            isIncoming: false,
+          ),
+        );
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        final surface = find.byType(OrbitDepthSurface);
+        await tester.timedDrag(
+          surface,
+          const Offset(0, -260),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-mine')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-depth-own-activity-mine')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('orbit-depth-react-love')),
+          findsNothing,
+        );
+        await tester.timedDrag(
+          surface,
+          const Offset(-240, 0),
+          const Duration(seconds: 1),
+        );
+        await pumpOrbitFrames(tester, count: 30);
+        expect(
+          find.byKey(const ValueKey('orbit-depth-card-friend-post')),
+          findsOneWidget,
+        );
+        expect(posts.focusedIds, isEmpty);
+        await finishThoughtCase(tester);
+      },
+    );
+
     Future<_OrbitThoughtPostRepository> enterDepthWithThought(
       WidgetTester tester,
     ) async {

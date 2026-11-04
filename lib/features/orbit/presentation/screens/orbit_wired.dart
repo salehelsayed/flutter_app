@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/orbit/presentation/widgets/orbit_depth_surface.dart';
 import 'package:flutter_app/core/config/thoughts_feature_flags.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/call/application/call_history_access.dart';
@@ -396,6 +397,10 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   final _thoughtEligibilityChanges = StreamController<void>.broadcast();
   Map<String, OrbitThoughtNote> _thoughtsByPeerId = const {};
   Map<String, PostModel> _depthThoughtsByPeerId = const {};
+
+  /// The user's own live thought on the 3D ring, and what friends did with it.
+  OrbitDepthSeat? _ownDepthSeat;
+  OrbitDepthOwnActivity? _ownDepthActivity;
   VoidCallback? _depthStepBack;
   final _depthSeenPending = <String>{};
   int _thoughtLoadRevision = 0;
@@ -1234,11 +1239,18 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final query = _thoughtQuery(repository);
       final thoughts = await query.execute(localPeerId: identity.peerId);
       final own = await query.executeOwn(localPeerId: identity.peerId);
+      final ownActivity = own == null
+          ? null
+          : await _ownDepthActivityFor(repository, own);
       if (!mounted || revision != _thoughtLoadRevision) return;
       setState(() {
         _depthThoughtsByPeerId = {
           for (final post in thoughts) post.authorPeerId: post,
         };
+        _ownDepthSeat = own == null
+            ? null
+            : (friend: _selfAsDepthFriend(identity), thought: own);
+        _ownDepthActivity = ownActivity;
         _thoughtsByPeerId = {
           for (final post in thoughts)
             post.authorPeerId: OrbitThoughtNote.fromPost(post),
@@ -1251,6 +1263,39 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         _reportThoughtFailure(error);
       }
     }
+  }
+
+  /// You, seated on the 3D ring like a friend, for your own thought.
+  OrbitFriend _selfAsDepthFriend(IdentityModel identity) => OrbitFriend(
+    contact: ContactModel(
+      peerId: identity.peerId,
+      publicKey: '',
+      rendezvous: '',
+      username: identity.username,
+      signature: '',
+      scannedAt: '',
+    ),
+    messageCount: 0,
+  );
+
+  /// The You page's reacted / wrote back counts for your own thought.
+  Future<OrbitDepthOwnActivity> _ownDepthActivityFor(
+    PostRepository repository,
+    PostModel own,
+  ) async {
+    final friends = [
+      for (final contact in await widget.contactRepo.getAllContacts())
+        if (!contact.isBlocked && !contact.isArchived) contact,
+    ];
+    final you = await _youThoughtResponses(repository, own, friends);
+    return (
+      reacted: {
+        for (final group in you.reactions)
+          for (final participant in group.participants) participant.peerId,
+      }.length,
+      wroteBack: you.wroteBack.length,
+      fresh: you.wroteBack.where((wrote) => wrote.hasUnread).length,
+    );
   }
 
   Future<void> _markDepthThoughtSeen(String postId) async {
@@ -1297,15 +1342,20 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  /// Every thought on the 3D ring: friends' and your own.
+  Iterable<PostModel> get _depthPosts => [
+    ..._depthThoughtsByPeerId.values,
+    ?_ownDepthSeat?.thought,
+  ];
+
   Future<List<PostMediaAttachmentModel>> _loadDepthMedia(String postId) async {
     final repository = _thoughtPosts;
-    if (repository == null ||
-        !_depthThoughtsByPeerId.values.any((post) => post.id == postId)) {
+    if (repository == null || !_depthPosts.any((post) => post.id == postId)) {
       return const [];
     }
     final media = await repository.loadPostMediaAttachmentsForPosts([postId]);
     if (!mounted ||
-        !_depthThoughtsByPeerId.values.any(
+        !_depthPosts.any(
           (post) =>
               post.id == postId &&
               DateTime.parse(
@@ -3622,6 +3672,52 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     }
   }
 
+  /// A thought of yours with who reacted and who wrote back, named only for
+  /// the friends it was sent to.
+  Future<YouThought> _youThoughtResponses(
+    PostRepository repository,
+    PostModel post,
+    List<ContactModel> friends,
+  ) async {
+    final messageRepo = widget.messageRepo;
+    final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
+        ? messageRepo as ThoughtReactionMessageRepository
+        : null;
+    // Same recipients-only names as loadThoughtActivity.
+    final recipients = {
+      for (final delivery in await repository.getRecipientDeliveries(post.id))
+        delivery.recipientPeerId,
+    };
+    final names = {
+      for (final contact in friends)
+        if (recipients.contains(contact.peerId))
+          contact.peerId: contact.username,
+    };
+    final replies =
+        await thoughtReplies?.loadThoughtReactionMessages(post.id) ??
+        const <ConversationMessage>[];
+    final wroteBack =
+        await thoughtReplies?.loadThoughtWroteBack(post.id) ??
+        const <ThoughtWroteBack>[];
+    return YouThought(
+      post: post,
+      reactions: groupThoughtReactions(
+        postId: post.id,
+        replies: replies,
+        participantNames: names,
+      ),
+      wroteBack: [
+        for (final wrote in wroteBack)
+          if (names[wrote.peerId] case final name?)
+            YouWroteBack(
+              peerId: wrote.peerId,
+              name: name,
+              hasUnread: wrote.hasUnread,
+            ),
+      ],
+    );
+  }
+
   Future<YouPageData> _loadYouPage(
     IdentityModel identity,
     int historyLimit,
@@ -3663,46 +3759,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           viewerPeerId: identity.peerId,
           nowProvider: widget.thoughtNowProvider,
         );
-    final messageRepo = widget.messageRepo;
-    final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
-        ? messageRepo as ThoughtReactionMessageRepository
-        : null;
 
-    Future<YouThought> responses(PostModel post) async {
-      // Same recipients-only names as loadThoughtActivity.
-      final recipients = {
-        for (final delivery in await repository.getRecipientDeliveries(post.id))
-          delivery.recipientPeerId,
-      };
-      final names = {
-        for (final contact in friends)
-          if (recipients.contains(contact.peerId))
-            contact.peerId: contact.username,
-      };
-      final replies =
-          await thoughtReplies?.loadThoughtReactionMessages(post.id) ??
-          const <ConversationMessage>[];
-      final wroteBack =
-          await thoughtReplies?.loadThoughtWroteBack(post.id) ??
-          const <ThoughtWroteBack>[];
-      return YouThought(
-        post: post,
-        reactions: groupThoughtReactions(
-          postId: post.id,
-          replies: replies,
-          participantNames: names,
-        ),
-        wroteBack: [
-          for (final wrote in wroteBack)
-            if (names[wrote.peerId] case final name?)
-              YouWroteBack(
-                peerId: wrote.peerId,
-                name: name,
-                hasUnread: wrote.hasUnread,
-              ),
-        ],
-      );
-    }
+    Future<YouThought> responses(PostModel post) =>
+        _youThoughtResponses(repository, post, friends);
 
     final ownSurface = own == null
         ? null
@@ -4085,6 +4144,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       onFriendTap: _onFriendTap,
       thoughtsByPeerId: _thoughtsByPeerId,
       depthThoughtsByPeerId: _depthThoughtsByPeerId,
+      ownDepthSeat: _ownDepthSeat,
+      ownDepthActivity: _ownDepthActivity,
       depthActive: _isOrbitActive,
       onDepthBackActionChanged: (action) => _depthStepBack = action,
       onDepthOwnsHostGestureChanged: widget.onDepthOwnsHostGestureChanged,
