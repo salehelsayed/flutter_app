@@ -1613,6 +1613,86 @@ void main() {
     );
 
     testWidgets(
+      'a thought for one picked friend reaches only them and retracts the '
+      'replaced one from the friend left out',
+      (tester) async {
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        final nour = testContact.copyWith(peerId: 'nour', username: 'nour');
+        contactRepo.seed([testContact, nour]);
+        final posts = InMemoryPostRepository();
+        addTearDown(posts.dispose);
+        await tester.pumpWidget(buildOrbitWired(postRepository: posts));
+        await pumpOrbitFrames(tester, count: 6);
+
+        Future<void> share(String text, {bool pickFirst = false}) async {
+          await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+          await pumpOrbitFrames(tester, count: 6);
+          if (pickFirst) {
+            await tester.tap(
+              find.byKey(const ValueKey('thought-audience-chip')),
+            );
+            await pumpOrbitFrames(tester, count: 8);
+            await tester.tap(
+              find.byKey(const ValueKey('thought-audience-select')),
+            );
+            await pumpOrbitFrames(tester, count: 8);
+            await tester.tap(
+              find.byKey(ValueKey('thought-pick-${testContact.peerId}')),
+            );
+            await tester.pump();
+            await tester.tap(find.byKey(const ValueKey('thought-pick-done')));
+            await pumpOrbitFrames(tester, count: 8);
+          }
+          await tester.enterText(
+            find.descendant(
+              of: find.byType(ComposePostSheet),
+              matching: find.byType(TextField),
+            ),
+            text,
+          );
+          await tester.pump();
+          await tester.tap(
+            find.byKey(const ValueKey('thought-composer-share')),
+          );
+          await pumpOrbitFrames(tester, count: 10);
+        }
+
+        await share('for everyone');
+        final feed = await posts.loadFeed();
+        final old = feed.singleWhere((p) => p.text == 'for everyone');
+        p2pService.storeInInboxLog.clear();
+        p2pService.sentMessageLog.clear();
+
+        await share('just for you', pickFirst: true);
+
+        final after = await posts.loadFeed();
+        expect(after.map((p) => p.text), isNot(contains('for everyone')));
+        final picked = after.singleWhere((p) => p.text == 'just for you');
+        expect(picked.audience.selectedPeerIds, [testContact.peerId]);
+        expect(
+          (await posts.getRecipientDeliveries(
+            picked.id,
+          )).map((d) => d.recipientPeerId),
+          [testContact.peerId],
+        );
+        final toNour = [
+          for (final m in p2pService.storeInInboxLog)
+            if (m.toPeerId == 'nour') m.message,
+          for (final m in p2pService.sentMessageLog)
+            if (m.peerId == 'nour') m.content,
+        ];
+        expect(toNour, isNotEmpty);
+        expect(
+          toNour.every((m) => m.contains('post_retract') && m.contains(old.id)),
+          isTrue,
+          reason: 'nour gets only the retraction of the old thought',
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
+    testWidgets(
       'own live thought shows over the self node, opens a You card without Message, and leaves at its deadline',
       (tester) async {
         setLargeTestSurface(tester);

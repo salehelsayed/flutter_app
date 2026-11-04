@@ -140,6 +140,7 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_audience.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
 import 'package:flutter_app/core/utils/thought_tags.dart';
@@ -1121,6 +1122,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 audience: draft.audience,
                 mediaDrafts: draft.mediaDrafts,
                 secureKeyStore: widget.secureKeyStore,
+                mediaFileManager: widget.mediaFileManager,
               );
               if (result == SendPostResult.success && local != null) {
                 // The sheet may have been swiped away mid-share and handed
