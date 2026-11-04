@@ -204,7 +204,7 @@ assert_unique_exact_count() {
 
 assert_unique_exact_count 4 "${FOCUSED_GO_TESTS[@]}"
 assert_unique_exact_count 4 "${PRESERVATION_GO_TESTS[@]}"
-assert_unique_exact_count 28 "${XCODE_TESTS[@]}"
+assert_unique_exact_count 30 "${XCODE_TESTS[@]}"
 
 run_go_test() {
   (
@@ -899,7 +899,7 @@ else
   )
   final_test_command+=("${only_testing_args[@]}")
   final_test_command+=(CODE_SIGNING_ALLOWED=NO test)
-  run_logged "the exact 28-method non-parallel Plan 373/398/badge XCTest set on $simulator_id" \
+  run_logged "the exact 30-method non-parallel Plan 373/398/badge XCTest set on $simulator_id" \
     "$RUNNER_BUILD_LOG" \
     "${final_test_command[@]}"
 
@@ -915,12 +915,12 @@ else
     >"$RESULT_DIR/ios-xctest-summary.json"
   jq -e '
     .result == "Passed" and
-    .totalTestCount == 28 and
-    .passedTests == 28 and
+    .totalTestCount == 30 and
+    .passedTests == 30 and
     .failedTests == 0 and
     .skippedTests == 0
   ' "$RESULT_DIR/ios-xctest-summary.json" >/dev/null ||
-    fail "Plan 373/398/badge XCTest summary was not exactly 28 passes and zero skips"
+    fail "Plan 373/398/badge XCTest summary was not exactly 30 passes and zero skips"
   xcrun xcresulttool get test-results tests \
     --path "$xctest_result" --compact \
     >"$RESULT_DIR/ios-xctest-tests.json"
@@ -931,7 +931,7 @@ else
   assert_xcresult_method_set "$RESULT_DIR/ios-xctest-tests.json" Passed \
     "${expected_method_names[@]}"
   verify_built_products "$xctest_derived"
-  printf 'PASS: 28/28 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
+  printf 'PASS: 30/30 on %s\n' "$simulator_id" >"$IOS_DISPOSITION"
 fi
 
 binding_digest_after="$(gomobile_binding_input_digest "$REPO_ROOT" ios)"
@@ -951,7 +951,7 @@ framework_digest_after="$(framework_content_digest)"
 
 [[ "$(wc -l <"$IOS_DISPOSITION" | tr -d '[:space:]')" -eq 1 ]] ||
   fail "iOS XCTest disposition must contain exactly one line"
-rg -x 'PASS: 28/28 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
+rg -x 'PASS: 30/30 on [0-9A-Fa-f-]{36}|N/A \(target unavailable by project policy\): no available iPhone simulator' \
   "$IOS_DISPOSITION" >/dev/null ||
   fail "iOS XCTest disposition is not the frozen PASS/N/A literal"
 [[ -s "$RUNNER_BUILD_LOG" ]] || fail "Runner simulator build log is empty"
