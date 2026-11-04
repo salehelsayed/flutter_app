@@ -6330,6 +6330,24 @@ visible and cannot become an ordinary first-attempt PASS.
   debug log marker for future RenderFlex overflows. Host layout tests establish
   Flutter constraints, not a rebuilt Android device screenshot.
 
+- **Dark Snackbar action contrast:** `app_theme_test.dart` renders default retry,
+  `showVideoProcessingNotice` and `showUndoBar` actions, reads their painted
+  foreground/background colors, and requires at least 4.5:1 contrast while
+  preserving each callback. Dark `inversePrimary` previously fell back to white
+  on white (1:1); Undo's explicit `primaryContainer` was only 2.59:1. The dark
+  theme now supplies a readable inverse accent and Undo uses the normal action
+  role. Existing Undo/video tests preserve timing and cancellation behavior.
+
+- **Recording timer/waveform separation:** `recording_overlay_test.dart` checks
+  actual painted waveform strokes against timer rectangles for English/Arabic
+  chat and Thought composers at 390 px. Layout rectangles alone missed bars
+  painting outside their slot. `AmplitudeBars` now draws only the newest samples
+  that fit, preserving bar dimensions and normal full-width rendering. The test
+  uses SDK Roboto/Noto fonts and each composer's available width (246/258 px).
+  Causal RED/GREEN evidence for both fixes is under
+  `.codex-test-logs/dark-snackbar-and-recording-timer-131/`; these are host widget
+  assertions, with installed-build appearance left to the 131 phone checks.
+
 - **Group sender avatar geometry:** the incoming group message gutter is 40 px,
   including a 32 px avatar and 8 px gap. Without reserving that gap as padding,
   the tight gutter constraint stretched the avatar to 40x32 and its photo clip

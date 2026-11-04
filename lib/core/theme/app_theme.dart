@@ -19,6 +19,8 @@ class AppTheme {
         onSurface: AppColors.textPrimary,
         onPrimary: AppColors.textPrimary,
         onSecondary: AppColors.textPrimary,
+        // SnackBar actions need a dark accent on the white inverse surface.
+        inversePrimary: Color(0xFF006E2C),
       ),
       textTheme: const TextTheme(
         headlineLarge: TextStyle(

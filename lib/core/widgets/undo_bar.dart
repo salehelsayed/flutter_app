@@ -109,11 +109,7 @@ UndoBarHandle showUndoBar(
     SnackBar(
       key: const ValueKey('undo-bar'),
       content: UndoBar(message: message),
-      action: SnackBarAction(
-        label: l10n.feed_undo,
-        textColor: scheme.primaryContainer,
-        onPressed: handle.undo,
-      ),
+      action: SnackBarAction(label: l10n.feed_undo, onPressed: handle.undo),
       behavior: SnackBarBehavior.floating,
       duration: window,
       shape: RoundedRectangleBorder(

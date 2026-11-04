@@ -7,9 +7,7 @@ class AmplitudeBars extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return CustomPaint(
-      painter: _AmplitudeBarsPainter(values: values),
-    );
+    return CustomPaint(painter: _AmplitudeBarsPainter(values: values));
   }
 }
 
@@ -33,13 +31,23 @@ class _AmplitudeBarsPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     final totalBarWidth = _barWidth + _barGap;
-    final totalWidth = values.length * totalBarWidth - _barGap;
+    final maxVisibleBars = ((size.width + _barGap) / totalBarWidth).floor();
+    final visibleBarCount = values.length > maxVisibleBars
+        ? maxVisibleBars
+        : values.length;
+    if (visibleBarCount <= 0) {
+      return;
+    }
+
+    // Keep the latest live levels inside the space left by the timer/actions.
+    final firstVisibleIndex = values.length - visibleBarCount;
+    final totalWidth = visibleBarCount * totalBarWidth - _barGap;
     final startX = (size.width - totalWidth) / 2;
     final centerY = size.height / 2;
     final maxBarHeight = size.height;
 
-    for (var i = 0; i < values.length; i++) {
-      final value = values[i].clamp(0.0, 1.0);
+    for (var i = 0; i < visibleBarCount; i++) {
+      final value = values[firstVisibleIndex + i].clamp(0.0, 1.0);
       final barHeight = _minBarHeight + value * (maxBarHeight - _minBarHeight);
       final x = startX + i * totalBarWidth + _barWidth / 2;
       final top = centerY - barHeight / 2;
