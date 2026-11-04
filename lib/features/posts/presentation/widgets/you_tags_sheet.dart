@@ -229,13 +229,13 @@ class _YouTagsSheetState extends State<YouTagsSheet> {
                           _Row(
                             key: _rows.putIfAbsent(tag.key, GlobalKey.new),
                             tag: tag,
-                            used: l10n.you_tags_used(
-                              widget.now
-                                  .toUtc()
-                                  .difference(tag.lastUsed)
-                                  .inDays
-                                  .clamp(0, 9999),
-                            ),
+                            used: switch (widget.now
+                                .toUtc()
+                                .difference(tag.lastUsed)
+                                .inDays) {
+                              <= 0 => l10n.you_tags_used_today,
+                              final days => l10n.you_tags_used(days),
+                            },
                             onTap: () => Navigator.of(context).pop(tag),
                           ),
                       ],

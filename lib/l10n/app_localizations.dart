@@ -8309,8 +8309,14 @@ abstract class AppLocalizations {
   /// No description provided for @you_tags_used.
   ///
   /// In en, this message translates to:
-  /// **'{days, plural, =0{today} other{{days} d ago}}'**
+  /// **'{days} d ago'**
   String you_tags_used(int days);
+
+  /// No description provided for @you_tags_used_today.
+  ///
+  /// In en, this message translates to:
+  /// **'today'**
+  String get you_tags_used_today;
 
   /// No description provided for @you_tags_note.
   ///

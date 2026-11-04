@@ -5097,14 +5097,11 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String you_tags_used(int days) {
-    String _temp0 = intl.Intl.pluralLogic(
-      days,
-      locale: localeName,
-      other: 'قبل $days يوم',
-      zero: 'اليوم',
-    );
-    return '$_temp0';
+    return 'قبل $days يوم';
   }
+
+  @override
+  String get you_tags_used_today => 'اليوم';
 
   @override
   String get you_tags_note => 'كل وسومك هنا.';

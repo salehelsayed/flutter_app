@@ -5139,14 +5139,11 @@ class AppLocalizationsDe extends AppLocalizations {
 
   @override
   String you_tags_used(int days) {
-    String _temp0 = intl.Intl.pluralLogic(
-      days,
-      locale: localeName,
-      other: 'vor $days T.',
-      zero: 'heute',
-    );
-    return '$_temp0';
+    return 'vor $days T.';
   }
+
+  @override
+  String get you_tags_used_today => 'heute';
 
   @override
   String get you_tags_note => 'Hier wohnen alle deine Tags.';
