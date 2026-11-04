@@ -27,6 +27,10 @@ import 'orbit_depth_media.dart';
 
 /// The production flat surface remains mounted below this local dial. Data,
 /// downloads, seen writes and destinations remain the wired host's authority.
+/// What friends did with the author's own live thought, shown in place of
+/// the reply bar on the author's own card.
+typedef OrbitDepthOwnActivity = ({int reacted, int wroteBack, int fresh});
+
 class OrbitDepthSurface extends StatefulWidget {
   const OrbitDepthSurface({
     super.key,
@@ -35,6 +39,8 @@ class OrbitDepthSurface extends StatefulWidget {
     required this.thoughts,
     required this.onFriendTap,
     required this.onThoughtTap,
+    this.ownSeat,
+    this.ownActivity,
     this.active = true,
     this.gesturesEnabled = true,
     this.topClearance = 0,
@@ -81,6 +87,12 @@ class OrbitDepthSurface extends StatefulWidget {
   final VoidCallback? onThoughtsExpired;
   final ValueChanged<OrbitFriend> onFriendTap;
   final ValueChanged<String>? onThoughtTap;
+
+  /// The author's own live thought, seated first on the ring.
+  final OrbitDepthSeat? ownSeat;
+
+  /// Shown on the author's own card instead of the reply bar.
+  final OrbitDepthOwnActivity? ownActivity;
   final Future<List<PostMediaAttachmentModel>> Function(String)? loadMedia;
   final Future<PostMediaAttachmentModel> Function(PostMediaAttachmentModel)?
   downloadMedia;

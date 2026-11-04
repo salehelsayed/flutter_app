@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'package:flutter_app/features/orbit/domain/orbit_depth_geometry.dart';
+import 'package:flutter_app/features/orbit/domain/models/orbit_friend.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -49,6 +52,8 @@ void main() {
     List<int>? order,
     double topClearance = 0,
     ValueNotifier<double>? hostChrome,
+    OrbitDepthSeat? ownSeat,
+    OrbitDepthOwnActivity? ownActivity,
   }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -85,6 +90,8 @@ void main() {
                   settled.add('${layer.name}:$front:$turned'),
               loadMedia: load,
               downloadMedia: (item) async => item,
+              ownSeat: ownSeat,
+              ownActivity: ownActivity,
               child:
                   child ??
                   SingleChildScrollView(
@@ -844,6 +851,99 @@ void main() {
       );
     }
   }
+
+  group('your own thought', () {
+    final me = OrbitFriend(
+      contact: ContactModel(
+        peerId: 'me',
+        publicKey: 'pk',
+        rendezvous: '',
+        username: 'Saleh',
+        signature: '',
+        scannedAt: depthNow.toIso8601String(),
+      ),
+      messageCount: 0,
+    );
+    PostModel mine({DateTime? expiry}) => depthThought(
+      0,
+      id: 'own-post',
+      text: 'back in dahab',
+      expiry: expiry,
+    ).copyWith(senderPeerId: 'me', authorPeerId: 'me', isIncoming: false);
+    OrbitDepthSeat seat({DateTime? expiry}) =>
+        (friend: me, thought: mine(expiry: expiry));
+    const activity = (reacted: 3, wroteBack: 2, fresh: 1);
+    Finder ownCard() => find.byKey(const ValueKey('orbit-depth-card-own-post'));
+
+    testWidgets('is first on the ring, with your name and the card friends '
+        'see', (tester) async {
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      expect(centerName(tester), 'Saleh');
+      expect(ownCard(), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('has no reply bar; it shows who reacted and wrote back', (
+      tester,
+    ) async {
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      expect(
+        find.byKey(const ValueKey('orbit-depth-react-love')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('orbit-depth-own-activity-own-post')),
+        findsOneWidget,
+      );
+      expect(find.text('3 reacted'), findsOneWidget);
+      expect(find.text('2 wrote back'), findsOneWidget);
+      expect(find.text('· 1 new'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a tap opens your own thought, not the reply composer', (
+      tester,
+    ) async {
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      await tester.tap(ownCard());
+      await rest(tester);
+      expect(opened, ['own-post']);
+      expect(find.byKey(const ValueKey('orbit-depth-composer')), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('is never marked seen when you turn past it', (tester) async {
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      await swipe(tester, Offset(rtl ? 160 : -160, 0));
+      expect(centerName(tester), 'Friend 0');
+      expect(seen, isNot(contains('own-post')));
+      await finish(tester);
+    });
+
+    testWidgets('an expired one stays out', (tester) async {
+      await mount(
+        tester,
+        ownSeat: seat(expiry: depthNow.subtract(const Duration(minutes: 1))),
+      );
+      await enter(tester);
+      expect(centerName(tester), 'Friend 0');
+      expect(ownCard(), findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('shows alone when no friend has a thought up', (tester) async {
+      thoughts = {};
+      await mount(tester, ownSeat: seat(), ownActivity: activity);
+      await enter(tester);
+      expect(centerName(tester), 'Saleh');
+      expect(ownCard(), findsOneWidget);
+      await finish(tester);
+    });
+  });
 }
 
 class _CaptionAi implements OnDeviceAi {
