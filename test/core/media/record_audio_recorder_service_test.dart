@@ -416,7 +416,10 @@ void main() {
 
       await service.resume();
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      expect(ticks.last - pausedAt, lessThan(const Duration(milliseconds: 400)));
+      expect(
+        ticks.last - pausedAt,
+        lessThan(const Duration(milliseconds: 400)),
+      );
     });
 
     test('a pause holds off the auto-stop by the time it lasted', () async {

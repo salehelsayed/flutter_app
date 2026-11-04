@@ -120,3 +120,12 @@ abstract class AudioRecorderService {
   /// and clears it again on its own stop/cancel paths.
   void Function(AudioRecording? recording)? onAutoStopped;
 }
+
+/// A recorder that can hold a recording without ending it. The mic stays
+/// leased and the wake lock held while paused; the clock and the auto-stop
+/// wait.
+abstract interface class PausableAudioRecorder {
+  bool get isPaused;
+  Future<void> pause();
+  Future<void> resume();
+}

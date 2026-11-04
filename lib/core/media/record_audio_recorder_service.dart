@@ -19,7 +19,8 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 /// stop/cancel/dispose/auto-stop. This is the only wake-lock call site outside
 /// the presentation layer; the ref-counted [UploadWakeLockController] keeps it
 /// safe alongside concurrent upload/migration holds.
-class RecordAudioRecorderService implements AudioRecorderService {
+class RecordAudioRecorderService
+    implements AudioRecorderService, PausableAudioRecorder {
   /// [recorder] and [maxDuration] are test seams: unit tests inject a fake
   /// recorder (no platform channel) and a short auto-stop duration.
   RecordAudioRecorderService({
@@ -38,6 +39,9 @@ class RecordAudioRecorderService implements AudioRecorderService {
   bool _wakeLockHeld = false;
   String? _currentOutputPath;
   DateTime? _startTime;
+  DateTime? _pausedAt;
+  Duration _autoStopLeft = Duration.zero;
+  DateTime? _autoStopArmedAt;
   Timer? _ticker;
   Timer? _maxDurationTimer;
   final _durationController = StreamController<Duration>.broadcast();
@@ -46,6 +50,9 @@ class RecordAudioRecorderService implements AudioRecorderService {
 
   @override
   bool get isRecording => _isRecording;
+
+  @override
+  bool get isPaused => _pausedAt != null;
 
   @override
   Stream<Duration> get durationStream => _durationController.stream;
@@ -94,23 +101,12 @@ class RecordAudioRecorderService implements AudioRecorderService {
 
     try {
       _isRecording = true;
+      _pausedAt = null;
       await _acquireWakeLock();
       _startTime = DateTime.now();
       _ensureAmplitudeStreamBridge();
-
-      _ticker = Timer.periodic(_tickInterval, (_) {
-        if (_startTime != null) {
-          final elapsed = DateTime.now().difference(_startTime!);
-          _durationController.add(elapsed);
-        }
-      });
-
-      _maxDurationTimer = Timer(maxDuration, () async {
-        if (_isRecording) {
-          final recording = await stop();
-          onAutoStopped?.call(recording);
-        }
-      });
+      _autoStopLeft = maxDuration;
+      _runClocks();
     } catch (_) {
       // Roll back so a throw out of start() always means "the service holds
       // nothing": no lock, no timers, no plugin recording. The UI catch
@@ -133,6 +129,45 @@ class RecordAudioRecorderService implements AudioRecorderService {
     }
   }
 
+  /// Ticks the duration and arms the auto-stop for what is left of
+  /// [maxDuration]; a pause stops both and a resume runs them again.
+  void _runClocks() {
+    _ticker = Timer.periodic(_tickInterval, (_) {
+      if (_startTime != null) {
+        _durationController.add(DateTime.now().difference(_startTime!));
+      }
+    });
+    _autoStopArmedAt = DateTime.now();
+    _maxDurationTimer = Timer(_autoStopLeft, () async {
+      if (_isRecording) {
+        final recording = await stop();
+        onAutoStopped?.call(recording);
+      }
+    });
+  }
+
+  @override
+  Future<void> pause() async {
+    if (!_isRecording || isPaused) return;
+    await _recorder.pause();
+    final now = DateTime.now();
+    _pausedAt = now;
+    _ticker?.cancel();
+    _maxDurationTimer?.cancel();
+    _autoStopLeft -= now.difference(_autoStopArmedAt ?? now);
+  }
+
+  @override
+  Future<void> resume() async {
+    final pausedAt = _pausedAt;
+    if (!_isRecording || pausedAt == null) return;
+    await _recorder.resume();
+    final paused = DateTime.now().difference(pausedAt);
+    _startTime = _startTime?.add(paused);
+    _pausedAt = null;
+    _runClocks();
+  }
+
   @override
   Future<AudioRecording?> stop() async {
     if (!_isRecording) return null;
@@ -140,8 +175,10 @@ class RecordAudioRecorderService implements AudioRecorderService {
     _ticker?.cancel();
     _maxDurationTimer?.cancel();
     _isRecording = false;
+    final endedAt = _pausedAt ?? DateTime.now();
+    _pausedAt = null;
     final elapsed = _startTime != null
-        ? DateTime.now().difference(_startTime!).inMilliseconds
+        ? endedAt.difference(_startTime!).inMilliseconds
         : 0;
     _startTime = null;
     // Release before the plugin call: a throwing stop() must not leak a hold.
@@ -186,6 +223,7 @@ class RecordAudioRecorderService implements AudioRecorderService {
     _maxDurationTimer?.cancel();
     _isRecording = false;
     _startTime = null;
+    _pausedAt = null;
     await _releaseWakeLock();
 
     await _recorder.stop();
