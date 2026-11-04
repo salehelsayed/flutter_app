@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
 
-/// Right-swipe gesture wrapper for received message bubbles.
+/// Swipe-to-reply wrapper for message bubbles.
 ///
-/// Reveals a reply icon behind the bubble as it slides right.
+/// The bubble slides away from the start edge (right in LTR, left in RTL)
+/// and reveals a reply icon at that edge.
 /// At 50% of trigger width → fires [onQuoteTriggered] and snaps back.
 class SwipeToQuoteBubble extends StatefulWidget {
   final Widget child;
@@ -58,13 +59,16 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
   void _onDragUpdate(DragUpdateDetails details) {
     if (!_isDragging) return;
 
-    final dx = details.delta.dx;
+    // Mirrored in RTL: the swipe always moves away from the start edge.
+    final dx = Directionality.of(context) == TextDirection.rtl
+        ? -details.delta.dx
+        : details.delta.dx;
     // The horizontal recognizer has already won against vertical scrolling.
     // Accumulate every update: a second per-event threshold drops slow swipes.
 
     setState(() {
       _dragOffset += dx;
-      // Right-swipe only: clamp to [0, triggerWidth * 1.5] with rubber-banding
+      // One direction only: clamp to [0, triggerWidth * 1.5] with rubber-banding
       if (_dragOffset > _triggerWidth) {
         final excess = _dragOffset - _triggerWidth;
         _dragOffset = _triggerWidth + excess * 0.3;
@@ -108,8 +112,8 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
         clipBehavior: Clip.none,
         children: [
           // Reply icon revealed behind bubble
-          Positioned(
-            left: 8,
+          PositionedDirectional(
+            start: 8,
             top: 0,
             bottom: 0,
             child: Center(
@@ -136,7 +140,12 @@ class _SwipeToQuoteBubbleState extends State<SwipeToQuoteBubble>
           ),
           // Sliding bubble
           Transform.translate(
-            offset: Offset(_dragOffset, 0),
+            offset: Offset(
+              Directionality.of(context) == TextDirection.rtl
+                  ? -_dragOffset
+                  : _dragOffset,
+              0,
+            ),
             child: widget.child,
           ),
         ],
