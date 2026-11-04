@@ -113,6 +113,11 @@ import 'package:flutter_app/features/posts/domain/repositories/post_repository.d
 import 'package:flutter_app/features/posts/domain/thought_quote.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
+import 'package:flutter_app/features/posts/presentation/thought_photo_framing.dart';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_photo_draft_preview.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker_platform_interface/image_picker_platform_interface.dart'
+    show ImagePickerPlatform, MediaOptions;
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 
 import '../../../../core/bridge/fake_bridge.dart';
@@ -2034,6 +2039,178 @@ void main() {
             .text,
         '#walks ',
       );
+      await finishThoughtCase(tester);
+    });
+
+    testWidgets('a photo reframed in a tag-started draft keeps its framing', (
+      tester,
+    ) async {
+      debugYouPageEnabledOverride = true;
+      addTearDown(() => debugYouPageEnabledOverride = null);
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final dir = Directory.systemTemp.createTempSync('orbit_tag_framing_');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final photo = '${dir.path}/wide.jpg';
+      File(
+        photo,
+      ).writeAsBytesSync(img.encodeJpg(img.Image(width: 400, height: 300)));
+      final previousPicker = ImagePickerPlatform.instance;
+      ImagePickerPlatform.instance = _OnePhotoPicker(photo);
+      addTearDown(() => ImagePickerPlatform.instance = previousPicker);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('you-live', text: 'Morning #walks').copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        ),
+      );
+      final framedImage = find.byKey(
+        const ValueKey('thought-photo-framed-image'),
+      );
+      Future<void> untilFramed() async {
+        for (var i = 0; i < 300 && framedImage.evaluate().isEmpty; i++) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 10)),
+          );
+          await tester.pump();
+        }
+        expect(framedImage, findsOneWidget);
+      }
+
+      PhotoFraming shownFraming() => tester
+          .widget<ThoughtPhotoDraftPreview>(
+            find.byType(ThoughtPhotoDraftPreview),
+          )
+          .framings[photo]!;
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+      await tester.pump();
+      await untilFramed();
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+
+      await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('you-thought-you-live')),
+          matching: find.byKey(const ValueKey('you-tag-walks')),
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await pumpOrbitFrames(tester, count: 8);
+      await untilFramed();
+      expect(shownFraming().center, const Offset(.5, .5));
+      await tester.drag(
+        find.byKey(const ValueKey('thought-photo-frame')),
+        const Offset(90, 0),
+      );
+      await tester.pump();
+      final framed = shownFraming().center;
+      expect(framed, isNot(const Offset(.5, .5)));
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await pumpOrbitFrames(tester, count: 8);
+      await untilFramed();
+      expect(shownFraming().center, framed);
+      await finishThoughtCase(tester);
+    });
+
+    testWidgets('a tag share finished after a swipe clears the kept draft', (
+      tester,
+    ) async {
+      debugYouPageEnabledOverride = true;
+      addTearDown(() => debugYouPageEnabledOverride = null);
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final posts = _HeldShareSaveRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought(
+          'you-old',
+          text: 'River #walks',
+          age: const Duration(days: 1),
+          expiresAt: thoughtNow.subtract(const Duration(hours: 1)),
+        ).copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        ),
+      );
+      final field = find.descendant(
+        of: find.byType(ComposePostSheet),
+        matching: find.byType(TextField),
+      );
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.enterText(find.byType(TextField), 'Half');
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('you-thought-you-old')),
+          matching: find.byKey(const ValueKey('you-tag-walks')),
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await pumpOrbitFrames(tester, count: 8);
+      expect(tester.widget<TextField>(field).controller!.text, 'Half #walks ');
+
+      posts.hold = Completer<void>();
+      await tester.tap(find.byKey(const ValueKey('thought-composer-share')));
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+      expect(find.byType(ComposePostSheet), findsNothing);
+      posts.hold!.complete();
+      bool shared() =>
+          flowEvents.any((e) => e['event'] == 'POST_CREATE_LOCAL_SUCCESS');
+      for (var i = 0; i < 300 && !shared(); i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      expect(shared(), isTrue);
+      await tester.pump();
+      expect([
+        for (final post in await posts.loadFeed()) post.text,
+      ], contains('Half #walks'));
+
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await pumpOrbitFrames(tester, count: 8);
+      expect(tester.widget<TextField>(field).controller!.text, '#walks ');
       await finishThoughtCase(tester);
     });
 
@@ -13070,5 +13247,28 @@ class _DismissalRecordingIntroductionRepository
       introductionIds: introductionIds,
       ownPeerId: ownPeerId,
     );
+  }
+}
+
+class _OnePhotoPicker extends ImagePickerPlatform {
+  _OnePhotoPicker(this.path);
+
+  final String path;
+
+  @override
+  Future<List<XFile>> getMedia({required MediaOptions options}) async => [
+    XFile(path),
+  ];
+}
+
+/// Holds each save while [hold] is pending, so a share can finish after the
+/// sheet is gone.
+class _HeldShareSaveRepository extends _OrbitThoughtPostRepository {
+  Completer<void>? hold;
+
+  @override
+  Future<void> savePost(PostModel post) async {
+    await hold?.future;
+    await super.savePost(post);
   }
 }
