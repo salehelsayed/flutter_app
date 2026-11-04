@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/presentation/widgets/chat_search.dart';
 import 'package:flutter_app/core/media/group_upload_retry_signal.dart';
 import 'dart:convert';
 import 'dart:io';
@@ -2071,6 +2072,70 @@ void main() {
         ),
       );
     }
+
+    testWidgets('in-chat search: the magnifier opens the bar, matches step '
+        'newest first and the bar closes back to the header', (tester) async {
+      final base = DateTime.utc(2026, 11, 4, 18);
+      await msgRepo.saveMessage(
+        makeMessage(id: 'g-old', text: 'Who is in for Dahab?', timestamp: base),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-mid',
+          text: 'Me! Bus on Thursday',
+          timestamp: base.add(const Duration(minutes: 1)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-private',
+          text: 'dahab',
+          privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+          timestamp: base.add(const Duration(minutes: 2)),
+        ),
+      );
+      await msgRepo.saveMessage(
+        makeMessage(
+          id: 'g-new',
+          text: 'Count me in for dahab',
+          isIncoming: false,
+          senderPeerId: 'me',
+          timestamp: base.add(const Duration(minutes: 3)),
+        ),
+      );
+      await tester.pumpWidget(buildWidget());
+      await pumpFrames(tester);
+
+      String? highlighted() => tester
+          .widget<GroupConversationScreen>(find.byType(GroupConversationScreen))
+          .highlightedMessageId;
+
+      await tester.tap(find.byTooltip('Search'));
+      await pumpFrames(tester, count: 4);
+      expect(find.byType(ChatSearchBar), findsOneWidget);
+      expect(find.byKey(const ValueKey('group-header')), findsNothing);
+
+      await tester.enterText(
+        find.descendant(
+          of: find.byType(ChatSearchBar),
+          matching: find.byType(TextField),
+        ),
+        'dahab',
+      );
+      await pumpFrames(tester);
+      expect(find.text('1 of 2'), findsOneWidget);
+      expect(highlighted(), 'g-new');
+
+      await tester.tap(find.byTooltip('Previous match'));
+      await pumpFrames(tester);
+      expect(find.text('2 of 2'), findsOneWidget);
+      expect(highlighted(), 'g-old');
+
+      await tester.tap(find.byTooltip('Close search'));
+      await pumpFrames(tester, count: 4);
+      expect(find.byType(ChatSearchBar), findsNothing);
+      expect(find.byKey(const ValueKey('group-header')), findsOneWidget);
+    });
 
     Future<void> pumpStickerComposer(
       WidgetTester tester, {
