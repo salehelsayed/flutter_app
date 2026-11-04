@@ -251,8 +251,10 @@ const _relocations = <String, List<String>>{
     // adapter; placement is unchanged. Thoughts 129 adds the metrics opt-out
     // mark through the same injected insert; imports are unchanged.
     // Round 9 keeps expired own Thoughts in the same adapter; imports are
-    // unchanged.
-    'fc420c8601cf868be61781857d17005bac4c999b51895c0ac7c1b09f19d5917b',
+    // unchanged. Thought history (build 131) adds the paged own-history read
+    // (loadExpiredOwnPosts with limit and offset) to the same adapter;
+    // placement and imports are unchanged.
+    '03be22e2c51de2ab36818c15ab88ce551ed4dc5346dbdde3edd2d20f8e4df74c',
   ],
 };
 
