@@ -1079,14 +1079,17 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
           eligibleContacts: const [],
           initialDraft: start,
           onClosed: (draft) {
-            handedBack = draft;
             // A tag the sheet only started with is no draft to keep.
             final untouched =
                 draft != null &&
                 !identical(start, kept) &&
                 draft.text == start?.text &&
-                draft.mediaDrafts.isEmpty;
+                listEquals(
+                  [for (final media in draft.mediaDrafts) media.localFilePath],
+                  [for (final media in start!.mediaDrafts) media.localFilePath],
+                );
             _thoughtDraft = untouched ? kept : draft;
+            handedBack = _thoughtDraft;
             closed.complete();
           },
           audioRecorderService: widget.audioRecorderService,
