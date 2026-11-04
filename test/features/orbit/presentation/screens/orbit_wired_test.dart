@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../../../translate_preview/fake_model_delivery_controller.dart';
+import 'package:flutter_app/features/translate_preview/model_delivery_contract.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -1551,6 +1553,48 @@ void main() {
         await finishThoughtCase(tester);
       },
     );
+
+    for (final ready in [true, false]) {
+      testWidgets(
+        'Send as text in the Thought recorder only where the model can run '
+        '(${ready ? 'ready' : 'unsupported'})',
+        (tester) async {
+          setLargeTestSurface(tester);
+          identityRepo.seed(testIdentity);
+          contactRepo.seed([testContact]);
+          debugModelDeliveryOverride = FakeModelDeliveryController(
+            ready ? const ModelReady(sizeBytes: 1) : const ModelUnsupported(),
+          );
+          addTearDown(() => debugModelDeliveryOverride = null);
+          final recorder = FakeAudioRecorderService()
+            ..fakeOutputPath = '/tmp/thought.m4a';
+          addTearDown(recorder.dispose);
+          final posts = InMemoryPostRepository();
+          addTearDown(posts.dispose);
+          await tester.pumpWidget(
+            buildOrbitWired(
+              postRepository: posts,
+              audioRecorderService: recorder,
+            ),
+          );
+          await pumpOrbitFrames(tester, count: 6);
+          await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+          await pumpOrbitFrames(tester, count: 6);
+          await tester.tap(find.byTooltip('Voice'));
+          await pumpOrbitFrames(tester, count: 4);
+
+          expect(
+            find.byKey(const ValueKey('thought-voice-as-text')),
+            ready ? findsOneWidget : findsNothing,
+          );
+          await tester.tap(find.byTooltip('Stop'));
+          await pumpOrbitFrames(tester, count: 4);
+          await tester.binding.handlePopRoute();
+          await pumpOrbitFrames(tester, count: 6);
+          await finishThoughtCase(tester);
+        },
+      );
+    }
 
     testWidgets(
       'own-node plus shares with every current active unblocked friend',
