@@ -8078,19 +8078,19 @@ abstract class AppLocalizations {
   /// **'Nothing shared right now'**
   String get you_page_empty;
 
-  /// No description provided for @you_page_tag_private.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'only you see this'**
   String get you_page_tag_private;
 
-  /// No description provided for @you_page_tag_count.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 thought} other{{count} thoughts}}'**
   String you_page_tag_count(int count);
 
-  /// No description provided for @you_page_add_to_tag.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'add to {tag}'**
