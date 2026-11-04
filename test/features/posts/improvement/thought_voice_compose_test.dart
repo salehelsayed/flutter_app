@@ -89,11 +89,23 @@ void main() {
     await tester.pump();
     expect(recorder.pauseCallCount, 1);
     expect(recorder.isRecording, isTrue);
+    expect(
+      find.descendant(of: card(), matching: find.text('paused')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: card(), matching: find.text('recording')),
+      findsNothing,
+    );
 
     await tester.tap(find.byTooltip('Resume'));
     await tester.pump();
     expect(recorder.resumeCallCount, 1);
     expect(find.byTooltip('Pause'), findsOneWidget);
+    expect(
+      find.descendant(of: card(), matching: find.text('recording')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('cancel throws the recording away', (tester) async {

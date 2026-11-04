@@ -470,6 +470,71 @@ void main() {
     await until(tester, () => shared == 1);
   });
 
+  for (final (label, size, top, bottom, keyboard, locale) in [
+    ('390 px, English', const Size(390, 844), 47.0, 34.0, 0.0, 'en'),
+    ('390 px, Arabic', const Size(390, 844), 47.0, 34.0, 0.0, 'ar'),
+    ('Pixel, English', const Size(412, 915), 24.0, 48.0, 0.0, 'en'),
+    ('Pixel, Arabic', const Size(412, 915), 24.0, 48.0, 0.0, 'ar'),
+    ('Pixel, keyboard up', const Size(412, 915), 24.0, 48.0, 300.0, 'en'),
+  ]) {
+    testWidgets('with six photos the replaces hint stays fully above the '
+        'toolbar ($label)', (tester) async {
+      tester.view.physicalSize = size * 3;
+      tester.view.devicePixelRatio = 3;
+      tester.view.padding = FakeViewPadding(top: top * 3, bottom: bottom * 3);
+      tester.view.viewInsets = FakeViewPadding(bottom: keyboard * 3);
+      addTearDown(tester.view.reset);
+      final photos = [
+        for (var i = 0; i < 6; i++)
+          PostMediaDraft(localFilePath: realPhoto(), mime: 'image/jpeg'),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: Locale(locale),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: TextButton(
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context,
+                    isScrollControlled: true,
+                    useSafeArea: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => ComposePostSheet(
+                      thoughtsOnly: true,
+                      replacesCurrentThought: true,
+                      eligibleContacts: const [],
+                      onSubmitWithOutcome: (_) async =>
+                          ComposePostSubmitOutcome.keepSheetOpen,
+                      onPickMedia: () async => (drafts: photos, leftOut: false),
+                    ),
+                  ),
+                  child: const Text('open'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('thought-composer-media')));
+      await finishPick(tester);
+      expect(shownPaths(tester), photos.map((p) => p.localFilePath));
+
+      final hint = tester.getRect(
+        find.byKey(const ValueKey('thought-composer-replaces')),
+      );
+      final toolbar = tester.getRect(
+        find.byKey(const ValueKey('thought-composer-toolbar')),
+      );
+      expect(hint.bottom, lessThanOrEqualTo(toolbar.top));
+      expect(hint.top, greaterThan(0));
+    });
+  }
+
   testWidgets('a mixed photo and video pick keeps photos and says so', (
     tester,
   ) async {
