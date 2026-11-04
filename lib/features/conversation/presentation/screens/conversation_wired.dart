@@ -5437,6 +5437,7 @@ class _ConversationWiredState extends State<ConversationWired>
 
   void _onDraftChanged(String text) {
     if (_draftText == text) return;
+    final endsVoiceText = _endsVoiceText(text);
     setState(() {
       _draftText = text;
       final restoredDraft = _restoredFailedDraftText;
@@ -5449,8 +5450,17 @@ class _ConversationWiredState extends State<ConversationWired>
       _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
       _privateMediaPolicyInvalidated = false;
     }
-    _updateComposerState();
+    _updateComposerState(
+      voiceTextNotice: endsVoiceText ? VoiceTextNotice.none : null,
+    );
   }
+
+  /// The from-voice hint covers one run of words: it ends when the field is
+  /// emptied, or once new words follow an empty field (as after a send, which
+  /// clears the field while building).
+  bool _endsVoiceText(String text) =>
+      _composerController.value.voiceTextNotice == VoiceTextNotice.fromVoice &&
+      (text.trim().isEmpty || _draftText.trim().isEmpty);
 
   bool _shouldRetryRestoredFailedDraft({
     required String sanitizedText,
@@ -6897,6 +6907,7 @@ class _ConversationWiredState extends State<ConversationWired>
         recordingState: VoiceRecordingState.idle,
         recordingDuration: Duration.zero,
         amplitudeValues: const [],
+        voiceTextNotice: VoiceTextNotice.fromVoice,
       );
       try {
         final file = File(recording.filePath);
@@ -6909,20 +6920,9 @@ class _ConversationWiredState extends State<ConversationWired>
           !_isCurrentVoiceTextCapture(outcome, generation, peerId)) {
         return;
       }
-      _updateComposerState(recordingState: VoiceRecordingState.reviewing);
-      final l10n = AppLocalizations.of(context)!;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.translator_transcribe_failed),
-          action: SnackBarAction(
-            label: l10n.translator_try_again,
-            onPressed: () {
-              if (_isCurrentVoiceTextCapture(outcome, generation, peerId)) {
-                unawaited(_onSendAsText());
-              }
-            },
-          ),
-        ),
+      _updateComposerState(
+        recordingState: VoiceRecordingState.reviewing,
+        voiceTextNotice: VoiceTextNotice.failed,
       );
     }
   }
@@ -7209,6 +7209,7 @@ class _ConversationWiredState extends State<ConversationWired>
     VoiceRecordingState? recordingState,
     Duration? recordingDuration,
     List<double>? amplitudeValues,
+    VoiceTextNotice? voiceTextNotice,
     PrivateMediaPolicy? privateMediaPolicy,
   }) {
     assert(pendingAttachments == null || restoreSnapshot == null);
@@ -7288,6 +7289,7 @@ class _ConversationWiredState extends State<ConversationWired>
       recordingState: recordingState,
       recordingDuration: recordingDuration,
       amplitudeValues: amplitudeValues,
+      voiceTextNotice: voiceTextNotice,
       privateMediaEligibility: eligibility,
       privateMediaPolicy: effectivePrivateMediaPolicy,
     );

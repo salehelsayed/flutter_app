@@ -368,6 +368,7 @@ class GroupConversationScreen extends StatelessWidget {
                 isProcessing: composerState.isProcessing,
                 isSending: isSending,
                 recordingState: composerState.recordingState,
+                voiceTextNotice: composerState.voiceTextNotice,
                 onRecordStart: onRecordStart,
                 onRecordStop: onRecordStop,
                 onRecordCancel: onRecordCancel,

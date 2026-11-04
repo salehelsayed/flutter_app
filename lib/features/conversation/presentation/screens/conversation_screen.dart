@@ -235,12 +235,24 @@ class ConversationComposerViewState {
       recordingState: recordingState ?? this.recordingState,
       recordingDuration: recordingDuration ?? this.recordingDuration,
       amplitudeValues: amplitudeValues ?? this.amplitudeValues,
-      voiceTextNotice: voiceTextNotice ?? this.voiceTextNotice,
+      voiceTextNotice: _voiceTextNotice(
+        voiceTextNotice ?? this.voiceTextNotice,
+        recordingState ?? this.recordingState,
+      ),
       privateMediaEligibility:
           privateMediaEligibility ?? this.privateMediaEligibility,
       privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,
     );
   }
+
+  /// A failure notice belongs to the recording held in review, so it ends
+  /// when that review ends (sent, discarded, or retried).
+  static VoiceTextNotice _voiceTextNotice(
+    VoiceTextNotice notice,
+    VoiceRecordingState recordingState,
+  ) => notice == VoiceTextNotice.failed && !recordingState.isReviewing
+      ? VoiceTextNotice.none
+      : notice;
 
   bool get isRecording => recordingState.isActive;
 
@@ -1028,6 +1040,7 @@ class _ConversationScreenState extends State<ConversationScreen>
           isProcessing: composerState.isProcessing,
           isSending: widget.isSending,
           recordingState: composerState.recordingState,
+          voiceTextNotice: composerState.voiceTextNotice,
           onRecordStart: widget.onRecordStart,
           onRecordStop: widget.onRecordStop,
           onRecordCancel: widget.onRecordCancel,

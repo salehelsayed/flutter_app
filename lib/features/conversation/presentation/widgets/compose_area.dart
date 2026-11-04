@@ -590,6 +590,13 @@ class _ComposeAreaState extends State<ComposeArea>
                     text: quotePreviewText!,
                     onDismiss: widget.onClearQuote,
                   ),
+                if (widget.voiceTextNotice == VoiceTextNotice.failed &&
+                    widget.recordingState.isReviewing)
+                  _buildVoiceTextFailedCard(context),
+                if (widget.voiceTextNotice == VoiceTextNotice.fromVoice &&
+                    _hasText &&
+                    !_isRecording)
+                  _buildFromVoiceHint(context),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -921,6 +928,7 @@ class _ComposeAreaState extends State<ComposeArea>
                   ],
                 ),
                 if (widget.onSendAsText != null &&
+                    widget.voiceTextNotice != VoiceTextNotice.failed &&
                     (widget.recordingState == VoiceRecordingState.recording ||
                         widget.recordingState == VoiceRecordingState.reviewing))
                   _buildSendAsTextAction(context),
@@ -939,16 +947,123 @@ class _ComposeAreaState extends State<ComposeArea>
       valueListenable: delivery.state,
       builder: (context, state, _) => state is ModelUnsupported
           ? const SizedBox.shrink()
-          : Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: TextButton(
+          : Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: OutlinedButton.icon(
                 key: const ValueKey('voice-send-as-text'),
                 onPressed: widget.onSendAsText,
-                child: Text(
+                style: _outlinedStyle(context),
+                icon: const Icon(Icons.notes_rounded, size: 18),
+                label: Text(
                   AppLocalizations.of(context)!.voice_send_as_text_action,
                 ),
               ),
             ),
+    );
+  }
+
+  ButtonStyle _outlinedStyle(BuildContext context) {
+    final accent = context.backgroundReadableColors.accent;
+    return OutlinedButton.styleFrom(
+      foregroundColor: accent,
+      side: BorderSide(color: accent, width: 1.5),
+      minimumSize: const Size(0, 44),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+    );
+  }
+
+  Widget _buildFromVoiceHint(BuildContext context) {
+    final color = context.backgroundReadableColors.textMuted;
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(start: 4, end: 4, bottom: 6),
+      child: Row(
+        children: [
+          Icon(Icons.mic_none_rounded, size: 14, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              AppLocalizations.of(context)!.voice_text_from_voice,
+              style: TextStyle(fontSize: 12.5, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVoiceTextFailedCard(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colors = context.backgroundReadableColors;
+    final light = colors.isLightSurface;
+    final accent = colors.accent;
+    return Container(
+      key: const ValueKey('voice-text-failed-card'),
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: light
+            ? colors.surfaceRaised
+            : const Color.fromRGBO(255, 255, 255, 0.06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: light
+              ? colors.inputBorder
+              : const Color.fromRGBO(255, 255, 255, 0.10),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l10n.translator_transcribe_failed,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: colors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            l10n.voice_text_recording_kept,
+            style: TextStyle(fontSize: 13, color: colors.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  onPressed: widget.onReviewSend,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor:
+                        ThemeData.estimateBrightnessForColor(accent) ==
+                            Brightness.dark
+                        ? Colors.white
+                        : Colors.black,
+                    minimumSize: const Size(0, 44),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(22),
+                    ),
+                  ),
+                  child: Text(l10n.voice_review_send_action),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: widget.onSendAsText,
+                  style: _outlinedStyle(context),
+                  child: Text(l10n.translator_try_again),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

@@ -11526,15 +11526,26 @@ void main() {
       testWidgets('group failure card Send voice message sends the recording', (
         tester,
       ) async {
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(mediaUploadInFlightTracker.clearAll);
+        final flowEvents = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flowEvents.add);
+        addTearDown(() => debugSetFlowEventSink(null));
         await failOnce(tester);
         await tester.tap(find.text('Send voice message'));
-        await pumpFrames(tester, count: 20);
-        expect(uploads, 1);
+        await pumpFrames(tester, count: 5);
+        expect(
+          flowEvents.where(
+            (event) => event['event'] == 'MEDIA_UPLOAD_LEASE_CLAIMED',
+          ),
+          hasLength(1),
+        );
         expect(ai.paths, [voiceFile.path]);
         expect(
           find.byKey(const ValueKey('voice-text-failed-card')),
           findsNothing,
         );
+        expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
         expect(recordingPhase(tester), VoiceRecordingState.idle);
       });
 
