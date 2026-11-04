@@ -1455,6 +1455,66 @@ void main() {
       }
     }
 
+    for (final isGroup in [false, true]) {
+      for (final direction in TextDirection.values) {
+        for (final isIncoming in [false, true]) {
+          testWidgets('text bubble side ${isGroup ? 'group' : 'direct'} '
+              '${direction.name} ${isIncoming ? 'incoming' : 'outgoing'}', (
+            tester,
+          ) async {
+            await tester.pumpWidget(
+              buildBubble(
+                textDirection: direction,
+                isIncoming: isIncoming,
+                text: 'hi',
+                isLastInGroup: false,
+                showAvatar: isGroup && isIncoming,
+                showSenderName: isGroup && isIncoming,
+                avatarOutsideBubble: isGroup && isIncoming,
+              ),
+            );
+            await tester.pump();
+
+            final slot = tester.getRect(
+              find.byKey(const ValueKey('letter-card-test-slot')),
+            );
+            final bubble = tester.getRect(find.byType(ClipRRect).first);
+            final onRight = isIncoming
+                ? direction == TextDirection.rtl
+                : direction == TextDirection.ltr;
+            final edgeGap = onRight
+                ? slot.right - bubble.right
+                : bubble.left - slot.left;
+            final gutter = isGroup && isIncoming ? kBubbleAvatarGutterWidth : 0;
+            expect(
+              edgeGap,
+              closeTo(gutter, 0.5),
+              reason:
+                  'Own bubbles sit at the end side and peer bubbles at the '
+                  'start side, mirrored in Arabic.',
+            );
+            final radius = bubbleRadius(tester);
+            final joined = onRight ? radius.bottomRight : radius.bottomLeft;
+            final outer = onRight ? radius.bottomLeft : radius.bottomRight;
+            expect(
+              joined.x,
+              lessThan(outer.x),
+              reason: 'the joined corner faces the side the bubble sits on',
+            );
+            if (isGroup && isIncoming) {
+              final avatar = tester.getRect(find.byType(UserAvatar));
+              if (onRight) {
+                expect(avatar.left, greaterThanOrEqualTo(bubble.right - 1));
+              } else {
+                expect(avatar.right, lessThanOrEqualTo(bubble.left + 1));
+              }
+            }
+            expect(tester.takeException(), isNull);
+          });
+        }
+      }
+    }
+
     // 156 QW-1 (TC-01): the bubble fill is already semi-opaque, so the
     // BackdropFilter blur was pure raster cost. Removing it must keep the solid
     // fill (no transparent/blurred bubble).
@@ -2162,12 +2222,10 @@ void main() {
       );
     });
 
-    // TC-AV4 (RTL) — the incoming bubble is pinned to the PHYSICAL-left edge
-    // (Alignment.centerLeft, not directional), so the run avatar must also stay
-    // on the leading/physical-left side under RTL (Arabic) rather than flipping
-    // to the inner/center-facing side.
+    // TC-AV4 (RTL) — the incoming bubble mirrors to the right edge in Arabic,
+    // so the run avatar sits on its outer (physical-right) side.
     testWidgets(
-      'TC-AV4 avatar stays on the physical-left of the incoming bubble under RTL',
+      'TC-AV4 avatar sits on the outer right of the incoming bubble under RTL',
       (tester) async {
         await tester.pumpWidget(
           MaterialApp(
@@ -2205,17 +2263,16 @@ void main() {
           ),
         );
 
-        final avatarRight = tester.getTopRight(find.byType(UserAvatar)).dx;
-        final bubbleLeftEdge = tester
-            .getTopLeft(find.byType(ClipRRect).first)
+        final avatarLeft = tester.getTopLeft(find.byType(UserAvatar)).dx;
+        final bubbleRightEdge = tester
+            .getTopRight(find.byType(ClipRRect).first)
             .dx;
         expect(
-          avatarRight,
-          lessThanOrEqualTo(bubbleLeftEdge + 1.0),
+          avatarLeft,
+          greaterThanOrEqualTo(bubbleRightEdge - 1.0),
           reason:
-              'Under RTL the avatar must remain on the leading (physical-'
-              'left) side of the incoming bubble, matching the physical-left '
-              'Align — not flip to the inner side.',
+              'Under RTL the avatar sits on the outer (physical-right) side '
+              'of the mirrored incoming bubble.',
         );
       },
     );
@@ -2286,8 +2343,8 @@ void main() {
     );
 
     // TC-AV6 (RTL) — a WIDE sender name must not push the bubble off the gutter
-    // under RTL: the name-above Column is pinned LTR like the gutter, so the
-    // bubble stays flush just right of the avatar.
+    // under RTL: the bubble stays flush just left of the mirrored avatar, and
+    // the name starts at the bubble's right edge.
     testWidgets(
       'TC-AV6 name-above bubble stays flush to the gutter under RTL',
       (tester) async {
@@ -2327,11 +2384,13 @@ void main() {
           ),
         );
 
-        final bubbleLeft = tester.getTopLeft(find.byType(ClipRRect).first).dx;
-        final avatarRight = tester.getTopRight(find.byType(UserAvatar)).dx;
-        // The bubble sits just right of the avatar gutter (small gap), not
-        // pushed far right by the wide name.
-        expect(bubbleLeft - avatarRight, lessThan(16));
+        final bubbleRight = tester.getTopRight(find.byType(ClipRRect).first).dx;
+        final avatarLeft = tester.getTopLeft(find.byType(UserAvatar)).dx;
+        expect(avatarLeft - bubbleRight, inInclusiveRange(-1, 16));
+        final name = tester.getRect(
+          find.text('A very long sender display name indeed'),
+        );
+        expect(name.right, closeTo(bubbleRight - 12, 1));
       },
     );
   });
