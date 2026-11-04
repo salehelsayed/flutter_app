@@ -45,6 +45,12 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   dbLoadRetryableOutgoingPosts;
   final Future<List<Map<String, Object?>>> Function(String nowIso)?
   dbLoadExpiredPosts;
+  final Future<List<Map<String, Object?>>> Function(
+    String nowIso, {
+    int? limit,
+    int offset,
+  })?
+  dbLoadExpiredOwnPosts;
   final Future<void> Function(String postId)? dbDeletePostCascade;
   final Future<void> Function(Map<String, Object?> row)
   dbUpsertRecipientDelivery;
@@ -173,6 +179,7 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
     required this.dbLoadPostsFeed,
     this.dbLoadRetryableOutgoingPosts,
     this.dbLoadExpiredPosts,
+    this.dbLoadExpiredOwnPosts,
     this.dbDeletePostCascade,
     required this.dbUpsertRecipientDelivery,
     required this.dbLoadRecipientDeliveries,
@@ -378,15 +385,17 @@ class PostRepositoryImpl implements PostRepository, ThoughtViewRepository {
   }
 
   @override
-  Future<List<PostModel>> loadExpiredOwnPosts(String nowIso) async {
-    return (await loadExpiredPosts(
-      nowIso,
-    )).where((post) => !post.isIncoming).toList(growable: false)..sort((a, b) {
-      final created = DateTime.parse(
-        b.createdAt,
-      ).compareTo(DateTime.parse(a.createdAt));
-      return created != 0 ? created : b.id.compareTo(a.id);
-    });
+  Future<List<PostModel>> loadExpiredOwnPosts(
+    String nowIso, {
+    int? limit,
+    int offset = 0,
+  }) async {
+    final dbLoad = _require(
+      dbLoadExpiredOwnPosts,
+      'Own Thought history is not configured for this repository.',
+    );
+    final rows = await dbLoad(nowIso, limit: limit, offset: offset);
+    return rows.map(PostModel.fromMap).toList(growable: false);
   }
 
   @override

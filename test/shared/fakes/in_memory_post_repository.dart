@@ -158,16 +158,30 @@ class InMemoryPostRepository implements PostRepository {
       ..sort((a, b) => a.expiresAt.compareTo(b.expiresAt));
   }
 
+  /// The `limit` of each [loadExpiredOwnPosts] call, in order.
+  final expiredOwnPageLimits = <int?>[];
+
   @override
-  Future<List<PostModel>> loadExpiredOwnPosts(String nowIso) async {
-    return (await loadExpiredPosts(
-      nowIso,
-    )).where((post) => !post.isIncoming).toList(growable: false)..sort((a, b) {
-      final created = DateTime.parse(
-        b.createdAt,
-      ).compareTo(DateTime.parse(a.createdAt));
-      return created != 0 ? created : b.id.compareTo(a.id);
-    });
+  Future<List<PostModel>> loadExpiredOwnPosts(
+    String nowIso, {
+    int? limit,
+    int offset = 0,
+  }) async {
+    expiredOwnPageLimits.add(limit);
+    final own =
+        (await loadExpiredPosts(
+          nowIso,
+        )).where((post) => !post.isIncoming).toList(growable: false)..sort((
+          a,
+          b,
+        ) {
+          final created = DateTime.parse(
+            b.createdAt,
+          ).compareTo(DateTime.parse(a.createdAt));
+          return created != 0 ? created : b.id.compareTo(a.id);
+        });
+    final page = own.skip(offset);
+    return (limit == null ? page : page.take(limit)).toList(growable: false);
   }
 
   @override

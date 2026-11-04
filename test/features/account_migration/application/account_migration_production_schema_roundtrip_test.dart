@@ -131,6 +131,8 @@ void main() {
           dbLoadPost: (id) => dbLoadPost(source, id),
           dbLoadPostsFeed: () => dbLoadPostsFeed(source),
           dbLoadExpiredPosts: (iso) => dbLoadExpiredPosts(source, iso),
+          dbLoadExpiredOwnPosts: (iso, {limit, offset = 0}) =>
+              dbLoadExpiredOwnPosts(source, iso, limit: limit, offset: offset),
           dbDeletePostCascade: (id) => dbDeletePostCascade(source, id),
           dbUpsertRecipientDelivery: (row) =>
               dbUpsertPostRecipientDelivery(source, row),
@@ -196,6 +198,8 @@ void main() {
           dbLoadPost: (id) => dbLoadPost(target, id),
           dbLoadPostsFeed: () => dbLoadPostsFeed(target),
           dbLoadExpiredPosts: (iso) => dbLoadExpiredPosts(target, iso),
+          dbLoadExpiredOwnPosts: (iso, {limit, offset = 0}) =>
+              dbLoadExpiredOwnPosts(target, iso, limit: limit, offset: offset),
           dbUpsertRecipientDelivery: (row) =>
               dbUpsertPostRecipientDelivery(target, row),
           dbLoadRecipientDeliveries: (id) =>

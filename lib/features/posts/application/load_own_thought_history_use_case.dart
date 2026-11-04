@@ -13,10 +13,13 @@ Future<List<PostModel>> loadOwnThoughtHistory({
   DateTime Function()? nowProvider,
 }) async {
   final now = (nowProvider ?? DateTime.now)().toUtc();
-  final posts = await postRepo.loadExpiredOwnPosts(now.toIso8601String());
+  final posts = await postRepo.loadExpiredOwnPosts(
+    now.toIso8601String(),
+    limit: historyLimit,
+  );
   return hydratePostSurfaceItems(
     postRepo: postRepo,
-    posts: posts.take(historyLimit),
+    posts: posts,
     mediaFileManager: mediaFileManager,
     viewerPeerId: viewerPeerId,
   );

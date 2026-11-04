@@ -3555,12 +3555,14 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
             onCompose: _composeThought,
-            changes: [
-              ?_thoughtPosts?.postChanges,
-              if (widget.messageRepo
-                  case final MessageRepositoryChangeSource source)
-                source.messageChanges,
-            ],
+            changes: [?_thoughtPosts?.postChanges],
+            thoughtReplies: switch (widget.messageRepo) {
+              final MessageRepositoryChangeSource source =>
+                source.messageChanges.expand(
+                  (message) => [?thoughtIdFromQuote(message.quotedMessageId)],
+                ),
+              _ => const Stream.empty(),
+            },
           ),
         ),
       );

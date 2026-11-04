@@ -421,7 +421,31 @@ Future<List<Map<String, Object?>>> dbLoadRetryableOutgoingPosts(
 Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
   Database db,
   String nowIso,
-) async {
+) => _loadExpiredPosts(db, nowIso);
+
+/// The author's own expired Thoughts, newest first, one page at a time.
+Future<List<Map<String, Object?>>> dbLoadExpiredOwnPosts(
+  Database db,
+  String nowIso, {
+  int? limit,
+  int offset = 0,
+}) => _loadExpiredPosts(
+  db,
+  nowIso,
+  ownOnly: true,
+  pageClause:
+      'ORDER BY julianday(p.post_created_at) DESC, p.post_id DESC '
+      'LIMIT ? OFFSET ?',
+  pageArgs: [limit ?? -1, offset],
+);
+
+Future<List<Map<String, Object?>>> _loadExpiredPosts(
+  Database db,
+  String nowIso, {
+  bool ownOnly = false,
+  String pageClause = '',
+  List<Object?> pageArgs = const [],
+}) async {
   final localSharedToCountSubquery = await _localSharedToCountSubquery(db);
   final sharedToBaselineExpression = await _sharedToBaselineExpression(db);
   return db.rawQuery(
@@ -453,8 +477,10 @@ Future<List<Map<String, Object?>>> dbLoadExpiredPosts(
         $localSharedToCountSubquery
       ) psc ON psc.post_id = p.post_id
       WHERE julianday(p.expires_at) <= julianday(?)
+        ${ownOnly ? 'AND p.is_incoming = 0' : ''}
+      $pageClause
     ''',
-    <Object?>[nowIso],
+    <Object?>[nowIso, ...pageArgs],
   );
 }
 

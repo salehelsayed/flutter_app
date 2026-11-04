@@ -34,8 +34,13 @@ abstract class PostRepository {
 
   Future<List<PostModel>> loadExpiredPosts(String nowIso);
 
-  /// Expired author copies, newest creation first. Public live reads stay separate.
-  Future<List<PostModel>> loadExpiredOwnPosts(String nowIso);
+  /// Expired author copies, newest creation first, [limit] at most after
+  /// skipping [offset]. Public live reads stay separate.
+  Future<List<PostModel>> loadExpiredOwnPosts(
+    String nowIso, {
+    int? limit,
+    int offset = 0,
+  });
 
   Future<void> deletePostCascade(String postId);
 

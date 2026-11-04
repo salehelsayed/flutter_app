@@ -2298,6 +2298,8 @@ final class ProductionApplicationBootstrap
       dbLoadPostsFeed: () => dbLoadPostsFeed(db),
       dbLoadRetryableOutgoingPosts: () => dbLoadRetryableOutgoingPosts(db),
       dbLoadExpiredPosts: (nowIso) => dbLoadExpiredPosts(db, nowIso),
+      dbLoadExpiredOwnPosts: (nowIso, {limit, offset = 0}) =>
+          dbLoadExpiredOwnPosts(db, nowIso, limit: limit, offset: offset),
       dbDeletePostCascade: (postId) => dbDeletePostCascade(db, postId),
       dbUpsertRecipientDelivery: (row) =>
           dbUpsertPostRecipientDelivery(db, row),

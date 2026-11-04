@@ -83,13 +83,17 @@ class YouPageScreen extends StatefulWidget {
     required this.onCompose,
     required this.now,
     this.changes = const [],
+    this.thoughtReplies = const Stream.empty(),
   });
 
   /// Loads the page with at most [historyLimit] past Thoughts.
   final Future<YouPageData> Function(int historyLimit) load;
 
-  /// Any event reloads the page: a stored post or a reply changed.
+  /// Any event reloads the page: a stored post changed.
   final List<Stream<Object?>> changes;
+
+  /// Post ids whose replies changed. Only a Thought on the page reloads it.
+  final Stream<String> thoughtReplies;
   final VoidCallback onBack;
   final Future<void> Function(String peerId) onOpenChat;
 
@@ -120,6 +124,11 @@ class _YouPageScreenState extends State<YouPageScreen>
     for (final changes in widget.changes) {
       _subscriptions.add(changes.listen((_) => _reload()));
     }
+    _subscriptions.add(
+      widget.thoughtReplies.listen((postId) {
+        if (_shows(postId)) _reload();
+      }),
+    );
     // Keeps "gone in N h" current between reloads.
     _ageTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
@@ -141,6 +150,13 @@ class _YouPageScreenState extends State<YouPageScreen>
     _expiryTimer?.cancel();
     _ageTimer?.cancel();
     super.dispose();
+  }
+
+  bool _shows(String postId) {
+    final data = _data;
+    return data == null ||
+        data.thought?.post.id == postId ||
+        data.past.any((past) => past.post.id == postId);
   }
 
   Future<void> _reload() async {
