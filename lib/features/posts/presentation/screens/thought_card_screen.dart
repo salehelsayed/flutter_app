@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -855,7 +856,9 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               ),
             ),
           ),
-        for (final attachment in voice)
+        for (final attachment in voice) ...[
+          if (attachment.caption case final caption?)
+            ThoughtVoiceCaption(caption, color: Colors.white70),
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
             child: AudioPlayerWidget(
@@ -864,6 +867,7 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
               onRetryUnavailableMedia: () => unawaited(_download(attachment)),
             ),
           ),
+        ],
         if (!_post.isIncoming) ...[
           _postingStatus(l10n),
           if (widget.loadActivity != null) _ownActivity(l10n),

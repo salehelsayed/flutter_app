@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
 import 'dart:math' as math;
 import 'dart:io';
 
@@ -146,12 +147,14 @@ class _OrbitDepthMediaState extends State<OrbitDepthMedia> {
             onPressed: () => unawaited(_load()),
             child: Text(AppLocalizations.of(context)!.btn_retry),
           ),
-        for (final item in _media.where((item) => item.kind == 'voice'))
+        for (final item in _media.where((item) => item.kind == 'voice')) ...[
+          if (item.caption case final caption?) ThoughtVoiceCaption(caption),
           AudioPlayerWidget(
             key: ValueKey('orbit-depth-voice-${item.mediaId}'),
             attachment: item.toSharedMediaAttachment(),
             onRetryUnavailableMedia: () => unawaited(_load()),
           ),
+        ],
         // The whole photo, as large as the space allows, on the scene.
         if (visual.isNotEmpty)
           Expanded(

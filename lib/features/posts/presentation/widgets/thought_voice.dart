@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/posts/application/post_media_draft.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 
@@ -188,10 +189,14 @@ class ThoughtVoiceCard extends StatelessWidget {
   const ThoughtVoiceCard({
     super.key = const ValueKey('thought-voice-card'),
     required this.draft,
+    required this.caption,
     required this.onRemove,
   });
 
   final PostMediaDraft draft;
+
+  /// The caption line above the player.
+  final TextEditingController caption;
   final VoidCallback onRemove;
 
   @override
@@ -205,32 +210,86 @@ class ThoughtVoiceCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: rc.accent.withValues(alpha: .3)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: AudioPlayerWidget(
-              key: ValueKey('thought-voice-player-${draft.localFilePath}'),
-              attachment: MediaAttachment(
-                id: 'thought-voice-draft',
-                messageId: 'thought-draft',
-                mime: draft.mime,
-                size: 0,
-                mediaType: 'audio',
-                durationMs: draft.durationMs,
-                localPath: draft.localFilePath,
-                downloadStatus: 'done',
-                createdAt: '',
-                waveform: draft.waveform,
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 4, end: 44),
+            child: TextField(
+              key: const ValueKey('thought-voice-caption'),
+              controller: caption,
+              maxLength: PostMediaAttachmentModel.maxCaptionLength,
+              buildCounter:
+                  (
+                    _, {
+                    required currentLength,
+                    required isFocused,
+                    maxLength,
+                  }) => null,
+              maxLines: 2,
+              minLines: 1,
+              style: TextStyle(color: rc.textSecondary, fontSize: 13),
+              decoration: InputDecoration(
+                isDense: true,
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 6),
+                hintText: l10n.thought_voice_caption_hint,
+                hintStyle: TextStyle(color: rc.placeholderText, fontSize: 13),
               ),
             ),
           ),
-          IconButton(
-            tooltip: l10n.thought_voice_remove,
-            onPressed: onRemove,
-            icon: Icon(Icons.close_rounded, color: rc.iconSecondary),
+          Row(
+            children: [
+              Expanded(
+                child: AudioPlayerWidget(
+                  key: ValueKey('thought-voice-player-${draft.localFilePath}'),
+                  attachment: MediaAttachment(
+                    id: 'thought-voice-draft',
+                    messageId: 'thought-draft',
+                    mime: draft.mime,
+                    size: 0,
+                    mediaType: 'audio',
+                    durationMs: draft.durationMs,
+                    localPath: draft.localFilePath,
+                    downloadStatus: 'done',
+                    createdAt: '',
+                    waveform: draft.waveform,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: l10n.thought_voice_remove,
+                onPressed: onRemove,
+                icon: Icon(Icons.close_rounded, color: rc.iconSecondary),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+}
+
+/// A voice note's caption where friends and the author see it, above the
+/// player.
+class ThoughtVoiceCaption extends StatelessWidget {
+  const ThoughtVoiceCaption(this.text, {super.key, this.color});
+
+  final String text;
+
+  /// Defaults to the theme's secondary text.
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsetsDirectional.only(start: 4, bottom: 4),
+    child: Text(
+      text,
+      style: TextStyle(
+        color: color ?? context.backgroundReadableColors.textSecondary,
+        fontSize: 13,
+        height: 1.35,
+      ),
+    ),
+  );
 }

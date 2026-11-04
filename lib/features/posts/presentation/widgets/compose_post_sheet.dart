@@ -129,6 +129,9 @@ class ComposePostSheet extends StatefulWidget {
 
 class _ComposePostSheetState extends State<ComposePostSheet> {
   final TextEditingController _textController = TextEditingController();
+
+  /// The grey line above a Thought's voice card.
+  final TextEditingController _voiceCaption = TextEditingController();
   TextDirection _inputDirection = TextDirection.ltr;
   PostAudienceKind _audienceKind = PostAudienceKind.allFriends;
   int _nearbyRadiusM = 1000;
@@ -171,6 +174,12 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       _textController.text = draft.text;
       _inputDirection = detectTextDirection(draft.text);
       _mediaDrafts = draft.mediaDrafts;
+      _voiceCaption.text =
+          [
+            for (final media in draft.mediaDrafts)
+              if (media.kind == 'voice') ?media.caption,
+          ].firstOrNull ??
+          '';
       _framings = draft.photoFramings;
       if (draft.audience.kind == PostAudienceKind.pickPeople) {
         _audienceKind = PostAudienceKind.pickPeople;
@@ -187,6 +196,29 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
     if (oldWidget.nearbyAvailability != widget.nearbyAvailability) {
       _nearbyAvailability = widget.nearbyAvailability;
     }
+  }
+
+  /// The drafts as shared: a Thought's voice note carries its caption line.
+  List<PostMediaDraft> get _captionedDrafts {
+    final typed = _voiceCaption.text.trim();
+    final caption = typed.isEmpty ? null : typed;
+    return [
+      for (final draft in _mediaDrafts)
+        if (!widget.thoughtsOnly ||
+            draft.kind != 'voice' ||
+            draft.caption == caption)
+          draft
+        else
+          PostMediaDraft(
+            localFilePath: draft.localFilePath,
+            mime: draft.mime,
+            width: draft.width,
+            height: draft.height,
+            durationMs: draft.durationMs,
+            waveform: draft.waveform,
+            caption: caption,
+          ),
+    ];
   }
 
   List<ContactModel> get _eligible => widget.eligibleContacts
@@ -291,7 +323,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       final List<PostMediaDraft> media;
       try {
         media = [
-          for (final draft in _mediaDrafts)
+          for (final draft in _captionedDrafts)
             if (framings[draft.localFilePath] case final framing?)
               await bakeFramedPhoto(draft, framing)
             else
@@ -362,7 +394,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
               audience: widget.thoughtsOnly
                   ? _thoughtAudience
                   : PostAudience.allFriends(),
-              mediaDrafts: _mediaDrafts,
+              mediaDrafts: _captionedDrafts,
               photoFramings: _framings,
             )
           : null,
@@ -383,6 +415,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
       }
     }
     _textController.dispose();
+    _voiceCaption.dispose();
     super.dispose();
   }
 
@@ -692,6 +725,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
   }
 
   void _clearDrafts() {
+    _voiceCaption.clear();
     setState(() => _mediaDrafts = const <PostMediaDraft>[]);
   }
 
@@ -1038,7 +1072,11 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
             _mediaDrafts.isNotEmpty &&
             _mediaDrafts.first.kind == 'voice') ...[
           const SizedBox(height: 12),
-          ThoughtVoiceCard(draft: _mediaDrafts.first, onRemove: _clearDrafts),
+          ThoughtVoiceCard(
+            draft: _mediaDrafts.first,
+            caption: _voiceCaption,
+            onRemove: _clearDrafts,
+          ),
         ] else if (_mediaDrafts.isNotEmpty &&
             _mediaDrafts.first.kind == 'voice') ...[
           const SizedBox(height: 12),

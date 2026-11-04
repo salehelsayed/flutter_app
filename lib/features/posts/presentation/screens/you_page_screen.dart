@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -544,6 +545,8 @@ class _ThoughtCard extends StatelessWidget {
           ],
           for (final attachment in voice) ...[
             const SizedBox(height: 8),
+            if (attachment.caption case final caption?)
+              ThoughtVoiceCaption(caption, color: _muted),
             AudioPlayerWidget(
               key: ValueKey('you-voice-${attachment.mediaId}'),
               attachment: attachment.toSharedMediaAttachment(),
