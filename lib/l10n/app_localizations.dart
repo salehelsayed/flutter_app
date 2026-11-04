@@ -8258,67 +8258,67 @@ abstract class AppLocalizations {
   /// **'add to {tag}'**
   String you_page_add_to_tag(String tag);
 
-  /// No description provided for @you_tags_open.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Your tags'**
   String get you_tags_open;
 
-  /// No description provided for @you_tags_done.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Done'**
   String get you_tags_done;
 
-  /// No description provided for @you_tags_title.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'your tags'**
   String get you_tags_title;
 
-  /// No description provided for @you_tags_find.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'find a tag…'**
   String get you_tags_find;
 
-  /// No description provided for @you_tags_recent.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'recent'**
   String get you_tags_recent;
 
-  /// No description provided for @you_tags_all.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'all tags'**
   String get you_tags_all;
 
-  /// No description provided for @you_tags_none.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'no tag like {tag}'**
   String you_tags_none(String tag);
 
-  /// No description provided for @you_tags_none_hint.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'tags come from your own Thoughts'**
   String get you_tags_none_hint;
 
-  /// No description provided for @you_tags_used.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{days} d ago'**
   String you_tags_used(int days);
 
-  /// No description provided for @you_tags_used_today.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'today'**
   String get you_tags_used_today;
 
-  /// No description provided for @you_tags_note.
+  /// Tag search copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'All your tags live here.'**
