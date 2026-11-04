@@ -5,6 +5,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/letter_card.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
+import 'package:flutter_app/features/stickers/application/sticker_media.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
 import 'package:flutter_app/shared/widgets/media/document_attachment_tile.dart';
@@ -1285,6 +1286,7 @@ void main() {
   group('bubble layout (136 Phase 2)', () {
     Widget buildBubble({
       double width = 400,
+      TextDirection textDirection = TextDirection.ltr,
       bool isIncoming = true,
       bool bubbleLayout = true,
       bool isFirstInGroup = true,
@@ -1298,6 +1300,8 @@ void main() {
       String text = 'Hello, this is a test message.',
       String time = '3:30 PM',
       String? status,
+      List<MediaAttachment> media = const [],
+      bool transportStatusGlyph = false,
       List<MessageReaction> reactions = const [],
       String? ownPeerId,
       VoidCallback? onLongPress,
@@ -1305,6 +1309,8 @@ void main() {
     }) {
       return MaterialApp(
         locale: const Locale('en'),
+        builder: (context, child) =>
+            Directionality(textDirection: textDirection, child: child!),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         theme: ThemeData(
@@ -1313,6 +1319,7 @@ void main() {
         home: Scaffold(
           body: Center(
             child: SizedBox(
+              key: const ValueKey('letter-card-test-slot'),
               width: width,
               child: SingleChildScrollView(
                 child: LetterCard(
@@ -1322,6 +1329,8 @@ void main() {
                   time: time,
                   isIncoming: isIncoming,
                   status: status,
+                  media: media,
+                  transportStatusGlyph: transportStatusGlyph,
                   isDeleted: isDeleted,
                   isEdited: isEdited,
                   reactions: reactions,
@@ -1379,6 +1388,72 @@ void main() {
     // The painted bubble's left edge (outer ClipRRect top-left dx).
     double bubbleLeft(WidgetTester tester) =>
         tester.getTopLeft(find.byType(ClipRRect).first).dx;
+
+    for (final isGroup in [false, true]) {
+      for (final direction in TextDirection.values) {
+        for (final isIncoming in [false, true]) {
+          testWidgets('sticker edge alignment ${isGroup ? 'group' : 'direct'} '
+              '${direction.name} ${isIncoming ? 'incoming' : 'outgoing'}', (
+            tester,
+          ) async {
+            await tester.runAsync(loadBundledStickerCatalog);
+            await tester.pumpWidget(
+              buildBubble(
+                textDirection: direction,
+                isIncoming: isIncoming,
+                text: '',
+                status: isIncoming ? null : 'sending',
+                showAvatar: isGroup && isIncoming,
+                showSenderName: isGroup && isIncoming,
+                avatarOutsideBubble: isGroup && isIncoming,
+                transportStatusGlyph: !isGroup,
+                media: [
+                  MediaAttachment(
+                    id: 'sticker-image',
+                    messageId: 'sticker-message',
+                    mime: 'image/webp',
+                    size: 70000,
+                    mediaType: 'image',
+                    width: isIncoming ? 512 : null,
+                    height: isIncoming ? 512 : null,
+                    downloadStatus: isIncoming ? 'pending' : 'upload_pending',
+                    createdAt: '2026-11-04T12:00:00.000Z',
+                    stickerId: 'orbit_crew.planet.angry',
+                  ),
+                ],
+              ),
+            );
+            await tester.pump();
+
+            final slot = tester.getRect(
+              find.byKey(const ValueKey('letter-card-test-slot')),
+            );
+            final sticker = tester.getRect(
+              find.byKey(
+                const ValueKey('media-grid-cell-sticker-message-sticker-image'),
+              ),
+            );
+            expect(sticker.width, closeTo(kStickerMessageWidth, 0.5));
+            final onRight = isIncoming
+                ? direction == TextDirection.rtl
+                : direction == TextDirection.ltr;
+            final edgeGap = onRight
+                ? slot.right - sticker.right
+                : sticker.left - slot.left;
+            final maxInset =
+                8.0 + (isGroup && isIncoming ? kBubbleAvatarGutterWidth : 0);
+            expect(
+              edgeGap,
+              inInclusiveRange(7.5, maxInset + 0.5),
+              reason:
+                  'The sticker must sit at the message side, with only its '
+                  'padding and the incoming group avatar gutter before it.',
+            );
+            expect(tester.takeException(), isNull);
+          });
+        }
+      }
+    }
 
     // 156 QW-1 (TC-01): the bubble fill is already semi-opaque, so the
     // BackdropFilter blur was pure raster cost. Removing it must keep the solid
