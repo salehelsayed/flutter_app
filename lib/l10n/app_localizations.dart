@@ -8078,6 +8078,24 @@ abstract class AppLocalizations {
   /// **'Nothing shared right now'**
   String get you_page_empty;
 
+  /// No description provided for @you_page_tag_private.
+  ///
+  /// In en, this message translates to:
+  /// **'only you see this'**
+  String get you_page_tag_private;
+
+  /// No description provided for @you_page_tag_count.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 thought} other{{count} thoughts}}'**
+  String you_page_tag_count(int count);
+
+  /// No description provided for @you_page_add_to_tag.
+  ///
+  /// In en, this message translates to:
+  /// **'add to {tag}'**
+  String you_page_add_to_tag(String tag);
+
   /// No description provided for @stickers_title.
   ///
   /// In en, this message translates to:

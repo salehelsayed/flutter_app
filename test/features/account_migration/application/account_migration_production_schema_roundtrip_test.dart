@@ -229,7 +229,7 @@ void main() {
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           home: YouPageScreen(
-            load: (_) async => YouPageData(
+            load: (_, _) async => YouPageData(
               username: 'Migrating Alice',
               avatarBytes: null,
               friendCount: 0,
@@ -246,7 +246,7 @@ void main() {
             now: DateTime.now,
             onBack: () {},
             onOpenChat: (_) async {},
-            onCompose: () async {},
+            onCompose: (_) async {},
           ),
         ),
       );

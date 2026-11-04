@@ -4858,6 +4858,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get you_page_empty => 'Nothing shared right now';
 
   @override
+  String get you_page_tag_private => 'only you see this';
+
+  @override
+  String you_page_tag_count(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count thoughts',
+      one: '1 thought',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String you_page_add_to_tag(String tag) {
+    return 'add to $tag';
+  }
+
+  @override
   String get stickers_title => 'Stickers';
 
   @override

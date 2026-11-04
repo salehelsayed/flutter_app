@@ -18,6 +18,7 @@ import 'package:flutter_app/features/translate_preview/translate_preview_widgets
 import 'package:flutter_app/features/translate_preview/translate_preview_persistence.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/linkable_text.dart';
+import 'package:flutter_app/shared/widgets/thought_tag_style.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_grid.dart';
@@ -672,6 +673,21 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
     );
   }
 
+  static const _centeredStyle = TextStyle(
+    color: Colors.white,
+    fontSize: 28,
+    height: 1.25,
+    fontWeight: FontWeight.w600,
+  );
+
+  static const _chromeStyle = TextStyle(
+    color: Colors.white,
+    fontSize: 21,
+    height: 1.3,
+    fontWeight: FontWeight.w600,
+    shadows: [Shadow(color: Color(0x59000000), blurRadius: 8)],
+  );
+
   Widget _centeredText() => Center(
     child: Padding(
       padding: const EdgeInsets.fromLTRB(28, 120, 28, 200),
@@ -682,12 +698,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
             LinkableText(
               text: _post.text,
               textDirection: detectTextDirection(_post.text),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 28,
-                height: 1.25,
-                fontWeight: FontWeight.w600,
-              ),
+              style: _centeredStyle,
+              tagStyle: thoughtTagStyle(_centeredStyle),
             ),
           ),
         ),
@@ -835,15 +847,8 @@ class _ThoughtCardScreenState extends State<ThoughtCardScreen>
                   LinkableText(
                     text: _post.text,
                     textDirection: detectTextDirection(_post.text),
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      height: 1.3,
-                      fontWeight: FontWeight.w600,
-                      shadows: const [
-                        Shadow(color: Color(0x59000000), blurRadius: 8),
-                      ],
-                    ),
+                    style: _chromeStyle,
+                    tagStyle: thoughtTagStyle(_chromeStyle),
                   ),
                   stretch: true,
                 ),

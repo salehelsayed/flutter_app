@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_app/core/theme/feed_colors.dart';
+import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/core/utils/url_parser.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -14,6 +15,10 @@ class LinkableText extends StatefulWidget {
   final String text;
   final TextStyle? style;
   final TextStyle? linkStyle;
+
+  /// When set, each #tag outside a link is drawn in this style. Tags are
+  /// never tappable here.
+  final TextStyle? tagStyle;
   final void Function(String url)? onLinkTap;
   final int? maxLines;
   final TextOverflow? overflow;
@@ -26,6 +31,7 @@ class LinkableText extends StatefulWidget {
     required this.text,
     this.style,
     this.linkStyle,
+    this.tagStyle,
     this.onLinkTap,
     this.maxLines,
     this.overflow,
@@ -95,11 +101,32 @@ class _LinkableTextState extends State<LinkableText> {
           ),
         );
       } else {
-        spans.add(TextSpan(text: segment.text, style: widget.style));
+        spans.addAll(_withTags(segment.text));
       }
     }
 
     _spans = spans;
+  }
+
+  Iterable<InlineSpan> _withTags(String text) sync* {
+    final tagStyle = widget.tagStyle;
+    final tags = tagStyle == null
+        ? const <ThoughtTag>[]
+        : parseThoughtTags(text);
+    var at = 0;
+    for (final tag in tags) {
+      if (tag.start > at) {
+        yield TextSpan(
+          text: text.substring(at, tag.start),
+          style: widget.style,
+        );
+      }
+      yield TextSpan(text: text.substring(tag.start, tag.end), style: tagStyle);
+      at = tag.end;
+    }
+    if (at < text.length || tags.isEmpty) {
+      yield TextSpan(text: text.substring(at), style: widget.style);
+    }
   }
 
   void _handleTap(String url) {

@@ -142,6 +142,7 @@ import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.d
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/application/load_orbit_thoughts_use_case.dart';
 import 'package:flutter_app/features/posts/application/load_own_thought_history_use_case.dart';
+import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
@@ -1054,11 +1055,13 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   // Memory only: what the last closed composer left unshared.
   ComposePostResult? _thoughtDraft;
 
-  Future<void> _composeThought() async {
+  Future<void> _composeThought({String? tag}) async {
     final repository = _thoughtPosts;
     final identity = _identity;
     if (_composingThought || repository == null || identity == null) return;
     _composingThought = true;
+    final kept = _thoughtDraft;
+    final start = tag == null ? kept : _draftWithTag(kept, tag);
     final closed = Completer<void>();
     ComposePostResult? handedBack;
     try {
@@ -1074,10 +1077,16 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
             identity.peerId,
           ),
           eligibleContacts: const [],
-          initialDraft: _thoughtDraft,
+          initialDraft: start,
           onClosed: (draft) {
             handedBack = draft;
-            _thoughtDraft = draft;
+            // A tag the sheet only started with is no draft to keep.
+            final untouched =
+                draft != null &&
+                !identical(start, kept) &&
+                draft.text == start?.text &&
+                draft.mediaDrafts.isEmpty;
+            _thoughtDraft = untouched ? kept : draft;
             closed.complete();
           },
           audioRecorderService: widget.audioRecorderService,
@@ -1126,6 +1135,21 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     } finally {
       _composingThought = false;
     }
+  }
+
+  /// [draft] with [tag] at its end, unless it already carries it.
+  static ComposePostResult _draftWithTag(ComposePostResult? draft, String tag) {
+    if (draft != null &&
+        hasThoughtTag(draft.text, tag.substring(1).toLowerCase())) {
+      return draft;
+    }
+    final text = draft?.text.trimRight() ?? '';
+    return ComposePostResult(
+      text: text.isEmpty ? '$tag ' : '$text $tag ',
+      audience: draft?.audience ?? PostAudience.allFriends(),
+      mediaDrafts: draft?.mediaDrafts ?? const [],
+      photoFramings: draft?.photoFramings ?? const {},
+    );
   }
 
   Future<void> _deliverThought(
@@ -3550,11 +3574,12 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (routeContext) => YouPageScreen(
-            load: (historyLimit) => _loadYouPage(identity, historyLimit),
+            load: (historyLimit, tag) =>
+                _loadYouPage(identity, historyLimit, tag),
             now: widget.thoughtNowProvider ?? DateTime.now,
             onBack: () => Navigator.of(routeContext).maybePop(),
             onOpenChat: _openConversationForPeerId,
-            onCompose: _composeThought,
+            onCompose: (tag) => _composeThought(tag: tag),
             changes: [?_thoughtPosts?.postChanges],
             thoughtReplies: switch (widget.messageRepo) {
               final MessageRepositoryChangeSource source =>
@@ -3574,6 +3599,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
   Future<YouPageData> _loadYouPage(
     IdentityModel identity,
     int historyLimit,
+    String? tag,
   ) async {
     final friends = [
       for (final contact in await widget.contactRepo.getAllContacts())
@@ -3592,13 +3618,25 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     final own = await _thoughtQuery(
       repository,
     ).executeOwn(localPeerId: identity.peerId);
-    final past = await loadOwnThoughtHistory(
-      postRepo: repository,
-      historyLimit: historyLimit,
-      mediaFileManager: widget.mediaFileManager,
-      viewerPeerId: identity.peerId,
-      nowProvider: widget.thoughtNowProvider,
-    );
+    final tagged = tag == null
+        ? null
+        : await loadOwnTaggedThoughtHistory(
+            postRepo: repository,
+            historyLimit: historyLimit,
+            tag: tag,
+            mediaFileManager: widget.mediaFileManager,
+            viewerPeerId: identity.peerId,
+            nowProvider: widget.thoughtNowProvider,
+          );
+    final past =
+        tagged?.posts ??
+        await loadOwnThoughtHistory(
+          postRepo: repository,
+          historyLimit: historyLimit,
+          mediaFileManager: widget.mediaFileManager,
+          viewerPeerId: identity.peerId,
+          nowProvider: widget.thoughtNowProvider,
+        );
     final messageRepo = widget.messageRepo;
     final thoughtReplies = messageRepo is ThoughtReactionMessageRepository
         ? messageRepo as ThoughtReactionMessageRepository
@@ -3655,6 +3693,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         for (final post in past)
           if (post.id != own?.id) responses(post),
       ]),
+      tag: tag,
+      tagCount: tag == null
+          ? 0
+          : tagged!.count +
+                (own != null && hasThoughtTag(own.text, tag) ? 1 : 0),
     );
   }
 

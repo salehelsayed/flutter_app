@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/format_day_separator_label.dart';
+import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/shared/widgets/media/audio_player_widget.dart';
 import 'package:flutter_app/shared/widgets/media/full_screen_typed_media_viewer.dart';
 import 'package:flutter_app/shared/widgets/media/media_thumbnail_image.dart';
+import 'package:flutter_app/shared/widgets/thought_tag_style.dart';
 
 class YouPageData {
   const YouPageData({
@@ -22,6 +24,8 @@ class YouPageData {
     required this.friendCount,
     required this.thought,
     required this.past,
+    this.tag,
+    this.tagCount = 0,
   });
 
   final String username;
@@ -31,8 +35,14 @@ class YouPageData {
   /// The one live own Thought, or null when nothing is up.
   final YouThought? thought;
 
-  /// Expired own Thoughts, newest first.
+  /// Expired own Thoughts, newest first: only those with [tag] when set.
   final List<YouThought> past;
+
+  /// The tag key [past] was loaded for, or null for the whole log.
+  final String? tag;
+
+  /// How many own Thoughts carry [tag], the live one included.
+  final int tagCount;
 }
 
 class YouThought {
@@ -65,6 +75,8 @@ const _muted = Color(0xFF9AA59F);
 const _accent = Color(0xFF1DB954);
 const _friendsBlue = Color(0xFF5FB3C9);
 const _hairline = Color(0x14E8ECE9);
+const _soft = Color(0xFF8C968F);
+const _faint = Color(0xFF59625D);
 const _historyPage = 20;
 const _mono = TextStyle(
   fontFamily: 'Menlo',
@@ -86,8 +98,9 @@ class YouPageScreen extends StatefulWidget {
     this.thoughtReplies = const Stream.empty(),
   });
 
-  /// Loads the page with at most [historyLimit] past Thoughts.
-  final Future<YouPageData> Function(int historyLimit) load;
+  /// Loads the page with at most [historyLimit] past Thoughts, only those
+  /// with the tag key [tag] when it is set.
+  final Future<YouPageData> Function(int historyLimit, String? tag) load;
 
   /// Any event reloads the page: a stored post changed.
   final List<Stream<Object?>> changes;
@@ -97,8 +110,9 @@ class YouPageScreen extends StatefulWidget {
   final VoidCallback onBack;
   final Future<void> Function(String peerId) onOpenChat;
 
-  /// Opens the write sheet and completes once it has closed.
-  final Future<void> Function() onCompose;
+  /// Opens the write sheet, starting with [tag] when set, and completes once
+  /// it has closed.
+  final Future<void> Function(String? tag) onCompose;
   final DateTime Function() now;
 
   @override
@@ -108,6 +122,10 @@ class YouPageScreen extends StatefulWidget {
 class _YouPageScreenState extends State<YouPageScreen>
     with WidgetsBindingObserver {
   YouPageData? _data;
+
+  /// The tag you tapped: only your Thoughts with it show.
+  ThoughtTag? _tag;
+  String _tagLabel = '';
   int _historyLimit = _historyPage;
   bool _loadingOlder = false;
   int _generation = 0;
@@ -162,7 +180,7 @@ class _YouPageScreenState extends State<YouPageScreen>
   Future<void> _reload() async {
     final generation = ++_generation;
     try {
-      final data = await widget.load(_historyLimit);
+      final data = await widget.load(_historyLimit, _tag?.key);
       if (!mounted || generation != _generation) return;
       final shown = {
         ?data.thought?.post.id,
@@ -194,6 +212,8 @@ class _YouPageScreenState extends State<YouPageScreen>
           friendCount: data.friendCount,
           thought: null,
           past: [live, ...data.past],
+          tag: data.tag,
+          tagCount: data.tagCount,
         ),
       );
     }
@@ -264,8 +284,22 @@ class _YouPageScreenState extends State<YouPageScreen>
   }
 
   Future<void> _compose() async {
-    await widget.onCompose();
+    await widget.onCompose(_tag == null ? null : _tagLabel);
     if (mounted) await _reload();
+  }
+
+  void _showTag(ThoughtTag? tag, [String label = '']) {
+    setState(() {
+      _tag = tag;
+      _tagLabel = label;
+      _historyLimit = _historyPage;
+    });
+    _reload();
+  }
+
+  bool _hasTag(YouThought thought) {
+    final tag = _tag;
+    return tag == null || hasThoughtTag(thought.post.text, tag.key);
   }
 
   Future<void> _openChat(String peerId) async {
@@ -277,7 +311,13 @@ class _YouPageScreenState extends State<YouPageScreen>
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final data = _data;
+    final tag = _tag;
     final thought = data?.thought;
+    final shown = [
+      if (data != null)
+        for (final each in [?thought, ...data.past])
+          if (_hasTag(each)) each,
+    ];
     final empty = _mono.copyWith(color: _muted, fontSize: 12);
     return Scaffold(
       key: const ValueKey('you'),
@@ -289,10 +329,16 @@ class _YouPageScreenState extends State<YouPageScreen>
           children: [
             _header(context, l10n, data),
             const Divider(height: 1, color: _hairline),
+            if (tag != null)
+              _TagBar(
+                label: _tagLabel,
+                count: data?.tag == tag.key ? data!.tagCount : shown.length,
+                onClear: () => _showTag(null),
+              ),
             Expanded(
               child: data == null
                   ? const SizedBox.shrink()
-                  : thought == null && data.past.isEmpty
+                  : shown.isEmpty && tag == null
                   ? Center(child: Text(l10n.you_page_empty, style: empty))
                   : NotificationListener<ScrollNotification>(
                       onNotification: _loadOlderAtTop,
@@ -301,7 +347,7 @@ class _YouPageScreenState extends State<YouPageScreen>
                         reverse: true,
                         padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                         children: [
-                          if (thought == null)
+                          if (thought == null && tag == null)
                             Padding(
                               padding: const EdgeInsets.only(top: 16),
                               child: Text(
@@ -310,21 +356,29 @@ class _YouPageScreenState extends State<YouPageScreen>
                                 style: empty,
                               ),
                             ),
-                          for (final shown in [?thought, ...data.past])
+                          for (final each in shown)
                             _ThoughtCard(
-                              key: ValueKey('you-thought-${shown.post.id}'),
-                              thought: shown,
-                              live: identical(shown, thought),
+                              key: ValueKey('you-thought-${each.post.id}'),
+                              thought: each,
+                              live: identical(each, thought),
                               now: widget.now,
                               onOpenChat: _openChat,
                               onOpenMedia: (visual, index) =>
-                                  _openMedia(shown.post.id, visual, index),
+                                  _openMedia(each.post.id, visual, index),
+                              activeTag: tag?.key,
+                              onTag: _showTag,
                             ),
                         ],
                       ),
                     ),
             ),
-            _ComposerBar(onTap: _compose),
+            _ComposerBar(
+              label: tag == null
+                  ? l10n.thought_compose_open
+                  : l10n.you_page_add_to_tag(_tagLabel),
+              tag: tag == null ? null : _tagLabel,
+              onTap: _compose,
+            ),
           ],
         ),
       ),
@@ -406,6 +460,8 @@ class _ThoughtCard extends StatelessWidget {
     required this.now,
     required this.onOpenChat,
     required this.onOpenMedia,
+    required this.activeTag,
+    required this.onTag,
   });
 
   final YouThought thought;
@@ -416,6 +472,8 @@ class _ThoughtCard extends StatelessWidget {
   final Future<void> Function(String peerId) onOpenChat;
   final Future<void> Function(List<PostMediaAttachmentModel> visual, int index)
   onOpenMedia;
+  final String? activeTag;
+  final void Function(ThoughtTag tag, String label) onTag;
 
   int _hoursLeft() {
     final expiry = DateTime.tryParse(thought.post.expiresAt)?.toUtc();
@@ -465,15 +523,7 @@ class _ThoughtCard extends StatelessWidget {
           _AudienceChip(label: l10n.compose_audience_all),
           if (post.text.trim().isNotEmpty) ...[
             const SizedBox(height: 6),
-            Text(
-              post.text,
-              style: const TextStyle(
-                color: _ink,
-                fontSize: 16,
-                height: 1.4,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
+            _TaggedText(text: post.text, activeTag: activeTag, onTag: onTag),
           ],
           if (visual.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -872,13 +922,32 @@ class _MediaTile extends StatelessWidget {
 /// The prototype's composer bar, as a door: tapping anywhere on it opens the
 /// app's write sheet.
 class _ComposerBar extends StatelessWidget {
-  const _ComposerBar({required this.onTap});
+  const _ComposerBar({required this.label, this.tag, required this.onTap});
 
+  final String label;
+
+  /// The open tag, set in the tag type inside [label].
+  final String? tag;
   final VoidCallback onTap;
+
+  TextSpan _hintWithTag() {
+    final tag = this.tag;
+    final at = tag == null ? -1 : label.indexOf(tag);
+    if (tag == null || at < 0) return TextSpan(text: label);
+    return TextSpan(
+      children: [
+        TextSpan(text: label.substring(0, at)),
+        TextSpan(
+          text: tag,
+          style: thoughtTagStyle(const TextStyle(fontSize: 15), color: _soft),
+        ),
+        TextSpan(text: label.substring(at + tag.length)),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
     return ClipRect(
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
@@ -895,7 +964,7 @@ class _ComposerBar extends StatelessWidget {
           ),
           child: Semantics(
             button: true,
-            label: l10n.thought_compose_open,
+            label: label,
             excludeSemantics: true,
             child: GestureDetector(
               key: const ValueKey('you-composer'),
@@ -927,8 +996,8 @@ class _ComposerBar extends StatelessWidget {
                         borderRadius: BorderRadius.circular(22),
                         border: Border.all(color: _hairline),
                       ),
-                      child: Text(
-                        l10n.thought_compose_open,
+                      child: Text.rich(
+                        _hintWithTag(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -956,6 +1025,157 @@ class _ComposerBar extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Your words with each #tag in the tag type. A tag opens your own log of
+/// the Thoughts that carry it.
+class _TaggedText extends StatelessWidget {
+  const _TaggedText({
+    required this.text,
+    required this.activeTag,
+    required this.onTag,
+  });
+
+  final String text;
+
+  /// The open tag's key: its mentions stand out.
+  final String? activeTag;
+  final void Function(ThoughtTag tag, String label) onTag;
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      color: _ink,
+      fontSize: 16,
+      height: 1.4,
+      fontWeight: FontWeight.w500,
+    );
+    final tagStyle = thoughtTagStyle(style, color: _soft);
+    final spans = <InlineSpan>[];
+    var at = 0;
+    for (final tag in parseThoughtTags(text)) {
+      if (tag.start > at) {
+        spans.add(TextSpan(text: text.substring(at, tag.start)));
+      }
+      final label = text.substring(tag.start, tag.end);
+      spans.add(
+        WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: Semantics(
+            button: true,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => onTag(tag, label),
+              child: tag.key == activeTag
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1AE8ECE9),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        label,
+                        key: ValueKey('you-tag-${tag.key}'),
+                        style: tagStyle.copyWith(color: _ink),
+                      ),
+                    )
+                  : Text(
+                      label,
+                      key: ValueKey('you-tag-${tag.key}'),
+                      style: tagStyle,
+                    ),
+            ),
+          ),
+        ),
+      );
+      at = tag.end;
+    }
+    if (at < text.length) spans.add(TextSpan(text: text.substring(at)));
+    return Text.rich(TextSpan(children: spans), style: style);
+  }
+}
+
+/// Over your log while a tag is open: the tag in a pill whose X goes back
+/// to everything, how many Thoughts carry it, and that nobody else sees it.
+class _TagBar extends StatelessWidget {
+  const _TagBar({
+    required this.label,
+    required this.count,
+    required this.onClear,
+  });
+
+  final String label;
+  final int count;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final small = _mono.copyWith(fontSize: 11.5);
+    return Container(
+      key: const ValueKey('you-tag-bar'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: _hairline)),
+      ),
+      child: Row(
+        children: [
+          Semantics(
+            button: true,
+            label: MaterialLocalizations.of(context).closeButtonTooltip,
+            child: GestureDetector(
+              key: const ValueKey('you-tag-clear'),
+              behavior: HitTestBehavior.opaque,
+              onTap: onClear,
+              child: Container(
+                height: 32,
+                padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 6, 0),
+                decoration: BoxDecoration(
+                  color: const Color(0x14E8ECE9),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      style: _mono.copyWith(color: _ink, fontSize: 13),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 22,
+                      height: 22,
+                      decoration: const BoxDecoration(
+                        color: Color(0x1FE8ECE9),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close, size: 14, color: _ink),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            l10n.you_page_tag_count(count),
+            style: small.copyWith(color: _muted),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              l10n.you_page_tag_private,
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: small.copyWith(color: _faint),
+            ),
+          ),
+        ],
       ),
     );
   }

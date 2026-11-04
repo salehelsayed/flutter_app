@@ -147,9 +147,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
-          load:
-              tagged ??
-              (limit, _) => paged != null ? paged(limit) : load!(),
+          load: tagged ?? (limit, _) => paged != null ? paged(limit) : load!(),
           now: now ?? () => _now,
           onBack: () => backCalls++,
           onOpenChat: (peerId) async => openedChats.add(peerId),
@@ -359,10 +357,8 @@ void main() {
       );
     }
 
-    Text tagIn(WidgetTester tester, String postId, String key) =>
-        tester.widget<Text>(
-          _inCard(postId, find.byKey(ValueKey('you-tag-$key'))),
-        );
+    Text tagIn(WidgetTester tester, String postId, String key) => tester
+        .widget<Text>(_inCard(postId, find.byKey(ValueKey('you-tag-$key'))));
 
     testWidgets('a tag in your own thought is set in the tag type', (
       tester,

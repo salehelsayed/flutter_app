@@ -1867,17 +1867,20 @@ void main() {
         contactRepo.seed([testContact]);
         final posts = _OrbitThoughtPostRepository();
         addTearDown(posts.dispose);
-        PostModel own(String id, String text, Duration age) => thought(
-          id,
-          text: text,
-          age: age,
-          expiresAt: thoughtNow.subtract(age).add(const Duration(hours: 24)),
-        ).copyWith(
-          senderPeerId: testIdentity.peerId,
-          authorPeerId: testIdentity.peerId,
-          authorUsername: testIdentity.username,
-          isIncoming: false,
-        );
+        PostModel own(String id, String text, Duration age) =>
+            thought(
+              id,
+              text: text,
+              age: age,
+              expiresAt: thoughtNow
+                  .subtract(age)
+                  .add(const Duration(hours: 24)),
+            ).copyWith(
+              senderPeerId: testIdentity.peerId,
+              authorPeerId: testIdentity.peerId,
+              authorUsername: testIdentity.username,
+              isIncoming: false,
+            );
         await posts.savePost(own('you-live', 'Morning #walks', Duration.zero));
         await posts.savePost(
           own('you-river', 'River #Walks', const Duration(days: 1)),
@@ -1918,8 +1921,14 @@ void main() {
           find.byKey(const ValueKey('you-thought-you-river')),
           findsOneWidget,
         );
-        expect(find.byKey(const ValueKey('you-thought-you-rain')), findsNothing);
-        expect(find.byKey(const ValueKey('you-thought-friend-old')), findsNothing);
+        expect(
+          find.byKey(const ValueKey('you-thought-you-rain')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('you-thought-friend-old')),
+          findsNothing,
+        );
 
         await tester.tap(find.byKey(const ValueKey('you-composer')));
         await pumpOrbitFrames(tester, count: 8);

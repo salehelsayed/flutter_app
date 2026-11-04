@@ -4920,6 +4920,28 @@ class AppLocalizationsAr extends AppLocalizations {
   String get you_page_empty => 'لا شيء مشارك الآن';
 
   @override
+  String get you_page_tag_private => 'أنت وحدك ترى هذا';
+
+  @override
+  String you_page_tag_count(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count خاطرة',
+      many: '$count خاطرة',
+      few: '$count خواطر',
+      two: 'خاطرتان',
+      one: 'خاطرة واحدة',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String you_page_add_to_tag(String tag) {
+    return 'أضف إلى $tag';
+  }
+
+  @override
   String get stickers_title => 'الملصقات';
 
   @override
