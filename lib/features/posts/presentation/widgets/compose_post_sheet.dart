@@ -91,6 +91,11 @@ class ComposePostSheet extends StatefulWidget {
   /// Where a Thought's "select people…" remembers its last picks.
   final ThoughtRecentPicks? recentPicks;
 
+  /// Turns a recording into words on this phone; null when it cannot.
+  /// Completes with null when there is no transcript yet (the model is
+  /// still downloading), and throws when transcribing failed.
+  final Future<String?> Function(String filePath)? transcribeVoice;
+
   /// Runs once as the sheet goes away: the unshared draft, or null after a
   /// share or when nothing was left to keep.
   final ValueChanged<ComposePostResult?>? onClosed;
@@ -100,6 +105,7 @@ class ComposePostSheet extends StatefulWidget {
     this.thoughtsOnly = false,
     this.replacesCurrentThought = false,
     this.recentPicks,
+    this.transcribeVoice,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,
@@ -864,6 +870,7 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         SizedBox(height: thought ? 6 : 16),
         TextField(
+          key: const ValueKey('thought-composer-text'),
           controller: _textController,
           textDirection: _inputDirection,
           maxLines: widget.thoughtsOnly ? 6 : 5,
