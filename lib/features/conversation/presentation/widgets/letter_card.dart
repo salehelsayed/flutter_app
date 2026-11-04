@@ -838,6 +838,13 @@ class LetterCard extends StatelessWidget {
         ? true
         : (!showAvatar && !showSenderName);
     final radius = _bubbleBorderRadius();
+    // Resolve before the group sender-label wrapper pins its children to LTR.
+    final stickerAlignment = _sticker == null
+        ? null
+        : (isIncoming
+                  ? AlignmentDirectional.centerStart
+                  : AlignmentDirectional.centerEnd)
+              .resolve(Directionality.of(context));
 
     // 156 QW-1: no BackdropFilter — the fill below is already semi-opaque, so
     // the per-bubble Gaussian blur was pure raster cost (and forced the raster
@@ -856,7 +863,10 @@ class LetterCard extends StatelessWidget {
                 border: Border.all(color: readableColors.border),
               ),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: stickerAlignment == Alignment.centerRight
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
+          textDirection: stickerAlignment == null ? null : TextDirection.ltr,
           children: [
             if (!headerHidden) _buildHeader(readableColors, hug: true),
             ..._buildBodyChildren(
@@ -886,7 +896,9 @@ class LetterCard extends StatelessWidget {
         : bubble;
 
     final aligned = Align(
-      alignment: isIncoming ? Alignment.centerLeft : Alignment.centerRight,
+      alignment:
+          stickerAlignment ??
+          (isIncoming ? Alignment.centerLeft : Alignment.centerRight),
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Reserve the avatar gutter (group avatar-outside mode) before

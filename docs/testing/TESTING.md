@@ -6365,6 +6365,14 @@ visible and cannot become an ordinary first-attempt PASS.
   they do not establish Photos-extension cold start, late downloads, or
   signed-device rendering. Startup source sets `UserAvatar`'s documents path
   during application preparation before launching the prepared root.
+- **Sticker card edges:** a media-only footer can expand the card while its
+  fixed-width sticker stays at the opposite edge. Resolve the sticker's inner
+  and outer leading/trailing placement before the group sender-name wrapper
+  applies LTR; preserve ordinary bubbles' existing physical alignment. Eight
+  `LetterCard` widget cases measure actual sticker rectangles for direct/group,
+  LTR/RTL and incoming/outgoing, including pending outgoing media with unknown
+  dimensions. Evidence: `.codex-test-logs/sticker-outgoing-alignment-131/`.
+  These host cases do not certify device screenshots or transport behavior.
 
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
