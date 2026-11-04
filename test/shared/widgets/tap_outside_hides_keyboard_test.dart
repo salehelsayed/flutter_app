@@ -199,7 +199,7 @@ void main() {
       );
       await focusField(tester);
 
-      await tester.tap(find.text('All your friends see this for 24 hours'));
+      await tester.tap(find.byKey(const ValueKey('thought-composer-lifetime')));
       await tester.pump();
 
       expect(fieldFocused(tester), isFalse);

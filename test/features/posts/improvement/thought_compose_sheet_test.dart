@@ -139,7 +139,7 @@ void main() {
     expect(find.byType(CheckboxListTile), findsNothing);
     expect(find.text('People Nearby'), findsNothing);
     expect(find.text('Pick People'), findsNothing);
-    expect(find.text('All your friends see this for 24 hours'), findsOneWidget);
+    expect(find.text('· 24 h'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('thought-composer-replaces')),
       findsNothing,
@@ -156,7 +156,7 @@ void main() {
         replacesCurrentThought: true,
       ),
     );
-    expect(find.text('All your friends see this for 24 hours'), findsOneWidget);
+    expect(find.text('· 24 h'), findsOneWidget);
     expect(
       find.text('Sharing replaces the thought you have up now'),
       findsOneWidget,

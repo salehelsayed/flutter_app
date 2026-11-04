@@ -34,7 +34,9 @@ void main() {
     ComposePostResult? initialDraft,
     ValueChanged<ComposePostResult?>? onClosed,
     List<ContactModel>? contacts,
+    Locale locale = const Locale('en'),
   }) => MaterialApp(
+    locale: locale,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     home: Scaffold(
@@ -53,6 +55,7 @@ void main() {
   );
 
   Finder chip() => find.byKey(const ValueKey('thought-audience-chip'));
+  Finder rule() => find.byKey(const ValueKey('thought-composer-lifetime'));
 
   Future<void> write(WidgetTester tester, String text) async {
     await tester.enterText(
@@ -86,9 +89,20 @@ void main() {
   testWidgets('a thought goes to friends by default, with no tap', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(scene());
-    expect(find.text('to friends · 3'), findsOneWidget);
-    expect(find.text('All your friends see this for 24 hours'), findsOneWidget);
+    expect(find.text('all friends'), findsOneWidget);
+    expect(find.text('· 24 h'), findsOneWidget);
+    expect(find.text('All your friends see this for 24 hours'), findsNothing);
+    expect(
+      find.bySemanticsLabel('All your friends see this for 24 hours'),
+      findsOneWidget,
+    );
+    final chipRect = tester.getRect(chip());
+    final ruleRect = tester.getRect(rule());
+    expect(ruleRect.center.dy, moreOrLessEquals(chipRect.center.dy, epsilon: 1));
+    expect(ruleRect.left, greaterThanOrEqualTo(chipRect.right));
+    semantics.dispose();
 
     await write(tester, 'back in dahab');
     await tapShare(tester);
@@ -103,7 +117,7 @@ void main() {
     await tester.tap(chip());
     await tester.pumpAndSettle();
 
-    expect(find.text('friends'), findsOneWidget);
+    expect(find.text('all friends'), findsNWidgets(2), reason: 'chip and row');
     expect(find.text('everyone in your orbit'), findsOneWidget);
     expect(find.text('select people…'), findsOneWidget);
     expect(find.text('just this once'), findsOneWidget);
@@ -113,6 +127,7 @@ void main() {
   testWidgets('picked people get the thought and the rule line names them', (
     tester,
   ) async {
+    final semantics = tester.ensureSemantics();
     await tester.pumpWidget(scene());
     await tester.tap(chip());
     await tester.pumpAndSettle();
@@ -139,8 +154,16 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('to 2 people'), findsOneWidget);
-    expect(find.text('layla and nour see this for 24 hours'), findsOneWidget);
-    expect(find.text('All your friends see this for 24 hours'), findsNothing);
+    expect(find.text('· 24 h'), findsOneWidget);
+    expect(
+      find.bySemanticsLabel('layla and nour see this for 24 hours'),
+      findsOneWidget,
+    );
+    expect(
+      find.bySemanticsLabel('All your friends see this for 24 hours'),
+      findsNothing,
+    );
+    semantics.dispose();
 
     await write(tester, 'back in dahab');
     await tapShare(tester);
@@ -158,7 +181,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('thought-audience-friends')));
     await tester.pumpAndSettle();
 
-    expect(find.text('to friends · 3'), findsOneWidget);
+    expect(find.text('all friends'), findsOneWidget);
     await write(tester, 'for everyone');
     await tapShare(tester);
     expect(shared.single.audience.kind, PostAudienceKind.allFriends);
@@ -174,7 +197,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('thought-pick-cancel')));
     await tester.pumpAndSettle();
 
-    expect(find.text('to friends · 3'), findsOneWidget);
+    expect(find.text('all friends'), findsOneWidget);
   });
 
   testWidgets('a shared pick shows as one tap under recent picks', (
@@ -241,6 +264,7 @@ void main() {
   });
 
   testWidgets('a swiped-away draft keeps its picked people', (tester) async {
+    final semantics = tester.ensureSemantics();
     ComposePostResult? handedBack;
     await tester.pumpWidget(scene(onClosed: (draft) => handedBack = draft));
     await pick(tester, ['layla']);
@@ -252,7 +276,43 @@ void main() {
     await tester.pumpWidget(scene(initialDraft: handedBack));
     await tester.pumpAndSettle();
     expect(find.text('to 1 person'), findsOneWidget);
-    expect(find.text('layla sees this for 24 hours'), findsOneWidget);
+    expect(find.bySemanticsLabel('layla sees this for 24 hours'), findsOne);
+    semantics.dispose();
+  });
+
+  testWidgets('a new thought after a picked share starts at all friends', (
+    tester,
+  ) async {
+    await tester.pumpWidget(scene());
+    await pick(tester, ['omar']);
+    await write(tester, 'just omar');
+    await tapShare(tester);
+    expect(shared.single.audience.kind, PostAudienceKind.pickPeople);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(scene());
+    await tester.pumpAndSettle();
+    expect(find.text('all friends'), findsOneWidget);
+    await write(tester, 'for everyone');
+    await tapShare(tester);
+    expect(shared.last.audience.kind, PostAudienceKind.allFriends);
+  });
+
+  testWidgets('in Arabic at 390 px the chip and the rule share one row', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844) * 3;
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(scene(locale: const Locale('ar')));
+    expect(find.text('كل الأصدقاء'), findsOneWidget);
+    expect(find.text('· 24 س'), findsOneWidget);
+    final chipRect = tester.getRect(chip());
+    final ruleRect = tester.getRect(rule());
+    expect(ruleRect.center.dy, moreOrLessEquals(chipRect.center.dy, epsilon: 1));
+    expect(ruleRect.right, lessThanOrEqualTo(chipRect.left));
+    expect(ruleRect.left, greaterThanOrEqualTo(0));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a draft whose only picked friend is gone shares with nobody '
