@@ -5,7 +5,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -484,7 +484,7 @@ class DirectMediaBatchForwardPickerScreen extends StatelessWidget {
             child: ListTile(
               enabled: enabled,
               contentPadding: EdgeInsets.zero,
-              leading: RingAvatar(peerId: contact.peerId, size: 40),
+              leading: UserAvatar(peerId: contact.peerId, size: 40),
               title: Text(
                 contact.username,
                 maxLines: 1,

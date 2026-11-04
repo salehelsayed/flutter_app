@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -182,6 +183,39 @@ void main() {
     expect(find.text('Groups'), findsOneWidget);
     expect(find.text('Alice'), findsOneWidget);
     expect(find.text('Friends'), findsOneWidget);
+  });
+
+  testWidgets('group avatar initials are excluded from target row semantics', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    try {
+      final group = makeGroup(id: 'friends', name: 'Friends Group');
+      await tester.pumpWidget(buildScreen(groups: [group]));
+      await tester.pump();
+
+      expect(find.text('FG'), findsOneWidget);
+      final labels = <String>[];
+      void collectLabels(SemanticsNode node) {
+        labels.addAll(node.label.split('\n'));
+        node.visitChildren((child) {
+          collectLabels(child);
+          return true;
+        });
+      }
+
+      collectLabels(
+        tester.getSemantics(find.byKey(const ValueKey('share-group-friends'))),
+      );
+      expect(labels, containsAll(<String>['Friends Group', 'Chat']));
+      expect(
+        labels,
+        isNot(contains('FG')),
+        reason: 'The decorative avatar must not repeat the group identity',
+      );
+    } finally {
+      semantics.dispose();
+    }
   });
 
   testWidgets('tapping contact toggles selection via callback', (tester) async {

@@ -7,7 +7,8 @@ import 'package:flutter_app/core/utils/text_direction_utils.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/upload_progress_banner.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/presentation/widgets/ambient_background.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
@@ -480,7 +481,9 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
       key: ValueKey('share-contact-${contact.peerId}'),
       contentPadding: EdgeInsets.zero,
       enabled: !widget.isSending,
-      leading: RingAvatar(peerId: contact.peerId, size: 40),
+      leading: ExcludeSemantics(
+        child: UserAvatar(peerId: contact.peerId, size: 40),
+      ),
       title: Text(
         contact.username,
         style: TextStyle(color: readableColors.textPrimary, fontSize: 15),
@@ -493,18 +496,20 @@ class _ShareTargetPickerScreenState extends State<ShareTargetPickerScreen> {
   Widget _buildGroupRow(BuildContext context, GroupModel group) {
     final readableColors = context.backgroundReadableColors;
     final l10n = AppLocalizations.of(context)!;
-    final groupAccent = readableColors.isLightSurface
-        ? const Color(0xFF16756F)
-        : const Color(0xFF4ECDC4);
     final isSelected = widget.selectedGroupIds.contains(group.id);
     return ListTile(
       key: ValueKey('share-group-${group.id}'),
       contentPadding: EdgeInsets.zero,
       enabled: !widget.isSending,
-      leading: CircleAvatar(
-        radius: 20,
-        backgroundColor: groupAccent.withValues(alpha: 0.15),
-        child: Icon(Icons.group, color: groupAccent, size: 20),
+      leading: ExcludeSemantics(
+        child: GroupAvatar(
+          groupId: group.id,
+          name: group.name,
+          avatarPath: group.avatarPath,
+          size: 40,
+          borderRadius: BorderRadius.circular(20),
+          cacheBustKey: group.lastMetadataEventAt?.toIso8601String(),
+        ),
       ),
       title: Text(
         group.name,

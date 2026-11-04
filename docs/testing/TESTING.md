@@ -6304,6 +6304,30 @@ visible and cannot become an ordinary first-attempt PASS.
   layouts. Evidence: `.codex-test-logs/group-avatar-square-20261024/`.
   This host geometry proof does not certify a device screenshot.
 
+- **Share picker stored avatars:** the share, direct-media batch-forward and
+  group-media batch-forward pickers must use `UserAvatar` for friends. The
+  share and group-forward group rows use `GroupAvatar` with the stored avatar
+  path and metadata timestamp cache key, matching Orbit. Direct `RingAvatar`
+  or generic group-icon rows cannot display a stored photo.
+  `test/features/share/presentation/share_picker_avatar_test.dart` loads real
+  160x80 files and checks decoded photos in all five affected row variants,
+  plus missing-photo selection controls in all three pickers. These five
+  photo assertions failed before the widget substitutions and passed after.
+  The main picker's leading avatars use `ExcludeSemantics` so fallback
+  initials and image semantics do not duplicate the accessible target name.
+  `share_target_picker_screen_test.dart` preserves the visible initials and
+  accessible name/type while excluding the initials from the semantic labels.
+  Dispose its `SemanticsHandle` in `finally` before the test body returns:
+  `addTearDown` ran after Flutter's handle-leak verification in the first run.
+  The final run passed 173 cases across all 19 share test files and the two
+  existing avatar test files; the initial cleanup failure remains in evidence.
+  Evidence: `.codex-test-logs/share-picker-avatars-131/`. The existing media
+  selection includes the new test through `test/features/share/`.
+  These fixtures ready the documents path and image resolution explicitly;
+  they do not establish Photos-extension cold start, late downloads, or
+  signed-device rendering. Startup source sets `UserAvatar`'s documents path
+  during application preparation before launching the prepared root.
+
 - **iOS icon-launch group catch-up:** the native APNs helper returns immediately
   on an empty consume. Its FCM fallback can still await native initial-message
   discovery indefinitely. StartupRouter now starts its existing group

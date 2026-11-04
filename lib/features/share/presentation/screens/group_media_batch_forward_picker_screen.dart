@@ -5,7 +5,8 @@ import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/groups/application/group_media_batch_forward.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
-import 'package:flutter_app/features/home/presentation/widgets/ring_avatar.dart';
+import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
+import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/share/application/group_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -406,7 +407,7 @@ class GroupMediaBatchForwardPickerScreen extends StatelessWidget {
       key: ValueKey('group-batch-forward-contact-${contact.peerId}'),
       label: contact.username,
       selected: selected,
-      leading: RingAvatar(peerId: contact.peerId, size: 40),
+      leading: UserAvatar(peerId: contact.peerId, size: 40),
       onTap: () => onToggleContact(contact),
     );
   }
@@ -418,7 +419,14 @@ class GroupMediaBatchForwardPickerScreen extends StatelessWidget {
       key: ValueKey('group-batch-forward-group-${group.id}'),
       label: group.name,
       selected: selected,
-      leading: const CircleAvatar(child: Icon(Icons.group_outlined)),
+      leading: GroupAvatar(
+        groupId: group.id,
+        name: group.name,
+        avatarPath: group.avatarPath,
+        size: 40,
+        borderRadius: BorderRadius.circular(20),
+        cacheBustKey: group.lastMetadataEventAt?.toIso8601String(),
+      ),
       onTap: () => onToggleGroup(group),
     );
   }
