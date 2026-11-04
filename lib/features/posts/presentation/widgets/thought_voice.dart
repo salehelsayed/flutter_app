@@ -61,7 +61,9 @@ class ThoughtRecordingCard extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    l10n.thought_voice_recording,
+                    paused
+                        ? l10n.translator_paused_word
+                        : l10n.thought_voice_recording,
                     style: TextStyle(color: rc.textSecondary, fontSize: 12),
                   ),
                   const Spacer(),

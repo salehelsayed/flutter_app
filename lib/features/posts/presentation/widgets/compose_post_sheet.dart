@@ -1179,22 +1179,6 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
           ),
         ],
         SizedBox(height: thought ? 12 : 20),
-        if (thought && widget.replacesCurrentThought) ...[
-          Row(
-            children: [
-              Icon(Icons.info_outline_rounded, size: 16, color: rc.textMuted),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  AppLocalizations.of(context)!.thought_compose_replaces,
-                  key: const ValueKey('thought-composer-replaces'),
-                  style: TextStyle(color: rc.textMuted, fontSize: 13),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-        ],
         if (_notice case final notice?) ...[
           Text(
             _noticeText(AppLocalizations.of(context)!, notice),
@@ -1324,6 +1308,28 @@ class _ComposePostSheetState extends State<ComposePostSheet> {
                   child: body,
                 ),
               ),
+              // Pinned above the toolbar: a tall body would scroll it under.
+              if (widget.replacesCurrentThought)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 16,
+                        color: rc.textMuted,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          l10n.thought_compose_replaces,
+                          key: const ValueKey('thought-composer-replaces'),
+                          style: TextStyle(color: rc.textMuted, fontSize: 13),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               // Photo and mic belong to the field: tapping them keeps the
               // keyboard.
               TextFieldTapRegion(
