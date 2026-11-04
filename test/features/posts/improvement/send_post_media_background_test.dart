@@ -64,6 +64,112 @@ void main() {
     posts.dispose();
   });
 
+  for (final scenario in [
+    'generated framing file',
+    'picker file',
+    'similarly named gallery file',
+    'similarly named direct temp file',
+  ]) {
+    test('photo source cleanup after durable acceptance: $scenario', () async {
+      final fixtureDir = await Directory.systemTemp.createTemp(
+        'thought-source-cleanup-',
+      );
+      addTearDown(() => fixtureDir.delete(recursive: true));
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final source = switch (scenario) {
+        'generated framing file' => File(
+          '${Directory.systemTemp.path}/thought_framed_$stamp.jpg',
+        ),
+        'picker file' => File('${fixtureDir.path}/picker/photo.jpg'),
+        'similarly named gallery file' => File(
+          '${fixtureDir.path}/gallery/thought_framed_$stamp.jpg',
+        ),
+        _ => File(
+          '${Directory.systemTemp.path}/thought_framed_${stamp}_picked.jpg',
+        ),
+      };
+      expect(await source.exists(), isFalse);
+      await source.parent.create(recursive: true);
+      const sourceBytes = <int>[1, 2, 3, 4];
+      await source.writeAsBytes(sourceBytes);
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
+      final files = TempPostMediaFileManager('${fixtureDir.path}/documents');
+      final (result, created) = await createLocalPost(
+        postRepo: posts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'My photo',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: [
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: files,
+      );
+
+      expect(result, SendPostResult.success);
+      final postId = created!.post.id;
+      expect(await posts.getPost(postId), isNotNull);
+      expect(await posts.getRecipientDeliveries(postId), hasLength(1));
+      final retained = await posts.loadPostMediaUploadRecoveryItems(postId);
+      expect(retained, hasLength(1));
+      final stagedSource = File(
+        await files.resolveStoredPath(retained.single.localFilePath),
+      );
+      expect(await stagedSource.readAsBytes(), sourceBytes);
+      expect(
+        await source.exists(),
+        scenario == 'generated framing file' ? isFalse : isTrue,
+      );
+      if (scenario != 'generated framing file') {
+        expect(await source.readAsBytes(), sourceBytes);
+      }
+    });
+  }
+
+  test('failed durable acceptance preserves its generated framing file', () async {
+    final fixtureDir = await Directory.systemTemp.createTemp(
+      'thought-source-rejected-',
+    );
+    addTearDown(() => fixtureDir.delete(recursive: true));
+    final source = File(
+      '${Directory.systemTemp.path}/thought_framed_'
+      '${DateTime.now().microsecondsSinceEpoch}.jpg',
+    );
+    expect(await source.exists(), isFalse);
+    const sourceBytes = <int>[1, 2, 3, 4];
+    await source.writeAsBytes(sourceBytes);
+    addTearDown(() async {
+      if (await source.exists()) await source.delete();
+    });
+    final rejectedPosts = _ThrowOnPostSavePostRepository();
+    addTearDown(rejectedPosts.dispose);
+
+    await expectLater(
+      createLocalPost(
+        postRepo: rejectedPosts,
+        contactRepo: contacts,
+        senderPeerId: 'peer-alice',
+        senderUsername: 'Alice',
+        text: 'My photo',
+        audience: PostAudience.allFriends(),
+        mediaDrafts: [
+          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+        ],
+        mediaFileManager: TempPostMediaFileManager(
+          '${fixtureDir.path}/documents',
+        ),
+      ),
+      throwsStateError,
+    );
+
+    expect(await rejectedPosts.loadFeed(), isEmpty);
+    expect(await source.exists(), isTrue);
+    expect(await source.readAsBytes(), sourceBytes);
+  });
+
   test(
     'accepted photo stays readable after its picker source is removed',
     () async {
@@ -640,5 +746,12 @@ class _ThrowOnRecipientSavePostRepository extends InMemoryPostRepository {
   @override
   Future<void> saveRecipientDelivery(PostRecipientDelivery delivery) async {
     throw StateError('simulated recipient persistence interruption');
+  }
+}
+
+class _ThrowOnPostSavePostRepository extends InMemoryPostRepository {
+  @override
+  Future<void> savePost(PostModel post) async {
+    throw StateError('simulated post persistence failure');
   }
 }

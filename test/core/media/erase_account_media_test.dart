@@ -121,6 +121,45 @@ void main() {
   });
 
   test(
+    'erases only generated framed-photo files at shared temporary roots',
+    () async {
+      const generatedName = 'thought_framed_1792760000000000.jpg';
+      final framed = await write(p.join(temporary.path, generatedName));
+      final galleryPhoto = await write(
+        p.join(sandbox.path, 'gallery', generatedName),
+      );
+      final preserved = <File>[
+        for (final name in [
+          'selected-photo.jpg',
+          'thought_framed_notes.jpg',
+          'thought_framed_.jpg',
+          'thought_framed_1792760000000000.png',
+          'thought_framed_1792760000000000.jpg.backup',
+          'other_thought_framed_1792760000000000.jpg',
+        ])
+          await write(p.join(temporary.path, name)),
+        await write(p.join(temporary.path, 'other-app', generatedName)),
+        galleryPhoto,
+        await write(
+          p.join(temporary.path, 'thought_framed_1792760000000001.jpg', 'keep'),
+        ),
+      ];
+      final linkedPhoto = Link(
+        p.join(temporary.path, 'thought_framed_1792760000000002.jpg'),
+      );
+      await linkedPhoto.create(galleryPhoto.path);
+
+      await erase();
+
+      expect(await framed.exists(), isFalse);
+      for (final file in preserved) {
+        expect(await file.exists(), isTrue, reason: file.path);
+      }
+      expect(await linkedPhoto.exists(), isTrue);
+    },
+  );
+
+  test(
     'rejects a replaced media root and preserves its external target',
     () async {
       final outside = await write(p.join(sandbox.path, 'outside', 'keep.jpg'));
