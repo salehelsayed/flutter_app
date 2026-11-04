@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/posts/application/load_own_thought_tags_use_case.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_voice.dart';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -28,6 +29,7 @@ class YouPageData {
     required this.past,
     this.tag,
     this.tagCount = 0,
+    this.tags = const [],
   });
 
   final String username;
@@ -45,6 +47,9 @@ class YouPageData {
 
   /// How many own Thoughts carry [tag], the live one included.
   final int tagCount;
+
+  /// Every tag on the author's own Thoughts, newest first.
+  final List<OwnThoughtTag> tags;
 }
 
 class YouThought {
@@ -98,7 +103,15 @@ class YouPageScreen extends StatefulWidget {
     required this.now,
     this.changes = const [],
     this.thoughtReplies = const Stream.empty(),
+    this.tagsNoteSeen = true,
+    this.onTagsNoteSeen,
   });
+
+  /// Whether the one-time note pointing at "your tags" was already shown.
+  final bool tagsNoteSeen;
+
+  /// The note was seen: it never shows again.
+  final VoidCallback? onTagsNoteSeen;
 
   /// Loads the page with at most [historyLimit] past Thoughts, only those
   /// with the tag key [tag] when it is set.

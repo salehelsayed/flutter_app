@@ -184,9 +184,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets("a friend's tags are set in the tag type and cannot be tapped", (
-    tester,
-  ) async {
+  testWidgets("a friend's tags are plain words, as written", (tester) async {
     final thought = _thought(
       initialNow,
     ).copyWith(text: 'river walk #Walks with #مشي');
@@ -195,20 +193,17 @@ void main() {
     await openCard(tester, thought);
     await tester.pumpAndSettle();
 
-    final tags = <TextSpan>[];
+    final styled = <TextSpan>[];
     for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
       rich.text.visitChildren((span) {
-        if (span is TextSpan && (span.text ?? '').startsWith('#')) {
-          tags.add(span);
+        if (span is TextSpan && span.style?.fontFamily == 'Menlo') {
+          styled.add(span);
         }
+        if (span is TextSpan) expect(span.recognizer, isNull);
         return true;
       });
     }
-    expect(tags.map((span) => span.text), ['#Walks', '#مشي']);
-    for (final span in tags) {
-      expect(span.style?.fontFamily, 'Menlo');
-      expect(span.recognizer, isNull);
-    }
+    expect(styled, isEmpty);
     expect(
       find.text('river walk #Walks with #مشي', findRichText: true),
       findsOneWidget,

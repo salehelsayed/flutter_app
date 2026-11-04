@@ -5070,6 +5070,43 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get you_tags_open => 'وسومك';
+
+  @override
+  String get you_tags_title => 'وسومك';
+
+  @override
+  String get you_tags_find => 'ابحث عن وسم…';
+
+  @override
+  String get you_tags_recent => 'الأخيرة';
+
+  @override
+  String get you_tags_all => 'كل الوسوم';
+
+  @override
+  String you_tags_none(String tag) {
+    return 'لا وسم مثل $tag';
+  }
+
+  @override
+  String get you_tags_none_hint => 'الوسوم من خواطرك أنت';
+
+  @override
+  String you_tags_used(int days) {
+    String _temp0 = intl.Intl.pluralLogic(
+      days,
+      locale: localeName,
+      other: 'قبل $days يوم',
+      zero: 'اليوم',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get you_tags_note => 'كل وسومك هنا.';
+
+  @override
   String get stickers_title => 'الملصقات';
 
   @override
