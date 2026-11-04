@@ -46,6 +46,7 @@ class RecordAudioRecorderService
   /// clock acts only for the recording that armed it.
   int _session = 0;
   bool _resuming = false;
+  bool _pausing = false;
   Duration _autoStopLeft = Duration.zero;
   DateTime? _autoStopArmedAt;
   Timer? _ticker;
@@ -156,9 +157,14 @@ class RecordAudioRecorderService
 
   @override
   Future<void> pause() async {
-    if (!_isRecording || isPaused || _resuming) return;
+    if (!_isRecording || isPaused || _pausing || _resuming) return;
     final session = _session;
-    await _recorder.pause();
+    _pausing = true;
+    try {
+      await _recorder.pause();
+    } finally {
+      _pausing = false;
+    }
     if (session != _session || !_isRecording) return;
     final now = DateTime.now();
     _pausedAt = now;
@@ -170,7 +176,7 @@ class RecordAudioRecorderService
   @override
   Future<void> resume() async {
     final pausedAt = _pausedAt;
-    if (!_isRecording || pausedAt == null || _resuming) return;
+    if (!_isRecording || pausedAt == null || _pausing || _resuming) return;
     final session = _session;
     _resuming = true;
     try {
