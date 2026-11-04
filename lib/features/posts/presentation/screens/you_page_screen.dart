@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/posts/application/group_thought_reactions.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -504,6 +505,9 @@ class _ThoughtCard extends StatelessWidget {
     final fresh = wrote.where((w) => w.hasUnread).length;
     final label = _mono.copyWith(color: _muted, fontSize: 11.5);
     final created = DateTime.tryParse(post.createdAt);
+    final picked = post.audience.kind == PostAudienceKind.pickPeople
+        ? post.audience.selectedPeerIds.length
+        : 0;
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(
@@ -522,7 +526,11 @@ class _ThoughtCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
           ],
-          _AudienceChip(label: l10n.compose_audience_all),
+          _AudienceChip(
+            label: picked == 0
+                ? l10n.compose_audience_all
+                : l10n.you_page_people(picked),
+          ),
           if (post.text.trim().isNotEmpty) ...[
             const SizedBox(height: 6),
             _TaggedText(text: post.text, activeTag: activeTag, onTag: onTag),
@@ -558,7 +566,12 @@ class _ThoughtCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 7),
                 Flexible(
-                  child: Text(l10n.you_page_live(_hoursLeft()), style: label),
+                  child: Text(
+                    picked == 0
+                        ? l10n.you_page_live(_hoursLeft())
+                        : l10n.you_page_live_people(picked, _hoursLeft()),
+                    style: label,
+                  ),
                 ),
               ],
             ),
