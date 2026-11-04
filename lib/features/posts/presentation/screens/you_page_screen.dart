@@ -173,8 +173,10 @@ class _YouPageScreenState extends State<YouPageScreen>
   bool _shows(String postId) {
     final data = _data;
     return data == null ||
-        data.thought?.post.id == postId ||
-        data.past.any((past) => past.post.id == postId);
+        [
+          ?data.thought,
+          ...data.past,
+        ].any((each) => each.post.id == postId && _hasTag(each));
   }
 
   Future<void> _reload() async {
