@@ -94,4 +94,7 @@
 // callee's microphone is off) by rebuilding the table; every row is kept.
 // v128 adds nullable `media_attachments.sticker_id`, the pack-list id of a
 // sticker attachment. No default and no backfill.
-const int currentIdentityDatabaseVersion = 128;
+// v129 adds nullable `caption` to post_media_attachments and
+// post_media_upload_recovery, the short text on a Thought voice note. No
+// default and no backfill.
+const int currentIdentityDatabaseVersion = 129;

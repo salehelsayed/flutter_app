@@ -10,6 +10,7 @@ class PostMediaUploadRecoveryItem {
   final int? height;
   final int? durationMs;
   final List<double>? waveform;
+  final String? caption;
   final String createdAt;
 
   const PostMediaUploadRecoveryItem({
@@ -22,6 +23,7 @@ class PostMediaUploadRecoveryItem {
     this.height,
     this.durationMs,
     this.waveform,
+    this.caption,
     required this.createdAt,
   });
 
@@ -36,6 +38,7 @@ class PostMediaUploadRecoveryItem {
       height: (map['height'] as num?)?.toInt(),
       durationMs: (map['duration_ms'] as num?)?.toInt(),
       waveform: _decodeWaveform(map['waveform']),
+      caption: map['caption'] as String?,
       createdAt: map['created_at'] as String,
     );
   }
@@ -52,6 +55,8 @@ class PostMediaUploadRecoveryItem {
       'duration_ms': durationMs,
       'waveform': waveform == null ? null : jsonEncode(waveform),
       'created_at': createdAt,
+      // Written only when present, so rows keep fitting schemas before v129.
+      if (caption != null) 'caption': caption,
     };
   }
 

@@ -15,6 +15,7 @@ import 'package:flutter_app/features/posts/application/post_delivery_runner.dart
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/application/thought_deletion.dart';
 import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
+import 'package:flutter_app/features/posts/domain/models/post_media_attachment_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_media_upload_recovery_item.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/domain/models/post_recipient_delivery.dart';
@@ -257,6 +258,7 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
               height: draft.height,
               durationMs: draft.durationMs,
               waveform: draft.waveform,
+              caption: PostMediaAttachmentModel.normalizeCaption(draft.caption),
               createdAt: createdAt,
             );
           })

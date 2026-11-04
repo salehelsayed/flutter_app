@@ -199,6 +199,7 @@ attachPostMedia({
       position: index,
       postId: postId,
       previewBase64: preview,
+      caption: PostMediaAttachmentModel.normalizeCaption(drafts[index].caption),
     );
     attachments.add(positioned);
   }
@@ -549,6 +550,7 @@ PostMediaDraft _draftFromRecoveryItem(PostMediaUploadRecoveryItem item) {
     height: item.height,
     durationMs: item.durationMs,
     waveform: item.waveform,
+    caption: item.caption,
   );
 }
 

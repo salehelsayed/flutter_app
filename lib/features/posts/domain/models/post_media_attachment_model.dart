@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/widgets.dart' show StringCharacters;
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
 class PostMediaAttachmentModel {
@@ -28,6 +29,22 @@ class PostMediaAttachmentModel {
   /// here. It travels only inside the encrypted per-media entry.
   final String? previewBase64;
 
+  /// Short text the author adds to the item (a voice note today), separate
+  /// from the thought's text. Always trimmed, never empty.
+  final String? caption;
+
+  static const int maxCaptionLength = 140;
+
+  /// Trims [raw], drops non-strings and blanks, and keeps at most
+  /// [maxCaptionLength] characters (grapheme clusters, as a text field
+  /// counts them).
+  static String? normalizeCaption(Object? raw) {
+    if (raw is! String) return null;
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    return trimmed.characters.take(maxCaptionLength).toString().trimRight();
+  }
+
   const PostMediaAttachmentModel({
     required this.mediaId,
     required this.postId,
@@ -50,6 +67,7 @@ class PostMediaAttachmentModel {
     this.contentHash,
     this.isEncrypted = false,
     this.previewBase64,
+    this.caption,
   });
 
   factory PostMediaAttachmentModel.fromMap(Map<String, Object?> map) {
@@ -75,6 +93,7 @@ class PostMediaAttachmentModel {
       contentHash: map['content_hash'] as String?,
       isEncrypted: (map['is_encrypted'] as int?) == 1,
       previewBase64: map['preview_base64'] as String?,
+      caption: map['caption'] as String?,
     );
   }
 
@@ -112,6 +131,7 @@ class PostMediaAttachmentModel {
       encryptionScheme: encryptionScheme,
       contentHash: contentHash,
       isEncrypted: isEncrypted,
+      caption: normalizeCaption(json['caption']),
     );
   }
 
@@ -139,6 +159,8 @@ class PostMediaAttachmentModel {
       'is_encrypted': isEncrypted ? 1 : 0,
       // Written only when present, so rows keep fitting schemas before v124.
       if (previewBase64 != null) 'preview_base64': previewBase64,
+      // Same for captions before v129.
+      if (caption != null) 'caption': caption,
     };
   }
 
@@ -154,6 +176,7 @@ class PostMediaAttachmentModel {
       if (durationMs != null) 'duration_ms': durationMs,
       if (waveform != null) 'waveform': waveform,
       if (thumbnailBlobId != null) 'thumbnail_blob_id': thumbnailBlobId,
+      if (caption != null) 'caption': caption,
     };
   }
 
@@ -201,6 +224,7 @@ class PostMediaAttachmentModel {
     String? contentHash,
     bool? isEncrypted,
     String? previewBase64,
+    String? caption,
   }) {
     return PostMediaAttachmentModel(
       mediaId: mediaId ?? this.mediaId,
@@ -224,6 +248,7 @@ class PostMediaAttachmentModel {
       contentHash: contentHash ?? this.contentHash,
       isEncrypted: isEncrypted ?? this.isEncrypted,
       previewBase64: previewBase64 ?? this.previewBase64,
+      caption: caption ?? this.caption,
     );
   }
 
