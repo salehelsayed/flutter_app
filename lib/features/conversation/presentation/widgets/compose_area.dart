@@ -78,6 +78,8 @@ class ComposeArea extends StatefulWidget {
 
   /// Called when the text field is tapped, e.g. to close the sticker panel.
   final VoidCallback? onTextFieldTap;
+  final VoidCallback? onStickerToggle;
+  final bool isStickerPanelOpen;
 
   /// Replaces the chat hint, as the Thought card's "Reply to `name`" does.
   final String? hintText;
@@ -127,6 +129,8 @@ class ComposeArea extends StatefulWidget {
     this.controller,
     this.focusNode,
     this.onTextFieldTap,
+    this.onStickerToggle,
+    this.isStickerPanelOpen = false,
     this.hintText,
     this.showAttachButton = true,
     this.alwaysShowSend = false,
@@ -255,6 +259,15 @@ class _ComposeAreaState extends State<ComposeArea>
 
   void _onFocusChanged() {
     setState(() => _hasFocus = _focusNode.hasFocus);
+  }
+
+  void _onStickerToggle() {
+    final returnToKeyboard = widget.isStickerPanelOpen;
+    if (!returnToKeyboard) _focusNode.unfocus();
+    widget.onStickerToggle?.call();
+    if (returnToKeyboard && _focusNode.canRequestFocus) {
+      _focusNode.requestFocus();
+    }
   }
 
   bool _sentThisFrame = false;
@@ -754,6 +767,25 @@ class _ComposeAreaState extends State<ComposeArea>
                                     height: 1.5,
                                   ),
                                   decoration: InputDecoration(
+                                    suffixIcon: widget.onStickerToggle == null
+                                        ? null
+                                        : IconButton(
+                                            tooltip: AppLocalizations.of(
+                                              context,
+                                            )!.stickers_title,
+                                            onPressed:
+                                                widget.isProcessing ||
+                                                    _isRecording
+                                                ? null
+                                                : _onStickerToggle,
+                                            icon: Icon(
+                                              widget.isStickerPanelOpen
+                                                  ? Icons.keyboard_rounded
+                                                  : Icons
+                                                        .emoji_emotions_outlined,
+                                            ),
+                                            color: readableColors.iconMuted,
+                                          ),
                                     prefixIcon: widget.compact
                                         ? showQuotePreview
                                               ? const Icon(

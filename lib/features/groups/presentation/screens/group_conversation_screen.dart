@@ -104,6 +104,7 @@ class GroupConversationScreen extends StatelessWidget {
 
   /// Called when the composer's text field is tapped.
   final VoidCallback? onComposerTextTap;
+  final VoidCallback? onStickerToggle;
   final VoidCallback? onRecordStart;
   final VoidCallback? onRecordStop;
   final VoidCallback? onRecordCancel;
@@ -203,6 +204,7 @@ class GroupConversationScreen extends StatelessWidget {
     this.onAttach,
     this.stickerPanel,
     this.onComposerTextTap,
+    this.onStickerToggle,
     this.onRecordStart,
     this.onRecordStop,
     this.onRecordCancel,
@@ -380,6 +382,8 @@ class GroupConversationScreen extends StatelessWidget {
                 isQuoteUnavailable: isActiveQuoteUnavailable,
                 onClearQuote: onClearQuote,
                 onTextFieldTap: onComposerTextTap,
+                onStickerToggle: onStickerToggle,
+                isStickerPanelOpen: stickerPanel != null,
               ),
               ?stickerPanel,
             ],

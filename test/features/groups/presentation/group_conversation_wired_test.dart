@@ -2184,7 +2184,7 @@ void main() {
       );
     });
 
-    testWidgets('stickers v1: the Stickers tile opens the panel and a tapped '
+    testWidgets('stickers v1: the field toggle opens the panel and a tapped '
         'sticker publishes one ordinary image with the sticker key', (
       tester,
     ) async {
@@ -2245,13 +2245,12 @@ void main() {
       );
       await pumpFrames(tester, count: 20);
 
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(
-            find.byKey(const ValueKey('group-attach-stickers-action')),
-          )
-          .onTap!();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TextField),
+          matching: find.byTooltip('Stickers'),
+        ),
+      );
       for (
         var i = 0;
         i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
@@ -2451,13 +2450,12 @@ void main() {
       );
       await pumpFrames(tester, count: 20);
 
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(
-            find.byKey(const ValueKey('group-attach-stickers-action')),
-          )
-          .onTap!();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TextField),
+          matching: find.byTooltip('Stickers'),
+        ),
+      );
       for (
         var i = 0;
         i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
@@ -2671,13 +2669,12 @@ void main() {
         await tester.pumpWidget(screenFor(group));
         await pumpFrames(tester, count: 20);
 
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
-        tester
-            .widget<ListTile>(
-              find.byKey(const ValueKey('group-attach-stickers-action')),
-            )
-            .onTap!();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(TextField),
+            matching: find.byTooltip('Stickers'),
+          ),
+        );
         for (
           var i = 0;
           i < 100 && find.byType(StickerPanel).evaluate().isEmpty;
@@ -2762,13 +2759,12 @@ void main() {
     }
 
     Future<void> openStickerPanel(WidgetTester tester) async {
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(
-            find.byKey(const ValueKey('group-attach-stickers-action')),
-          )
-          .onTap!();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TextField),
+          matching: find.byTooltip('Stickers'),
+        ),
+      );
       for (
         var i = 0;
         i < 100 && find.byType(StickerPanel).evaluate().isEmpty;

@@ -2294,6 +2294,17 @@ Source identity and retained raw-log references are in
 `.audit/thoughts-128-codex/keyboard-review-65ed-verification.json`. These are host
 widget results, not evidence from installed phones.
 
+The direct and group sticker controls use the text field's directional suffix:
+right in LTR and left in RTL. Their wired widget cases preserve both keyboard
+return paths, draft text and the other plus-menu actions while removing the old
+Stickers menu entry. Opening the panel releases only the composer's focus node;
+returning to the keyboard must respect that node's inherited focus exclusion.
+The existing call-overlay focus case and outside-tap suite preserve their
+separate focus boundaries. Evidence for these host cases and the unchanged
+sticker catalog, panel, wire and receive suites is retained in
+`.codex-test-logs/sticker-button-field-131/`. These checks do not establish
+installed native keyboard behavior.
+
 Keyboard dismissal intentionally drops composer focus; flows that dismiss it
 must re-tap the composer before `inputText`. The five-message direct batch stays
 in the chat, with one composer tap before each entry and no keyboard dismissal

@@ -3929,7 +3929,7 @@ void main() {
     });
 
     for (final strict in [true, false]) {
-      testWidgets('the Stickers tile opens the panel and a tapped sticker goes '
+      testWidgets('the field toggle opens the panel and a tapped sticker goes '
           'out as one ordinary ${strict ? 'strict' : 'legacy'} image with the '
           'sticker key', (tester) async {
         installPrivateMediaProtectionEventChannelStub(tester);
@@ -4125,13 +4125,12 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 300));
 
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
-        tester
-            .widget<ListTile>(
-              find.byKey(const ValueKey('conversation-attach-stickers-action')),
-            )
-            .onTap!();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(TextField),
+            matching: find.byTooltip('Stickers'),
+          ),
+        );
         await pumpUntilAsyncIo(
           tester,
           () => find.byType(StickerPanel).evaluate().isNotEmpty,
@@ -4274,13 +4273,12 @@ void main() {
     }
 
     Future<void> tapStickerInPanel(WidgetTester tester) async {
-      await tester.tap(find.byIcon(Icons.add_rounded));
-      await tester.pump(const Duration(milliseconds: 500));
-      tester
-          .widget<ListTile>(
-            find.byKey(const ValueKey('conversation-attach-stickers-action')),
-          )
-          .onTap!();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(TextField),
+          matching: find.byTooltip('Stickers'),
+        ),
+      );
       await pumpUntilAsyncIo(
         tester,
         () => find.byType(StickerPanel).evaluate().isNotEmpty,
@@ -7922,13 +7920,12 @@ void main() {
           'Retry this message',
         );
 
-        await tester.tap(find.byIcon(Icons.add_rounded));
-        await tester.pump(const Duration(milliseconds: 500));
-        tester
-            .widget<ListTile>(
-              find.byKey(const ValueKey('conversation-attach-stickers-action')),
-            )
-            .onTap!();
+        await tester.tap(
+          find.descendant(
+            of: find.byType(TextField),
+            matching: find.byTooltip('Stickers'),
+          ),
+        );
         await pumpUntilAsyncIo(
           tester,
           () => find.byType(StickerPanel).evaluate().isNotEmpty,

@@ -4834,7 +4834,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   // -------------------------------------------------------------------------
 
   void _openStickerPanel() {
-    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _stickerPanelOpen = true);
   }
 
@@ -4946,21 +4945,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                   onTap: () {
                     Navigator.pop(ctx);
                     _pickVideoFromCamera();
-                  },
-                ),
-                ListTile(
-                  key: const ValueKey('group-attach-stickers-action'),
-                  leading: Icon(
-                    Icons.emoji_emotions_outlined,
-                    color: sheetColors.iconPrimary,
-                  ),
-                  title: Text(
-                    AppLocalizations.of(context)!.stickers_title,
-                    style: TextStyle(color: sheetColors.textPrimary),
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openStickerPanel();
                   },
                 ),
                 if (widget.documentAttachmentsEnabled)
@@ -8629,6 +8613,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
                 ? BundledStickerPanel(onSend: _sendSticker)
                 : null,
             onComposerTextTap: _closeStickerPanel,
+            onStickerToggle: _canWrite
+                ? (_stickerPanelOpen ? _closeStickerPanel : _openStickerPanel)
+                : null,
             onRecordStart: _canWrite && _supportsDurableGroupMediaUploads
                 ? _onRecordStart
                 : null,

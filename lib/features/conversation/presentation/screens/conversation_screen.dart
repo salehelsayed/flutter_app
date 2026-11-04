@@ -310,6 +310,7 @@ class ConversationScreen extends StatefulWidget {
 
   /// Called when the composer's text field is tapped.
   final VoidCallback? onComposerTextTap;
+  final VoidCallback? onStickerToggle;
   final List<File> pendingAttachments;
   final bool isUploading;
   final ValueChanged<int>? onRemoveAttachment;
@@ -433,6 +434,7 @@ class ConversationScreen extends StatefulWidget {
     this.onAttach,
     this.stickerPanel,
     this.onComposerTextTap,
+    this.onStickerToggle,
     this.pendingAttachments = const [],
     this.isUploading = false,
     this.onRemoveAttachment,
@@ -1041,6 +1043,8 @@ class _ConversationScreenState extends State<ConversationScreen>
           privateMediaRecipientName: widget.contactUsername,
           onPrivateMediaPolicyChanged: widget.onPrivateMediaPolicyChanged,
           onTextFieldTap: widget.onComposerTextTap,
+          onStickerToggle: widget.onStickerToggle,
+          isStickerPanelOpen: widget.stickerPanel != null,
         ),
         ?widget.stickerPanel,
       ],
