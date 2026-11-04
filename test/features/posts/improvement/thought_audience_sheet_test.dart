@@ -255,6 +255,54 @@ void main() {
     expect(find.text('layla sees this for 24 hours'), findsOneWidget);
   });
 
+  testWidgets('a draft whose only picked friend is gone shares with nobody '
+      'until the user chooses again', (tester) async {
+    ComposePostResult? handedBack;
+    await tester.pumpWidget(
+      scene(
+        contacts: [_friends[1]],
+        onClosed: (draft) => handedBack = draft,
+        initialDraft: ComposePostResult(
+          text: 'for layla only',
+          audience: PostAudience.pickPeople(['peer-layla']),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    ElevatedButton shareButton() =>
+        tester.widget(find.byKey(const ValueKey('thought-composer-share')));
+    expect(shareButton().onPressed, isNull);
+    expect(find.text('to 0 people'), findsOneWidget);
+    expect(find.text('All your friends see this for 24 hours'), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    expect(handedBack?.audience.kind, PostAudienceKind.pickPeople);
+    expect(handedBack?.audience.selectedPeerIds, isEmpty);
+    expect(shared, isEmpty);
+  });
+
+  testWidgets('choosing friends after the pick is gone shares with friends', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      scene(
+        contacts: [_friends[1]],
+        initialDraft: ComposePostResult(
+          text: 'for layla only',
+          audience: PostAudience.pickPeople(['peer-layla']),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(chip());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('thought-audience-friends')));
+    await tester.pumpAndSettle();
+    await tapShare(tester);
+    expect(shared.single.audience.kind, PostAudienceKind.allFriends);
+  });
+
   testWidgets('a picked friend who is gone by reopening is left out', (
     tester,
   ) async {

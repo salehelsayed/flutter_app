@@ -46,8 +46,13 @@ class _FakeAudioRecorder implements AudioRecorder {
   @override
   Future<void> pause() async => pauseCalls += 1;
 
+  Completer<void>? resumeGate;
+
   @override
-  Future<void> resume() async => resumeCalls += 1;
+  Future<void> resume() async {
+    resumeCalls += 1;
+    await resumeGate?.future;
+  }
 
   @override
   Future<void> dispose() async {}
@@ -437,6 +442,86 @@ void main() {
 
       await short.resume();
       await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(autoStops, 1);
+    });
+
+    test(
+      'a resume still pending at cancel cannot stop the next recording',
+      () async {
+        final short = RecordAudioRecorderService(
+          recorder: fakeRecorder,
+          maxDuration: const Duration(milliseconds: 300),
+        );
+        addTearDown(short.dispose);
+        final autoStops = <AudioRecording?>[];
+        short.onAutoStopped = autoStops.add;
+        await short.start(outputPath: testOutputPath);
+        // Most of the 300 ms is used, so a stale clock would fire first.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await short.pause();
+        final gate = fakeRecorder.resumeGate = Completer<void>();
+        final resuming = short.resume();
+        await short.cancel();
+        gate.complete();
+        await resuming;
+
+        await short.start(outputPath: testOutputPath);
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        expect(short.isRecording, isTrue, reason: 'old clock stopped it');
+        expect(autoStops, isEmpty);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(autoStops, hasLength(1), reason: 'its own clock still runs');
+      },
+    );
+
+    test(
+      'a resume still pending at stop cannot stop the next recording',
+      () async {
+        final short = RecordAudioRecorderService(
+          recorder: fakeRecorder,
+          maxDuration: const Duration(milliseconds: 300),
+        );
+        addTearDown(short.dispose);
+        var autoStops = 0;
+        short.onAutoStopped = (_) => autoStops += 1;
+        await short.start(outputPath: testOutputPath);
+        // Most of the 300 ms is used, so a stale clock would fire first.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await short.pause();
+        final gate = fakeRecorder.resumeGate = Completer<void>();
+        final resuming = short.resume();
+        await short.stop();
+        gate.complete();
+        await resuming;
+        await short.start(outputPath: testOutputPath);
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        expect(short.isRecording, isTrue, reason: 'old clock stopped it');
+        expect(autoStops, 0);
+      },
+    );
+
+    test('a second resume while one is pending runs one clock', () async {
+      final short = RecordAudioRecorderService(
+        recorder: fakeRecorder,
+        maxDuration: const Duration(milliseconds: 300),
+      );
+      addTearDown(short.dispose);
+      var autoStops = 0;
+      short.onAutoStopped = (_) => autoStops += 1;
+      await short.start(outputPath: testOutputPath);
+      await short.pause();
+      final gate = fakeRecorder.resumeGate = Completer<void>();
+      final first = short.resume();
+      final second = short.resume();
+      gate.complete();
+      await Future.wait([first, second]);
+      expect(fakeRecorder.resumeCalls, 1);
+      final ticks = <Duration>[];
+      final sub = short.durationStream.listen(ticks.add);
+      addTearDown(sub.cancel);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(ticks.length, lessThan(4), reason: 'one ticker, 100 ms apart');
+      await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(autoStops, 1);
     });
 
