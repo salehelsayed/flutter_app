@@ -140,6 +140,7 @@ void main() {
     Future<YouPageData> Function(int historyLimit)? paged,
     Future<YouPageData> Function(int historyLimit, String? tag)? tagged,
     DateTime Function()? now,
+    Stream<String> replies = const Stream.empty(),
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -155,6 +156,7 @@ void main() {
             composeCalls++;
             composeTags.add(tag);
           },
+          thoughtReplies: replies,
         ),
       ),
     );
@@ -338,11 +340,15 @@ void main() {
     );
     late List<String?> loadedTags;
 
-    Future<void> pumpTagged(WidgetTester tester) {
+    Future<void> pumpTagged(
+      WidgetTester tester, {
+      Stream<String> replies = const Stream.empty(),
+    }) {
       loadedTags = [];
       return pumpPage(
         tester,
         null,
+        replies: replies,
         tagged: (_, tag) async {
           loadedTags.add(tag);
           return tag == 'walks'
@@ -415,6 +421,61 @@ void main() {
       expect(find.byKey(const ValueKey('you-tag-bar')), findsNothing);
       expect(find.byKey(const ValueKey('you-thought-post-rain')), findsOne);
       expect(find.byKey(const ValueKey('you-thought-post-1')), findsOne);
+    });
+
+    testWidgets('in a tag view only a reply to a shown thought reloads', (
+      tester,
+    ) async {
+      final replies = StreamController<String>.broadcast();
+      addTearDown(replies.close);
+      await pumpTagged(tester, replies: replies.stream);
+      await tester.tap(
+        _inCard('post-river', find.byKey(const ValueKey('you-tag-walks'))),
+      );
+      await tester.pumpAndSettle();
+      expect(loadedTags, [null, 'walks']);
+
+      replies.add('post-1');
+      await tester.pumpAndSettle();
+      expect(loadedTags, [null, 'walks']);
+
+      replies.add('post-river');
+      await tester.pumpAndSettle();
+      expect(loadedTags, [null, 'walks', 'walks']);
+    });
+
+    testWidgets('a long tag keeps its X and count inside a phone screen', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final key = 'a' * 80;
+      final long = _past('post-long', 'long #$key', const Duration(days: 1));
+      await pumpPage(
+        tester,
+        null,
+        tagged: (_, tag) async => tag == null
+            ? _data(past: [long])
+            : _data(past: [long], tag: key, tagCount: 1),
+      );
+      await tester.tap(
+        _inCard('post-long', find.byKey(ValueKey('you-tag-$key'))),
+      );
+      await tester.pumpAndSettle();
+
+      final bar = tester.getRect(find.byKey(const ValueKey('you-tag-bar')));
+      final clear = tester.getRect(
+        find.descendant(
+          of: find.byKey(const ValueKey('you-tag-clear')),
+          matching: find.byIcon(Icons.close),
+        ),
+      );
+      final count = tester.getRect(find.text('1 thought'));
+      expect(bar.width, 390);
+      expect(clear.right, lessThanOrEqualTo(bar.right));
+      expect(count.right, lessThanOrEqualTo(bar.right));
+      expect(clear.right, lessThan(count.left));
     });
 
     testWidgets('one thought with the tag reads 1 thought', (tester) async {

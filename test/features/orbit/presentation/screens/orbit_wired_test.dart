@@ -118,6 +118,7 @@ import 'package:flutter_app/features/conversation/presentation/screens/conversat
 import '../../../../core/bridge/fake_bridge.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../../core/services/fake_p2p_service.dart';
+import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../../shared/fakes/ed25519_contact_request_crypto.dart';
 import '../../../../shared/fakes/fake_group_dissolve_preflight.dart';
@@ -1948,6 +1949,93 @@ void main() {
         await finishThoughtCase(tester);
       },
     );
+
+    testWidgets('a voice note removed from a tag-started draft stays removed', (
+      tester,
+    ) async {
+      debugYouPageEnabledOverride = true;
+      addTearDown(() => debugYouPageEnabledOverride = null);
+      setLargeTestSurface(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([testContact]);
+      final recorder = FakeAudioRecorderService()
+        ..fakeOutputPath = '/tmp/kept.m4a'
+        ..fakeDurationMs = 4000;
+      addTearDown(recorder.dispose);
+      final posts = _OrbitThoughtPostRepository();
+      addTearDown(posts.dispose);
+      await posts.savePost(
+        thought('you-live', text: 'Morning #walks').copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        ),
+      );
+
+      await tester.pumpWidget(
+        buildOrbitWired(
+          postRepository: posts,
+          thoughtNowProvider: () => thoughtNow,
+          audioRecorderService: recorder,
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(find.byKey(const ValueKey('orbit-compose-thought')));
+      await pumpOrbitFrames(tester, count: 6);
+      await tester.tap(find.byTooltip('Voice'));
+      await tester.pump();
+      recorder.emitAmplitude(0.4);
+      await recorder.triggerAutoStop();
+      await tester.pump();
+      expect(find.text('Voice attached'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+
+      await tester.tap(find.byKey(const ValueKey('orbit-center-self-avatar')));
+      await pumpOrbitFrames(tester, count: 8);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('you-thought-you-live')),
+          matching: find.byKey(const ValueKey('you-tag-walks')),
+        ),
+      );
+      await pumpOrbitFrames(tester, count: 8);
+      Future<void> openTagComposer() async {
+        await tester.tap(find.byKey(const ValueKey('you-composer')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ComposePostSheet), findsOneWidget);
+      }
+
+      await openTagComposer();
+      expect(find.text('Voice attached'), findsOneWidget);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(ComposePostSheet),
+          matching: find.byIcon(Icons.close_rounded),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Voice attached'), findsNothing);
+      await tester.binding.handlePopRoute();
+      await pumpOrbitFrames(tester, count: 6);
+
+      await openTagComposer();
+      expect(find.text('Voice attached'), findsNothing);
+      expect(
+        tester
+            .widget<TextField>(
+              find.descendant(
+                of: find.byType(ComposePostSheet),
+                matching: find.byType(TextField),
+              ),
+            )
+            .controller!
+            .text,
+        '#walks ',
+      );
+      await finishThoughtCase(tester);
+    });
 
     testWidgets('deleting the own thought from its card clears the self note', (
       tester,
