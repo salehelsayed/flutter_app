@@ -43,8 +43,13 @@ class _FakeAudioRecorder implements AudioRecorder {
   int pauseCalls = 0;
   int resumeCalls = 0;
 
+  Completer<void>? pauseGate;
+
   @override
-  Future<void> pause() async => pauseCalls += 1;
+  Future<void> pause() async {
+    pauseCalls += 1;
+    await pauseGate?.future;
+  }
 
   Completer<void>? resumeGate;
 
@@ -521,6 +526,32 @@ void main() {
       addTearDown(sub.cancel);
       await Future<void>.delayed(const Duration(milliseconds: 250));
       expect(ticks.length, lessThan(4), reason: 'one ticker, 100 ms apart');
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(autoStops, 1);
+    });
+
+    test('a second pause while one is pending counts the time once', () async {
+      final short = RecordAudioRecorderService(
+        recorder: fakeRecorder,
+        maxDuration: const Duration(milliseconds: 400),
+      );
+      addTearDown(short.dispose);
+      var autoStops = 0;
+      short.onAutoStopped = (_) => autoStops += 1;
+      await short.start(outputPath: testOutputPath);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      final gate = fakeRecorder.pauseGate = Completer<void>();
+      final first = short.pause();
+      final second = short.pause();
+      gate.complete();
+      await Future.wait([first, second]);
+      expect(fakeRecorder.pauseCalls, 1);
+      expect(short.isPaused, isTrue);
+
+      await short.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(autoStops, 0, reason: 'about 250 ms of 400 were left');
+      expect(short.isRecording, isTrue);
       await Future<void>.delayed(const Duration(milliseconds: 300));
       expect(autoStops, 1);
     });
