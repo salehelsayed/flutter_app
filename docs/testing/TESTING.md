@@ -4209,7 +4209,10 @@ feed, so it does not remove already-expired stored own history.
 
 Photo sources accepted by the Orbit composer (or `PostsWired` when supplied its
 optional media manager) are copied into the existing owned `post_media`
-directory before the Thought is saved. Recovery stores the portable
+directory before the Thought is saved. After durable acceptance, only regular
+composer-generated `thought_framed_<digits>.jpg` files directly under system
+temporary storage are released. Arbitrary picker/gallery inputs and failed
+acceptance sources remain intact. Recovery stores the portable
 path, and live retries resolve it through `MediaFileManager`. Delivery expiry
 must exclude upload work without deleting the author's retained source; late
 upload completion or failure must also preserve it when `getPost` hides the
@@ -4219,7 +4222,8 @@ Thoughts with no completed attachments; You-page thumbnails use that local-only
 projection, which is absent from persisted/wire post maps. Completed attachments
 take precedence. The repository, background-send, delivery-rule, restart,
 feed-hydration and You-page tests plus the actual Orbit-to-You regression cover
-these boundaries. On the landed history/hashtag base the 76 focused cases pass;
+these boundaries. On the landed history/hashtag base the 88 focused cases pass,
+including generated-source ownership and residual account-erasure checks;
 the exact Orbit regression also passes, following the live card into history.
 Original causal REDs, the corrected missing-input fixture failure, and stable-source receipts
 are retained in `.codex-test-logs/thought-photo-upload-retry-131/`. These are host
@@ -12103,7 +12107,10 @@ database and secure keys. It removes the canonical media/avatar, pending-upload,
 local/post media, ciphertext custody and migration-staging roots, application
 cache contents, and the bounded media artifacts in temporary/external-files
 storage. Application cache comes from the package-specific cache API; shared
-desktop temporary roots are never cleared wholesale. Directory-root symlinks
+desktop temporary roots are never cleared wholesale. Generated-photo cleanup
+selects only regular `thought_framed_<digits>.jpg` files at a supplied temporary
+root; nested files, non-file lookalikes and arbitrary gallery inputs survive.
+Directory-root symlinks
 are rejected, nested links do not authorize outside deletion, deletion is read
 back, and a media/database cleanup failure preserves the database key and
 retired-account authority and reaches the existing failure UI. Only the blocked-account screen exposes

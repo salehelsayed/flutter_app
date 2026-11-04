@@ -73,6 +73,9 @@ Future<void> eraseAccountMedia({
         await _eraseDirectory(Directory(entry.path));
       } else if (RegExp(r'^voice_[0-9]+\.m4a$').hasMatch(name)) {
         await _eraseEntry(entry);
+      } else if (entry is File &&
+          RegExp(r'^thought_framed_[0-9]+\.jpg$').hasMatch(name)) {
+        await _eraseEntry(entry);
       }
     }
   }

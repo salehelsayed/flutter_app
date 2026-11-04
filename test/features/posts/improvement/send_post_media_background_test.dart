@@ -129,46 +129,49 @@ void main() {
     });
   }
 
-  test('failed durable acceptance preserves its generated framing file', () async {
-    final fixtureDir = await Directory.systemTemp.createTemp(
-      'thought-source-rejected-',
-    );
-    addTearDown(() => fixtureDir.delete(recursive: true));
-    final source = File(
-      '${Directory.systemTemp.path}/thought_framed_'
-      '${DateTime.now().microsecondsSinceEpoch}.jpg',
-    );
-    expect(await source.exists(), isFalse);
-    const sourceBytes = <int>[1, 2, 3, 4];
-    await source.writeAsBytes(sourceBytes);
-    addTearDown(() async {
-      if (await source.exists()) await source.delete();
-    });
-    final rejectedPosts = _ThrowOnPostSavePostRepository();
-    addTearDown(rejectedPosts.dispose);
+  test(
+    'failed durable acceptance preserves its generated framing file',
+    () async {
+      final fixtureDir = await Directory.systemTemp.createTemp(
+        'thought-source-rejected-',
+      );
+      addTearDown(() => fixtureDir.delete(recursive: true));
+      final source = File(
+        '${Directory.systemTemp.path}/thought_framed_'
+        '${DateTime.now().microsecondsSinceEpoch}.jpg',
+      );
+      expect(await source.exists(), isFalse);
+      const sourceBytes = <int>[1, 2, 3, 4];
+      await source.writeAsBytes(sourceBytes);
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
+      final rejectedPosts = _ThrowOnPostSavePostRepository();
+      addTearDown(rejectedPosts.dispose);
 
-    await expectLater(
-      createLocalPost(
-        postRepo: rejectedPosts,
-        contactRepo: contacts,
-        senderPeerId: 'peer-alice',
-        senderUsername: 'Alice',
-        text: 'My photo',
-        audience: PostAudience.allFriends(),
-        mediaDrafts: [
-          PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
-        ],
-        mediaFileManager: TempPostMediaFileManager(
-          '${fixtureDir.path}/documents',
+      await expectLater(
+        createLocalPost(
+          postRepo: rejectedPosts,
+          contactRepo: contacts,
+          senderPeerId: 'peer-alice',
+          senderUsername: 'Alice',
+          text: 'My photo',
+          audience: PostAudience.allFriends(),
+          mediaDrafts: [
+            PostMediaDraft(localFilePath: source.path, mime: 'image/jpeg'),
+          ],
+          mediaFileManager: TempPostMediaFileManager(
+            '${fixtureDir.path}/documents',
+          ),
         ),
-      ),
-      throwsStateError,
-    );
+        throwsStateError,
+      );
 
-    expect(await rejectedPosts.loadFeed(), isEmpty);
-    expect(await source.exists(), isTrue);
-    expect(await source.readAsBytes(), sourceBytes);
-  });
+      expect(await rejectedPosts.loadFeed(), isEmpty);
+      expect(await source.exists(), isTrue);
+      expect(await source.readAsBytes(), sourceBytes);
+    },
+  );
 
   test(
     'accepted photo stays readable after its picker source is removed',

@@ -242,14 +242,15 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
     isIncoming: false,
     deliveryStatus: 'sending',
   );
-  var storedMediaDrafts = mediaDrafts;
+  final sourceMediaDrafts = List<PostMediaDraft>.of(mediaDrafts);
+  var storedMediaDrafts = sourceMediaDrafts;
   var postSaved = false;
   try {
     if (hasMedia) {
       if (mediaFileManager != null) {
         storedMediaDrafts = await _stagePostPhotoDrafts(
           postId: post.id,
-          drafts: mediaDrafts,
+          drafts: sourceMediaDrafts,
           mediaFileManager: mediaFileManager,
         );
       }
@@ -395,6 +396,29 @@ Future<(SendPostResult, CreatedLocalPost?)> createLocalPost({
       SendPostResult.success,
       CreatedLocalPost(post: post, resolvedRecipients: resolvedRecipients),
     );
+  }
+  if (mediaFileManager != null) {
+    final framingSourcePattern = RegExp(
+      '^${RegExp.escape(Directory.systemTemp.path)}/'
+      r'thought_framed_[0-9]+\.jpg$',
+    );
+    for (final draft in sourceMediaDrafts) {
+      if (draft.kind != 'image' ||
+          !framingSourcePattern.hasMatch(draft.localFilePath)) {
+        continue;
+      }
+      try {
+        if (await FileSystemEntity.type(
+              draft.localFilePath,
+              followLinks: false,
+            ) ==
+            FileSystemEntityType.file) {
+          await File(draft.localFilePath).delete();
+        }
+      } catch (_) {
+        // The durable copy already belongs to this accepted Thought.
+      }
+    }
   }
   emitFlowEvent(
     layer: 'FL',
