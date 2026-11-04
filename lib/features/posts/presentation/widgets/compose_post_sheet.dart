@@ -20,6 +20,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/attachmen
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/shared/widgets/media/recording_overlay.dart';
 
+import 'thought_audience.dart';
 import 'thought_photo_draft_preview.dart';
 
 class ComposePostResult {
@@ -83,6 +84,9 @@ class ComposePostSheet extends StatefulWidget {
   /// The user has a thought up now, which sharing this one replaces.
   final bool replacesCurrentThought;
 
+  /// Where a Thought's "select people…" remembers its last picks.
+  final ThoughtRecentPicks? recentPicks;
+
   /// Runs once as the sheet goes away: the unshared draft, or null after a
   /// share or when nothing was left to keep.
   final ValueChanged<ComposePostResult?>? onClosed;
@@ -91,6 +95,7 @@ class ComposePostSheet extends StatefulWidget {
     super.key,
     this.thoughtsOnly = false,
     this.replacesCurrentThought = false,
+    this.recentPicks,
     required this.eligibleContacts,
     this.onSubmit,
     this.onSubmitWithOutcome,

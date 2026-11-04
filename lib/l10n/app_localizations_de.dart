@@ -207,6 +207,107 @@ class AppLocalizationsDe extends AppLocalizations {
       'Teilen ersetzt deinen aktuellen Gedanken';
 
   @override
+  String thought_audience_to_friends(int count) {
+    return 'an Freunde · $count';
+  }
+
+  @override
+  String thought_audience_to_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'an $count Personen',
+      one: 'an 1 Person',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_audience_friends => 'Freunde';
+
+  @override
+  String get thought_audience_friends_desc => 'alle in deinem Orbit';
+
+  @override
+  String get thought_audience_select => 'Personen auswählen…';
+
+  @override
+  String get thought_audience_select_desc => 'nur dieses Mal';
+
+  @override
+  String get thought_pick_title => 'Wer das sieht';
+
+  @override
+  String thought_pick_done(int count) {
+    return 'Fertig · $count';
+  }
+
+  @override
+  String get thought_pick_search => 'Jemanden finden…';
+
+  @override
+  String get thought_pick_recent => 'zuletzt gewählt';
+
+  @override
+  String thought_pick_everyone(int count) {
+    return 'alle · $count';
+  }
+
+  @override
+  String get thought_pick_footer =>
+      'nur dieser Gedanke. Es wird nichts angelegt, und niemand sieht, wer sonst gewählt wurde';
+
+  @override
+  String thought_pick_remove(String name) {
+    return '$name entfernen';
+  }
+
+  @override
+  String get thought_pick_no_match => 'niemand mit diesem Namen';
+
+  @override
+  String thought_compose_lifetime_one(String a) {
+    return '$a sieht das 24 Stunden lang';
+  }
+
+  @override
+  String thought_compose_lifetime_two(String a, String b) {
+    return '$a und $b sehen das 24 Stunden lang';
+  }
+
+  @override
+  String thought_compose_lifetime_three(String a, String b, String c) {
+    return '$a, $b und $c sehen das 24 Stunden lang';
+  }
+
+  @override
+  String thought_compose_lifetime_more(String a, String b, int count) {
+    return '$a, $b und $count weitere sehen das 24 Stunden lang';
+  }
+
+  @override
+  String you_page_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count Personen',
+      one: '1 Person',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String you_page_live_people(int count, int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'noch für $count Personen da · weg in $hours Std.',
+      one: 'noch für 1 Person da · weg in $hours Std.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get orbit_intro_spread_title =>
       'Auseinanderziehen, um Gedanken zu zeigen';
 

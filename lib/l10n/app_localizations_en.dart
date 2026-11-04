@@ -201,6 +201,107 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sharing replaces the thought you have up now';
 
   @override
+  String thought_audience_to_friends(int count) {
+    return 'to friends · $count';
+  }
+
+  @override
+  String thought_audience_to_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'to $count people',
+      one: 'to 1 person',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_audience_friends => 'friends';
+
+  @override
+  String get thought_audience_friends_desc => 'everyone in your orbit';
+
+  @override
+  String get thought_audience_select => 'select people…';
+
+  @override
+  String get thought_audience_select_desc => 'just this once';
+
+  @override
+  String get thought_pick_title => 'Who sees this';
+
+  @override
+  String thought_pick_done(int count) {
+    return 'Done · $count';
+  }
+
+  @override
+  String get thought_pick_search => 'find someone…';
+
+  @override
+  String get thought_pick_recent => 'recent picks';
+
+  @override
+  String thought_pick_everyone(int count) {
+    return 'everyone · $count';
+  }
+
+  @override
+  String get thought_pick_footer =>
+      'just this thought. nothing is created, nobody sees who else was picked';
+
+  @override
+  String thought_pick_remove(String name) {
+    return 'Remove $name';
+  }
+
+  @override
+  String get thought_pick_no_match => 'no one by that name';
+
+  @override
+  String thought_compose_lifetime_one(String a) {
+    return '$a sees this for 24 hours';
+  }
+
+  @override
+  String thought_compose_lifetime_two(String a, String b) {
+    return '$a and $b see this for 24 hours';
+  }
+
+  @override
+  String thought_compose_lifetime_three(String a, String b, String c) {
+    return '$a, $b and $c see this for 24 hours';
+  }
+
+  @override
+  String thought_compose_lifetime_more(String a, String b, int count) {
+    return '$a, $b and $count others see this for 24 hours';
+  }
+
+  @override
+  String you_page_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count people',
+      one: '1 person',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String you_page_live_people(int count, int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'still up for $count people · gone in $hours h',
+      one: 'still up for 1 person · gone in $hours h',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get orbit_intro_spread_title => 'Spread to show thoughts';
 
   @override

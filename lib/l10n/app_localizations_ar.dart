@@ -196,6 +196,113 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_replaces => 'المشاركة تستبدل خاطرتك الحالية';
 
   @override
+  String thought_audience_to_friends(int count) {
+    return 'إلى الأصدقاء · $count';
+  }
+
+  @override
+  String thought_audience_to_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'إلى $count شخصًا',
+      few: 'إلى $count أشخاص',
+      two: 'إلى شخصين',
+      one: 'إلى شخص واحد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get thought_audience_friends => 'الأصدقاء';
+
+  @override
+  String get thought_audience_friends_desc => 'كل من في مدارك';
+
+  @override
+  String get thought_audience_select => 'اختر أشخاصًا…';
+
+  @override
+  String get thought_audience_select_desc => 'هذه المرة فقط';
+
+  @override
+  String get thought_pick_title => 'من يرى هذا';
+
+  @override
+  String thought_pick_done(int count) {
+    return 'تم · $count';
+  }
+
+  @override
+  String get thought_pick_search => 'ابحث عن شخص…';
+
+  @override
+  String get thought_pick_recent => 'اختيارات سابقة';
+
+  @override
+  String thought_pick_everyone(int count) {
+    return 'الجميع · $count';
+  }
+
+  @override
+  String get thought_pick_footer =>
+      'لهذه الخاطرة فقط. لا يُنشأ شيء، ولا يرى أحد من اختير غيره';
+
+  @override
+  String thought_pick_remove(String name) {
+    return 'إزالة $name';
+  }
+
+  @override
+  String get thought_pick_no_match => 'لا أحد بهذا الاسم';
+
+  @override
+  String thought_compose_lifetime_one(String a) {
+    return 'يرى $a هذه الخاطرة لمدة 24 ساعة';
+  }
+
+  @override
+  String thought_compose_lifetime_two(String a, String b) {
+    return 'يرى $a و$b هذه الخاطرة لمدة 24 ساعة';
+  }
+
+  @override
+  String thought_compose_lifetime_three(String a, String b, String c) {
+    return 'يرى $a و$b و$c هذه الخاطرة لمدة 24 ساعة';
+  }
+
+  @override
+  String thought_compose_lifetime_more(String a, String b, int count) {
+    return 'يرى $a و$b و$count آخرون هذه الخاطرة لمدة 24 ساعة';
+  }
+
+  @override
+  String you_page_people(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count شخصًا',
+      few: '$count أشخاص',
+      two: 'شخصان',
+      one: 'شخص واحد',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String you_page_live_people(int count, int hours) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'ما زالت لـ$count شخصًا · تختفي بعد $hours س',
+      few: 'ما زالت لـ$count أشخاص · تختفي بعد $hours س',
+      two: 'ما زالت لشخصين · تختفي بعد $hours س',
+      one: 'ما زالت لشخص واحد · تختفي بعد $hours س',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get orbit_intro_spread_title => 'باعد بإصبعيك لإظهار الخواطر';
 
   @override
