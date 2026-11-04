@@ -137,7 +137,6 @@ import 'package:flutter_app/features/posts/application/attach_post_media_use_cas
     show prepareCreatedLocalPostMedia;
 import 'package:flutter_app/features/posts/application/post_delivery_runner.dart'
     show PostDeliveryRunner;
-import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/presentation/pick_post_media_drafts.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/compose_post_sheet.dart';
 import 'package:flutter_app/features/posts/presentation/widgets/thought_audience.dart';
