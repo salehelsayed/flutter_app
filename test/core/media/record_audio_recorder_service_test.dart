@@ -40,6 +40,15 @@ class _FakeAudioRecorder implements AudioRecorder {
     return stopReturnsPath;
   }
 
+  int pauseCalls = 0;
+  int resumeCalls = 0;
+
+  @override
+  Future<void> pause() async => pauseCalls += 1;
+
+  @override
+  Future<void> resume() async => resumeCalls += 1;
+
   @override
   Future<void> dispose() async {}
 
@@ -374,6 +383,65 @@ void main() {
 
       expect(UploadWakeLockController.debugActiveHolds, 0);
       expect(fakeDriver.enableCalls, fakeDriver.disableCalls);
+    });
+  });
+
+  group('pause and resume', () {
+    test('pause and resume reach the recorder; the mic stays held', () async {
+      await service.start(outputPath: testOutputPath);
+
+      await service.pause();
+      expect(fakeRecorder.pauseCalls, 1);
+      expect(service.isPaused, isTrue);
+      expect(service.isRecording, isTrue);
+      expect(UploadWakeLockController.debugActiveHolds, 1);
+
+      await service.resume();
+      expect(fakeRecorder.resumeCalls, 1);
+      expect(service.isPaused, isFalse);
+    });
+
+    test('the clock stops while paused', () async {
+      await service.start(outputPath: testOutputPath);
+      final ticks = <Duration>[];
+      final sub = service.durationStream.listen(ticks.add);
+      addTearDown(sub.cancel);
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await service.pause();
+      final pausedAt = ticks.last;
+      final count = ticks.length;
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(ticks.length, count);
+
+      await service.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      expect(ticks.last - pausedAt, lessThan(const Duration(milliseconds: 400)));
+    });
+
+    test('a pause holds off the auto-stop by the time it lasted', () async {
+      final short = RecordAudioRecorderService(
+        recorder: fakeRecorder,
+        maxDuration: const Duration(milliseconds: 300),
+      );
+      addTearDown(short.dispose);
+      var autoStops = 0;
+      short.onAutoStopped = (_) => autoStops += 1;
+      await short.start(outputPath: testOutputPath);
+      await short.pause();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(autoStops, 0);
+
+      await short.resume();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(autoStops, 1);
+    });
+
+    test('pause and resume before start do nothing', () async {
+      await service.pause();
+      await service.resume();
+      expect(fakeRecorder.pauseCalls, 0);
+      expect(fakeRecorder.resumeCalls, 0);
     });
   });
 }
