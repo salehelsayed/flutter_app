@@ -22,6 +22,7 @@ PostModel _post({
   String text = 'first coffee on the balcony',
   Duration age = const Duration(hours: 5),
   Duration left = const Duration(hours: 18, minutes: 10),
+  PostAudience? audience,
 }) => PostModel(
   id: id,
   eventId: 'event-$id',
@@ -29,7 +30,7 @@ PostModel _post({
   authorPeerId: 'me',
   authorUsername: 'Saleh',
   text: text,
-  audience: PostAudience.allFriends(),
+  audience: audience ?? PostAudience.allFriends(),
   createdAt: _now.subtract(age).toIso8601String(),
   visibleAt: _now.subtract(age).toIso8601String(),
   expiresAt: _now.add(left).toIso8601String(),
@@ -62,8 +63,9 @@ YouThought _thought({
   bool reactions = true,
   bool wroteBack = true,
   Duration left = const Duration(hours: 18, minutes: 10),
+  PostAudience? audience,
 }) => YouThought(
-  post: _post(left: left),
+  post: _post(left: left, audience: audience),
   reactions: reactions
       ? [
           (
@@ -197,6 +199,24 @@ void main() {
     await pumpPage(tester, () async => _data(thought: _thought()));
 
     expect(find.text('still up for friends · gone in 19 h'), findsOneWidget);
+  });
+
+  testWidgets('a thought for picked people says how many see it', (
+    tester,
+  ) async {
+    await pumpPage(
+      tester,
+      () async => _data(
+        thought: _thought(
+          audience: PostAudience.pickPeople(['omar', 'nour', 'layla']),
+        ),
+      ),
+    );
+
+    expect(find.text('3 people'), findsOneWidget);
+    expect(find.text('still up for 3 people · gone in 19 h'), findsOneWidget);
+    expect(find.text('All Friends'), findsNothing);
+    expect(find.textContaining('for friends'), findsNothing);
   });
 
   testWidgets('tapping a wrote-back face opens that chat', (tester) async {
