@@ -1087,7 +1087,8 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
                 listEquals(
                   [for (final media in draft.mediaDrafts) media.localFilePath],
                   [for (final media in start!.mediaDrafts) media.localFilePath],
-                );
+                ) &&
+                mapEquals(draft.photoFramings, start.photoFramings);
             _thoughtDraft = untouched ? kept : draft;
             handedBack = _thoughtDraft;
             closed.complete();
