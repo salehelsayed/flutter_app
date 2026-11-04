@@ -2103,7 +2103,7 @@ void main() {
       recorder.emitAmplitude(0.4);
       await recorder.triggerAutoStop();
       await tester.pump();
-      expect(find.text('Voice attached'), findsOneWidget);
+      expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
       await tester.binding.handlePopRoute();
       await pumpOrbitFrames(tester, count: 6);
 
@@ -2123,20 +2123,15 @@ void main() {
       }
 
       await openTagComposer();
-      expect(find.text('Voice attached'), findsOneWidget);
-      await tester.tap(
-        find.descendant(
-          of: find.byType(ComposePostSheet),
-          matching: find.byIcon(Icons.close_rounded),
-        ),
-      );
+      expect(find.byKey(const ValueKey('thought-voice-card')), findsOneWidget);
+      await tester.tap(find.byTooltip('Remove voice note'));
       await tester.pump();
-      expect(find.text('Voice attached'), findsNothing);
+      expect(find.byKey(const ValueKey('thought-voice-card')), findsNothing);
       await tester.binding.handlePopRoute();
       await pumpOrbitFrames(tester, count: 6);
 
       await openTagComposer();
-      expect(find.text('Voice attached'), findsNothing);
+      expect(find.byKey(const ValueKey('thought-voice-card')), findsNothing);
       expect(
         tester
             .widget<TextField>(
