@@ -747,8 +747,8 @@ verify_built_products() {
     assert_shared_entitlements "$RUNNER_ENTITLEMENTS" '$(MKNOON_VOIP_ENVIRONMENT)'
     assert_shared_entitlements "$NSE_ENTITLEMENTS" production
     cmp \
-      <(plutil -convert json -o - "$RUNNER_ENTITLEMENTS" | jq -S 'del(.["aps-environment"])') \
-      <(plutil -convert json -o - "$NSE_ENTITLEMENTS" | jq -S 'del(.["aps-environment"])')
+      <(plutil -convert json -o - "$RUNNER_ENTITLEMENTS" | jq -S 'del(.["aps-environment"], .["com.apple.developer.kernel.increased-memory-limit"])') \
+      <(plutil -convert json -o - "$NSE_ENTITLEMENTS" | jq -S 'del(.["aps-environment"], .["com.apple.developer.kernel.increased-memory-limit"])')
     python3 - "$IOS_PROJECT" <<'PY'
 import json
 import subprocess
