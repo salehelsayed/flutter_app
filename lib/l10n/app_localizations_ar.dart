@@ -196,6 +196,27 @@ class AppLocalizationsAr extends AppLocalizations {
   String get thought_compose_replaces => 'المشاركة تستبدل خاطرتك الحالية';
 
   @override
+  String get thought_compose_hint => 'قل شيئًا، أو تحدّث فقط';
+
+  @override
+  String get thought_voice_recording => 'جارٍ التسجيل';
+
+  @override
+  String get thought_voice_limit => 'حتى 3 دقائق · يمكنك الكتابة بعدها';
+
+  @override
+  String get thought_voice_pause => 'إيقاف مؤقت';
+
+  @override
+  String get thought_voice_resume => 'متابعة';
+
+  @override
+  String get thought_voice_caption_hint => 'أضف تعليقًا…';
+
+  @override
+  String get thought_voice_remove => 'إزالة الرسالة الصوتية';
+
+  @override
   String thought_audience_to_friends(int count) {
     return 'إلى الأصدقاء · $count';
   }

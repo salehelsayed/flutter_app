@@ -454,6 +454,48 @@ abstract class AppLocalizations {
   /// **'Sharing replaces the thought you have up now'**
   String get thought_compose_replaces;
 
+  /// No description provided for @thought_compose_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'say something, or just talk'**
+  String get thought_compose_hint;
+
+  /// No description provided for @thought_voice_recording.
+  ///
+  /// In en, this message translates to:
+  /// **'recording'**
+  String get thought_voice_recording;
+
+  /// No description provided for @thought_voice_limit.
+  ///
+  /// In en, this message translates to:
+  /// **'up to 3 min · you can write after'**
+  String get thought_voice_limit;
+
+  /// No description provided for @thought_voice_pause.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get thought_voice_pause;
+
+  /// No description provided for @thought_voice_resume.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume'**
+  String get thought_voice_resume;
+
+  /// No description provided for @thought_voice_caption_hint.
+  ///
+  /// In en, this message translates to:
+  /// **'add a caption…'**
+  String get thought_voice_caption_hint;
+
+  /// No description provided for @thought_voice_remove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove voice note'**
+  String get thought_voice_remove;
+
   /// No description provided for @thought_audience_to_friends.
   ///
   /// In en, this message translates to:

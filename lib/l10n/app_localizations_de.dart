@@ -207,6 +207,28 @@ class AppLocalizationsDe extends AppLocalizations {
       'Teilen ersetzt deinen aktuellen Gedanken';
 
   @override
+  String get thought_compose_hint => 'Sag etwas oder sprich einfach';
+
+  @override
+  String get thought_voice_recording => 'Aufnahme';
+
+  @override
+  String get thought_voice_limit =>
+      'bis zu 3 Min. · schreiben kannst du danach';
+
+  @override
+  String get thought_voice_pause => 'Pause';
+
+  @override
+  String get thought_voice_resume => 'Weiter';
+
+  @override
+  String get thought_voice_caption_hint => 'Beschreibung hinzufügen…';
+
+  @override
+  String get thought_voice_remove => 'Sprachnachricht entfernen';
+
+  @override
   String thought_audience_to_friends(int count) {
     return 'an Freunde · $count';
   }

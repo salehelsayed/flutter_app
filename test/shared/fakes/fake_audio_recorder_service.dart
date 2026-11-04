@@ -2,7 +2,8 @@ import 'dart:async';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
-class FakeAudioRecorderService implements AudioRecorderService {
+class FakeAudioRecorderService
+    implements AudioRecorderService, PausableAudioRecorder {
   @override
   void Function(AudioRecording? recording)? onAutoStopped;
 
@@ -111,6 +112,25 @@ class FakeAudioRecorderService implements AudioRecorderService {
       deletedPaths.add(_currentOutputPath!);
     }
     _currentOutputPath = null;
+  }
+
+  bool _paused = false;
+  int pauseCallCount = 0;
+  int resumeCallCount = 0;
+
+  @override
+  bool get isPaused => _paused;
+
+  @override
+  Future<void> pause() async {
+    pauseCallCount++;
+    if (_isRecording) _paused = true;
+  }
+
+  @override
+  Future<void> resume() async {
+    resumeCallCount++;
+    _paused = false;
   }
 
   /// Simulates the production max-duration auto-stop: stops the active

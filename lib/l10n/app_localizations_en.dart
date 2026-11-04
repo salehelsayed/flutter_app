@@ -201,6 +201,27 @@ class AppLocalizationsEn extends AppLocalizations {
       'Sharing replaces the thought you have up now';
 
   @override
+  String get thought_compose_hint => 'say something, or just talk';
+
+  @override
+  String get thought_voice_recording => 'recording';
+
+  @override
+  String get thought_voice_limit => 'up to 3 min · you can write after';
+
+  @override
+  String get thought_voice_pause => 'Pause';
+
+  @override
+  String get thought_voice_resume => 'Resume';
+
+  @override
+  String get thought_voice_caption_hint => 'add a caption…';
+
+  @override
+  String get thought_voice_remove => 'Remove voice note';
+
+  @override
   String thought_audience_to_friends(int count) {
     return 'to friends · $count';
   }
