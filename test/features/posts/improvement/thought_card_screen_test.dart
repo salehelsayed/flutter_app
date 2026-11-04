@@ -184,6 +184,38 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets("a friend's tags are set in the tag type and cannot be tapped", (
+    tester,
+  ) async {
+    final thought = _thought(
+      initialNow,
+    ).copyWith(text: 'river walk #Walks with #مشي');
+    await posts.savePost(thought);
+
+    await openCard(tester, thought);
+    await tester.pumpAndSettle();
+
+    final tags = <TextSpan>[];
+    for (final rich in tester.widgetList<RichText>(find.byType(RichText))) {
+      rich.text.visitChildren((span) {
+        if (span is TextSpan && (span.text ?? '').startsWith('#')) {
+          tags.add(span);
+        }
+        return true;
+      });
+    }
+    expect(tags.map((span) => span.text), ['#Walks', '#مشي']);
+    for (final span in tags) {
+      expect(span.style?.fontFamily, 'Menlo');
+      expect(span.recognizer, isNull);
+    }
+    expect(
+      find.text('river walk #Walks with #مشي', findRichText: true),
+      findsOneWidget,
+    );
+    await finish(tester);
+  });
+
   testWidgets('the own card still shows Seen by and Delete', (tester) async {
     final mine = _thought(initialNow).copyWith(
       senderPeerId: 'local-peer',

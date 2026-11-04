@@ -85,14 +85,20 @@ YouThought _thought({
       : const [],
 );
 
-YouPageData _data({YouThought? thought, List<YouThought> past = const []}) =>
-    YouPageData(
-      username: 'Saleh',
-      avatarBytes: null,
-      friendCount: 41,
-      thought: thought,
-      past: past,
-    );
+YouPageData _data({
+  YouThought? thought,
+  List<YouThought> past = const [],
+  String? tag,
+  int tagCount = 0,
+}) => YouPageData(
+  username: 'Saleh',
+  avatarBytes: null,
+  friendCount: 41,
+  thought: thought,
+  past: past,
+  tag: tag,
+  tagCount: tagCount,
+);
 
 Finder _keysStartingWith(String prefix) => find.byWidgetPredicate(
   (widget) =>
@@ -118,11 +124,13 @@ PostMediaAttachmentModel _media(String id, String kind, int position) =>
 void main() {
   late List<String> openedChats;
   late int composeCalls;
+  late List<String?> composeTags;
   late int backCalls;
 
   setUp(() {
     openedChats = [];
     composeCalls = 0;
+    composeTags = [];
     backCalls = 0;
   });
 
@@ -130,6 +138,7 @@ void main() {
     WidgetTester tester,
     Future<YouPageData> Function()? load, {
     Future<YouPageData> Function(int historyLimit)? paged,
+    Future<YouPageData> Function(int historyLimit, String? tag)? tagged,
     DateTime Function()? now,
   }) async {
     await tester.pumpWidget(
@@ -138,11 +147,16 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
-          load: paged ?? (_) => load!(),
+          load:
+              tagged ??
+              (limit, _) => paged != null ? paged(limit) : load!(),
           now: now ?? () => _now,
           onBack: () => backCalls++,
           onOpenChat: (peerId) async => openedChats.add(peerId),
-          onCompose: () async => composeCalls++,
+          onCompose: (tag) async {
+            composeCalls++;
+            composeTags.add(tag);
+          },
         ),
       ),
     );
@@ -276,7 +290,7 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: YouPageScreen(
-          load: (_) async {
+          load: (_, _) async {
             loads++;
             return _data(
               thought: _thought(),
@@ -286,7 +300,7 @@ void main() {
           now: () => _now,
           onBack: () {},
           onOpenChat: (_) async {},
-          onCompose: () async {},
+          onCompose: (_) async {},
           thoughtReplies: replies.stream,
         ),
       ),
@@ -305,6 +319,154 @@ void main() {
     replies.add('post-1');
     await tester.pumpAndSettle();
     expect(loads, 3);
+  });
+
+  group('tags', () {
+    final live = _past(
+      'post-1',
+      'first coffee #Mornings',
+      const Duration(hours: 2),
+    );
+    final river = _past(
+      'post-river',
+      'walk by the river #walks',
+      const Duration(days: 1),
+    );
+    final rain = _past('post-rain', 'rain again', const Duration(days: 2));
+    final falls = _past(
+      'post-falls',
+      'sunset at the falls #Walks',
+      const Duration(days: 3),
+    );
+    late List<String?> loadedTags;
+
+    Future<void> pumpTagged(WidgetTester tester) {
+      loadedTags = [];
+      return pumpPage(
+        tester,
+        null,
+        tagged: (_, tag) async {
+          loadedTags.add(tag);
+          return tag == 'walks'
+              ? _data(
+                  thought: live,
+                  past: [river, falls],
+                  tag: 'walks',
+                  tagCount: 2,
+                )
+              : _data(thought: live, past: [river, rain, falls]);
+        },
+      );
+    }
+
+    Text tagIn(WidgetTester tester, String postId, String key) =>
+        tester.widget<Text>(
+          _inCard(postId, find.byKey(ValueKey('you-tag-$key'))),
+        );
+
+    testWidgets('a tag in your own thought is set in the tag type', (
+      tester,
+    ) async {
+      await pumpTagged(tester);
+
+      expect(tagIn(tester, 'post-river', 'walks').style?.fontFamily, 'Menlo');
+      expect(tagIn(tester, 'post-1', 'mornings').style?.fontFamily, 'Menlo');
+      expect(tagIn(tester, 'post-falls', 'walks').data, '#Walks');
+    });
+
+    testWidgets('tapping a tag shows only your thoughts with it, with a bar', (
+      tester,
+    ) async {
+      await pumpTagged(tester);
+      expect(find.byKey(const ValueKey('you-tag-bar')), findsNothing);
+
+      await tester.tap(
+        _inCard('post-river', find.byKey(const ValueKey('you-tag-walks'))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(loadedTags, [null, 'walks']);
+      final bar = find.byKey(const ValueKey('you-tag-bar'));
+      expect(
+        find.descendant(of: bar, matching: find.text('#walks')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: bar, matching: find.text('2 thoughts')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: bar, matching: find.text('only you see this')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('you-thought-post-river')), findsOne);
+      expect(find.byKey(const ValueKey('you-thought-post-falls')), findsOne);
+      expect(find.byKey(const ValueKey('you-thought-post-rain')), findsNothing);
+      expect(find.byKey(const ValueKey('you-thought-post-1')), findsNothing);
+    });
+
+    testWidgets('the clear X goes back to all your thoughts', (tester) async {
+      await pumpTagged(tester);
+      await tester.tap(
+        _inCard('post-river', find.byKey(const ValueKey('you-tag-walks'))),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('you-tag-clear')));
+      await tester.pumpAndSettle();
+
+      expect(loadedTags, [null, 'walks', null]);
+      expect(find.byKey(const ValueKey('you-tag-bar')), findsNothing);
+      expect(find.byKey(const ValueKey('you-thought-post-rain')), findsOne);
+      expect(find.byKey(const ValueKey('you-thought-post-1')), findsOne);
+    });
+
+    testWidgets('one thought with the tag reads 1 thought', (tester) async {
+      await pumpPage(
+        tester,
+        null,
+        tagged: (_, tag) async => tag == null
+            ? _data(past: [river, rain])
+            : _data(past: [river], tag: 'walks', tagCount: 1),
+      );
+      await tester.tap(
+        _inCard('post-river', find.byKey(const ValueKey('you-tag-walks'))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 thought'), findsOneWidget);
+    });
+
+    testWidgets('the composer adds the next thought to the tag', (
+      tester,
+    ) async {
+      await pumpTagged(tester);
+      await tester.tap(
+        _inCard('post-river', find.byKey(const ValueKey('you-tag-walks'))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('you-composer')),
+          matching: find.text('add to #walks'),
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await tester.pumpAndSettle();
+
+      expect(composeTags, ['#walks']);
+      expect(find.byKey(const ValueKey('you-tag-bar')), findsOneWidget);
+    });
+
+    testWidgets('without a tag the composer opens empty', (tester) async {
+      await pumpTagged(tester);
+      await tester.tap(find.byKey(const ValueKey('you-composer')));
+      await tester.pumpAndSettle();
+
+      expect(composeTags, [null]);
+    });
   });
 
   testWidgets('a thought with an hour or less left reads 1 h', (tester) async {

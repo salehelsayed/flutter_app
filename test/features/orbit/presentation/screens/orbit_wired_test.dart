@@ -1856,6 +1856,90 @@ void main() {
       },
     );
 
+    testWidgets(
+      'a tag on the You page counts your live and past thoughts with it and '
+      'starts the next one with it',
+      (tester) async {
+        debugYouPageEnabledOverride = true;
+        addTearDown(() => debugYouPageEnabledOverride = null);
+        setLargeTestSurface(tester);
+        identityRepo.seed(testIdentity);
+        contactRepo.seed([testContact]);
+        final posts = _OrbitThoughtPostRepository();
+        addTearDown(posts.dispose);
+        PostModel own(String id, String text, Duration age) => thought(
+          id,
+          text: text,
+          age: age,
+          expiresAt: thoughtNow.subtract(age).add(const Duration(hours: 24)),
+        ).copyWith(
+          senderPeerId: testIdentity.peerId,
+          authorPeerId: testIdentity.peerId,
+          authorUsername: testIdentity.username,
+          isIncoming: false,
+        );
+        await posts.savePost(own('you-live', 'Morning #walks', Duration.zero));
+        await posts.savePost(
+          own('you-river', 'River #Walks', const Duration(days: 1)),
+        );
+        await posts.savePost(
+          own('you-rain', 'Rain again', const Duration(days: 2)),
+        );
+        await posts.savePost(
+          thought(
+            'friend-old',
+            text: 'Their #walks',
+            age: const Duration(days: 1),
+            expiresAt: thoughtNow.subtract(const Duration(hours: 1)),
+          ),
+        );
+
+        await tester.pumpWidget(
+          buildOrbitWired(
+            postRepository: posts,
+            thoughtNowProvider: () => thoughtNow,
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.byKey(const ValueKey('orbit-center-self-avatar')),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+        await tester.tap(
+          find.descendant(
+            of: find.byKey(const ValueKey('you-thought-you-live')),
+            matching: find.byKey(const ValueKey('you-tag-walks')),
+          ),
+        );
+        await pumpOrbitFrames(tester, count: 8);
+
+        expect(find.text('2 thoughts'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('you-thought-you-river')),
+          findsOneWidget,
+        );
+        expect(find.byKey(const ValueKey('you-thought-you-rain')), findsNothing);
+        expect(find.byKey(const ValueKey('you-thought-friend-old')), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('you-composer')));
+        await pumpOrbitFrames(tester, count: 8);
+        expect(find.byType(ComposePostSheet), findsOneWidget);
+        expect(
+          tester
+              .widget<TextField>(
+                find.descendant(
+                  of: find.byType(ComposePostSheet),
+                  matching: find.byType(TextField),
+                ),
+              )
+              .controller!
+              .text,
+          '#walks ',
+        );
+        await finishThoughtCase(tester);
+      },
+    );
+
     testWidgets('deleting the own thought from its card clears the self note', (
       tester,
     ) async {
