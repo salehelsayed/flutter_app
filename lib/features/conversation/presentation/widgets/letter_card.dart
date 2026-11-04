@@ -837,14 +837,13 @@ class LetterCard extends StatelessWidget {
     final headerHidden = avatarOutsideBubble
         ? true
         : (!showAvatar && !showSenderName);
-    final radius = _bubbleBorderRadius();
-    // Resolve before the group sender-label wrapper pins its children to LTR.
-    final stickerAlignment = _sticker == null
-        ? null
-        : (isIncoming
-                  ? AlignmentDirectional.centerStart
-                  : AlignmentDirectional.centerEnd)
-              .resolve(Directionality.of(context));
+    // Peers at the start, own messages at the end: mirrored in Arabic.
+    final side =
+        (isIncoming
+                ? AlignmentDirectional.centerStart
+                : AlignmentDirectional.centerEnd)
+            .resolve(Directionality.of(context));
+    final radius = _bubbleBorderRadius(onLeft: side == Alignment.centerLeft);
 
     // 156 QW-1: no BackdropFilter — the fill below is already semi-opaque, so
     // the per-bubble Gaussian blur was pure raster cost (and forced the raster
@@ -863,10 +862,10 @@ class LetterCard extends StatelessWidget {
                 border: Border.all(color: readableColors.border),
               ),
         child: Column(
-          crossAxisAlignment: stickerAlignment == Alignment.centerRight
+          crossAxisAlignment: _sticker != null && side == Alignment.centerRight
               ? CrossAxisAlignment.end
               : CrossAxisAlignment.start,
-          textDirection: stickerAlignment == null ? null : TextDirection.ltr,
+          textDirection: _sticker == null ? null : TextDirection.ltr,
           children: [
             if (!headerHidden) _buildHeader(readableColors, hug: true),
             ..._buildBodyChildren(
@@ -896,9 +895,7 @@ class LetterCard extends StatelessWidget {
         : bubble;
 
     final aligned = Align(
-      alignment:
-          stickerAlignment ??
-          (isIncoming ? Alignment.centerLeft : Alignment.centerRight),
+      alignment: side,
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Reserve the avatar gutter (group avatar-outside mode) before
@@ -909,9 +906,9 @@ class LetterCard extends StatelessWidget {
               ? (constraints.maxWidth - gutter) * 0.78
               : double.infinity;
           // 137: every incoming balloon (first-in-run AND continuation) is
-          // flush-left so it shares the recipient's left edge. The `Align`
-          // already left-aligns the bubble; in avatar-outside mode the gutter
-          // (below) keeps that shared edge while moving the avatar outside.
+          // flush to the start edge so they share one edge; in avatar-outside
+          // mode the gutter (below) keeps that edge while moving the avatar
+          // outside.
           final sized = hugPrivateContentBubble
               ? IntrinsicWidth(child: attributed)
               : attributed;
@@ -922,55 +919,46 @@ class LetterCard extends StatelessWidget {
           if (!avatarOutsideBubble) return capped;
           // The sender name (first balloon of the run) is a label ABOVE the
           // bubble, OUTSIDE it; continuation balloons have no name.
-          final rightSide = showSenderName
-              // Pin to LTR (like the gutter Row + physical-left Align) so the
-              // name label and the bubble stay flush to the gutter under RTL
-              // (CrossAxisAlignment.start is direction-relative). The body text
-              // keeps its own explicit `detectTextDirection`, so Arabic message
-              // text still lays out RTL inside the bubble.
-              ? Directionality(
-                  textDirection: TextDirection.ltr,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(left: 12, bottom: 3),
-                        child: Text(
-                          senderName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: readableColors.textPrimary,
-                          ),
+          final labelled = showSenderName
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(
+                        start: 12,
+                        bottom: 3,
+                      ),
+                      child: Text(
+                        senderName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: readableColors.textPrimary,
                         ),
                       ),
-                      capped,
-                    ],
-                  ),
+                    ),
+                    capped,
+                  ],
                 )
               : capped;
-          // The avatar sits in a fixed-width gutter to the LEFT of the bubble
-          // (outside it). Every balloon of the run reserves the gutter so they
-          // share one left edge; the avatar is painted only on the first
+          // The avatar sits in a fixed-width gutter on the bubble's outer
+          // (screen-edge) side. Every balloon of the run reserves the gutter
+          // so they share one edge; the avatar is painted only on the first
           // balloon (the sender switch), continuations leave it empty.
           return Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
-            // Pin the gutter leading-on-physical-left to match the physical
-            // `Align.centerLeft` above, so the avatar stays on the bubble's
-            // outer (screen) edge under RTL instead of flipping inward.
-            textDirection: TextDirection.ltr,
             children: [
               SizedBox(
                 width: kBubbleAvatarGutterWidth,
                 child: showAvatar
                     ? Padding(
-                        padding: const EdgeInsets.only(
+                        padding: const EdgeInsetsDirectional.only(
                           top: _kBubbleAvatarGutterTopInset,
-                          right: kBubbleAvatarGutterWidth - kBubbleAvatarSize,
+                          end: kBubbleAvatarGutterWidth - kBubbleAvatarSize,
                         ),
                         child: UserAvatar(
                           peerId: senderPeerId,
@@ -979,7 +967,7 @@ class LetterCard extends StatelessWidget {
                       )
                     : null,
               ),
-              Flexible(child: rightSide),
+              Flexible(child: labelled),
             ],
           );
         },
@@ -1038,8 +1026,8 @@ class LetterCard extends StatelessWidget {
   /// [kBubbleRadius]; the SPEAKER-edge corners that join consecutive bubbles
   /// collapse to [kBubbleStackRadius] (first squares the bottom speaker corner,
   /// last squares the top speaker corner, middle squares both, standalone none).
-  /// Speaker edge = LEFT for incoming, RIGHT for outgoing.
-  BorderRadius _bubbleBorderRadius() {
+  /// Speaker edge = the screen side the bubble sits on.
+  BorderRadius _bubbleBorderRadius({required bool onLeft}) {
     const r = Radius.circular(kBubbleRadius);
     const sq = Radius.circular(kBubbleStackRadius);
 
@@ -1047,7 +1035,7 @@ class LetterCard extends StatelessWidget {
     final topSpeaker = !isFirstInGroup ? sq : r;
     final bottomSpeaker = !isLastInGroup ? sq : r;
 
-    if (isIncoming) {
+    if (onLeft) {
       return BorderRadius.only(
         topLeft: topSpeaker,
         bottomLeft: bottomSpeaker,
