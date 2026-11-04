@@ -454,163 +454,163 @@ abstract class AppLocalizations {
   /// **'Sharing replaces the thought you have up now'**
   String get thought_compose_replaces;
 
-  /// No description provided for @thought_compose_hint.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'say something, or just talk'**
   String get thought_compose_hint;
 
-  /// No description provided for @thought_voice_recording.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'recording'**
   String get thought_voice_recording;
 
-  /// No description provided for @thought_voice_limit.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'up to 3 min · you can write after'**
   String get thought_voice_limit;
 
-  /// No description provided for @thought_voice_pause.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Pause'**
   String get thought_voice_pause;
 
-  /// No description provided for @thought_voice_resume.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Resume'**
   String get thought_voice_resume;
 
-  /// No description provided for @thought_voice_caption_hint.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'add a caption…'**
   String get thought_voice_caption_hint;
 
-  /// No description provided for @thought_voice_remove.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Remove voice note'**
   String get thought_voice_remove;
 
-  /// No description provided for @thought_audience_to_friends.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'to friends · {count}'**
   String thought_audience_to_friends(int count);
 
-  /// No description provided for @thought_audience_to_people.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{count, plural, =1{to 1 person} other{to {count} people}}'**
   String thought_audience_to_people(int count);
 
-  /// No description provided for @thought_audience_friends.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'friends'**
   String get thought_audience_friends;
 
-  /// No description provided for @thought_audience_friends_desc.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'everyone in your orbit'**
   String get thought_audience_friends_desc;
 
-  /// No description provided for @thought_audience_select.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'select people…'**
   String get thought_audience_select;
 
-  /// No description provided for @thought_audience_select_desc.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'just this once'**
   String get thought_audience_select_desc;
 
-  /// No description provided for @thought_pick_title.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Who sees this'**
   String get thought_pick_title;
 
-  /// No description provided for @thought_pick_done.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Done · {count}'**
   String thought_pick_done(int count);
 
-  /// No description provided for @thought_pick_search.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'find someone…'**
   String get thought_pick_search;
 
-  /// No description provided for @thought_pick_recent.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'recent picks'**
   String get thought_pick_recent;
 
-  /// No description provided for @thought_pick_everyone.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'everyone · {count}'**
   String thought_pick_everyone(int count);
 
-  /// No description provided for @thought_pick_footer.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'just this thought. nothing is created, nobody sees who else was picked'**
   String get thought_pick_footer;
 
-  /// No description provided for @thought_pick_remove.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'Remove {name}'**
   String thought_pick_remove(String name);
 
-  /// No description provided for @thought_pick_no_match.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'no one by that name'**
   String get thought_pick_no_match;
 
-  /// No description provided for @thought_compose_lifetime_one.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{a} sees this for 24 hours'**
   String thought_compose_lifetime_one(String a);
 
-  /// No description provided for @thought_compose_lifetime_two.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{a} and {b} see this for 24 hours'**
   String thought_compose_lifetime_two(String a, String b);
 
-  /// No description provided for @thought_compose_lifetime_three.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{a}, {b} and {c} see this for 24 hours'**
   String thought_compose_lifetime_three(String a, String b, String c);
 
-  /// No description provided for @thought_compose_lifetime_more.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{a}, {b} and {count} others see this for 24 hours'**
   String thought_compose_lifetime_more(String a, String b, int count);
 
-  /// No description provided for @you_page_people.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{count, plural, =1{1 person} other{{count} people}}'**
   String you_page_people(int count);
 
-  /// No description provided for @you_page_live_people.
+  /// Thoughts 131 copy, owner-approved 2026-11-04
   ///
   /// In en, this message translates to:
   /// **'{count, plural, =1{still up for 1 person · gone in {hours} h} other{still up for {count} people · gone in {hours} h}}'**
