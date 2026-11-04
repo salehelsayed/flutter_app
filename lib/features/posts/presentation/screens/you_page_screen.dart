@@ -1125,50 +1125,77 @@ class _TagBar extends StatelessWidget {
         border: Border(bottom: BorderSide(color: _hairline)),
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Semantics(
-            button: true,
-            label: MaterialLocalizations.of(context).closeButtonTooltip,
-            child: GestureDetector(
-              key: const ValueKey('you-tag-clear'),
-              behavior: HitTestBehavior.opaque,
-              onTap: onClear,
-              child: Container(
-                height: 32,
-                padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 6, 0),
-                decoration: BoxDecoration(
-                  color: const Color(0x14E8ECE9),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      label,
-                      style: _mono.copyWith(color: _ink, fontSize: 13),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 22,
-                      height: 22,
-                      decoration: const BoxDecoration(
-                        color: Color(0x1FE8ECE9),
-                        shape: BoxShape.circle,
+          Flexible(
+            flex: 2,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Semantics(
+                    button: true,
+                    label: MaterialLocalizations.of(context).closeButtonTooltip,
+                    child: GestureDetector(
+                      key: const ValueKey('you-tag-clear'),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onClear,
+                      child: Container(
+                        height: 32,
+                        padding: const EdgeInsetsDirectional.fromSTEB(
+                          12,
+                          0,
+                          6,
+                          0,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0x14E8ECE9),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: _mono.copyWith(
+                                  color: _ink,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              width: 22,
+                              height: 22,
+                              decoration: const BoxDecoration(
+                                color: Color(0x1FE8ECE9),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.close,
+                                size: 14,
+                                color: _ink,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      child: const Icon(Icons.close, size: 14, color: _ink),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+                const SizedBox(width: 8),
+                Text(
+                  l10n.you_page_tag_count(count),
+                  style: small.copyWith(color: _muted),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 8),
-          Text(
-            l10n.you_page_tag_count(count),
-            style: small.copyWith(color: _muted),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
+          Flexible(
             child: Text(
               l10n.you_page_tag_private,
               textAlign: TextAlign.end,
