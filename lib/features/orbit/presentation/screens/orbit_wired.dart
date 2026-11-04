@@ -145,6 +145,7 @@ import 'package:flutter_app/features/posts/application/load_own_thought_history_
 import 'package:flutter_app/core/utils/thought_tags.dart';
 import 'package:flutter_app/features/posts/application/retract_thought_use_case.dart';
 import 'package:flutter_app/features/posts/application/pending_post_follow_on_retrier.dart';
+import 'package:flutter_app/features/posts/domain/models/post_audience.dart';
 import 'package:flutter_app/features/posts/domain/models/post_model.dart';
 import 'package:flutter_app/features/posts/presentation/screens/thought_card_screen.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_thought_note.dart';
