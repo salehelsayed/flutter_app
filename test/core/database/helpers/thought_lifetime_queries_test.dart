@@ -330,7 +330,7 @@ void main() {
     },
   );
   test(
-    'expired recovery rows are terminal and cannot be selected again',
+    'expired own recovery sources survive without becoming pending work',
     () async {
       await seed('expired', now.subtract(const Duration(hours: 24)));
       await seed('live', now.subtract(const Duration(hours: 23)));
@@ -344,6 +344,11 @@ void main() {
           'created_at': now.toIso8601String(),
         });
       }
+      final expiredSource = await dbLoadPostMediaUploadRecoveryItems(
+        db,
+        'expired',
+      );
+      expect(expiredSource, hasLength(1));
       expect(
         (await dbLoadPendingPostMediaUploadPosts(
           db,
@@ -351,13 +356,20 @@ void main() {
         )).single['post_id'],
         'live',
       );
-      expect(await dbLoadPostMediaUploadRecoveryItems(db, 'expired'), isEmpty);
+      expect(
+        await dbLoadPostMediaUploadRecoveryItems(db, 'expired'),
+        equals(expiredSource),
+      );
       expect(
         (await dbLoadPendingPostMediaUploadPosts(
           db,
           nowProvider: () => now,
         )).single['post_id'],
         'live',
+      );
+      expect(
+        await dbLoadPostMediaUploadRecoveryItems(db, 'expired'),
+        equals(expiredSource),
       );
     },
   );

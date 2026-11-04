@@ -4217,7 +4217,9 @@ path, and live retries resolve it through `MediaFileManager`. Delivery expiry
 must exclude upload work without deleting the author's retained source; late
 upload completion or failure must also preserve it when `getPost` hides the
 expired own row. Actual Thought deletion still removes its recovery rows and
-owned files. The shared hydrator projects these sources only onto own media
+owned files. The SQL lifetime sentinel checks that repeated pending selections
+still exclude the expired Thought while leaving its recovery metadata unchanged.
+The shared hydrator projects these sources only onto own media
 Thoughts with no completed attachments; You-page thumbnails use that local-only
 projection, which is absent from persisted/wire post maps. Completed attachments
 take precedence. The repository, background-send, delivery-rule, restart,
